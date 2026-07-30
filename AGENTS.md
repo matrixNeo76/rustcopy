@@ -11,11 +11,11 @@ Welcome to `robocopy-ingest-cli` (`rustcopy`). This document serves as the prima
 ### Core Architectural Rules:
 1. **Zero-Allocation Stdout Streaming**: Always read `robocopy.exe` output using binary `read_until` byte buffers (`Vec<u8>`) to avoid heap allocations per copied file.
 2. **Never Redirect Stderr to Unread Pipe**: Always direct `stderr` to `Stdio::null()` to prevent Windows pipe buffer deadlocks.
-3. **Lossy OEM/ANSI Decoding**: Windows Robocopy outputs text in OEM code pages (e.g. CP850/CP437). Always decode stdout lines via `String::from_utf8_lossy`.
+3. **OEM/ANSI CP850 Decoding**: Windows Robocopy outputs text in OEM code pages (e.g. CP850/CP1252). Always decode stdout lines via `encoding_rs::Encoding::for_label(b"ibm850")` to preserve accented characters.
 4. **Memory Bounds (Anti-OOM)**:
    - Logging channels MUST use bounded channels (`bounded_channel(10_000)`).
    - Report mismatch lists MUST be capped to `10_000` items (`MAX_REPORTED_ERRORS`).
-5. **Path Normalization**: Strip trailing separators from arguments to prevent quote escaping bugs (`"C:\data\"` -> `"C:\data"`).
+5. **Path Normalization & Signal Handling**: Strip trailing separators from arguments. Intercept `Ctrl+C` and ensure `child.kill()` / `taskkill` is dispatched to prevent orphan `robocopy.exe` processes.
 
 ---
 

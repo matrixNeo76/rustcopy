@@ -34,7 +34,7 @@ graph LR
 
 1. **Scansione Iniziale (Prescan)**: Mappa l'albero della directory sorgente (`walkdir`), calcola le dimensioni ed esegue il matching dei filtri glob (`--pattern "*.csv"`). Se si gestiscono milioni di file, il flag `--no-prescan` avvia il trasferimento all'istante senza attese.
 2. **Trasferimento Robocopy a Zero Allocazioni**: Invoca `robocopy.exe` su Windows iniettando i flag ottimali (`/MT:N` thread automatici sulle CPU dell'host, `/COPYALL` permessi ACL, `/DCOPY:DAT` timestamp directory, `/MIR` mirroring, `/IPG` throttling). Legge lo stdout tramite buffer binario riutilizzato, evitando qualsiasi allocazione heap per riga e decodificando in modo lossy i set di caratteri OEM/ANSI (CP850).
-3. **Retry Esterni & Resilience**: Se Robocopy restituisce exit code transitori di blocco file (codici 8, 9, 11), l'invocazione viene ripetuta automaticamente con backoff esponenziale. Se si seleziona `Ctrl+C`, l'applicazione intercetta il segnale e termina in modo ordinato salvando i log.
+3. **Retry Esterni & Resilience**: Se Robocopy restituisce exit code transitori di blocco file (codici 8, 9, 11), l'invocazione viene ripetuta automaticamente con backoff esponenziale. Se si seleziona `Ctrl+C`, l'applicazione intercetta il segnale, invia un `kill()` forzato a `robocopy.exe` per evitare processi orfani e termina in modo ordinato salvando i log.
 4. **Verifica Integrità Multi-Threaded**: Verifica la corrispondenza dei checksum tra sorgente e destinazione utilizzando **Rayon** su tutte le CPU dell'host. Supporta **SHA-256** ed l'algoritmo **BLAKE3** (3-5x più veloce).
 5. **Cifratura & Cloud Sync**: Supporta la cifratura simmetrica in streaming **AES-256** (`--encrypt-aes256`) per backup Zero-Trust e la sincronizzazione diretta verso storage remoti S3 / Azure Blob Container (`--cloud-sync-target`).
 6. **Live Monitoring & Reporting**: Scrive un report JSON completo con metadati sull'host, genera una **Dashboard HTML Standalone** (`--html-report-path`), invia un alert **HTTP Webhook** (Slack/Teams) ed espone un **Server Web HTTP Live** (`--serve-dashboard 8080`) per monitorare l'avanzamento dal browser.
@@ -47,13 +47,14 @@ graph LR
 |---|---|---|---|
 | `--source <PATH>` | *obbligatorio* | 1° arg | Percorso della directory sorgente. |
 | `--dest <PATH>` | *obbligatorio* | 2° arg | Percorso della directory di destinazione. |
-| `--pattern <GLOB>` | `*.csv` | 3° arg | Pattern dei file da includere nell'ingestion. |
+| `--pattern <GLOB>` | `*` | 3° arg | Pattern dei file da includere nell'ingestion (default `*` = tutti i file). |
 | `--config <PATH>` | *nessuno* | — | Carica la configurazione da un file TOML riutilizzabile. |
 | `--threads <N>` | *CPU logiche* | `/MT:N` | Thread paralleli di copia per Robocopy (1-128). |
 | `--preserve-acl` | `false` | `/COPYALL` | Preserva i permessi di sicurezza NTFS e le ACL di dominio. |
 | `--preserve-timestamps` | `false` | `/DCOPY:DAT` | Preserva le date di creazione e modifica delle directory. |
 | `--long-paths` | `false` | — | Attiva il prefisso `\\?\` per percorsi lunghi oltre 240 caratteri. |
 | `--mirror` | `false` | `/MIR` | Sincronizza ed elimina i file in destinazione non presenti in sorgente. |
+| `--force-purge` | `false` | — | Disattiva la soglia di protezione per la modalità `--mirror` (F21). |
 | `--exclude-files <GLOB>` | *nessuno* | `/XF` | Esclude file corrispondenti ai pattern indicati (ripetibile). |
 | `--exclude-dirs <GLOB>` | *nessuno* | `/XD` | Esclude directory corrispondenti ai pattern indicati (ripetibile). |
 | `--min-age-days <N>` | *nessuno* | `/MINAGE:N` | Esclude i file modificati negli ultimi N giorni. |

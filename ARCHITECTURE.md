@@ -1,4 +1,4 @@
-# Architettura di Sistema — robocopy-ingest-cli (v4.0.0 Next-Gen)
+# Architettura di Sistema — robocopy-ingest-cli (v5.1.0 Robustness & Encoding)
 
 Questo documento descrive in dettaglio l'**architettura interna, la pipeline di esecuzione, i pattern di progettazione ed i meccanismi di sicurezza e performance** implementati nel crate `robocopy_ingest`.
 
@@ -43,11 +43,11 @@ graph TD
 
 | Modulo Sorgente | Responsabilità Architetturale | Tecnica / Pattern Utilizzato |
 |---|---|---|
-| `src/main.rs` | Orchestrazione asincrona e gestione dei segnali. | `tokio::select!` per cattura `Ctrl+C` e shutdown pulito. |
-| `src/cli.rs` | Definition, parsing e validazione delle opzioni CLI. | Struct `clap` derivata con merge automatico dai profili TOML. |
+| `src/main.rs` | Orchestrazione asincrona e gestione dei segnali. | `tokio::select!` per cattura `Ctrl+C`, `taskkill` subprocess cleanup e Mirror Safety Threshold check. |
+| `src/cli.rs` | Definition, parsing e validazione delle opzioni CLI. | Struct `clap` derivata con default `*`, flag `--force-purge` e merge automatico dai profili TOML. |
 | `src/config.rs` | Caricamento e parsing delle configurazioni riutilizzabili. | Deserializzazione TOML tramite `serde`. |
-| `src/engine/mod.rs` | Astrazione del motore di copia. | Trait `CopyEngine` per disaccoppiare Robocopy dalla copia Naive baseline. |
-| `src/engine/robocopy.rs` | Wrapper ad altissime prestazioni per `robocopy.exe`. | Streaming `read_until` binario, buffer riutilizzato, decodifica OEM/ANSI e Stdio `stderr` a null. |
+| `src/engine/mod.rs` | Astrazione del motore di copia. | Trait `CopyEngine` e `CopyRequestBuilder` fluente per disaccoppiare Robocopy dalla copia Naive. |
+| `src/engine/robocopy.rs` | Wrapper ad altissime prestazioni per `robocopy.exe`. | Streaming `read_until` binario, buffer riutilizzato, decodifica OEM CP850 via `encoding_rs` e Stdio `stderr` a null. |
 | `src/integrity.rs` | Verifica di corrispondenza sorgente/destinazione. | Parallelizzazione multi-core con **Rayon** (`par_iter`), pre-check taglia file, **BLAKE3 / SHA-256** e cap errore a 10k per OOM guard. |
 | `src/logging.rs` | Logging asincrono su file per-file. | Canale asincrono `bounded_channel(10_000)` con strategia non bloccante (`try_send`). |
 | `src/report.rs` | Generazione dello schema JSON completo. | Serializzazione `serde_json`, conteggio temporizzazioni di fase (`PhaseTiming`) e metadati host (`HostMetadata`). |

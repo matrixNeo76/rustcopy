@@ -32,6 +32,8 @@ When editing or extending `robocopy-ingest-cli`, keep these design patterns in m
 ### CLI Argument Rules:
 - All CLI flags defined in `src/cli.rs` must also support optional TOML config overrides via `src/config.rs` (`IngestConfig`).
 - Paths should be normalized via `normalize_path_arg` to handle Windows backslashes correctly.
+- Default pattern is `*` for full recursive copy. `--mirror` mode enforces safety threshold checks unless `--force-purge` is specified.
+- Stdout decoding uses `encoding_rs::Encoding::for_label(b"ibm850")` for accurate OEM CP850 text processing.
 
 ---
 
