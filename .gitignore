@@ -1,0 +1,7 @@
+/target
+**/*.rs.bk
+*.log
+.ingest_cache
+robocopy_ingest.log
+robocopy_ingest_report.json
+*.html
