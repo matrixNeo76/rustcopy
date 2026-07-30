@@ -6,11 +6,13 @@ This file contains specific context, conventions, and operational instructions f
 
 ## 1. Quick Reference & Commands
 
-- **Build Project**: `cargo build`
-- **Build Release**: `cargo build --release`
-- **Run Full Test Suite**: `cargo test`
-- **Run Specific Test**: `cargo test <test_name>`
-- **Check Compilation**: `cargo check`
+- **Build Project**: `rtk cargo build` or `cargo build`
+- **Build Release**: `rtk cargo build --release` or `cargo build --release`
+- **Run Full Test Suite**: `rtk cargo test` (ALWAYS prefer `rtk cargo test` for token optimization)
+- **Run Specific Test**: `rtk cargo test <test_name>`
+- **Check Compilation**: `rtk cargo check`
+- **Summarize Module Impact**: `rtk smart <file>`
+- **Query Code Graph**: `graphify query "<question>" --graph src/graphify-out/graph.json`
 
 ---
 

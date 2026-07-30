@@ -71,3 +71,18 @@ RUST_BACKTRACE=1 cargo test
 - **Language Standard**: Rust 2021 edition.
 - **Error Handling**: Use `anyhow::Result` for application-level error handling in `main.rs`, and custom `IngestError` in core library modules.
 - **Doc Comments**: Maintain standard Rustdoc comments (`///`) on all public functions, traits, and structs in English.
+
+---
+
+## 5. Tooling & Optimization Workflow (RTK & Graphify)
+
+All AI agents and contributors working on this repository MUST utilize the installed tooling to optimize token consumption and maintain code graph clarity:
+
+### RTK (Token Optimization Proxy):
+- Use `rtk cargo test` instead of raw `cargo test` to compress test logs and save tokens.
+- Use `rtk smart <file>` to obtain a 2-line technical summary of module impact.
+- Use `rtk cargo check` or `rtk git status` to keep context clean.
+
+### Graphify (Code Graph & AST):
+- Use `graphify extract src/ --no-viz --no-cluster` to update the AST graph when refactoring modules.
+- Use `graphify query "<question>" --graph src/graphify-out/graph.json` to inspect cross-module dependencies and call graphs.
