@@ -131,6 +131,15 @@ pub struct IngestReport {
     pub integrity_check: Option<IntegrityCheck>,
     pub phase_timing: PhaseTiming,
     pub configuration: ConfigurationReport,
+    /// Log lines dropped because the bounded async log channel was full (audit-trail gap).
+    #[serde(default)]
+    pub log_lines_dropped: u64,
+    /// Whether destination files were encrypted with AES-256-GCM after the transfer.
+    #[serde(default)]
+    pub encrypted: bool,
+    /// Non-fatal problem encountered while delivering the completion webhook, if any.
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub webhook_error: Option<String>,
 }
 
 impl IngestReport {
@@ -174,6 +183,9 @@ impl IngestReport {
             integrity_check: integrity,
             phase_timing: timing,
             configuration: ConfigurationReport::from(args),
+            log_lines_dropped: 0,
+            encrypted: false,
+            webhook_error: None,
         }
     }
 
@@ -319,6 +331,7 @@ mod tests {
                 },
             ],
             total_bytes: 1_000_000_000,
+            total_files_hint: None,
         }
     }
 
@@ -435,8 +448,10 @@ mod tests {
             bytes_hashed: 2048,
             mismatches: vec![Mismatch {
                 path: "nested/b.csv".to_string(),
-                source_sha256: "aa".to_string(),
-                dest_sha256: "bb".to_string(),
+                kind: crate::integrity::MismatchKind::Hash,
+                algorithm: "sha256".to_string(),
+                source_digest: "aa".to_string(),
+                dest_digest: "bb".to_string(),
             }],
             missing_in_dest: vec!["c.csv".to_string()],
             unreadable: Vec::new(),

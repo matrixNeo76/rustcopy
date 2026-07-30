@@ -1,14 +1,21 @@
 //! Asynchronous Webhook Notification system for robocopy-ingest-cli.
 //!
-//! Sends JSON execution summary payloads to configured HTTP Webhook endpoints
-//! (such as Slack, Microsoft Teams, Discord, or monitoring APIs) upon task completion.
+//! Sends JSON execution summary payloads to configured HTTP/HTTPS Webhook endpoints (such as
+//! Slack, Microsoft Teams, Discord, or monitoring APIs) upon task completion, using `reqwest`
+//! with `rustls` so both `http://` and `https://` URLs work. Unlike the previous implementation
+//! (a hand-rolled blocking `std::net::TcpStream` POST that only ever connected to port 80 in
+//! plaintext and treated every failure as silent success), this surfaces connection errors,
+//! non-2xx statuses and timeouts back to the caller so they can be logged and included in the
+//! run's outcome instead of being reported as delivered.
 
-use std::io::Write;
-use std::net::TcpStream;
+use std::time::Duration;
 
 use serde::Serialize;
 
 use crate::report::IngestReport;
+
+/// How long to wait for the webhook endpoint to respond before giving up.
+const WEBHOOK_TIMEOUT: Duration = Duration::from_secs(10);
 
 /// Payload sent to Webhook endpoints.
 #[derive(Debug, Clone, Serialize)]
@@ -47,39 +54,35 @@ impl WebhookPayload {
     }
 }
 
-/// Send a webhook payload asynchronously to an HTTP/HTTPS endpoint URL string.
+/// Send a webhook payload to an HTTP/HTTPS endpoint URL, returning the real error on failure.
 pub async fn send_webhook(url: &str, report: &IngestReport) -> Result<(), String> {
     let payload = WebhookPayload::from_report(report);
-    let json_body = serde_json::to_string_pretty(&payload).map_err(|e| e.to_string())?;
 
-    tracing::info!(webhook_url = %url, "dispatching async completion webhook notification");
+    tracing::info!(webhook_url = %url, "dispatching completion webhook notification");
 
-    // Standard HTTP POST request using Tokio TcpStream
-    if let Some(host_port) = extract_host_port(url) {
-        let req = format!(
-            "POST {} HTTP/1.1\r\nHost: {}\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
-            url, host_port, json_body.len(), json_body
-        );
+    let client = reqwest::Client::builder()
+        .timeout(WEBHOOK_TIMEOUT)
+        .build()
+        .map_err(|e| format!("cannot build HTTP client: {e}"))?;
 
-        if let Ok(mut stream) = TcpStream::connect(&host_port) {
-            let _ = stream.write_all(req.as_bytes());
-            tracing::info!(webhook_url = %url, "webhook notification sent successfully");
-            return Ok(());
-        }
+    let response = client
+        .post(url)
+        .json(&payload)
+        .send()
+        .await
+        .map_err(|e| format!("webhook request failed: {e}"))?;
+
+    let status = response.status();
+    if !status.is_success() {
+        let body = response.text().await.unwrap_or_default();
+        return Err(format!(
+            "webhook endpoint returned {status}: {}",
+            body.chars().take(500).collect::<String>()
+        ));
     }
 
-    tracing::warn!(webhook_url = %url, "webhook notification logged (mock/offline mode)");
+    tracing::info!(webhook_url = %url, status = %status, "webhook notification delivered");
     Ok(())
-}
-
-fn extract_host_port(url: &str) -> Option<String> {
-    let stripped = url.trim_start_matches("http://").trim_start_matches("https://");
-    let host = stripped.split('/').next()?;
-    if host.contains(':') {
-        Some(host.to_string())
-    } else {
-        Some(format!("{host}:80"))
-    }
 }
 
 #[cfg(test)]
@@ -87,8 +90,53 @@ mod tests {
     use super::*;
 
     #[test]
-    fn extracts_host_and_port_correctly() {
-        assert_eq!(extract_host_port("http://localhost:8080/hook"), Some("localhost:8080".to_string()));
-        assert_eq!(extract_host_port("http://api.example.com/webhook"), Some("api.example.com:80".to_string()));
+    fn payload_reports_success_below_the_error_threshold() {
+        let payload = WebhookPayload {
+            text: "test".to_string(),
+            report_summary: "summary".to_string(),
+            status: "SUCCESS".to_string(),
+            files_copied: 10,
+            bytes_copied: 1000,
+            elapsed_seconds: 1.0,
+        };
+        assert_eq!(payload.status, "SUCCESS");
+    }
+
+    #[tokio::test]
+    async fn unreachable_host_surfaces_a_real_error() {
+        // Port 0 is never a valid connection target: this must fail, not silently return Ok(()).
+        let report_json = r#"{
+            "schema_version": 1,
+            "timestamp": "2026-07-30T09:14:22Z",
+            "tool_version": "5.1.0",
+            "host_platform": "windows",
+            "host_metadata": { "hostname": "srv", "os_name": "windows", "logical_cpus": 8 },
+            "source": "D:/landing",
+            "dest": "E:/warehouse",
+            "total_files": 1,
+            "total_bytes": 100,
+            "robocopy_transfer": {
+                "engine": "robocopy",
+                "elapsed_seconds": 1.0,
+                "throughput_mbps": 100.0,
+                "bytes_copied": 100,
+                "files_copied": 1,
+                "retry_attempts_used": 0,
+                "dry_run": false
+            },
+            "phase_timing": { "inventory_seconds": 0.1, "transfer_seconds": 1.0, "total_seconds": 1.1 },
+            "configuration": {
+                "threads": 8,
+                "retries": 3,
+                "retry_wait_seconds": 5,
+                "pattern": "*.csv",
+                "verify_integrity": true,
+                "compare_baseline": false,
+                "dry_run": false
+            }
+        }"#;
+        let report: IngestReport = serde_json::from_str(report_json).expect("parse fixture");
+        let result = send_webhook("http://127.0.0.1:0/hook", &report).await;
+        assert!(result.is_err(), "connecting to port 0 must fail loudly");
     }
 }

@@ -33,12 +33,27 @@ pub enum IntegrityStatus {
     Failed,
 }
 
-/// A file whose destination checksum differs from the source.
+/// How two files were found to differ.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum MismatchKind {
+    /// Sizes differed; hashing was skipped because it could not possibly match.
+    #[serde(rename = "size")]
+    Size,
+    /// Sizes matched but the content hash (`algorithm` field) differed.
+    #[serde(rename = "hash")]
+    Hash,
+}
+
+/// A file whose destination differs from the source.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Mismatch {
     pub path: String,
-    pub source_sha256: String,
-    pub dest_sha256: String,
+    pub kind: MismatchKind,
+    /// Hash algorithm used for `source_digest`/`dest_digest` when `kind` is `Hash`; the literal
+    /// string `"size"` when `kind` is `Size` and the fields below hold byte counts instead.
+    pub algorithm: String,
+    pub source_digest: String,
+    pub dest_digest: String,
 }
 
 /// Maximum number of detailed error entries kept in the report to prevent OOM.
@@ -167,8 +182,10 @@ pub fn verify(
                 );
                 return FileVerificationOutcome::Mismatch(Mismatch {
                     path: label,
-                    source_sha256: format!("size:{}B", file.size_bytes),
-                    dest_sha256: format!("size:{}B", dest_meta.len()),
+                    kind: MismatchKind::Size,
+                    algorithm: "size".to_string(),
+                    source_digest: format!("{}B", file.size_bytes),
+                    dest_digest: format!("{}B", dest_meta.len()),
                 });
             }
 
@@ -187,8 +204,13 @@ pub fn verify(
                         tracing::error!(path = %label, "checksum mismatch");
                         FileVerificationOutcome::Mismatch(Mismatch {
                             path: label,
-                            source_sha256: source_hash,
-                            dest_sha256: dest_hash,
+                            kind: MismatchKind::Hash,
+                            algorithm: match algo {
+                                HashAlgorithm::Sha256 => "sha256".to_string(),
+                                HashAlgorithm::Blake3 => "blake3".to_string(),
+                            },
+                            source_digest: source_hash,
+                            dest_digest: dest_hash,
                         })
                     }
                 }
@@ -348,8 +370,8 @@ mod tests {
         assert_eq!(check.mismatches.len(), 1);
         assert_eq!(check.mismatches[0].path, "b.csv");
         assert_ne!(
-            check.mismatches[0].source_sha256,
-            check.mismatches[0].dest_sha256
+            check.mismatches[0].source_digest,
+            check.mismatches[0].dest_digest
         );
     }
 

@@ -224,7 +224,6 @@ fn fixture_bytes(seed: &str, size: usize) -> Vec<u8> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::path::PathBuf;
 
     #[test]
     fn fixture_files_have_the_requested_size_and_differ_by_path() {

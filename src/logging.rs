@@ -1,14 +1,19 @@
 //! Asynchronous file logger.
 //!
-//! `tracing` events are formatted on the calling thread and then handed to an unbounded
-//! `tokio::sync::mpsc` channel. A dedicated tokio task owns the log file and performs every write,
-//! so the copy loop and the progress bar never block on disk I/O — a real concern when the log
-//! lives on the same spindle as a 50 GB ingestion.
+//! `tracing` events are formatted on the calling thread and then handed to a *bounded*
+//! `tokio::sync::mpsc` channel (capacity [`CHANNEL_CAPACITY`]) via `try_send`, so a burst of log
+//! lines can never grow without limit and OOM a 1TB+ transfer. A dedicated tokio task owns the
+//! log file and performs every write, so the copy loop and the progress bar never block on disk
+//! I/O. Because `try_send` is non-blocking, lines are dropped rather than buffered without bound
+//! when the channel is full; [`LogHandle::dropped_lines`] reports how many, so a run under heavy
+//! logging pressure can flag this in its report instead of silently losing audit trail entries.
 //!
 //! Logs go to the file only: the terminal is reserved for the progress bar and the final summary.
 
 use std::io;
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::Arc;
 
 use tokio::io::AsyncWriteExt;
 use tokio::sync::{mpsc, oneshot};
@@ -16,6 +21,9 @@ use tracing_subscriber::fmt::MakeWriter;
 use tracing_subscriber::EnvFilter;
 
 use crate::errors::IngestError;
+
+/// Bound on the in-flight log message queue.
+const CHANNEL_CAPACITY: usize = 10_000;
 
 /// Default verbosity: DEBUG for this crate (per-file detail), WARN for dependencies.
 pub const DEFAULT_FILTER: &str = "robocopy_ingest=debug,warn";
@@ -31,12 +39,16 @@ enum LogMessage {
 #[derive(Clone)]
 struct ChannelWriter {
     sender: mpsc::Sender<LogMessage>,
+    dropped: Arc<AtomicU64>,
 }
 
 impl io::Write for ChannelWriter {
     fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
         // Use try_send so logging never blocks the caller or causes OOM on 1TB+ transfers.
-        let _ = self.sender.try_send(LogMessage::Line(buf.to_vec()));
+        // A full channel means lines are dropped; track how many so the report can surface it.
+        if self.sender.try_send(LogMessage::Line(buf.to_vec())).is_err() {
+            self.dropped.fetch_add(1, Ordering::Relaxed);
+        }
         Ok(buf.len())
     }
 
@@ -58,11 +70,17 @@ pub struct LogHandle {
     sender: mpsc::Sender<LogMessage>,
     task: tokio::task::JoinHandle<()>,
     path: PathBuf,
+    dropped: Arc<AtomicU64>,
 }
 
 impl LogHandle {
     pub fn path(&self) -> &Path {
         &self.path
+    }
+
+    /// Number of log lines dropped because the bounded channel was full.
+    pub fn dropped_lines(&self) -> u64 {
+        self.dropped.load(Ordering::Relaxed)
     }
 
     /// Wait until every buffered line has reached the file.
@@ -117,7 +135,8 @@ fn build(path: &Path) -> Result<(impl tracing::Subscriber + Send + Sync, LogHand
         .map_err(|error| IngestError::io(path, error))?;
     let mut file = tokio::fs::File::from_std(file);
 
-    let (sender, mut receiver) = mpsc::channel::<LogMessage>(10_000);
+    let (sender, mut receiver) = mpsc::channel::<LogMessage>(CHANNEL_CAPACITY);
+    let dropped = Arc::new(AtomicU64::new(0));
 
     let task = tokio::spawn(async move {
         while let Some(message) = receiver.recv().await {
@@ -147,6 +166,7 @@ fn build(path: &Path) -> Result<(impl tracing::Subscriber + Send + Sync, LogHand
         .with_env_filter(filter)
         .with_writer(ChannelWriter {
             sender: sender.clone(),
+            dropped: Arc::clone(&dropped),
         })
         .with_ansi(false)
         .with_target(true)
@@ -159,6 +179,7 @@ fn build(path: &Path) -> Result<(impl tracing::Subscriber + Send + Sync, LogHand
             sender,
             task,
             path: path.to_path_buf(),
+            dropped,
         },
     ))
 }
@@ -233,6 +254,15 @@ mod tests {
             "existing content preserved"
         );
         assert!(contents.contains("second run"));
+        handle.shutdown().await;
+    }
+
+    #[tokio::test]
+    async fn dropped_lines_starts_at_zero() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let path = dir.path().join("ingest.log");
+        let (_guard, handle) = init_scoped(&path).expect("logger starts");
+        assert_eq!(handle.dropped_lines(), 0);
         handle.shutdown().await;
     }
 

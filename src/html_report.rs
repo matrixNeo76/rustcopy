@@ -10,6 +10,26 @@ use anyhow::{Context, Result};
 
 use crate::report::IngestReport;
 
+/// Escape the five HTML-significant characters. Every field interpolated into the report's
+/// markup ultimately comes from data that isn't fully trusted (source/dest paths, and in restore
+/// mode the whole `IngestReport` is parsed from an external JSON file), so every such value must
+/// be escaped before landing in the page — otherwise a crafted path or report field can inject
+/// arbitrary markup/script into a report that gets opened in a browser.
+fn escape_html(input: &str) -> String {
+    let mut out = String::with_capacity(input.len());
+    for c in input.chars() {
+        match c {
+            '&' => out.push_str("&amp;"),
+            '<' => out.push_str("&lt;"),
+            '>' => out.push_str("&gt;"),
+            '"' => out.push_str("&quot;"),
+            '\'' => out.push_str("&#39;"),
+            _ => out.push(c),
+        }
+    }
+    out
+}
+
 /// Generate a standalone HTML report page from an [`IngestReport`].
 pub fn generate_html_report(report: &IngestReport, output_path: &Path) -> Result<()> {
     let status_color = if report.integrity_check.as_ref().map(|c| c.passed()).unwrap_or(true)
@@ -116,15 +136,15 @@ pub fn generate_html_report(report: &IngestReport, output_path: &Path) -> Result
         report.robocopy_transfer.bytes_copied as f64 / 1_000_000.0,
         report.robocopy_transfer.throughput_mbps,
         report.robocopy_transfer.elapsed_seconds,
-        report.source,
-        report.dest,
-        report.configuration.pattern,
+        escape_html(&report.source),
+        escape_html(&report.dest),
+        escape_html(&report.configuration.pattern),
         report.configuration.threads,
         report.robocopy_transfer.exit_code.unwrap_or(0),
         report.phase_timing.inventory_seconds,
         report.phase_timing.transfer_seconds,
         report.phase_timing.total_seconds,
-        report.tool_version,
+        escape_html(&report.tool_version),
         report.timestamp
     );
 
@@ -181,5 +201,54 @@ mod tests {
         let html_text = fs::read_to_string(&html_path).expect("read html");
         assert!(html_text.contains("robocopy-ingest-cli"));
         assert!(html_text.contains("D:/landing"));
+    }
+
+    #[test]
+    fn html_escape_neutralises_markup_characters() {
+        assert_eq!(
+            escape_html("<script>alert('x')&\"y\"</script>"),
+            "&lt;script&gt;alert(&#39;x&#39;)&amp;&quot;y&quot;&lt;/script&gt;"
+        );
+    }
+
+    #[test]
+    fn malicious_path_in_report_is_escaped_in_the_generated_html() {
+        let json = r#"{
+            "schema_version": 1,
+            "timestamp": "2026-07-30T09:14:22Z",
+            "tool_version": "5.1.0",
+            "host_platform": "windows",
+            "host_metadata": { "hostname": "srv", "os_name": "windows", "logical_cpus": 8 },
+            "source": "<img src=x onerror=alert(1)>",
+            "dest": "E:/warehouse",
+            "total_files": 1,
+            "total_bytes": 100,
+            "robocopy_transfer": {
+                "engine": "robocopy",
+                "elapsed_seconds": 1.0,
+                "throughput_mbps": 100.0,
+                "bytes_copied": 100,
+                "files_copied": 1,
+                "retry_attempts_used": 0,
+                "dry_run": false
+            },
+            "phase_timing": { "inventory_seconds": 0.1, "transfer_seconds": 1.0, "total_seconds": 1.1 },
+            "configuration": {
+                "threads": 8,
+                "retries": 3,
+                "retry_wait_seconds": 5,
+                "pattern": "*.csv",
+                "verify_integrity": true,
+                "compare_baseline": false,
+                "dry_run": false
+            }
+        }"#;
+        let report: IngestReport = serde_json::from_str(json).expect("parse report");
+        let dir = tempfile::tempdir().expect("tempdir");
+        let html_path = dir.path().join("report.html");
+        generate_html_report(&report, &html_path).expect("generate html");
+        let html_text = fs::read_to_string(&html_path).expect("read html");
+        assert!(!html_text.contains("<img src=x onerror=alert(1)>"));
+        assert!(html_text.contains("&lt;img src=x onerror=alert(1)&gt;"));
     }
 }

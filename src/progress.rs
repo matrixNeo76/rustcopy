@@ -26,6 +26,10 @@ pub trait ProgressSink: Send + Sync {
     fn observe_total_bytes(&self, bytes: u64);
     /// Attach a free-form status message.
     fn set_status(&self, message: &str);
+    /// Zero the byte/file counters. Called between retry attempts so a failed attempt's partial
+    /// progress isn't added to the next attempt's, which would otherwise inflate the reported
+    /// `bytes_copied` on the failure path (each retry re-copies overlapping files).
+    fn reset(&self);
 }
 
 /// Progress sink that discards everything. Used by tests and by `--dry-run`.
@@ -37,6 +41,7 @@ impl ProgressSink for NoopProgress {
     fn add_file(&self) {}
     fn observe_total_bytes(&self, _bytes: u64) {}
     fn set_status(&self, _message: &str) {}
+    fn reset(&self) {}
 }
 
 /// Sink that only accumulates counters, without any terminal output. Handy in tests.
@@ -70,6 +75,11 @@ impl ProgressSink for CountingProgress {
     }
 
     fn set_status(&self, _message: &str) {}
+
+    fn reset(&self) {
+        self.bytes.store(0, Ordering::Relaxed);
+        self.files.store(0, Ordering::Relaxed);
+    }
 }
 
 /// Terminal progress bar reporting MB/s, ETA and percentage of total bytes.
@@ -161,6 +171,13 @@ impl ProgressSink for ThroughputProgress {
 
     fn set_status(&self, message: &str) {
         self.bar.set_message(message.to_string());
+    }
+
+    fn reset(&self) {
+        self.reported_bytes.store(0, Ordering::Relaxed);
+        self.observed_bytes.store(0, Ordering::Relaxed);
+        self.files.store(0, Ordering::Relaxed);
+        self.refresh();
     }
 }
 

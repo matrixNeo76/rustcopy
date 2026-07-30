@@ -27,18 +27,24 @@ pub struct ScannedFile {
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct ScanSummary {
     /// Full file list — kept for integrity verification. For large trees this can be
-    /// significant RAM; consider enabling `--no-prescan` to avoid materialising it.
+    /// significant RAM; `--no-prescan` avoids materialising it (see `total_files_hint`).
     pub files: Vec<ScannedFile>,
     pub total_bytes: u64,
+    /// Set when `files` is intentionally empty because `--no-prescan` used the lightweight
+    /// [`inventory`] walk instead of [`scan`]. `file_count`/`is_empty` prefer this over
+    /// `files.len()` so `--no-prescan` doesn't get misreported as "no files matched".
+    pub total_files_hint: Option<u64>,
 }
 
 impl ScanSummary {
     pub fn file_count(&self) -> usize {
-        self.files.len()
+        self.total_files_hint
+            .map(|n| n as usize)
+            .unwrap_or(self.files.len())
     }
 
     pub fn is_empty(&self) -> bool {
-        self.files.is_empty()
+        self.file_count() == 0
     }
 }
 
@@ -123,6 +129,17 @@ pub struct InventorySummary {
 impl InventorySummary {
     pub fn is_empty(&self) -> bool {
         self.total_files == 0
+    }
+
+    /// Adapt a lightweight inventory into a [`ScanSummary`] with an empty file list, for
+    /// `--no-prescan`. Per-file operations (integrity verification) are unavailable in this
+    /// mode since the individual paths were never collected.
+    pub fn into_scan_summary(self) -> ScanSummary {
+        ScanSummary {
+            files: Vec::new(),
+            total_bytes: self.total_bytes,
+            total_files_hint: Some(self.total_files),
+        }
     }
 }
 

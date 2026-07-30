@@ -30,10 +30,12 @@ When editing or extending `robocopy-ingest-cli`, keep these design patterns in m
 - **Integrity Report Capping**: `IntegrityCheck` caps error vectors at `MAX_REPORTED_ERRORS = 10_000`.
 
 ### CLI Argument Rules:
-- All CLI flags defined in `src/cli.rs` must also support optional TOML config overrides via `src/config.rs` (`IngestConfig`).
+- All CLI flags defined in `src/cli.rs` must also support optional TOML config overrides via `src/config.rs` (`IngestConfig`). `merge_config` only overwrites a field when the CLI still holds clap's own default for it (see the comment in `Args::merge_config`); it cannot yet distinguish "explicit CLI value equal to the default" from "no CLI value at all" (would need `ArgMatches::value_source`).
 - Paths should be normalized via `normalize_path_arg` to handle Windows backslashes correctly.
-- Default pattern is `*` for full recursive copy. `--mirror` mode enforces safety threshold checks unless `--force-purge` is specified.
-- Stdout decoding uses `encoding_rs::Encoding::for_label(b"ibm850")` for accurate OEM CP850 text processing.
+- Default pattern is `*` for full recursive copy. `--mirror` mode runs `check_mirror_safety` in `main.rs`, which diffs the destination tree against the source inventory and aborts (dedicated exit code 3) unless `--force-purge` is given or the run is interactive and the operator confirms. This only works when a full prescan was taken; `--no-prescan` + `--mirror` always requires `--force-purge`.
+- Stdout/stderr decoding uses `src/oem_codec.rs` (a hardcoded CP850 table plus a `GetOEMCP()` runtime check), **not** `encoding_rs::Encoding::for_label(b"ibm850")` — `encoding_rs` does not implement single-byte DOS/OEM code pages, so `for_label(b"ibm850")` always returns `None` and silently falls back to UTF-8. Do not reintroduce that pattern.
+- `--enable-dedup`, `--cloud-sync-target`, `--install-service` are accepted for forward compatibility but are **not implemented** (see `[NOT IMPLEMENTED]` markers in `src/cli.rs`); `--serve-dashboard` only serves a static status page, not live data. Don't describe these as working features in docs.
+- `--encrypt-aes256` performs real AES-256-GCM (see `src/crypto.rs`), applied to destination files after the transfer (and after integrity verification, so verification still compares plaintext). It is not a no-op.
 
 ---
 

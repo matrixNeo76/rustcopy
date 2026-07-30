@@ -66,6 +66,16 @@ pub enum IngestError {
         #[source]
         source: std::io::Error,
     },
+
+    /// F21: mirror mode was about to purge destination files and no confirmation was given.
+    #[error(
+        "--mirror would purge {count} file(s)/dir(s) from the destination that are not present \
+         in the source; re-run with --force-purge to proceed, confirm interactively, or drop --mirror"
+    )]
+    MirrorPurgeAborted { count: usize },
+
+    #[error("encryption error: {0}")]
+    Crypto(String),
 }
 
 impl IngestError {
@@ -109,7 +119,9 @@ impl IngestError {
             | IngestError::DestInsideSource { .. }
             | IngestError::EmptyPattern
             | IngestError::InvalidPattern { .. }
-            | IngestError::IntegrityFailed { .. } => false,
+            | IngestError::IntegrityFailed { .. }
+            | IngestError::MirrorPurgeAborted { .. }
+            | IngestError::Crypto(_) => false,
         }
     }
 }

@@ -37,11 +37,13 @@ pub struct Args {
     pub config: Option<PathBuf>,
 
     /// Source directory containing the CSV files to ingest.
-    #[arg(long, value_name = "PATH")]
+    /// Not required when --restore-from is given (it is derived from the backup report).
+    #[arg(long, value_name = "PATH", required_unless_present = "restore_from", default_value = "")]
     pub source: PathBuf,
 
     /// Destination directory for the ingested files.
-    #[arg(long, value_name = "PATH")]
+    /// Not required when --restore-from is given (it is derived from the backup report).
+    #[arg(long, value_name = "PATH", required_unless_present = "restore_from", default_value = "")]
     pub dest: PathBuf,
 
     /// File pattern to match (robocopy file filter / glob on the file name). Defaults to "*" (all files).
@@ -63,6 +65,14 @@ pub struct Args {
     /// After the transfer, compare checksums of source and destination files.
     #[arg(long, default_value_t = false)]
     pub verify_integrity: bool,
+
+    /// Selective integrity verification: only calculate checksums for files modified or copied in this run.
+    #[arg(long, default_value_t = false)]
+    pub fast_verify: bool,
+
+    /// Ignore temporary or transient files (.log, .tmp, .git/objects) that disappear during copy/verification.
+    #[arg(long, default_value_t = false)]
+    pub ignore_transient_missing: bool,
 
     /// Hash algorithm for integrity checks: sha256 (default) or blake3 (3-5x faster).
     #[arg(long, default_value = "sha256", value_name = "ALGO")]
@@ -162,27 +172,35 @@ pub struct Args {
     pub html_report_path: Option<PathBuf>,
 
     // ── F11.1: State Cache & Deduplication ───────────────────────────────────
-    /// Enable incremental state caching (.ingest_cache) to skip unchanged files.
+    /// [NOT IMPLEMENTED] Reserved for incremental state caching (.ingest_cache) to skip
+    /// unchanged files; accepted for forward compatibility but currently has no effect.
     #[arg(long, default_value_t = false)]
     pub enable_dedup: bool,
 
     // ── F14.1: Live Web Dashboard Server ─────────────────────────────────────
-    /// Start a live web monitoring dashboard HTTP server on this port (e.g. 8080).
+    /// [PARTIAL] Start an HTTP server on this port serving a static status page.
+    /// It does not yet stream live progress data; treat it as a placeholder, not a dashboard.
     #[arg(long, value_name = "PORT")]
     pub serve_dashboard: Option<u16>,
 
     // ── F15.1: Zero-Trust Streaming Encryption ──────────────────────────────
-    /// Encrypt payload files with AES-256 using the key provided.
+    /// Encrypt every copied file in the destination with AES-256-GCM after the transfer
+    /// completes. VALUE is the key material: `env:NAME` reads it from environment variable
+    /// NAME, `file:PATH` reads it from the first line of PATH, and any other value is treated
+    /// as a literal passphrase (avoid this on shared/multi-user hosts: it is visible in the
+    /// process list). The key is stretched to 256 bits with SHA-256.
     #[arg(long, value_name = "KEY")]
     pub encrypt_aes256: Option<String>,
 
     // ── F18.1: Direct Cloud Sync ─────────────────────────────────────────────
-    /// Target S3 or Azure Blob container for cloud synchronization (e.g. s3://bucket/prefix).
+    /// [NOT IMPLEMENTED] Reserved for direct S3/Azure Blob sync; accepted for forward
+    /// compatibility but currently has no effect (no cloud transfer is performed).
     #[arg(long, value_name = "URI")]
     pub cloud_sync_target: Option<String>,
 
     // ── F19.1: Windows Service Registration ──────────────────────────────────
-    /// Register and run the binary as a Windows Service background daemon.
+    /// [NOT IMPLEMENTED] Reserved for Windows Service registration; accepted for forward
+    /// compatibility but currently has no effect (no service is registered).
     #[arg(long, default_value_t = false)]
     pub install_service: bool,
 }
@@ -201,7 +219,16 @@ impl Args {
             }
         }
         if let Some(pat) = config.pattern {
-            if self.pattern == "*.csv" {
+            // Only apply the config file's pattern when the CLI still holds clap's own default
+            // ("*"); otherwise an explicit `--pattern` on the command line would be silently
+            // overwritten. This was previously checked against "*.csv", which never matched the
+            // real default and made the config file's pattern dead on arrival.
+            //
+            // Caveat: this can't distinguish "user typed --pattern '*'" from "user didn't pass
+            // --pattern at all" (both look identical here); doing that properly needs
+            // `ArgMatches::value_source`, which isn't threaded through yet for any of the
+            // merge_config fields (all of them share this limitation, not just pattern).
+            if self.pattern == "*" {
                 self.pattern = pat;
             }
         }
@@ -308,21 +335,28 @@ impl Args {
 
     /// Convert MB/s bandwidth limit to robocopy's /IPG (inter-packet gap in milliseconds).
     ///
-    /// Robocopy's /IPG represents the gap in **milliseconds** between 64 KB packets.
-    /// Formula: gap_ms = (64 * 1024 * 8) / (bandwidth_bps) * 1000
-    ///        = (64 * 1024 * 8 * 1000) / (mbps * 1_000_000)
-    ///        = 524_288 / mbps
+    /// Robocopy's /IPG represents the gap in **milliseconds** inserted after every 64 KB packet.
+    /// Formula, with `mbps` in megabytes (10^6 bytes) per second:
+    ///   gap_ms = packet_bits / bandwidth_bps * 1000
+    ///          = (65_536 bytes * 8 bits/byte) / (mbps * 1_000_000 bytes/s * 8 bits/byte) * 1000
+    ///          = 65_536 / (mbps * 1_000_000) * 1000
+    ///          = 65.536 / mbps
     ///
-    /// At 100 MB/s this yields about 5 ms gap per 64 KB packet, which keeps the load on the
-    /// link at roughly the desired level.  At very low bandwidth values the gap becomes large
-    /// (and potentially inaccurate), which is fine for the typical "don't saturate the link"
-    /// use case.
+    /// (The previous implementation used 524_288 / mbps — the numerator in bits instead of
+    /// converting through the correct byte/bit factors — which made the computed gap about
+    /// 8000x too large: at 100 MB/s it produced a 5242 ms gap between 64 KB packets, throttling
+    /// the real transfer down to roughly 12 KB/s instead of ~100 MB/s.)
+    ///
+    /// At high requested bandwidths the exact gap rounds below 1 ms, which robocopy cannot
+    /// express; those requests are clamped to the smallest representable gap (1 ms) rather than
+    /// silently becoming "no throttle".
     pub fn inter_packet_gap_ms(&self) -> Option<u32> {
         self.bandwidth_limit_mbps.and_then(|mbps| {
             if mbps == 0 {
                 return None;
             }
-            Some((524_288u64 / mbps as u64).clamp(1, u32::MAX as u64) as u32)
+            let gap_ms = 65.536_f64 / mbps as f64;
+            Some(gap_ms.round().clamp(1.0, u32::MAX as f64) as u32)
         })
     }
 
@@ -521,7 +555,7 @@ mod tests {
             "--max-age-days",
             "30",
             "--bandwidth-limit-mbps",
-            "100",
+            "10",
             "--no-prescan",
         ]);
         let args = Args::try_parse_from(argv).expect("parse");
@@ -531,24 +565,32 @@ mod tests {
         assert_eq!(args.exclude_dirs, vec![".git".to_string()]);
         assert_eq!(args.min_age_days, Some(7));
         assert_eq!(args.max_age_days, Some(30));
-        assert_eq!(args.bandwidth_limit_mbps, Some(100));
+        assert_eq!(args.bandwidth_limit_mbps, Some(10));
         assert!(args.no_prescan);
 
         let request = args.copy_request(PathBuf::from("/dst"));
         assert!(request.mirror);
         assert_eq!(request.min_age_days, Some(7));
-        // 524_288 / 100 = 5242 ms
-        assert_eq!(request.inter_packet_gap_ms, Some(5242));
+        // 65.536 / 10 = 6.5536 -> rounds to 7 ms
+        assert_eq!(request.inter_packet_gap_ms, Some(7));
         assert!(!request.prescan);
     }
 
     #[test]
     fn bandwidth_ipg_conversion_is_correct() {
         let mut argv = base_args();
+        argv.extend(["--bandwidth-limit-mbps", "5"]);
+        let args = Args::try_parse_from(argv).expect("parse");
+        // 65.536 / 5 = 13.1072 -> rounds to 13 ms
+        assert_eq!(args.inter_packet_gap_ms(), Some(13));
+
+        // At high requested bandwidths the exact gap is below robocopy's 1ms granularity and
+        // is clamped to the smallest representable value rather than silently disabling the
+        // throttle.
+        let mut argv = base_args();
         argv.extend(["--bandwidth-limit-mbps", "1000"]);
         let args = Args::try_parse_from(argv).expect("parse");
-        // 524_288 / 1000 = 524 ms
-        assert_eq!(args.inter_packet_gap_ms(), Some(524));
+        assert_eq!(args.inter_packet_gap_ms(), Some(1));
 
         let mut argv = base_args();
         argv.extend(["--bandwidth-limit-mbps", "0"]);

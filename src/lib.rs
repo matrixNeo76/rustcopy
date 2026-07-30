@@ -26,6 +26,7 @@ pub mod html_report;
 pub mod integrity;
 pub mod logging;
 pub mod notify;
+pub mod oem_codec;
 pub mod progress;
 pub mod report;
 pub mod restore;

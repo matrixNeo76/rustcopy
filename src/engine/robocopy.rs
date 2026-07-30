@@ -5,6 +5,8 @@
 //! any platform. Flag semantics follow the Microsoft Learn robocopy reference:
 //! <https://learn.microsoft.com/windows-server/administration/windows-commands/robocopy>
 
+use std::sync::atomic::{AtomicU32, Ordering};
+use std::sync::Arc;
 use std::time::Instant;
 
 use crate::errors::IngestError;
@@ -267,7 +269,16 @@ pub struct RobocopyEngine<R: CommandRunner> {
 impl RobocopyEngine<ProcessRunner> {
     /// Engine backed by a real process spawn. Only functional on Windows.
     pub fn new() -> Self {
-        Self::with_runner(ProcessRunner)
+        Self::with_runner(ProcessRunner::default())
+    }
+
+    /// Same as [`Self::new`], but publishes the child's PID into `pid_slot` while it runs so a
+    /// caller (the Ctrl+C handler) can terminate *this* process specifically instead of every
+    /// `robocopy.exe` on the host. The slot holds `0` when no child is running.
+    pub fn new_with_pid_slot(pid_slot: Arc<AtomicU32>) -> Self {
+        Self::with_runner(ProcessRunner {
+            pid_slot: Some(pid_slot),
+        })
     }
 }
 
@@ -364,8 +375,11 @@ impl<R: CommandRunner> CopyEngine for RobocopyEngine<R> {
 }
 
 /// Real process runner.
-#[derive(Debug, Default, Clone, Copy)]
-pub struct ProcessRunner;
+#[derive(Debug, Default, Clone)]
+pub struct ProcessRunner {
+    /// When set, the child's PID is published here for the run's duration (0 = no child).
+    pid_slot: Option<Arc<AtomicU32>>,
+}
 
 #[cfg(windows)]
 impl CommandRunner for ProcessRunner {
@@ -380,26 +394,51 @@ impl CommandRunner for ProcessRunner {
         let mut child = Command::new(program)
             .args(args)
             .stdout(Stdio::piped())
-            // F1.1: stderr is set to null (not piped) to prevent a deadlock.
-            // If robocopy writes more stderr than the OS pipe buffer (4–64 KB), it blocks
-            // waiting to write while we block waiting for it to exit — permanent deadlock.
-            // Setting null avoids the pipe entirely; any stderr output is simply discarded.
-            // This is safe because robocopy writes diagnostics to stdout (parsed above) and
-            // uses stderr only for catastrophic failures that will be visible in the exit code.
-            .stderr(Stdio::null())
+            // F1.1 (fixed): stderr is piped and drained on its own thread instead of being
+            // discarded. The previous justification (avoiding a deadlock from a full stderr
+            // pipe buffer) is still valid, but the fix for that is to drain both pipes
+            // concurrently, not to throw away diagnostics that are only visible on stderr.
+            .stderr(Stdio::piped())
             .spawn()
             .map_err(|source| IngestError::SpawnFailed {
                 program: program.to_string(),
                 source,
             })?;
 
+        if let Some(slot) = &self.pid_slot {
+            slot.store(child.id(), Ordering::SeqCst);
+        }
+        // Ensure the PID slot is cleared however this function returns.
+        struct ClearPidOnDrop<'a>(&'a Option<Arc<AtomicU32>>);
+        impl Drop for ClearPidOnDrop<'_> {
+            fn drop(&mut self) {
+                if let Some(slot) = self.0 {
+                    slot.store(0, Ordering::SeqCst);
+                }
+            }
+        }
+        let _clear_guard = ClearPidOnDrop(&self.pid_slot);
+
+        let stderr_thread = child.stderr.take().map(|stderr| {
+            std::thread::spawn(move || {
+                use std::io::BufRead;
+                let reader = std::io::BufReader::new(stderr);
+                for line in reader.split(b'\n') {
+                    if let Ok(bytes) = line {
+                        let text = crate::oem_codec::decode_robocopy_output(&bytes);
+                        let text = text.trim_end_matches(['\r', '\n']);
+                        if !text.is_empty() {
+                            tracing::warn!(stream = "stderr", "{text}");
+                        }
+                    }
+                }
+            })
+        });
+
         if let Some(stdout) = child.stdout.take() {
-            // Robocopy emits OEM/ANSI text (e.g. CP850/CP437 on Windows), which is not always
-            // valid UTF-8. We read raw bytes and decode lossily so that:
-            // a) invalid byte sequences are replaced with U+FFFD rather than aborting;
-            // b) the per-line progress callback still receives clean &str slices.
-            //
-            // F2.5: reuse a single Vec<u8> buffer to avoid per-line heap allocations.
+            // Robocopy emits OEM text (CP850 on Western European Windows installs by default),
+            // which is not valid UTF-8. F2.5: reuse a single Vec<u8> buffer to avoid per-line
+            // heap allocations.
             use std::io::BufRead;
             let mut reader = std::io::BufReader::with_capacity(65_536, stdout);
             let mut raw_line: Vec<u8> = Vec::with_capacity(512);
@@ -412,9 +451,8 @@ impl CommandRunner for ProcessRunner {
                         while raw_line.last() == Some(&b'\n') || raw_line.last() == Some(&b'\r') {
                             raw_line.pop();
                         }
-                        // F22: Decode OEM CP850 text accurately (handles Italian/European accented characters correctly).
-                        let encoding = encoding_rs::Encoding::for_label(b"ibm850").unwrap_or(encoding_rs::UTF_8);
-                        let (decoded, _, _) = encoding.decode(&raw_line);
+                        // F22: decode the real OEM code page instead of assuming UTF-8.
+                        let decoded = crate::oem_codec::decode_robocopy_output(&raw_line);
                         on_line(&decoded);
                     }
                     Err(source) => {
@@ -425,6 +463,10 @@ impl CommandRunner for ProcessRunner {
                     }
                 }
             }
+        }
+
+        if let Some(handle) = stderr_thread {
+            let _ = handle.join();
         }
 
         let status = child.wait().map_err(|source| IngestError::SpawnFailed {
@@ -689,7 +731,7 @@ mod tests {
     #[cfg(not(windows))]
     #[test]
     fn real_process_runner_is_unavailable_off_windows() {
-        let error = ProcessRunner
+        let error = ProcessRunner::default()
             .run(PROGRAM, &[], &mut |_| {})
             .expect_err("robocopy cannot run here");
         assert!(matches!(error, IngestError::RobocopyUnavailable));
@@ -700,7 +742,7 @@ mod tests {
     fn real_robocopy_reports_its_version() {
         // Only meaningful on Windows, where robocopy.exe actually exists.
         let mut lines = Vec::new();
-        let code = ProcessRunner
+        let code = ProcessRunner::default()
             .run(PROGRAM, &["/?".to_string()], &mut |line| {
                 lines.push(line.to_string())
             })

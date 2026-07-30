@@ -1,7 +1,10 @@
 //! CLI entry point: orchestrates scan, transfer, optional baseline benchmark and verification.
 
+use std::collections::HashSet;
+use std::io::IsTerminal;
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
+use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
@@ -10,6 +13,7 @@ use clap::Parser;
 use tempfile::TempDir;
 
 use robocopy_ingest::cli::Args;
+use robocopy_ingest::crypto::CryptoManager;
 use robocopy_ingest::engine::naive::NaiveCopyEngine;
 use robocopy_ingest::engine::robocopy::RobocopyEngine;
 use robocopy_ingest::engine::{self, CopyEngine, CopyOutcome, ThreadSleeper};
@@ -21,12 +25,21 @@ use robocopy_ingest::report::{format_bytes, IngestReport};
 use robocopy_ingest::scan::{self, ScanSummary};
 
 /// How often the destination directory is sampled to estimate live throughput.
-const POLL_INTERVAL: Duration = Duration::from_millis(500);
+///
+/// F2.1 fix: this used to be 500ms, which meant a full recursive walk of the destination
+/// (potentially a large SMB share) every half second — often more expensive than the transfer
+/// itself. Robocopy's own per-file stdout output (parsed in `engine::robocopy`) already drives
+/// the bar for the common case; this poller only exists to keep it moving during long single-file
+/// copies, so a long interval is sufficient.
+const POLL_INTERVAL: Duration = Duration::from_secs(30);
 
 /// Exit code when the ingestion ran but the outcome is not acceptable.
 const EXIT_INGESTION_PROBLEM: u8 = 1;
 /// Exit code for usage errors and unrecoverable environment problems.
 const EXIT_UNRECOVERABLE: u8 = 2;
+/// Exit code when `--mirror` was aborted because it would have purged destination files and
+/// neither `--force-purge` nor an interactive confirmation was given.
+const EXIT_MIRROR_ABORTED: u8 = 3;
 
 #[tokio::main]
 async fn main() -> ExitCode {
@@ -36,8 +49,16 @@ async fn main() -> ExitCode {
         Ok(true) => ExitCode::SUCCESS,
         Ok(false) => ExitCode::from(EXIT_INGESTION_PROBLEM),
         Err(error) => {
-            eprintln!("error: {error:#}");
-            ExitCode::from(EXIT_UNRECOVERABLE)
+            if matches!(
+                error.downcast_ref::<IngestError>(),
+                Some(IngestError::MirrorPurgeAborted { .. })
+            ) {
+                eprintln!("error: {error:#}");
+                ExitCode::from(EXIT_MIRROR_ABORTED)
+            } else {
+                eprintln!("error: {error:#}");
+                ExitCode::from(EXIT_UNRECOVERABLE)
+            }
         }
     }
 }
@@ -69,27 +90,17 @@ async fn run(mut args: Args) -> Result<bool> {
         "ingestion starting"
     );
 
-    // F21: Safety Threshold Check for --mirror mode to prevent accidental dest file purges.
-    if args.mirror && !args.force_purge && args.dest.exists() {
-        let dest_files = robocopy_ingest::scan::directory_size(&args.dest);
-        if dest_files > 0 {
-            tracing::info!(dest = %args.dest.display(), "mirror mode safety threshold active; purge protection enabled");
-        }
-    }
+    // Published with the actual robocopy.exe child's PID while it runs, so a Ctrl+C only
+    // terminates *this* transfer instead of every robocopy.exe process on the host (the previous
+    // `taskkill /IM robocopy.exe` behaviour).
+    let child_pid = Arc::new(AtomicU32::new(0));
 
     let result = tokio::select! {
-        res = execute(&args) => res,
+        res = execute(&args, Arc::clone(&child_pid)) => res,
         _ = tokio::signal::ctrl_c() => {
-            eprintln!("\nreceived Ctrl+C interrupt signal, terminating child processes and shutting down...");
-            tracing::warn!("ingestion interrupted by Ctrl+C signal; sending kill signal to child processes");
-            #[cfg(windows)]
-            {
-                let _ = std::process::Command::new("taskkill")
-                    .args(["/F", "/IM", "robocopy.exe"])
-                    .stdout(std::process::Stdio::null())
-                    .stderr(std::process::Stdio::null())
-                    .status();
-            }
+            eprintln!("\nreceived Ctrl+C interrupt signal, terminating the active transfer...");
+            tracing::warn!("ingestion interrupted by Ctrl+C signal");
+            kill_active_child(&child_pid);
             log.flush().await;
             log.shutdown().await;
             return Ok(false);
@@ -106,7 +117,11 @@ async fn run(mut args: Args) -> Result<bool> {
         }
     };
     tracing::info!(acceptable, "ingestion finished");
+    let dropped = log.dropped_lines();
     log.shutdown().await;
+    if dropped > 0 {
+        eprintln!("warning: {dropped} log line(s) were dropped (logger under load)");
+    }
 
     let outcome = result?;
     println!("\n{}", outcome.summary);
@@ -118,13 +133,31 @@ async fn run(mut args: Args) -> Result<bool> {
     Ok(acceptable)
 }
 
+/// Terminate only the tracked child PID (if any), never every `robocopy.exe` on the host.
+#[cfg(windows)]
+fn kill_active_child(child_pid: &Arc<AtomicU32>) {
+    let pid = child_pid.load(Ordering::SeqCst);
+    if pid == 0 {
+        return;
+    }
+    tracing::warn!(pid, "sending kill signal to the tracked robocopy.exe child process");
+    let _ = std::process::Command::new("taskkill")
+        .args(["/F", "/PID", &pid.to_string()])
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .status();
+}
+
+#[cfg(not(windows))]
+fn kill_active_child(_child_pid: &Arc<AtomicU32>) {}
+
 struct RunOutcome {
     acceptable: bool,
     summary: String,
     report_path: PathBuf,
 }
 
-async fn execute(args: &Args) -> Result<RunOutcome> {
+async fn execute(args: &Args, child_pid: Arc<AtomicU32>) -> Result<RunOutcome> {
     let start_all = Instant::now();
 
     let start_inv = Instant::now();
@@ -140,6 +173,10 @@ async fn execute(args: &Args) -> Result<RunOutcome> {
         );
     }
 
+    // F21 (fixed): a real mirror-purge safety check, run with the actual source inventory
+    // available, instead of the previous no-op that only logged a message.
+    check_mirror_safety(args, &inventory)?;
+
     if !args.dry_run {
         tokio::fs::create_dir_all(&args.dest)
             .await
@@ -148,7 +185,7 @@ async fn execute(args: &Args) -> Result<RunOutcome> {
     }
 
     let start_transfer = Instant::now();
-    let (robocopy_outcome, copy_failure) = transfer(args, &inventory).await?;
+    let (robocopy_outcome, copy_failure) = transfer(args, &inventory, child_pid).await?;
     let transfer_seconds = start_transfer.elapsed().as_secs_f64();
 
     let (baseline_outcome, baseline_seconds) = if args.compare_baseline && copy_failure.is_none() {
@@ -163,14 +200,32 @@ async fn execute(args: &Args) -> Result<RunOutcome> {
     };
 
     let (integrity_check, verification_seconds) = if args.verify_integrity && !args.dry_run && copy_failure.is_none() {
-        let start_ver = Instant::now();
-        let check = verify(args, &inventory).await?;
-        (Some(check), Some(start_ver.elapsed().as_secs_f64()))
+        if inventory.total_files_hint.is_some() {
+            tracing::warn!(
+                "skipping integrity verification: --no-prescan did not collect per-file paths"
+            );
+            println!("warning: --verify-integrity has no effect together with --no-prescan");
+            (None, None)
+        } else {
+            let start_ver = Instant::now();
+            let check = verify(args, &inventory).await?;
+            (Some(check), Some(start_ver.elapsed().as_secs_f64()))
+        }
     } else {
         if args.verify_integrity && args.dry_run {
             tracing::warn!("skipping integrity verification: nothing was copied in dry-run mode");
         }
         (None, None)
+    };
+
+    // Encrypt destination files only after verification, so integrity checks still compare
+    // plaintext against plaintext.
+    let encrypted_count = if let (Some(key_spec), None, false) =
+        (&args.encrypt_aes256, &copy_failure, args.dry_run)
+    {
+        Some(encrypt_destination(args, &inventory, key_spec).await?)
+    } else {
+        None
     };
 
     let timing = robocopy_ingest::report::PhaseTiming {
@@ -181,7 +236,7 @@ async fn execute(args: &Args) -> Result<RunOutcome> {
         total_seconds: start_all.elapsed().as_secs_f64(),
     };
 
-    let report = IngestReport::with_timing(
+    let mut report = IngestReport::with_timing(
         args,
         &inventory,
         &robocopy_outcome,
@@ -189,14 +244,23 @@ async fn execute(args: &Args) -> Result<RunOutcome> {
         integrity_check.clone(),
         timing,
     );
+    report.encrypted = encrypted_count.unwrap_or(0) > 0;
+
+    if let Some(webhook_url) = &args.webhook_url {
+        match robocopy_ingest::notify::send_webhook(webhook_url, &report).await {
+            Ok(()) => tracing::info!("completion webhook delivered"),
+            Err(error) => {
+                tracing::error!(error = %error, "completion webhook delivery failed");
+                eprintln!("warning: completion webhook delivery failed: {error}");
+                report.webhook_error = Some(error);
+            }
+        }
+    }
+
     report
         .write_to(&args.report_path)
         .with_context(|| format!("cannot write the report to {}", args.report_path.display()))?;
     tracing::info!(path = %args.report_path.display(), "report written");
-
-    if let Some(webhook_url) = &args.webhook_url {
-        let _ = robocopy_ingest::notify::send_webhook(webhook_url, &report).await;
-    }
 
     if let Some(html_path) = &args.html_report_path {
         if let Err(e) = robocopy_ingest::html_report::generate_html_report(&report, html_path) {
@@ -223,18 +287,33 @@ async fn execute(args: &Args) -> Result<RunOutcome> {
 }
 
 /// Build the source inventory off the async runtime: walking a 50 GB tree is blocking work.
+///
+/// F2.4/F2.6 fix: `--no-prescan` used to be accepted but ignored (this function always did the
+/// full walk regardless). It now actually switches to the lightweight `scan::inventory` walk,
+/// which counts files/bytes without materialising every path in RAM — the whole point of the
+/// flag on multi-million file trees.
 async fn inventory_source(args: &Args) -> Result<ScanSummary> {
     let source = args.source.clone();
     let pattern = args.pattern.clone();
+    let no_prescan = args.no_prescan;
 
-    let inventory = tokio::task::spawn_blocking(move || scan::scan(&source, &pattern))
-        .await
-        .context("the source scan task panicked")?
-        .context("cannot scan the source directory")?;
+    let inventory = if no_prescan {
+        tokio::task::spawn_blocking(move || scan::inventory(&source, &pattern))
+            .await
+            .context("the source scan task panicked")?
+            .context("cannot scan the source directory")?
+            .into_scan_summary()
+    } else {
+        tokio::task::spawn_blocking(move || scan::scan(&source, &pattern))
+            .await
+            .context("the source scan task panicked")?
+            .context("cannot scan the source directory")?
+    };
 
     tracing::info!(
         files = inventory.file_count(),
         bytes = inventory.total_bytes,
+        no_prescan,
         "source inventory complete"
     );
     println!(
@@ -246,6 +325,120 @@ async fn inventory_source(args: &Args) -> Result<ScanSummary> {
     Ok(inventory)
 }
 
+/// Real mirror-purge safety check (F21).
+///
+/// With `--mirror` (robocopy `/MIR`), any destination file/dir that doesn't match the current
+/// source+pattern is purged — including, non-obviously, files that simply don't match `--pattern`
+/// even if they exist in the source tree under a different name. The previous implementation
+/// only compared destination *byte size* against zero and logged a message; it never counted
+/// what would actually be deleted and never blocked anything, so `--force-purge` had no effect to
+/// disable.
+///
+/// This walks the destination (when it already exists) and diffs its relative paths against the
+/// source inventory; the difference is exactly what `/MIR` would purge. If that's non-empty and
+/// `--force-purge` wasn't given, the run aborts (or, on an interactive terminal, asks for
+/// confirmation) rather than proceeding blind.
+fn check_mirror_safety(args: &Args, inventory: &ScanSummary) -> Result<()> {
+    if !args.mirror || args.force_purge || !args.dest.exists() {
+        return Ok(());
+    }
+    if inventory.total_files_hint.is_some() {
+        // --no-prescan: we don't have the source's per-file list to diff against. Erring toward
+        // caution, still require --force-purge explicitly rather than silently allowing purges
+        // whose scope we can't compute.
+        return Err(IngestError::MirrorPurgeAborted {
+            count: usize::MAX,
+        }
+        .into());
+    }
+
+    let source_relative: HashSet<PathBuf> = inventory
+        .files
+        .iter()
+        .map(|f| normalize_for_compare(&f.relative_path))
+        .collect();
+
+    let dest_all = scan::scan(&args.dest, "*").context("cannot scan the destination for the mirror safety check")?;
+    let extraneous: Vec<&Path> = dest_all
+        .files
+        .iter()
+        .map(|f| f.relative_path.as_path())
+        .filter(|p| !source_relative.contains(&normalize_for_compare(p)))
+        .collect();
+
+    if extraneous.is_empty() {
+        return Ok(());
+    }
+
+    let count = extraneous.len();
+    tracing::warn!(
+        count,
+        dest = %args.dest.display(),
+        "mirror mode would purge destination files not present in the source"
+    );
+
+    if std::io::stdin().is_terminal() && std::io::stdout().is_terminal() {
+        eprintln!(
+            "\n--mirror would delete {count} file(s) from {} that are not in the source \
+             (first few: {}).",
+            args.dest.display(),
+            extraneous
+                .iter()
+                .take(5)
+                .map(|p| p.display().to_string())
+                .collect::<Vec<_>>()
+                .join(", ")
+        );
+        eprint!("Proceed with the purge? [y/N] ");
+        use std::io::Write;
+        std::io::stderr().flush().ok();
+        let mut answer = String::new();
+        std::io::stdin().read_line(&mut answer).ok();
+        if answer.trim().eq_ignore_ascii_case("y") {
+            return Ok(());
+        }
+    }
+
+    Err(IngestError::MirrorPurgeAborted { count }.into())
+}
+
+fn normalize_for_compare(path: &Path) -> PathBuf {
+    // Windows paths/patterns are case-insensitive; compare case-folded so `Report.CSV` and
+    // `report.csv` are recognised as the same destination entry.
+    PathBuf::from(path.to_string_lossy().to_lowercase())
+}
+
+/// Encrypt every file the transfer touched, in place in the destination, with AES-256-GCM.
+async fn encrypt_destination(args: &Args, inventory: &ScanSummary, key_spec: &str) -> Result<usize> {
+    let key = robocopy_ingest::crypto::resolve_key(key_spec)?;
+    let manager = CryptoManager::new(&key)?;
+    let dest_root = args.dest.clone();
+    let files = inventory.files.clone();
+
+    let count = tokio::task::spawn_blocking(move || -> Result<usize, IngestError> {
+        let mut encrypted = 0usize;
+        for file in &files {
+            let path = dest_root.join(&file.relative_path);
+            let data = match std::fs::read(&path) {
+                Ok(data) => data,
+                Err(_) => continue, // file missing at dest (copy skipped/failed): nothing to encrypt
+            };
+            let ciphertext = manager.encrypt(&data)?;
+            std::fs::write(&path, ciphertext).map_err(|e| IngestError::io(&path, e))?;
+            encrypted += 1;
+        }
+        Ok(encrypted)
+    })
+    .await
+    .context("the encryption task panicked")??;
+
+    if count > 0 {
+        tracing::info!(count, "destination files encrypted with AES-256-GCM");
+        println!("Encrypted {count} file(s) in the destination with AES-256-GCM.");
+    }
+    Ok(count)
+}
+
 /// Run the robocopy transfer with live progress and the outer retry loop.
 ///
 /// An [`IngestError::CopyFailed`] is returned alongside a best-effort outcome so the JSON report is
@@ -253,6 +446,7 @@ async fn inventory_source(args: &Args) -> Result<ScanSummary> {
 async fn transfer(
     args: &Args,
     inventory: &ScanSummary,
+    child_pid: Arc<AtomicU32>,
 ) -> Result<(CopyOutcome, Option<IngestError>)> {
     let progress = new_progress(args, inventory.total_bytes, "robocopy");
     let poller = spawn_dest_poller(args, Arc::clone(&progress));
@@ -263,7 +457,7 @@ async fn transfer(
     let started = Instant::now();
 
     let result = tokio::task::spawn_blocking(move || {
-        let engine = RobocopyEngine::new();
+        let engine = RobocopyEngine::new_with_pid_slot(child_pid);
         engine::run_with_retries(&engine, &request, sink.as_ref(), &policy, &ThreadSleeper)
     })
     .await

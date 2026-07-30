@@ -189,6 +189,104 @@ fn a_real_dry_run_succeeds_on_windows() {
     assert_eq!(report["configuration"]["dry_run"], true);
 }
 
+#[test]
+fn mirror_without_force_purge_aborts_instead_of_deleting_extraneous_files() {
+    let source = fixture_tree(&[("a.csv", 10)]);
+    let workdir = tempfile::tempdir().expect("workdir");
+    let dest = workdir.path().join("out");
+    std::fs::create_dir_all(&dest).expect("create dest");
+    let extraneous = dest.join("do-not-delete-me.csv");
+    std::fs::write(&extraneous, b"precious data").expect("seed dest");
+
+    let output = run(&[
+        "--source",
+        source.path().to_str().expect("utf8"),
+        "--dest",
+        dest.to_str().expect("utf8"),
+        "--log-path",
+        workdir.path().join("ingest.log").to_str().expect("utf8"),
+        "--report-path",
+        workdir.path().join("report.json").to_str().expect("utf8"),
+        "--mirror",
+    ]);
+
+    assert_eq!(
+        output.status.code(),
+        Some(3),
+        "mirror-purge-aborted must exit with the dedicated code; stderr: {}",
+        stderr_of(&output)
+    );
+    assert!(
+        extraneous.exists(),
+        "the file must not have been purged when the run was aborted"
+    );
+    assert!(stderr_of(&output).contains("force-purge"));
+}
+
+#[test]
+fn mirror_with_force_purge_proceeds() {
+    let source = fixture_tree(&[("a.csv", 10)]);
+    let workdir = tempfile::tempdir().expect("workdir");
+    let dest = workdir.path().join("out");
+    std::fs::create_dir_all(&dest).expect("create dest");
+    std::fs::write(dest.join("stale.csv"), b"old data").expect("seed dest");
+
+    let output = run(&[
+        "--source",
+        source.path().to_str().expect("utf8"),
+        "--dest",
+        dest.to_str().expect("utf8"),
+        "--log-path",
+        workdir.path().join("ingest.log").to_str().expect("utf8"),
+        "--report-path",
+        workdir.path().join("report.json").to_str().expect("utf8"),
+        "--mirror",
+        "--force-purge",
+    ]);
+
+    assert_ne!(
+        output.status.code(),
+        Some(3),
+        "--force-purge must bypass the mirror safety abort; stderr: {}",
+        stderr_of(&output)
+    );
+}
+
+#[cfg(windows)]
+#[test]
+fn encrypt_aes256_actually_encrypts_destination_files() {
+    let source = fixture_tree(&[("a.csv", 1024)]);
+    let workdir = tempfile::tempdir().expect("workdir");
+    let dest = workdir.path().join("out");
+
+    let output = run(&[
+        "--source",
+        source.path().to_str().expect("utf8"),
+        "--dest",
+        dest.to_str().expect("utf8"),
+        "--log-path",
+        workdir.path().join("ingest.log").to_str().expect("utf8"),
+        "--report-path",
+        workdir.path().join("report.json").to_str().expect("utf8"),
+        "--encrypt-aes256",
+        "test-passphrase",
+    ]);
+
+    assert!(output.status.success(), "stderr: {}", stderr_of(&output));
+    let encrypted = std::fs::read(dest.join("a.csv")).expect("read encrypted file");
+    let plaintext = std::fs::read(source.path().join("a.csv")).expect("read source file");
+    assert_ne!(
+        encrypted[robocopy_ingest::crypto::NONCE_LEN..],
+        plaintext[..],
+        "destination content must not be the plaintext"
+    );
+
+    let manager =
+        robocopy_ingest::crypto::CryptoManager::new("test-passphrase").expect("build manager");
+    let decrypted = manager.decrypt(&encrypted).expect("decrypt with the right key");
+    assert_eq!(decrypted, plaintext, "must decrypt back to the original bytes");
+}
+
 /// Guards the assumption the Linux tests rely on: the fixture helper is deterministic.
 #[test]
 fn fixtures_are_created_where_expected() {

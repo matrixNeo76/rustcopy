@@ -285,6 +285,11 @@ pub fn run_with_retries(
 
     for attempt in 0..policy.total_attempts() {
         let is_last = attempt + 1 == policy.total_attempts();
+        // Each attempt re-copies overlapping files; reset so a failed attempt's partial byte
+        // count isn't added on top of the next attempt's (would otherwise inflate the report).
+        if attempt > 0 {
+            sink.reset();
+        }
         match engine.copy(request, sink) {
             Ok(mut outcome) => {
                 accumulated += outcome.elapsed;

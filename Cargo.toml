@@ -1,6 +1,6 @@
 [package]
 name = "robocopy_ingest"
-version = "0.2.0"
+version = "5.1.0"
 edition = "2021"
 rust-version = "1.74"
 description = "CLI Rust per l'ingestion di grandi volumi CSV via Robocopy, con benchmark contro copia naive"
@@ -25,7 +25,8 @@ chrono = { version = "0.4", default-features = false, features = ["clock", "serd
 tempfile = "3"
 toml = "0.8"
 num_cpus = "1"
-encoding_rs = "0.8"
+aes-gcm = "0.10"
+reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "json"] }
 
 [dev-dependencies]
 tempfile = "3"

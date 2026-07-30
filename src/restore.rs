@@ -6,11 +6,18 @@
 use std::path::{Path, PathBuf};
 
 use anyhow::{Context, Result};
+use clap::Parser;
 
 use crate::cli::Args;
 use crate::report::IngestReport;
 
 /// Load a previous IngestReport JSON file and produce a restored Args request.
+///
+/// Built by parsing a minimal argv through clap (`Args::try_parse_from`) rather than
+/// `Args::default()`: clap's derived `Default` zeroes every field (empty `report_path`,
+/// `log_path`, etc.), which is not the same as clap's own `#[arg(default_value = ...)]`
+/// defaults. Using `Args::default()` here used to send `logging::init("")` an empty path and
+/// abort the restore run before it could start.
 pub fn build_restore_args(report_path: &Path, target_override: Option<PathBuf>) -> Result<Args> {
     let content = std::fs::read_to_string(report_path)
         .with_context(|| format!("cannot read backup report JSON from {}", report_path.display()))?;
@@ -24,9 +31,15 @@ pub fn build_restore_args(report_path: &Path, target_override: Option<PathBuf>) 
     println!("  Restoring From: {}", restore_source.display());
     println!("  Restoring To  : {}", restore_dest.display());
 
-    let mut args = Args::default();
-    args.source = restore_source;
-    args.dest = restore_dest;
+    let mut args = Args::try_parse_from([
+        "robocopy_ingest",
+        "--source",
+        &restore_source.to_string_lossy(),
+        "--dest",
+        &restore_dest.to_string_lossy(),
+    ])
+    .context("cannot build restore arguments")?;
+
     args.pattern = report.configuration.pattern;
     args.threads = report.configuration.threads;
     args.retries = report.configuration.retries;
