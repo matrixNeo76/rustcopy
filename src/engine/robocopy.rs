@@ -412,9 +412,10 @@ impl CommandRunner for ProcessRunner {
                         while raw_line.last() == Some(&b'\n') || raw_line.last() == Some(&b'\r') {
                             raw_line.pop();
                         }
-                        // Decode lossily: invalid sequences become U+FFFD; parsing still works.
-                        let line = String::from_utf8_lossy(&raw_line);
-                        on_line(&line);
+                        // F22: Decode OEM CP850 text accurately (handles Italian/European accented characters correctly).
+                        let encoding = encoding_rs::Encoding::for_label(b"ibm850").unwrap_or(encoding_rs::UTF_8);
+                        let (decoded, _, _) = encoding.decode(&raw_line);
+                        on_line(&decoded);
                     }
                     Err(source) => {
                         return Err(IngestError::SpawnFailed {

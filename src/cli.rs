@@ -94,6 +94,10 @@ pub struct Args {
     #[arg(long, default_value_t = false)]
     pub mirror: bool,
 
+    /// Force purge during mirror mode without safety confirmation threshold check.
+    #[arg(long, default_value_t = false)]
+    pub force_purge: bool,
+
     // ── F4.1: Exclusion filters ─────────────────────────────────────────────
     /// Exclude files matching the given pattern(s) (repeatable, maps to /XF).
     /// Example: --exclude-files "*.tmp" --exclude-files "thumbs.db"

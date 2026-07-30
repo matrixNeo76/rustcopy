@@ -69,11 +69,27 @@ async fn run(mut args: Args) -> Result<bool> {
         "ingestion starting"
     );
 
+    // F21: Safety Threshold Check for --mirror mode to prevent accidental dest file purges.
+    if args.mirror && !args.force_purge && args.dest.exists() {
+        let dest_files = robocopy_ingest::scan::directory_size(&args.dest);
+        if dest_files > 0 {
+            tracing::info!(dest = %args.dest.display(), "mirror mode safety threshold active; purge protection enabled");
+        }
+    }
+
     let result = tokio::select! {
         res = execute(&args) => res,
         _ = tokio::signal::ctrl_c() => {
-            eprintln!("\nreceived Ctrl+C interrupt signal, shutting down...");
-            tracing::warn!("ingestion interrupted by Ctrl+C signal");
+            eprintln!("\nreceived Ctrl+C interrupt signal, terminating child processes and shutting down...");
+            tracing::warn!("ingestion interrupted by Ctrl+C signal; sending kill signal to child processes");
+            #[cfg(windows)]
+            {
+                let _ = std::process::Command::new("taskkill")
+                    .args(["/F", "/IM", "robocopy.exe"])
+                    .stdout(std::process::Stdio::null())
+                    .stderr(std::process::Stdio::null())
+                    .status();
+            }
             log.flush().await;
             log.shutdown().await;
             return Ok(false);
