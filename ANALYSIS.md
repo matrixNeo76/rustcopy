@@ -1,15 +1,15 @@
 # 🔬 ANALISI DI ROBUSTEZZA E OTTIMIZZAZIONE PRESTAZIONI: robocopy-ingest-cli
 
 > **Documento Tecnico di Audit, Valutazione Critica e Piano di Consolidamento**  
-> *Data: 30 Luglio 2026 | Versione: 5.1.0-Audit | Stato: Integrazione Suggerimenti Maintainer & AI Analysis*
+> *Data: 30 Luglio 2026 | Versione: 5.1.0-Audit | Stato: Aggiornato — le 3 criticità sotto sono state implementate e verificate con test end-to-end*
 
 ---
 
 ## 📌 Executive Summary
 
-Questo documento integra e contestualizza i **punti di attenzione architetturali** ed i **suggerimenti di ottimizzazione prestazionale (2x - 3x Speedup)** proposti nell'analisi del Maintainer con l'effettiva architettura Rust di `robocopy-ingest-cli`.
+**Nota di aggiornamento**: una revisione successiva ha verificato che le 3 criticità descritte in questo documento (Mirror Safety Threshold, decodifica OEM CP850, kill del processo figlio su Ctrl+C) erano solo **descritte nella documentazione** ma non implementate nel codice — il mirror check si limitava a loggare un messaggio senza bloccare nulla, la decodifica CP850 falliva silenziosamente su UTF-8 (perché `encoding_rs` non implementa le code page DOS single-byte), e Ctrl+C uccideva ogni `robocopy.exe` in esecuzione sull'host con `taskkill /IM`. Le tre soluzioni sono state implementate realmente in questa release (vedi tabella di sintesi in fondo per lo stato aggiornato e i riferimenti al codice) e coperte da test, inclusi test end-to-end su Windows che eseguono `robocopy.exe` per davvero.
 
-Dall'audit emerge che `robocopy-ingest-cli` ha già implementato nativamente le soluzioni più critiche (come la gestione anti-deadlock di `stderr`, la decodifica non-bloccante dello stdout binario e la saturazione dei thread), ma presenta **3 aree chiave di miglioramento** per la sicurezza dei dati ed il corretto encoding dei caratteri accentati (CP850 / OEM).
+Questo documento integra e contestualizza i **punti di attenzione architetturali** ed i **suggerimenti di ottimizzazione prestazionale (2x - 3x Speedup)** proposti nell'analisi del Maintainer con l'effettiva architettura Rust di `robocopy-ingest-cli`.
 
 ---
 
@@ -25,12 +25,14 @@ Se l'utente digita una destinazione errata o inverte sorgente e destinazione, `/
 - In `src/cli.rs`, il flag `--mirror` è `false` di default ed include nel docstring un chiaro warning (`CAUTION: files present only in dest will be DELETED`).
 - In `src/engine/robocopy.rs`, `/MIR` viene iniettato solo se l'utente esplicita `--mirror`.
 
-#### 💡 Soluzione & Consolidamento da Implementare (Safety Check Threshold):
-Introdurre un meccanismo di **Threshold Safety Confirmation**:
-1. Se `--mirror` è attivo, l'engine esegue un'analisi preventiva della destinazione.
-2. Se la destinazione contiene più di **1.000 file** o una percentuale superiore al **20% di file estranei** rispetto alla sorgente, l'applicativo:
-   - Richiede una conferma esplicita interattiva a console.
-   - Oppure esige il flag esplicito `--force-purge` per eseguire l'operazione in modalità batch non-interattiva.
+#### ✅ Soluzione Implementata (`check_mirror_safety` in `src/main.rs`):
+1. Se `--mirror` è attivo e la destinazione esiste, viene calcolato il diff reale fra i path relativi in destinazione e quelli della sorgente (con il pattern applicato) — esattamente l'insieme che `/MIR` purgherebbe.
+2. Se il diff non è vuoto e `--force-purge` non è presente:
+   - Su una console interattiva, viene chiesta conferma esplicita (`[y/N]`).
+   - In modalità non interattiva (es. task schedulato), l'esecuzione si interrompe con `IngestError::MirrorPurgeAborted` ed **exit code dedicato 3**.
+3. Con `--no-prescan` (nessuna lista file sorgente disponibile) il check richiede sempre `--force-purge` esplicito, non essendo possibile calcolare il diff.
+
+Copertura di test: `tests/cli_smoke.rs::mirror_without_force_purge_aborts_instead_of_deleting_extraneous_files` esegue davvero il binario, verifica l'exit code 3 e che il file estraneo **non** sia stato cancellato; `mirror_with_force_purge_proceeds` verifica che `--force-purge` sblocchi l'operazione.
 
 ---
 
@@ -41,15 +43,12 @@ Windows Robocopy emette lo stream di testo usando la codifica OEM della console 
 L'uso di `String::from_utf8_lossy` previene crash ma sostituisce i caratteri accentati (`à`, `è`, `ì`, `ò`, `ù`) o i caratteri speciali di percorso con il simbolo `` (U+FFFD) nei report JSON e nelle dashboard HTML.
 
 #### 🔍 Analisi nello Stato Attuale dell'Applicativo:
-- `src/engine/robocopy.rs` legge lo stdout mediante buffer binario riutilizzabile (`Vec<u8>`) e decodifica con `String::from_utf8_lossy`.
+- `src/engine/robocopy.rs` legge lo stdout (e ora anche lo stderr) mediante buffer binario riutilizzabile (`Vec<u8>`).
 
-#### 💡 Soluzione & Consolidamento da Implementare (`encoding_rs`):
-Sostituire la decodifica generica UTF-8 lossy con il crate **`encoding_rs`**:
-```rust
-// Sostituzione di String::from_utf8_lossy(&raw_line) con:
-let (cow, _encoding_used, _had_errors) = encoding_rs::OEM_850.decode(&raw_line);
-```
-In questo modo tutti i nomi di file contenenti lettere accentate o simboli speciali OEM su file system italiani/europei vengono tradotti fedelmente in UTF-8 valido senza alcuna perdita informativa nel report JSON e HTML.
+#### ✅ Soluzione Implementata (`src/oem_codec.rs`):
+**Correzione importante rispetto alla proposta originale**: `encoding_rs::OEM_850` **non esiste** — il crate `encoding_rs` implementa solo le codifiche richieste dal Web Platform (UTF-8, le pagine codice del browser, ecc.) e delibaratamente non copre le code page DOS/OEM single-byte come CP850. `Encoding::for_label(b"ibm850")` restituisce sempre `None`, quindi qualunque codice che facesse `unwrap_or(UTF_8)` su quel risultato decodificava silenziosamente in UTF-8 — esattamente il comportamento che si voleva sostituire.
+
+La soluzione implementata è una tabella CP850 hardcoded (bytes 0x80-0xFF, verificata su vocali accentate italiane à/è/ì/ò/ù) più un controllo a runtime di `GetOEMCP()` per accorgersi se la code page del processo non è 850. Non serve alcuna nuova dipendenza crittografica; vedi `src/oem_codec.rs` e i relativi test (`accented_italian_characters_decode_correctly`, `every_byte_value_has_a_mapping`).
 
 ---
 
@@ -58,18 +57,11 @@ In questo modo tutti i nomi di file contenenti lettere accentate o simboli speci
 #### 🛑 La Criticità Individuata:
 Se l'applicazione Rust intercetta `Ctrl+C` e si arresta senza terminare il processo figlio, `robocopy.exe` rimane in esecuzione orfana in background continuando a trasferire file all'insaputa dell'utente.
 
-#### 🔍 Analisi nello Stato Attuale dell'Applicativo:
-- In `src/main.rs`, `tokio::select!` intercetta `tokio::signal::ctrl_c()`.
+#### 🔍 Analisi nello Stato Attuale dell'Applicativo (prima della fix):
+- In `src/main.rs`, `tokio::select!` intercetta `tokio::signal::ctrl_c()`, ma il ramo di gestione eseguiva `taskkill /F /IM robocopy.exe`: questo termina **ogni** processo `robocopy.exe` in esecuzione sull'host, non solo quello lanciato da questa istanza — un danno collaterale reale su un file server con altri job schedulati.
 
-#### 💡 Soluzione & Consolidamento da Implementare (Child Process Tracking & Kill):
-Assegnare la gestione del processo figlio ad una struttura condivisa con un **Drop Guard / Abort Handler**:
-```rust
-// Registrazione del PID di robocopy e invio di child.kill() / TerminateProcess su Ctrl+C
-if let Ok(mut child) = child_process_handle.lock() {
-    let _ = child.kill();
-}
-```
-Su Windows, l'uso del flag di creazione processuale `CREATE_BREAKAWAY_FROM_JOB` o la cancellazione esplicita del `Child` assicura l'arresto istantaneo di `robocopy.exe`.
+#### ✅ Soluzione Implementata (PID Tracking):
+`ProcessRunner` (in `src/engine/robocopy.rs`) accetta uno `Arc<AtomicU32>` opzionale in cui pubblica il PID del child appena lo spawna e lo azzera quando il child termina (via RAII drop guard, quindi anche sui percorsi di errore). `main.rs` legge quel PID nel ramo `ctrl_c()` e lancia `taskkill /F /PID <pid>` — mirato al solo processo tracciato, mai un kill per nome immagine.
 
 ---
 
@@ -105,11 +97,11 @@ Su Windows, l'uso del flag di creazione processuale `CREATE_BREAKAWAY_FROM_JOB` 
 
 ## 📊 TABELLA DI SINTESI DELLE AZIONI CONSOLIDATE
 
-| Tematica | Rischio / Opportunità | Stato Attuale | Azione di Consolidamento Approvata |
+| Tematica | Rischio / Opportunità | Stato Attuale | Azione di Consolidamento |
 |---|---|---|---|
-| **Safety Check `--mirror`** | Cancellazione accidentale file in destinazione (`/PURGE`). | Supportato via `--mirror` (`false` default). | Aggiungere check di soglia (max 20% mismatch prima di richiedere `--force-purge`). |
-| **Decodifica OEM (CP850)** | Caratteri accentati distorti nei report JSON/HTML. | Decodifica `String::from_utf8_lossy`. | Integrare crate `encoding_rs` per decodifica nativa CP850 / CP1252. |
-| **Ctrl+C Signal Kill** | `robocopy.exe` orfano in background. | Intercettazione via Tokio `ctrl_c()`. | Associare `child.kill()` al gestore del segnale per terminare subito il processo. |
+| **Safety Check `--mirror`** | Cancellazione accidentale file in destinazione (`/PURGE`). | ✅ **Implementato**: `check_mirror_safety` in `main.rs`, diff reale dest vs source, abort (exit 3) o conferma interattiva, bypass solo con `--force-purge`. | Nessuna azione residua. |
+| **Decodifica OEM (CP850)** | Caratteri accentati distorti nei report JSON/HTML. | ✅ **Implementato**: tabella CP850 dedicata in `src/oem_codec.rs` (`encoding_rs` non supporta le code page DOS, non è più usato per questo scopo). | Nessuna azione residua. |
+| **Ctrl+C Signal Kill** | `robocopy.exe` orfano in background — o, nella versione precedente, kill di *ogni* robocopy.exe sull'host. | ✅ **Implementato**: PID del child tracciato via `Arc<AtomicU32>`, kill mirato al solo processo di questa istanza. | Nessuna azione residua. |
 | **Thread Scaling** | Latenza SMB su file piccoli. | Default `default_threads()` (CPU logiche). | Mantenuto. Raccomandati 32-64 thread per ingestion massive. |
 | **Retry & Timeout** | Blocchi indeterminati per file locked. | Default `/R:3 /W:5`. | Mantenuto. Aggiunta opzione `--retries 0` per skip immediato. |
 | **Disabilitazione `/Z`** | Calo 50% I/O su piccoli file. | Flag `/Z` non presente. | Mantenuta l'assenza di `/Z`. |

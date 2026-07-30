@@ -5,3 +5,7 @@
 robocopy_ingest.log
 robocopy_ingest_report.json
 *.html
+graphify-out/cache/
+graphify-out/manifest.json
+graphify-out/cost.json
+graphify-out/.graphify_*

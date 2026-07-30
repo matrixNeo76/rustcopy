@@ -33,11 +33,11 @@ graph LR
 ```
 
 1. **Scansione Iniziale (Prescan)**: Mappa l'albero della directory sorgente (`walkdir`), calcola le dimensioni ed esegue il matching dei filtri glob (`--pattern "*.csv"`). Se si gestiscono milioni di file, il flag `--no-prescan` avvia il trasferimento all'istante senza attese.
-2. **Trasferimento Robocopy a Zero Allocazioni**: Invoca `robocopy.exe` su Windows iniettando i flag ottimali (`/MT:N` thread automatici sulle CPU dell'host, `/COPYALL` permessi ACL, `/DCOPY:DAT` timestamp directory, `/MIR` mirroring, `/IPG` throttling). Legge lo stdout tramite buffer binario riutilizzato, evitando qualsiasi allocazione heap per riga e decodificando in modo lossy i set di caratteri OEM/ANSI (CP850).
-3. **Retry Esterni & Resilience**: Se Robocopy restituisce exit code transitori di blocco file (codici 8, 9, 11), l'invocazione viene ripetuta automaticamente con backoff esponenziale. Se si seleziona `Ctrl+C`, l'applicazione intercetta il segnale, invia un `kill()` forzato a `robocopy.exe` per evitare processi orfani e termina in modo ordinato salvando i log.
+2. **Trasferimento Robocopy Streaming**: Invoca `robocopy.exe` su Windows iniettando i flag ottimali (`/MT:N` thread automatici sulle CPU dell'host, `/COPYALL` permessi ACL, `/DCOPY:DAT` timestamp directory, `/MIR` mirroring, `/IPG` throttling). Legge stdout e stderr tramite buffer binario riutilizzato (drenati su thread separati per evitare deadlock), decodificando i caratteri OEM (CP850) con una tabella dedicata (`src/oem_codec.rs`) invece di un fallback UTF-8 silenzioso.
+3. **Retry Esterni & Resilience**: Se Robocopy restituisce exit code transitori di blocco file (codici 8, 9, 11), l'invocazione viene ripetuta automaticamente con backoff esponenziale. Se si preme `Ctrl+C`, l'applicazione intercetta il segnale e termina **solo** il processo `robocopy.exe` figlio effettivamente in corso (tramite il suo PID), senza toccare altri eventuali processi robocopy in esecuzione sull'host.
 4. **Verifica Integrità Multi-Threaded**: Verifica la corrispondenza dei checksum tra sorgente e destinazione utilizzando **Rayon** su tutte le CPU dell'host. Supporta **SHA-256** ed l'algoritmo **BLAKE3** (3-5x più veloce).
-5. **Cifratura & Cloud Sync**: Supporta la cifratura simmetrica in streaming **AES-256** (`--encrypt-aes256`) per backup Zero-Trust e la sincronizzazione diretta verso storage remoti S3 / Azure Blob Container (`--cloud-sync-target`).
-6. **Live Monitoring & Reporting**: Scrive un report JSON completo con metadati sull'host, genera una **Dashboard HTML Standalone** (`--html-report-path`), invia un alert **HTTP Webhook** (Slack/Teams) ed espone un **Server Web HTTP Live** (`--serve-dashboard 8080`) per monitorare l'avanzamento dal browser.
+5. **Cifratura**: Supporta la cifratura **AES-256-GCM** reale (`--encrypt-aes256`) dei file in destinazione a fine trasferimento, con nonce casuale per file. La sincronizzazione diretta verso S3/Azure (`--cloud-sync-target`) è **riservata ma non implementata** (vedi tabella flag).
+6. **Reporting & Notifiche**: Scrive un report JSON completo con metadati sull'host, genera una **Dashboard HTML Standalone** (`--html-report-path`, con escaping di ogni valore interpolato) e invia un alert **HTTP/HTTPS Webhook** (`--webhook-url`, con timeout ed errori realmente riportati). `--serve-dashboard` avvia un server HTTP che espone **una pagina di stato statica**, non un dashboard con dati live.
 
 ---
 
@@ -53,7 +53,7 @@ graph LR
 | `--preserve-acl` | `false` | `/COPYALL` | Preserva i permessi di sicurezza NTFS e le ACL di dominio. |
 | `--preserve-timestamps` | `false` | `/DCOPY:DAT` | Preserva le date di creazione e modifica delle directory. |
 | `--long-paths` | `false` | — | Attiva il prefisso `\\?\` per percorsi lunghi oltre 240 caratteri. |
-| `--mirror` | `false` | `/MIR` | Sincronizza ed elimina i file in destinazione non presenti in sorgente. |
+| `--mirror` | `false` | `/MIR` | Sincronizza ed elimina i file in destinazione non presenti in sorgente. Senza `--force-purge`, se ci sono file estranei in destinazione l'esecuzione si interrompe (exit code 3) o chiede conferma a console. |
 | `--force-purge` | `false` | — | Disattiva la soglia di protezione per la modalità `--mirror` (F21). |
 | `--exclude-files <GLOB>` | *nessuno* | `/XF` | Esclude file corrispondenti ai pattern indicati (ripetibile). |
 | `--exclude-dirs <GLOB>` | *nessuno* | `/XD` | Esclude directory corrispondenti ai pattern indicati (ripetibile). |
@@ -63,13 +63,14 @@ graph LR
 | `--no-prescan` | `false` | — | Salta la scansione preventiva ed avvia immediatamente la copia. |
 | `--verify-integrity` | `false` | — | Esegue la verifica dei checksum sorgente vs destinazione a fine copia. |
 | `--hash-algo <ALGO>` | `sha256` | — | Algoritmo per la verifica checksum: `sha256` o `blake3`. |
-| `--html-report-path <PATH>`| *nessuno* | — | Genera un report visivo autonomo in formato HTML/SVG. |
-| `--serve-dashboard <PORT>`| *nessuno* | — | Avvia il server Web Dashboard HTTP live (es. `http://localhost:8080`). |
-| `--webhook-url <URL>` | *nessuno* | — | Trasmette una notifica HTTP POST JSON summary a fine job. |
-| `--restore-from <PATH>` | *nessuno* | — | Modalità Disaster Recovery: inverte il backup Dest -> Source dal report JSON. |
-| `--cloud-sync-target <URI>`| *nessuno* | — | Target per la sincronizzazione diretta (es. `s3://bucket/prefix`). |
-| `--encrypt-aes256 <KEY>` | *nessuno* | — | Cifra i file inviati con algoritmo AES-256 usando la chiave fornita. |
-| `--install-service` | `false` | — | Registra l'applicativo come servizio Windows di background. |
+| `--html-report-path <PATH>`| *nessuno* | — | Genera un report visivo autonomo in formato HTML (valori interpolati sempre sottoposti ad escaping). |
+| `--serve-dashboard <PORT>`| *nessuno* | — | **[PARZIALE]** Avvia un server HTTP che serve una pagina di stato statica; non trasmette dati live. |
+| `--webhook-url <URL>` | *nessuno* | — | Trasmette una notifica HTTP/HTTPS POST JSON a fine job (timeout 10s, errori reali riportati, non più ignorati). |
+| `--restore-from <PATH>` | *nessuno* | — | Modalità Disaster Recovery: inverte il backup Dest -> Source dal report JSON. `--source`/`--dest` non sono richiesti in questa modalità. |
+| `--cloud-sync-target <URI>`| *nessuno* | — | **[NON IMPLEMENTATO]** Accettato per compatibilità futura; nessuna sincronizzazione viene eseguita. |
+| `--encrypt-aes256 <KEY>` | *nessuno* | — | Cifra ogni file in destinazione con **AES-256-GCM** dopo il trasferimento (nonce casuale per file). `KEY` può essere `env:NOME`, `file:PERCORSO` o una passphrase letterale (sconsigliata: visibile nella process list). |
+| `--install-service` | `false` | — | **[NON IMPLEMENTATO]** Accettato per compatibilità futura; nessun servizio viene registrato. |
+| `--enable-dedup` | `false` | — | **[NON IMPLEMENTATO]** Accettato per compatibilità futura; nessuna cache di stato viene usata. |
 | `--dry-run` | `false` | `/L` | Simula le operazioni senza modificare o copiare file. |
 
 ---
@@ -115,13 +116,13 @@ Per dettagli tecnici approfonditi, diagrammi architetturali e roadmap di svilupp
 
 ---
 
-## 🧪 Esecuzione dei Test (123 Test Superati)
+## 🧪 Esecuzione dei Test (140 Test Superati)
 
 ```bash
 cargo test
 ```
 
-Esito: `test result: ok. 123 passed; 0 failed`.
+Esito: `test result: ok.` su tutti i target (124 unit test di libreria, 10 test black-box del binario, 6 test di integrazione della pipeline).
 
 ---
 

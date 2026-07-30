@@ -75,8 +75,8 @@ Test di verifica senza scrivere o alterare i dati di destinazione:
 
 ---
 
-### 4. Backup Enterprise con Live Dashboard Web Server (Porta 8080)
-Avvio dell'ingestion con interfaccia di monitoraggio Web visibile via browser su `http://localhost:8080`:
+### 4. Backup Enterprise con Web Server di Stato (Porta 8080)
+Avvio dell'ingestion con un server HTTP di stato visibile via browser su `http://localhost:8080`. **Nota**: `--serve-dashboard` espone al momento solo una pagina statica ("Status: ACTIVE"), non un dashboard con progresso in tempo reale — per il progresso vero usare la progress bar in console o il report JSON/HTML a fine job:
 ```powershell
 .\target\release\robocopy_ingest.exe `
   --source "C:\Users\auresystem\repos" `
@@ -105,5 +105,5 @@ Ripristino guidato in caso di guasto del server principale partendo dal report J
 | 📘 **[README.md](file:///c:/Users/auresystem/repos/robocopy-ingest-cli/README.md)** | Guida generale, tabella flag CLI e panoramica di alto livello. |
 | 📖 **[RUNBOOK.md](file:///c:/Users/auresystem/repos/robocopy-ingest-cli/RUNBOOK.md)** | **[QUESTO DOCUMENTO]** Guida operativa, backup multi-sorgente e comandi reali testati. |
 | 📄 **[ARCHITECTURE.md](file:///c:/Users/auresystem/repos/robocopy-ingest-cli/ARCHITECTURE.md)** | Architettura interna v5.1.0, diagrammi di flusso e mappa dei moduli Rust. |
-| 📊 **[ANALYSIS.md](file:///c:/Users/auresystem/repos/robocopy-ingest-cli/ANALYSIS.md)** | Diagnosi di robustezza, tuning 3x performance e 123 test di validazione. |
+| 📊 **[ANALYSIS.md](file:///c:/Users/auresystem/repos/robocopy-ingest-cli/ANALYSIS.md)** | Diagnosi di robustezza, tuning 3x performance e 140 test di validazione. |
 | 🗺️ **[ROADMAP.md](file:///c:/Users/auresystem/repos/robocopy-ingest-cli/ROADMAP.md)** | Diagramma Gantt dello storico delle release (v1.0 - v5.1). |

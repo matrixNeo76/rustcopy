@@ -10,12 +10,14 @@ Welcome to `robocopy-ingest-cli` (`rustcopy`). This document serves as the prima
 
 ### Core Architectural Rules:
 1. **Zero-Allocation Stdout Streaming**: Always read `robocopy.exe` output using binary `read_until` byte buffers (`Vec<u8>`) to avoid heap allocations per copied file.
-2. **Never Redirect Stderr to Unread Pipe**: Always direct `stderr` to `Stdio::null()` to prevent Windows pipe buffer deadlocks.
-3. **OEM/ANSI CP850 Decoding**: Windows Robocopy outputs text in OEM code pages (e.g. CP850/CP1252). Always decode stdout lines via `encoding_rs::Encoding::for_label(b"ibm850")` to preserve accented characters.
+2. **Drain Both Pipes, Never Discard Stderr**: `stdout` and `stderr` are both `Stdio::piped()` and drained concurrently (stderr on its own `std::thread`, forwarded to `tracing::warn!`). Do not go back to `Stdio::null()` for stderr — that was the previous (wrong) fix for the pipe-buffer deadlock; draining both pipes concurrently is the correct fix.
+3. **OEM/ANSI CP850 Decoding**: Windows Robocopy outputs text in OEM code pages (CP850 by default on Western European Windows installs). Decode via `crate::oem_codec::decode_robocopy_output` (`src/oem_codec.rs`), **not** `encoding_rs::Encoding::for_label(b"ibm850")` — `encoding_rs` does not implement single-byte DOS/OEM code pages and that call always returns `None`, silently falling back to UTF-8.
 4. **Memory Bounds (Anti-OOM)**:
-   - Logging channels MUST use bounded channels (`bounded_channel(10_000)`).
+   - Logging channels MUST use bounded channels (`bounded_channel(10_000)`); dropped lines are counted and exposed via `LogHandle::dropped_lines()` / `IngestReport.log_lines_dropped`.
    - Report mismatch lists MUST be capped to `10_000` items (`MAX_REPORTED_ERRORS`).
-5. **Path Normalization & Signal Handling**: Strip trailing separators from arguments. Intercept `Ctrl+C` and ensure `child.kill()` / `taskkill` is dispatched to prevent orphan `robocopy.exe` processes.
+5. **Path Normalization & Signal Handling**: Strip trailing separators from arguments. `Ctrl+C` terminates *only* the tracked child PID (published into an `Arc<AtomicU32>` by `ProcessRunner`), never every `robocopy.exe` process on the host (`taskkill /IM` by image name is banned — use `/PID`).
+6. **Mirror Safety**: `--mirror` runs `check_mirror_safety` before the transfer, which diffs the destination against the source inventory and aborts (dedicated exit code 3) unless `--force-purge` is given or the run is interactive and confirmed. Never remove this check or make `--force-purge` the default.
+7. **Real vs. Mock Features**: `src/cache.rs`, `src/cloud.rs`, `src/service.rs` are not wired into the pipeline (`--enable-dedup`, `--cloud-sync-target`, `--install-service` are no-ops, marked `[NOT IMPLEMENTED]` in `--help`). `--serve-dashboard` only serves a static status page. Do not describe these as working in docs or fix requests without actually wiring them up first. `--encrypt-aes256` (`src/crypto.rs`) and the webhook (`src/notify.rs`) *are* fully implemented (AES-256-GCM; HTTPS via reqwest+rustls).
 
 ---
 
@@ -39,6 +41,7 @@ src/
 ├── crypto.rs        # Zero-Trust AES-256 streaming encryption manager.
 ├── exit_code.rs     # Robocopy bitmask exit code decoder & status rules.
 ├── errors.rs        # IngestError enum & retry classification.
+├── oem_codec.rs     # CP850 decode table + GetOEMCP() runtime check.
 ├── progress.rs      # Monotonic throughput progress bar.
 ├── testkit.rs       # ScriptedRunner & test doubles for cross-platform mocks.
 └── engine/
@@ -52,7 +55,7 @@ src/
 ## 3. Mandatory Testing Guidelines
 
 - **Never declare success without running `cargo test`**.
-- All **120+ unit and integration tests** MUST pass before committing changes.
+- All **140 unit and integration tests** MUST pass before committing changes.
 - Cross-Platform Constraint: Unit tests inside `src/engine/robocopy.rs`, `src/integrity.rs`, `src/notify.rs`, etc. MUST pass on Linux and macOS using `ScriptedRunner`.
 
 ### Test Commands:
