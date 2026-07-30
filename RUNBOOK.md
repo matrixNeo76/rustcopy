@@ -89,12 +89,17 @@ Avvio dell'ingestion con un server HTTP di stato visibile via browser su `http:/
 
 ---
 
-### 5. Disaster Recovery / Ripristino da Report JSON (Reverse Restore)
+### 5. Disaster Recovery / Ripristino da Report JSON (Reverse Restore) — ⚠️ NON FUNZIONANTE
 Ripristino guidato in caso di guasto del server principale partendo dal report JSON di backup:
 ```powershell
 .\target\release\robocopy_ingest.exe `
   --restore-from "\\FILESERV01\dati01\provarust\robocopy_ingest_report.json"
 ```
+> **⚠️ Questo comando NON è tra quelli verificati sul campo** (a differenza dei casi 1-4) e allo stato
+> attuale fallisce con `error: a value is required for '--source <PATH>'`. Difetto **D1** in
+> `ANALYSIS.md`, pianificato come **F24**. **Procedura di ripristino alternativa da usare finché non è
+> risolto**: eseguire una copia normale invertendo manualmente sorgente e destinazione, es.
+> `--source "\\FILESERV01\dati01\provarust" --dest "C:\Users\auresystem\repos"`.
 
 ---
 

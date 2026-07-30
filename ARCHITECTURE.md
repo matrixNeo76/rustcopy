@@ -44,7 +44,7 @@ graph TD
 | Modulo Sorgente | Responsabilità Architetturale | Tecnica / Pattern Utilizzato |
 |---|---|---|
 | `src/main.rs` | Orchestrazione asincrona e gestione dei segnali. | `tokio::select!` per cattura `Ctrl+C`; termina solo il PID del child `robocopy.exe` tracciato (non `taskkill /IM`); esegue `check_mirror_safety` (diff reale dest vs source) prima del trasferimento. |
-| `src/cli.rs` | Definition, parsing e validazione delle opzioni CLI. | Struct `clap` derivata con default `*`, flag `--force-purge`, `--source`/`--dest` opzionali in modalità `--restore-from`, e merge automatico dai profili TOML. |
+| `src/cli.rs` | Definition, parsing e validazione delle opzioni CLI. | Struct `clap` derivata con default `*`, flag `--force-purge` e merge automatico dai profili TOML. **Nota**: `--source`/`--dest` sono dichiarati `required_unless_present = "restore_from"` con `default_value = ""`, ma clap rifiuta il valore vuoto per `PathBuf` prima di valutare la condizione: restano quindi obbligatori sempre e la modalità restore non è raggiungibile (D1/F24). |
 | `src/config.rs` | Caricamento e parsing delle configurazioni riutilizzabili. | Deserializzazione TOML tramite `serde`. |
 | `src/engine/mod.rs` | Astrazione del motore di copia. | Trait `CopyEngine` e `CopyRequestBuilder` fluente per disaccoppiare Robocopy dalla copia Naive; `run_with_retries` azzera il `ProgressSink` tra un tentativo e l'altro. |
 | `src/engine/robocopy.rs` | Wrapper ad altissime prestazioni per `robocopy.exe`. | Streaming `read_until` binario, buffer riutilizzato, decodifica OEM via `src/oem_codec.rs`, stdout e stderr entrambi drenati (su thread separati) invece di scartare stderr, PID del child pubblicato per il kill mirato su Ctrl+C. |
