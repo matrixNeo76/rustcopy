@@ -484,12 +484,39 @@ async fn transfer(
         }) => {
             progress.finish("failed");
             // Report what actually reached the destination before giving up.
+            //
+            // The progress sink is reset at the start of every retry attempt (so a failing
+            // attempt's partial bytes don't get added on top of the next one — see
+            // engine::run_with_retries). That fixes double-counting across attempts, but it
+            // means the sink only reflects the *last* attempt here, which badly undercounts a
+            // run where most files succeeded on an earlier attempt and only a persistent,
+            // non-transient per-file failure (e.g. a source file literally named a reserved
+            // Windows device name like `NUL`, which can never be copied no matter how many
+            // times robocopy retries) kept exhausting the retry budget. A real scan of what's
+            // actually on disk at the destination is the only way to get a trustworthy total
+            // in that case.
+            let dest_for_count = args.dest.clone();
+            let observed = tokio::task::spawn_blocking(move || scan::inventory(&dest_for_count, "*"))
+                .await
+                .ok()
+                .and_then(Result::ok);
+
             let mut outcome = CopyOutcome::new(robocopy_ingest::engine::robocopy::ENGINE_NAME);
             outcome.exit_code = Some(code);
             outcome.retry_attempts_used = attempts.saturating_sub(1);
             outcome.elapsed = elapsed;
-            outcome.bytes_copied = progress.current_bytes();
-            outcome.files_copied = progress.files();
+            match observed {
+                Some(dest_inventory) => {
+                    outcome.bytes_copied = dest_inventory.total_bytes;
+                    outcome.files_copied = dest_inventory.total_files;
+                }
+                None => {
+                    // Destination scan itself failed (e.g. share became unreachable): fall back
+                    // to the sink's last-attempt numbers rather than reporting nothing.
+                    outcome.bytes_copied = progress.current_bytes();
+                    outcome.files_copied = progress.files();
+                }
+            }
             outcome.dry_run = args.dry_run;
             Ok((
                 outcome,

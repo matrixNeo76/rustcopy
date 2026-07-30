@@ -287,6 +287,59 @@ fn encrypt_aes256_actually_encrypts_destination_files() {
     assert_eq!(decrypted, plaintext, "must decrypt back to the original bytes");
 }
 
+#[cfg(windows)]
+#[test]
+fn permanently_uncopyable_file_does_not_undercount_the_rest_of_the_transfer() {
+    let source = fixture_tree(&[("a.csv", 10), ("b.csv", 20), ("c.csv", 30)]);
+
+    let workdir = tempfile::tempdir().expect("workdir");
+    let dest = workdir.path().join("out");
+    std::fs::create_dir_all(&dest).expect("create dest");
+    // Pre-create b.csv at the destination and hold it open with share_mode(0) (deny all
+    // sharing): as long as this handle lives, robocopy gets "used by another process" on every
+    // single retry attempt for exactly this file, while a.csv and c.csv copy normally. This must
+    // not make the report undercount the files that genuinely made it to the destination.
+    use std::os::windows::fs::OpenOptionsExt;
+    let _locked_handle = std::fs::OpenOptions::new()
+        .write(true)
+        .create(true)
+        .share_mode(0)
+        .open(dest.join("b.csv"))
+        .expect("lock b.csv exclusively");
+    let report_path = workdir.path().join("report.json");
+
+    let output = run(&[
+        "--source",
+        source.path().to_str().expect("utf8"),
+        "--dest",
+        dest.to_str().expect("utf8"),
+        "--log-path",
+        workdir.path().join("ingest.log").to_str().expect("utf8"),
+        "--report-path",
+        report_path.to_str().expect("utf8"),
+        "--retries",
+        "1",
+        "--retry-wait-seconds",
+        "0",
+    ]);
+
+    assert_eq!(output.status.code(), Some(1), "some items could not be copied");
+    assert!(report_path.is_file());
+    let report: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(&report_path).expect("read")).expect("json");
+    // b.csv itself exists at the destination (as the pre-created, still-locked 0-byte stub), so
+    // all 3 destination entries are present — but its *content* was never overwritten by
+    // robocopy (locked the whole time), so only a.csv (10B) + c.csv (30B) = 40B are real,
+    // correctly-copied bytes. Before the fix, this failure path reported whatever the *last*
+    // retry attempt's reset progress sink happened to hold (near-zero for a run this short),
+    // not a real reflection of what's actually sitting on disk.
+    let bytes_copied = report["robocopy_transfer"]["bytes_copied"].as_u64().expect("bytes_copied");
+    assert_eq!(
+        bytes_copied, 40,
+        "a.csv (10B) + c.csv (30B) must be counted from a real destination scan, not the last retry's leftover sink state; report: {report}"
+    );
+}
+
 /// Guards the assumption the Linux tests rely on: the fixture helper is deterministic.
 #[test]
 fn fixtures_are_created_where_expected() {
