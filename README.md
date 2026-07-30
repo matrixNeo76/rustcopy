@@ -16,7 +16,8 @@ Nome del crate: `robocopy_ingest` — binario: `robocopy_ingest`.
 6. [Feature Avanzate Enterprise & Disaster Recovery](#6-feature-avanzate-enterprise--disaster-recovery)
 7. [Architettura di Sistema & Moduli](#7-architettura-di-sistema--moduli)
 8. [Esecuzione Suite di Test (120 Test)](#8-esecuzione-suite-di-test-120-test)
-9. [Licenza](#9-licenza)
+9. [Pianificazione Evolutiva v5.0 Cloud-Native](#9-pianificazione-evolutiva-v50-cloud-native)
+10. [Licenza](#10-licenza)
 
 ---
 
@@ -144,6 +145,17 @@ Esito: `test result: ok. 120 passed; 0 failed`.
 
 ---
 
-## 9. Licenza
+## 9. Pianificazione Evolutiva v5.0 Cloud-Native
+
+La futura iterazione **v5.0 Cloud-Native** introdurrà:
+- **Direct Cloud Sync AWS S3 & Azure Blob Storage (`src/cloud.rs`)**: Trasferimento diretto verso object storage remoti senza richiedere volumi SMB montati.
+- **Esecuzione come Servizio Windows Nativo (`src/service.rs`)**: Integrazione con il Service Control Manager (SCM) di Windows via `--install-service`.
+- **Stream Dashboard Reattiva SSE**: Server-Sent Events per aggiornare i grafici visivi su browser in tempo reale.
+
+Per la roadmap completa di sviluppo, consultare **[ROADMAP.md](file:///c:/Users/auresystem/repos/robocopy-ingest-cli/ROADMAP.md)** ed **[ANALYSIS.md](file:///c:/Users/auresystem/repos/robocopy-ingest-cli/ANALYSIS.md)**.
+
+---
+
+## 10. Licenza
 
 Rilasciato sotto licenza **MIT**.

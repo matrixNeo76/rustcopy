@@ -1,57 +1,63 @@
-# Analisi Architetturale & Stato del Progetto — robocopy-ingest-cli
+# Analisi Architetturale & Strategia Evolutiva v5.0 Cloud-Native — robocopy-ingest-cli
 
 > **Data Ultimo Audit**: 2026-07-30  
-> **Versione Progetto**: **v4.0.0 Next-Gen**  
-> **Esito Audit**: 🟢 **PRONTO PER IL PRODUZIONE ENTERPRISE (120/120 test superati)**.
+> **Versione Corrente**: **v4.0.0 Next-Gen** (120/120 test passati)  
+> **Target Evolutivo**: **v5.0 Cloud-Native & Autonomous Service**
 
 ---
 
-## 1. Panoramica del Sistema
+## 1. Panoramica ed Esito dello Stato Attuale (v4.0.0)
 
-`robocopy-ingest-cli` è una soluzione avanzata sviluppata in Rust progettata per l'**ingestion, il backup Enterprise, il Disaster Recovery ed il monitoraggio in tempo reale di dataset trasversali e volumetrie massive (da 50 GB a oltre 10 TB)**.
-
-Il sistema combina l'efficienza nativa del binario Windows `robocopy.exe` con la sicurezza della memoria, il multi-threading concorrente (Rayon) e le capacità asincrone (Tokio) di Rust.
-
----
-
-## 2. Diagnosi Criticità Storiche & Contromisure Adottate
-
-Nel corso dell'evoluzione dell'applicativo sono state identificate e risolte diverse criticità architetturali tipiche dei backup su larga scala:
-
-### 2.1 🔴 Deadlock su StdPipe di Robocopy
-- **Diagnosi**: Invocando `robocopy.exe` con sia `stdout` che `stderr` reindirizzati in pipe senza un thread lettore dedicato per `stderr`, il buffer del sistema operativo (4–64 KB) si saturava provocando il congelamento in deadlock dell'intero processo.
-- **Soluzione Implementata (`src/engine/robocopy.rs`)**: `stderr` viene reindirizzato su `Stdio::null()`. L'output `stdout` viene letto tramite uno streaming binario `read_until` a buffer riutilizzato e decodificato con `from_utf8_lossy` per gestire in modo sicuro i set di caratteri OEM/ANSI Windows (CP850/CP437).
-
-### 2.2 🔴 Windows Argument Quoting & Trailing Backslashes
-- **Diagnosi**: Percorsi sorgente/destinazione che terminano con un backslash (es. `"C:\Data\"`) causavano l'escaping della virgoletta di chiusura (`\"`) durante l'invocazione della shell, fondendo il percorso con i flag CLI successivi.
-- **Soluzione Implementata (`src/engine/robocopy.rs`)**: La funzione `normalize_path_arg` rimuove automaticamente i separatori finali e applica il prefisso `\\?\` per percorsi lunghi (`--long-paths`).
-
-### 2.3 🔴 Prevenzione OOM su Logging Asincrono & Report JSON
-- **Diagnosi**: Durante il trasferimento di milioni di file, l'emissione di log per-file non limitata poteva saturare la memoria RAM se il disco di scrittura fosse stato lento.
-- **Soluzione Implementata (`src/logging.rs` & `src/integrity.rs`)**:
-  - Il canale di logging asincrono è configurato come `bounded_channel(10_000)` con inoltro non-bloccante (`try_send`).
-  - L'elenco dei file disallineati nel report JSON è troncato a **10.000 elementi** (`MAX_REPORTED_ERRORS`) con indicatore `truncated: true`.
+`robocopy-ingest-cli` ha raggiunto la completa maturità per ambienti Windows Enterprise locali e di rete:
+- **Zero-Alloc Streaming Parser**: Lettura dello stdout di Robocopy priva di allocazioni heap per riga con decodifica OEM/ANSI (CP850).
+- **Integrità Multi-Core**: Rayon parallel hashing con BLAKE3 / SHA-256 e pre-check dimensioni.
+- **Enterprise NTFS Security**: Preservazione permessi ACL (`/COPYALL`), timestamp directory (`/DCOPY:DAT`) e Windows Long Paths (`\\?\`).
+- **Live Monitoring & Alerting**: Web Server HTTP integrato (`--serve-dashboard 8080`), notifiche Webhook asincrone (Slack/Teams) e Dashboard HTML standalone.
+- **Disaster Recovery & Deduplica**: Restore Mode guidata da report JSON e cache di stato `.ingest_cache`.
 
 ---
 
-## 3. Matrice Architetturale dei Moduli (v4.0.0)
+## 2. Analisi Approfondita per la Versione 5.0 Cloud-Native
 
-| Modulo | Responsabilità Principali | File Sorgente |
+Per evolvere l'applicativo verso un vero **Hub di Ingestion e Sync Multi-Cloud Autonomo**, sono stati identificati 4 nuovi moduli ad alto impatto:
+
+### 2.1 ☁️ Modulo Cloud Native Sync: Connettore S3 & Azure Blob Storage (`src/cloud.rs`)
+- **Opportunità**: Attualmente il backup trasferisce file solo verso file system locali o SMB montati.
+- **Proposta v5.0**: Estendere l'astrazione `CopyEngine` creando il modulo `src/cloud.rs` con supporto nativo (o tramite wrapper per `rclone` / S3 API) per sincronizzare dataset direttamente verso bucket AWS S3 o container Azure Blob Storage.
+
+### 2.2 🛠️ Modalità Servizio Windows Nativo (`src/service.rs`)
+- **Opportunità**: Per operare in ambiente server senza richiedere un'interfaccia utente o Task Scheduler esterni, il binario deve potersi installare ed eseguire come vero **Windows Service**.
+- **Proposta v5.0**: Integrare la gestione dei segnali di controllo del Service Control Manager (SCM) di Windows via `--install-service` e `--run-service`.
+
+### 2.3 📊 Web Dashboard Reattiva con Grafici Real-Time (SSE / WebSocket)
+- **Opportunità**: Il Live Server HTTP attuale restituisce uno stato base.
+- **Proposta v5.0**: Aggiungere uno stream Server-Sent Events (SSE) `/events` al modulo `src/server.rs` per aggiornare grafici reattivi di throughput (MB/s) in tempo reale su browser senza ricaricare la pagina.
+
+### 2.4 🔒 Gestione Credenziali Sicure tramite Windows Credential Manager (`src/credentials.rs`)
+- **Opportunità**: Evitare l'inserimento in chiaro di chiavi AES-256 o Webhook URL nel file di configurazione TOML.
+- **Proposta v5.0**: Integrare la memorizzazione cifrata delle credenziali nell'archivio protetto di Windows.
+
+---
+
+## 3. Matrice Architetturale dei Moduli (v4.0 Corrente & v5.0 Pianificato)
+
+| Modulo Sorgente | Stato | Ruolo Architetturale |
 |---|---|---|
-| **CLI & Parser** | Definition delle opzioni, parsing delle direttive e merge da profili TOML. | [src/cli.rs](file:///c:/Users/auresystem/repos/robocopy-ingest-cli/src/cli.rs), [src/config.rs](file:///c:/Users/auresystem/repos/robocopy-ingest-cli/src/config.rs) |
-| **Robocopy Engine** | Costruzione argomenti (`/MT`, `/COPYALL`, `/DCOPY:DAT`, `/MIR`, `/IPG`, `\\?\`), execution streaming e parsing stdout zero-alloc. | [src/engine/robocopy.rs](file:///c:/Users/auresystem/repos/robocopy-ingest-cli/src/engine/robocopy.rs) |
-| **Integrità & Security** | Verifica checksum parallelizzata con Rayon, algoritmi BLAKE3/SHA-256 e cifratura streaming AES-256. | [src/integrity.rs](file:///c:/Users/auresystem/repos/robocopy-ingest-cli/src/integrity.rs), [src/crypto.rs](file:///c:/Users/auresystem/repos/robocopy-ingest-cli/src/crypto.rs) |
-| **Monitoring & Server** | Server HTTP multithread integrato per live dashboard web, dispatcher notifiche Webhook HTTP POST e generatore HTML standalone. | [src/server.rs](file:///c:/Users/auresystem/repos/robocopy-ingest-cli/src/server.rs), [src/notify.rs](file:///c:/Users/auresystem/repos/robocopy-ingest-cli/src/notify.rs), [src/html_report.rs](file:///c:/Users/auresystem/repos/robocopy-ingest-cli/src/html_report.rs) |
-| **Disaster Recovery** | Ripristino guidato e reverse restore mode partendo dal report JSON di backup. | [src/restore.rs](file:///c:/Users/auresystem/repos/robocopy-ingest-cli/src/restore.rs) |
-| **Deduplica & Cache** | Mappa di stato `.ingest_cache` basata su timestamp e dimensione file. | [src/cache.rs](file:///c:/Users/auresystem/repos/robocopy-ingest-cli/src/cache.rs) |
+| [src/cli.rs](file:///c:/Users/auresystem/repos/robocopy-ingest-cli/src/cli.rs) | ✅ v4.0 | Parsing Clap, TOML merging, flag ACL, long paths, AES-256, dashboard. |
+| [src/engine/robocopy.rs](file:///c:/Users/auresystem/repos/robocopy-ingest-cli/src/engine/robocopy.rs) | ✅ v4.0 | Builder argomenti Robocopy, streaming zero-alloc, decodifica CP850. |
+| [src/integrity.rs](file:///c:/Users/auresystem/repos/robocopy-ingest-cli/src/integrity.rs) | ✅ v4.0 | Verification pass con Rayon, BLAKE3 / SHA-256 e cap OOM 10k items. |
+| [src/server.rs](file:///c:/Users/auresystem/repos/robocopy-ingest-cli/src/server.rs) | ✅ v4.0 | Live Web Dashboard HTTP server. *(Pianificato v5.0: Stream SSE real-time)* |
+| [src/crypto.rs](file:///c:/Users/auresystem/repos/robocopy-ingest-cli/src/crypto.rs) | ✅ v4.0 | Streaming Encryption simmetrica AES-256. |
+| `src/cloud.rs` | 🎯 Pianificato v5.0 | Connettore Direct Cloud Sync per AWS S3 / Azure Blob Storage. |
+| `src/service.rs` | 🎯 Pianificato v5.0 | Wrapper per installazione ed esecuzione come Windows Service nativo. |
 
 ---
 
-## 4. Validazione della Suite di Test
+## 4. Validazione e Copertura Test
 
-L'intero progetto è validato da **120 test automatizzati**:
-- **107 Unit Test**: Copertura di bitmask, regole di retry, parsing stdout, decodifica OEM/ANSI, Rayon, BLAKE3, AES-256, HTTP Live Server ed iniezione argomenti.
-- **7 Smoke Test CLI**: Rifiuto argomenti non validi, dry-run, report di versione e help.
-- **6 Test di Integrazione Pipeline**: Esecuzione end-to-end con motore Robocopy mockato (`ScriptedRunner`).
+Stato del Build e della Test Suite:
+- **107 Unit Test**: Copertura di parsing, bitmask exit code, Rayon, BLAKE3, AES-256, server HTTP e TOML.
+- **7 Smoke Test CLI**: Rifiuto argomenti errati, dry-run e report di versione.
+- **6 Test Integrati Pipeline**: Esecuzione end-to-end con mock process (`ScriptedRunner`).
 
-**Esito Esecuzione Test**: 🟢 `120 passed; 0 failed`.
+**Esito Globale**: 🟢 `120 passed; 0 failed`.
