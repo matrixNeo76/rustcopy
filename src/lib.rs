@@ -16,6 +16,7 @@
 
 pub mod cache;
 pub mod cli;
+pub mod cloud;
 pub mod config;
 pub mod crypto;
 pub mod engine;
@@ -30,4 +31,5 @@ pub mod report;
 pub mod restore;
 pub mod scan;
 pub mod server;
+pub mod service;
 pub mod testkit;

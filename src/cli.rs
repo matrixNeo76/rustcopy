@@ -171,6 +171,16 @@ pub struct Args {
     /// Encrypt payload files with AES-256 using the key provided.
     #[arg(long, value_name = "KEY")]
     pub encrypt_aes256: Option<String>,
+
+    // ── F18.1: Direct Cloud Sync ─────────────────────────────────────────────
+    /// Target S3 or Azure Blob container for cloud synchronization (e.g. s3://bucket/prefix).
+    #[arg(long, value_name = "URI")]
+    pub cloud_sync_target: Option<String>,
+
+    // ── F19.1: Windows Service Registration ──────────────────────────────────
+    /// Register and run the binary as a Windows Service background daemon.
+    #[arg(long, default_value_t = false)]
+    pub install_service: bool,
 }
 
 impl Args {
