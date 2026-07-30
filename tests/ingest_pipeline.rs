@@ -72,6 +72,8 @@ fn baseline_copy_then_integrity_check_passes_and_report_is_written() {
         source.path(),
         dest.path(),
         &[
+            "--pattern",
+            "*.csv",
             "--verify-integrity",
             "--report-path",
             report_path.to_str().expect("utf8"),

@@ -400,7 +400,7 @@ mod tests {
         assert_eq!(json["configuration"]["threads"], 16);
         assert_eq!(json["configuration"]["retries"], 4);
         assert_eq!(json["configuration"]["retry_wait_seconds"], 7);
-        assert_eq!(json["configuration"]["pattern"], "*.csv");
+        assert_eq!(json["configuration"]["pattern"], "*");
     }
 
     #[test]

@@ -44,8 +44,8 @@ pub struct Args {
     #[arg(long, value_name = "PATH")]
     pub dest: PathBuf,
 
-    /// File pattern to match (robocopy file filter / glob on the file name).
-    #[arg(long, default_value = "*.csv", value_name = "GLOB")]
+    /// File pattern to match (robocopy file filter / glob on the file name). Defaults to "*" (all files).
+    #[arg(long, default_value = "*", value_name = "GLOB")]
     pub pattern: String,
 
     /// Number of copy threads, mapped to robocopy's /MT:N (1-128). Defaults to logical CPU count.
@@ -363,7 +363,7 @@ mod tests {
     #[test]
     fn defaults_match_specification() {
         let args = Args::try_parse_from(base_args()).expect("parse");
-        assert_eq!(args.pattern, "*.csv");
+        assert_eq!(args.pattern, "*");
         // Thread count defaults to logical CPUs, clamped to [1, 128].
         assert!((MIN_THREADS as u16..=MAX_THREADS).contains(&args.threads));
         assert_eq!(args.retries, 3);
@@ -495,7 +495,7 @@ mod tests {
         assert_eq!(request.dest, PathBuf::from("/tmp/baseline"));
         assert_eq!(request.source, args.source);
         assert_eq!(request.threads, 16);
-        assert_eq!(request.pattern, "*.csv");
+        assert_eq!(request.pattern, "*");
         assert!(request.dry_run);
         assert!(!request.mirror);
         assert!(request.exclude_files.is_empty());
