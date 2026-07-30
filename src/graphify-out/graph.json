@@ -1,0 +1,1685 @@
+{
+  "nodes": [
+    {
+      "id": "engine_mod",
+      "label": "mod.rs",
+      "file_type": "code",
+      "source_file": "engine/mod.rs",
+      "source_location": "L1",
+      "_origin": "ast"
+    },
+    {
+      "id": "engine_mod_copyrequest",
+      "label": "CopyRequest",
+      "file_type": "code",
+      "source_file": "engine/mod.rs",
+      "source_location": "L24",
+      "_origin": "ast"
+    },
+    {
+      "id": "pathbuf",
+      "label": "PathBuf",
+      "file_type": "code",
+      "source_file": "engine/mod.rs",
+      "source_location": "L25",
+      "_origin": "ast"
+    },
+    {
+      "id": "string",
+      "label": "String",
+      "file_type": "code",
+      "source_file": "engine/mod.rs",
+      "source_location": "L27",
+      "_origin": "ast"
+    },
+    {
+      "id": "vec",
+      "label": "Vec",
+      "file_type": "code",
+      "source_file": "engine/mod.rs",
+      "source_location": "L39",
+      "_origin": "ast"
+    },
+    {
+      "id": "option",
+      "label": "Option",
+      "file_type": "code",
+      "source_file": "engine/mod.rs",
+      "source_location": "L43",
+      "_origin": "ast"
+    },
+    {
+      "id": "engine_mod_copyrequestbuilder",
+      "label": "CopyRequestBuilder",
+      "file_type": "code",
+      "source_file": "engine/mod.rs",
+      "source_location": "L61",
+      "_origin": "ast"
+    },
+    {
+      "id": "engine_mod_copyrequestbuilder_new",
+      "label": ".new()",
+      "file_type": "code",
+      "source_file": "engine/mod.rs",
+      "source_location": "L82",
+      "_origin": "ast"
+    },
+    {
+      "id": "into",
+      "label": "Into",
+      "file_type": "code",
+      "source_file": "engine/mod.rs",
+      "source_location": "L82",
+      "_origin": "ast"
+    },
+    {
+      "id": "self",
+      "label": "Self",
+      "file_type": "code",
+      "source_file": "engine/mod.rs",
+      "source_location": "L82",
+      "_origin": "ast"
+    },
+    {
+      "id": "engine_mod_copyrequestbuilder_pattern",
+      "label": ".pattern()",
+      "file_type": "code",
+      "source_file": "engine/mod.rs",
+      "source_location": "L104",
+      "_origin": "ast"
+    },
+    {
+      "id": "engine_mod_copyrequestbuilder_threads",
+      "label": ".threads()",
+      "file_type": "code",
+      "source_file": "engine/mod.rs",
+      "source_location": "L109",
+      "_origin": "ast"
+    },
+    {
+      "id": "engine_mod_copyrequestbuilder_file_retries",
+      "label": ".file_retries()",
+      "file_type": "code",
+      "source_file": "engine/mod.rs",
+      "source_location": "L114",
+      "_origin": "ast"
+    },
+    {
+      "id": "engine_mod_copyrequestbuilder_dry_run",
+      "label": ".dry_run()",
+      "file_type": "code",
+      "source_file": "engine/mod.rs",
+      "source_location": "L119",
+      "_origin": "ast"
+    },
+    {
+      "id": "engine_mod_copyrequestbuilder_mirror",
+      "label": ".mirror()",
+      "file_type": "code",
+      "source_file": "engine/mod.rs",
+      "source_location": "L124",
+      "_origin": "ast"
+    },
+    {
+      "id": "engine_mod_copyrequestbuilder_build",
+      "label": ".build()",
+      "file_type": "code",
+      "source_file": "engine/mod.rs",
+      "source_location": "L129",
+      "_origin": "ast"
+    },
+    {
+      "id": "engine_mod_copyrequest_builder",
+      "label": ".builder()",
+      "file_type": "code",
+      "source_file": "engine/mod.rs",
+      "source_location": "L153",
+      "_origin": "ast"
+    },
+    {
+      "id": "engine_mod_copyoutcome",
+      "label": "CopyOutcome",
+      "file_type": "code",
+      "source_file": "engine/mod.rs",
+      "source_location": "L160",
+      "_origin": "ast"
+    },
+    {
+      "id": "duration",
+      "label": "Duration",
+      "file_type": "code",
+      "source_file": "engine/mod.rs",
+      "source_location": "L165",
+      "_origin": "ast"
+    },
+    {
+      "id": "engine_mod_copyoutcome_new",
+      "label": ".new()",
+      "file_type": "code",
+      "source_file": "engine/mod.rs",
+      "source_location": "L174",
+      "_origin": "ast"
+    },
+    {
+      "id": "engine_mod_copyoutcome_status",
+      "label": ".status()",
+      "file_type": "code",
+      "source_file": "engine/mod.rs",
+      "source_location": "L187",
+      "_origin": "ast"
+    },
+    {
+      "id": "robocopystatus",
+      "label": "RobocopyStatus",
+      "file_type": "code",
+      "source_file": "engine/mod.rs",
+      "source_location": "L187",
+      "_origin": "ast"
+    },
+    {
+      "id": "engine_mod_copyoutcome_is_success",
+      "label": ".is_success()",
+      "file_type": "code",
+      "source_file": "engine/mod.rs",
+      "source_location": "L192",
+      "_origin": "ast"
+    },
+    {
+      "id": "engine_mod_copyoutcome_should_retry",
+      "label": ".should_retry()",
+      "file_type": "code",
+      "source_file": "engine/mod.rs",
+      "source_location": "L198",
+      "_origin": "ast"
+    },
+    {
+      "id": "engine_mod_copyoutcome_describe_status",
+      "label": ".describe_status()",
+      "file_type": "code",
+      "source_file": "engine/mod.rs",
+      "source_location": "L204",
+      "_origin": "ast"
+    },
+    {
+      "id": "engine_mod_copyengine",
+      "label": "CopyEngine",
+      "file_type": "code",
+      "source_file": "engine/mod.rs",
+      "source_location": "L212",
+      "_origin": "ast"
+    },
+    {
+      "id": "send",
+      "label": "Send",
+      "file_type": "code",
+      "source_file": "engine/mod.rs",
+      "source_location": "L212",
+      "_origin": "ast"
+    },
+    {
+      "id": "sync",
+      "label": "Sync",
+      "file_type": "code",
+      "source_file": "engine/mod.rs",
+      "source_location": "L212",
+      "_origin": "ast"
+    },
+    {
+      "id": "engine_mod_retrypolicy",
+      "label": "RetryPolicy",
+      "file_type": "code",
+      "source_file": "engine/mod.rs",
+      "source_location": "L226",
+      "_origin": "ast"
+    },
+    {
+      "id": "engine_mod_retrypolicy_new",
+      "label": ".new()",
+      "file_type": "code",
+      "source_file": "engine/mod.rs",
+      "source_location": "L236",
+      "_origin": "ast"
+    },
+    {
+      "id": "engine_mod_retrypolicy_backoff",
+      "label": ".backoff()",
+      "file_type": "code",
+      "source_file": "engine/mod.rs",
+      "source_location": "L245",
+      "_origin": "ast"
+    },
+    {
+      "id": "engine_mod_retrypolicy_total_attempts",
+      "label": ".total_attempts()",
+      "file_type": "code",
+      "source_file": "engine/mod.rs",
+      "source_location": "L250",
+      "_origin": "ast"
+    },
+    {
+      "id": "engine_mod_sleeper",
+      "label": "Sleeper",
+      "file_type": "code",
+      "source_file": "engine/mod.rs",
+      "source_location": "L256",
+      "_origin": "ast"
+    },
+    {
+      "id": "engine_mod_threadsleeper",
+      "label": "ThreadSleeper",
+      "file_type": "code",
+      "source_file": "engine/mod.rs",
+      "source_location": "L262",
+      "_origin": "ast"
+    },
+    {
+      "id": "engine_mod_threadsleeper_sleep",
+      "label": ".sleep()",
+      "file_type": "code",
+      "source_file": "engine/mod.rs",
+      "source_location": "L265",
+      "_origin": "ast"
+    },
+    {
+      "id": "engine_mod_run_with_retries",
+      "label": "run_with_retries()",
+      "file_type": "code",
+      "source_file": "engine/mod.rs",
+      "source_location": "L277",
+      "_origin": "ast"
+    },
+    {
+      "id": "progresssink",
+      "label": "ProgressSink",
+      "file_type": "code",
+      "source_file": "engine/mod.rs",
+      "source_location": "L277",
+      "_origin": "ast"
+    },
+    {
+      "id": "result",
+      "label": "Result",
+      "file_type": "code",
+      "source_file": "engine/mod.rs",
+      "source_location": "L277",
+      "_origin": "ast"
+    },
+    {
+      "id": "ingesterror",
+      "label": "IngestError",
+      "file_type": "code",
+      "source_file": "engine/mod.rs",
+      "source_location": "L277",
+      "_origin": "ast"
+    },
+    {
+      "id": "engine_mod_request",
+      "label": "request()",
+      "file_type": "code",
+      "source_file": "engine/mod.rs",
+      "source_location": "L362",
+      "_origin": "ast"
+    },
+    {
+      "id": "engine_mod_backoff_is_exponential_and_capped",
+      "label": "backoff_is_exponential_and_capped()",
+      "file_type": "code",
+      "source_file": "engine/mod.rs",
+      "source_location": "L385",
+      "_origin": "ast"
+    },
+    {
+      "id": "engine_mod_success_on_first_attempt_does_not_sleep",
+      "label": "success_on_first_attempt_does_not_sleep()",
+      "file_type": "code",
+      "source_file": "engine/mod.rs",
+      "source_location": "L396",
+      "_origin": "ast"
+    },
+    {
+      "id": "engine_mod_transient_failure_is_retried_with_exponential_backoff",
+      "label": "transient_failure_is_retried_with_exponential_backoff()",
+      "file_type": "code",
+      "source_file": "engine/mod.rs",
+      "source_location": "L416",
+      "_origin": "ast"
+    },
+    {
+      "id": "engine_mod_elapsed_time_accumulates_across_attempts",
+      "label": "elapsed_time_accumulates_across_attempts()",
+      "file_type": "code",
+      "source_file": "engine/mod.rs",
+      "source_location": "L440",
+      "_origin": "ast"
+    },
+    {
+      "id": "engine_mod_fatal_exit_code_is_not_retried",
+      "label": "fatal_exit_code_is_not_retried()",
+      "file_type": "code",
+      "source_file": "engine/mod.rs",
+      "source_location": "L458",
+      "_origin": "ast"
+    },
+    {
+      "id": "engine_mod_retry_budget_is_exhausted_then_reported",
+      "label": "retry_budget_is_exhausted_then_reported()",
+      "file_type": "code",
+      "source_file": "engine/mod.rs",
+      "source_location": "L485",
+      "_origin": "ast"
+    },
+    {
+      "id": "engine_mod_zero_retries_runs_exactly_once",
+      "label": "zero_retries_runs_exactly_once()",
+      "file_type": "code",
+      "source_file": "engine/mod.rs",
+      "source_location": "L511",
+      "_origin": "ast"
+    },
+    {
+      "id": "engine_mod_transient_io_errors_are_retried_then_surfaced",
+      "label": "transient_io_errors_are_retried_then_surfaced()",
+      "file_type": "code",
+      "source_file": "engine/mod.rs",
+      "source_location": "L530",
+      "_origin": "ast"
+    },
+    {
+      "id": "engine_mod_non_transient_errors_abort_immediately",
+      "label": "non_transient_errors_abort_immediately()",
+      "file_type": "code",
+      "source_file": "engine/mod.rs",
+      "source_location": "L554",
+      "_origin": "ast"
+    },
+    {
+      "id": "engine_mod_engine_without_exit_code_is_successful",
+      "label": "engine_without_exit_code_is_successful()",
+      "file_type": "code",
+      "source_file": "engine/mod.rs",
+      "source_location": "L574",
+      "_origin": "ast"
+    },
+    {
+      "id": "engine_mod_informational_exit_codes_are_accepted",
+      "label": "informational_exit_codes_are_accepted()",
+      "file_type": "code",
+      "source_file": "engine/mod.rs",
+      "source_location": "L584",
+      "_origin": "ast"
+    }
+  ],
+  "edges": [
+    {
+      "source": "engine_mod",
+      "target": "pathbuf",
+      "relation": "imports_from",
+      "confidence": "EXTRACTED",
+      "source_file": "engine/mod.rs",
+      "source_location": "L15",
+      "weight": 1.0,
+      "context": "import"
+    },
+    {
+      "source": "engine_mod",
+      "target": "duration",
+      "relation": "imports_from",
+      "confidence": "EXTRACTED",
+      "source_file": "engine/mod.rs",
+      "source_location": "L16",
+      "weight": 1.0,
+      "context": "import"
+    },
+    {
+      "source": "engine_mod",
+      "target": "ingesterror",
+      "relation": "imports_from",
+      "confidence": "EXTRACTED",
+      "source_file": "engine/mod.rs",
+      "source_location": "L18",
+      "weight": 1.0,
+      "context": "import"
+    },
+    {
+      "source": "engine_mod",
+      "target": "robocopystatus",
+      "relation": "imports_from",
+      "confidence": "EXTRACTED",
+      "source_file": "engine/mod.rs",
+      "source_location": "L19",
+      "weight": 1.0,
+      "context": "import"
+    },
+    {
+      "source": "engine_mod",
+      "target": "progresssink",
+      "relation": "imports_from",
+      "confidence": "EXTRACTED",
+      "source_file": "engine/mod.rs",
+      "source_location": "L20",
+      "weight": 1.0,
+      "context": "import"
+    },
+    {
+      "source": "engine_mod",
+      "target": "engine_mod_copyrequest",
+      "relation": "contains",
+      "confidence": "EXTRACTED",
+      "source_file": "engine/mod.rs",
+      "source_location": "L24",
+      "weight": 1.0
+    },
+    {
+      "source": "engine_mod_copyrequest",
+      "target": "pathbuf",
+      "relation": "references",
+      "confidence": "EXTRACTED",
+      "source_file": "engine/mod.rs",
+      "source_location": "L25",
+      "weight": 1.0,
+      "context": "field"
+    },
+    {
+      "source": "engine_mod_copyrequest",
+      "target": "string",
+      "relation": "references",
+      "confidence": "EXTRACTED",
+      "source_file": "engine/mod.rs",
+      "source_location": "L27",
+      "weight": 1.0,
+      "context": "field"
+    },
+    {
+      "source": "engine_mod_copyrequest",
+      "target": "vec",
+      "relation": "references",
+      "confidence": "EXTRACTED",
+      "source_file": "engine/mod.rs",
+      "source_location": "L39",
+      "weight": 1.0,
+      "context": "field"
+    },
+    {
+      "source": "engine_mod_copyrequest",
+      "target": "option",
+      "relation": "references",
+      "confidence": "EXTRACTED",
+      "source_file": "engine/mod.rs",
+      "source_location": "L43",
+      "weight": 1.0,
+      "context": "field"
+    },
+    {
+      "source": "engine_mod",
+      "target": "engine_mod_copyrequestbuilder",
+      "relation": "contains",
+      "confidence": "EXTRACTED",
+      "source_file": "engine/mod.rs",
+      "source_location": "L61",
+      "weight": 1.0
+    },
+    {
+      "source": "engine_mod_copyrequestbuilder",
+      "target": "pathbuf",
+      "relation": "references",
+      "confidence": "EXTRACTED",
+      "source_file": "engine/mod.rs",
+      "source_location": "L62",
+      "weight": 1.0,
+      "context": "field"
+    },
+    {
+      "source": "engine_mod_copyrequestbuilder",
+      "target": "string",
+      "relation": "references",
+      "confidence": "EXTRACTED",
+      "source_file": "engine/mod.rs",
+      "source_location": "L64",
+      "weight": 1.0,
+      "context": "field"
+    },
+    {
+      "source": "engine_mod_copyrequestbuilder",
+      "target": "vec",
+      "relation": "references",
+      "confidence": "EXTRACTED",
+      "source_file": "engine/mod.rs",
+      "source_location": "L70",
+      "weight": 1.0,
+      "context": "field"
+    },
+    {
+      "source": "engine_mod_copyrequestbuilder",
+      "target": "option",
+      "relation": "references",
+      "confidence": "EXTRACTED",
+      "source_file": "engine/mod.rs",
+      "source_location": "L72",
+      "weight": 1.0,
+      "context": "field"
+    },
+    {
+      "source": "engine_mod_copyrequestbuilder",
+      "target": "engine_mod_copyrequestbuilder_new",
+      "relation": "method",
+      "confidence": "EXTRACTED",
+      "source_file": "engine/mod.rs",
+      "source_location": "L82",
+      "weight": 1.0
+    },
+    {
+      "source": "engine_mod_copyrequestbuilder_new",
+      "target": "into",
+      "relation": "references",
+      "confidence": "EXTRACTED",
+      "source_file": "engine/mod.rs",
+      "source_location": "L82",
+      "weight": 1.0,
+      "context": "parameter_type"
+    },
+    {
+      "source": "engine_mod_copyrequestbuilder_new",
+      "target": "pathbuf",
+      "relation": "references",
+      "confidence": "EXTRACTED",
+      "source_file": "engine/mod.rs",
+      "source_location": "L82",
+      "weight": 1.0,
+      "context": "generic_arg"
+    },
+    {
+      "source": "engine_mod_copyrequestbuilder_new",
+      "target": "self",
+      "relation": "references",
+      "confidence": "EXTRACTED",
+      "source_file": "engine/mod.rs",
+      "source_location": "L82",
+      "weight": 1.0,
+      "context": "return_type"
+    },
+    {
+      "source": "engine_mod_copyrequestbuilder",
+      "target": "engine_mod_copyrequestbuilder_pattern",
+      "relation": "method",
+      "confidence": "EXTRACTED",
+      "source_file": "engine/mod.rs",
+      "source_location": "L104",
+      "weight": 1.0
+    },
+    {
+      "source": "engine_mod_copyrequestbuilder_pattern",
+      "target": "into",
+      "relation": "references",
+      "confidence": "EXTRACTED",
+      "source_file": "engine/mod.rs",
+      "source_location": "L104",
+      "weight": 1.0,
+      "context": "parameter_type"
+    },
+    {
+      "source": "engine_mod_copyrequestbuilder_pattern",
+      "target": "string",
+      "relation": "references",
+      "confidence": "EXTRACTED",
+      "source_file": "engine/mod.rs",
+      "source_location": "L104",
+      "weight": 1.0,
+      "context": "generic_arg"
+    },
+    {
+      "source": "engine_mod_copyrequestbuilder_pattern",
+      "target": "self",
+      "relation": "references",
+      "confidence": "EXTRACTED",
+      "source_file": "engine/mod.rs",
+      "source_location": "L104",
+      "weight": 1.0,
+      "context": "return_type"
+    },
+    {
+      "source": "engine_mod_copyrequestbuilder",
+      "target": "engine_mod_copyrequestbuilder_threads",
+      "relation": "method",
+      "confidence": "EXTRACTED",
+      "source_file": "engine/mod.rs",
+      "source_location": "L109",
+      "weight": 1.0
+    },
+    {
+      "source": "engine_mod_copyrequestbuilder_threads",
+      "target": "self",
+      "relation": "references",
+      "confidence": "EXTRACTED",
+      "source_file": "engine/mod.rs",
+      "source_location": "L109",
+      "weight": 1.0,
+      "context": "return_type"
+    },
+    {
+      "source": "engine_mod_copyrequestbuilder",
+      "target": "engine_mod_copyrequestbuilder_file_retries",
+      "relation": "method",
+      "confidence": "EXTRACTED",
+      "source_file": "engine/mod.rs",
+      "source_location": "L114",
+      "weight": 1.0
+    },
+    {
+      "source": "engine_mod_copyrequestbuilder_file_retries",
+      "target": "self",
+      "relation": "references",
+      "confidence": "EXTRACTED",
+      "source_file": "engine/mod.rs",
+      "source_location": "L114",
+      "weight": 1.0,
+      "context": "return_type"
+    },
+    {
+      "source": "engine_mod_copyrequestbuilder",
+      "target": "engine_mod_copyrequestbuilder_dry_run",
+      "relation": "method",
+      "confidence": "EXTRACTED",
+      "source_file": "engine/mod.rs",
+      "source_location": "L119",
+      "weight": 1.0
+    },
+    {
+      "source": "engine_mod_copyrequestbuilder_dry_run",
+      "target": "self",
+      "relation": "references",
+      "confidence": "EXTRACTED",
+      "source_file": "engine/mod.rs",
+      "source_location": "L119",
+      "weight": 1.0,
+      "context": "return_type"
+    },
+    {
+      "source": "engine_mod_copyrequestbuilder",
+      "target": "engine_mod_copyrequestbuilder_mirror",
+      "relation": "method",
+      "confidence": "EXTRACTED",
+      "source_file": "engine/mod.rs",
+      "source_location": "L124",
+      "weight": 1.0
+    },
+    {
+      "source": "engine_mod_copyrequestbuilder_mirror",
+      "target": "self",
+      "relation": "references",
+      "confidence": "EXTRACTED",
+      "source_file": "engine/mod.rs",
+      "source_location": "L124",
+      "weight": 1.0,
+      "context": "return_type"
+    },
+    {
+      "source": "engine_mod_copyrequestbuilder",
+      "target": "engine_mod_copyrequestbuilder_build",
+      "relation": "method",
+      "confidence": "EXTRACTED",
+      "source_file": "engine/mod.rs",
+      "source_location": "L129",
+      "weight": 1.0
+    },
+    {
+      "source": "engine_mod_copyrequestbuilder_build",
+      "target": "engine_mod_copyrequest",
+      "relation": "references",
+      "confidence": "EXTRACTED",
+      "source_file": "engine/mod.rs",
+      "source_location": "L129",
+      "weight": 1.0,
+      "context": "return_type"
+    },
+    {
+      "source": "engine_mod_copyrequest",
+      "target": "engine_mod_copyrequest_builder",
+      "relation": "method",
+      "confidence": "EXTRACTED",
+      "source_file": "engine/mod.rs",
+      "source_location": "L153",
+      "weight": 1.0
+    },
+    {
+      "source": "engine_mod_copyrequest_builder",
+      "target": "into",
+      "relation": "references",
+      "confidence": "EXTRACTED",
+      "source_file": "engine/mod.rs",
+      "source_location": "L153",
+      "weight": 1.0,
+      "context": "parameter_type"
+    },
+    {
+      "source": "engine_mod_copyrequest_builder",
+      "target": "pathbuf",
+      "relation": "references",
+      "confidence": "EXTRACTED",
+      "source_file": "engine/mod.rs",
+      "source_location": "L153",
+      "weight": 1.0,
+      "context": "generic_arg"
+    },
+    {
+      "source": "engine_mod_copyrequest_builder",
+      "target": "engine_mod_copyrequestbuilder",
+      "relation": "references",
+      "confidence": "EXTRACTED",
+      "source_file": "engine/mod.rs",
+      "source_location": "L153",
+      "weight": 1.0,
+      "context": "return_type"
+    },
+    {
+      "source": "engine_mod",
+      "target": "engine_mod_copyoutcome",
+      "relation": "contains",
+      "confidence": "EXTRACTED",
+      "source_file": "engine/mod.rs",
+      "source_location": "L160",
+      "weight": 1.0
+    },
+    {
+      "source": "engine_mod_copyoutcome",
+      "target": "duration",
+      "relation": "references",
+      "confidence": "EXTRACTED",
+      "source_file": "engine/mod.rs",
+      "source_location": "L165",
+      "weight": 1.0,
+      "context": "field"
+    },
+    {
+      "source": "engine_mod_copyoutcome",
+      "target": "option",
+      "relation": "references",
+      "confidence": "EXTRACTED",
+      "source_file": "engine/mod.rs",
+      "source_location": "L167",
+      "weight": 1.0,
+      "context": "field"
+    },
+    {
+      "source": "engine_mod_copyoutcome",
+      "target": "engine_mod_copyoutcome_new",
+      "relation": "method",
+      "confidence": "EXTRACTED",
+      "source_file": "engine/mod.rs",
+      "source_location": "L174",
+      "weight": 1.0
+    },
+    {
+      "source": "engine_mod_copyoutcome_new",
+      "target": "self",
+      "relation": "references",
+      "confidence": "EXTRACTED",
+      "source_file": "engine/mod.rs",
+      "source_location": "L174",
+      "weight": 1.0,
+      "context": "return_type"
+    },
+    {
+      "source": "engine_mod_copyoutcome",
+      "target": "engine_mod_copyoutcome_status",
+      "relation": "method",
+      "confidence": "EXTRACTED",
+      "source_file": "engine/mod.rs",
+      "source_location": "L187",
+      "weight": 1.0
+    },
+    {
+      "source": "engine_mod_copyoutcome_status",
+      "target": "option",
+      "relation": "references",
+      "confidence": "EXTRACTED",
+      "source_file": "engine/mod.rs",
+      "source_location": "L187",
+      "weight": 1.0,
+      "context": "return_type"
+    },
+    {
+      "source": "engine_mod_copyoutcome_status",
+      "target": "robocopystatus",
+      "relation": "references",
+      "confidence": "EXTRACTED",
+      "source_file": "engine/mod.rs",
+      "source_location": "L187",
+      "weight": 1.0,
+      "context": "generic_arg"
+    },
+    {
+      "source": "engine_mod_copyoutcome",
+      "target": "engine_mod_copyoutcome_is_success",
+      "relation": "method",
+      "confidence": "EXTRACTED",
+      "source_file": "engine/mod.rs",
+      "source_location": "L192",
+      "weight": 1.0
+    },
+    {
+      "source": "engine_mod_copyoutcome",
+      "target": "engine_mod_copyoutcome_should_retry",
+      "relation": "method",
+      "confidence": "EXTRACTED",
+      "source_file": "engine/mod.rs",
+      "source_location": "L198",
+      "weight": 1.0
+    },
+    {
+      "source": "engine_mod_copyoutcome",
+      "target": "engine_mod_copyoutcome_describe_status",
+      "relation": "method",
+      "confidence": "EXTRACTED",
+      "source_file": "engine/mod.rs",
+      "source_location": "L204",
+      "weight": 1.0
+    },
+    {
+      "source": "engine_mod_copyoutcome_describe_status",
+      "target": "string",
+      "relation": "references",
+      "confidence": "EXTRACTED",
+      "source_file": "engine/mod.rs",
+      "source_location": "L204",
+      "weight": 1.0,
+      "context": "return_type"
+    },
+    {
+      "source": "engine_mod",
+      "target": "engine_mod_copyengine",
+      "relation": "contains",
+      "confidence": "EXTRACTED",
+      "source_file": "engine/mod.rs",
+      "source_location": "L212",
+      "weight": 1.0
+    },
+    {
+      "source": "engine_mod_copyengine",
+      "target": "send",
+      "relation": "inherits",
+      "confidence": "EXTRACTED",
+      "source_file": "engine/mod.rs",
+      "source_location": "L212",
+      "weight": 1.0
+    },
+    {
+      "source": "engine_mod_copyengine",
+      "target": "sync",
+      "relation": "inherits",
+      "confidence": "EXTRACTED",
+      "source_file": "engine/mod.rs",
+      "source_location": "L212",
+      "weight": 1.0
+    },
+    {
+      "source": "engine_mod",
+      "target": "engine_mod_retrypolicy",
+      "relation": "contains",
+      "confidence": "EXTRACTED",
+      "source_file": "engine/mod.rs",
+      "source_location": "L226",
+      "weight": 1.0
+    },
+    {
+      "source": "engine_mod_retrypolicy",
+      "target": "duration",
+      "relation": "references",
+      "confidence": "EXTRACTED",
+      "source_file": "engine/mod.rs",
+      "source_location": "L229",
+      "weight": 1.0,
+      "context": "field"
+    },
+    {
+      "source": "engine_mod_retrypolicy",
+      "target": "engine_mod_retrypolicy_new",
+      "relation": "method",
+      "confidence": "EXTRACTED",
+      "source_file": "engine/mod.rs",
+      "source_location": "L236",
+      "weight": 1.0
+    },
+    {
+      "source": "engine_mod_retrypolicy_new",
+      "target": "self",
+      "relation": "references",
+      "confidence": "EXTRACTED",
+      "source_file": "engine/mod.rs",
+      "source_location": "L236",
+      "weight": 1.0,
+      "context": "return_type"
+    },
+    {
+      "source": "engine_mod_retrypolicy",
+      "target": "engine_mod_retrypolicy_backoff",
+      "relation": "method",
+      "confidence": "EXTRACTED",
+      "source_file": "engine/mod.rs",
+      "source_location": "L245",
+      "weight": 1.0
+    },
+    {
+      "source": "engine_mod_retrypolicy_backoff",
+      "target": "duration",
+      "relation": "references",
+      "confidence": "EXTRACTED",
+      "source_file": "engine/mod.rs",
+      "source_location": "L245",
+      "weight": 1.0,
+      "context": "return_type"
+    },
+    {
+      "source": "engine_mod_retrypolicy",
+      "target": "engine_mod_retrypolicy_total_attempts",
+      "relation": "method",
+      "confidence": "EXTRACTED",
+      "source_file": "engine/mod.rs",
+      "source_location": "L250",
+      "weight": 1.0
+    },
+    {
+      "source": "engine_mod",
+      "target": "engine_mod_sleeper",
+      "relation": "contains",
+      "confidence": "EXTRACTED",
+      "source_file": "engine/mod.rs",
+      "source_location": "L256",
+      "weight": 1.0
+    },
+    {
+      "source": "engine_mod_sleeper",
+      "target": "send",
+      "relation": "inherits",
+      "confidence": "EXTRACTED",
+      "source_file": "engine/mod.rs",
+      "source_location": "L256",
+      "weight": 1.0
+    },
+    {
+      "source": "engine_mod_sleeper",
+      "target": "sync",
+      "relation": "inherits",
+      "confidence": "EXTRACTED",
+      "source_file": "engine/mod.rs",
+      "source_location": "L256",
+      "weight": 1.0
+    },
+    {
+      "source": "engine_mod",
+      "target": "engine_mod_threadsleeper",
+      "relation": "contains",
+      "confidence": "EXTRACTED",
+      "source_file": "engine/mod.rs",
+      "source_location": "L262",
+      "weight": 1.0
+    },
+    {
+      "source": "engine_mod_threadsleeper",
+      "target": "engine_mod_sleeper",
+      "relation": "implements",
+      "confidence": "EXTRACTED",
+      "source_file": "engine/mod.rs",
+      "source_location": "L264",
+      "weight": 1.0
+    },
+    {
+      "source": "engine_mod_threadsleeper",
+      "target": "engine_mod_threadsleeper_sleep",
+      "relation": "method",
+      "confidence": "EXTRACTED",
+      "source_file": "engine/mod.rs",
+      "source_location": "L265",
+      "weight": 1.0
+    },
+    {
+      "source": "engine_mod_threadsleeper_sleep",
+      "target": "duration",
+      "relation": "references",
+      "confidence": "EXTRACTED",
+      "source_file": "engine/mod.rs",
+      "source_location": "L265",
+      "weight": 1.0,
+      "context": "parameter_type"
+    },
+    {
+      "source": "engine_mod",
+      "target": "engine_mod_run_with_retries",
+      "relation": "contains",
+      "confidence": "EXTRACTED",
+      "source_file": "engine/mod.rs",
+      "source_location": "L277",
+      "weight": 1.0
+    },
+    {
+      "source": "engine_mod_run_with_retries",
+      "target": "engine_mod_copyengine",
+      "relation": "references",
+      "confidence": "EXTRACTED",
+      "source_file": "engine/mod.rs",
+      "source_location": "L277",
+      "weight": 1.0,
+      "context": "parameter_type"
+    },
+    {
+      "source": "engine_mod_run_with_retries",
+      "target": "engine_mod_copyrequest",
+      "relation": "references",
+      "confidence": "EXTRACTED",
+      "source_file": "engine/mod.rs",
+      "source_location": "L277",
+      "weight": 1.0,
+      "context": "parameter_type"
+    },
+    {
+      "source": "engine_mod_run_with_retries",
+      "target": "progresssink",
+      "relation": "references",
+      "confidence": "EXTRACTED",
+      "source_file": "engine/mod.rs",
+      "source_location": "L277",
+      "weight": 1.0,
+      "context": "parameter_type"
+    },
+    {
+      "source": "engine_mod_run_with_retries",
+      "target": "engine_mod_retrypolicy",
+      "relation": "references",
+      "confidence": "EXTRACTED",
+      "source_file": "engine/mod.rs",
+      "source_location": "L277",
+      "weight": 1.0,
+      "context": "parameter_type"
+    },
+    {
+      "source": "engine_mod_run_with_retries",
+      "target": "engine_mod_sleeper",
+      "relation": "references",
+      "confidence": "EXTRACTED",
+      "source_file": "engine/mod.rs",
+      "source_location": "L277",
+      "weight": 1.0,
+      "context": "parameter_type"
+    },
+    {
+      "source": "engine_mod_run_with_retries",
+      "target": "result",
+      "relation": "references",
+      "confidence": "EXTRACTED",
+      "source_file": "engine/mod.rs",
+      "source_location": "L277",
+      "weight": 1.0,
+      "context": "return_type"
+    },
+    {
+      "source": "engine_mod_run_with_retries",
+      "target": "engine_mod_copyoutcome",
+      "relation": "references",
+      "confidence": "EXTRACTED",
+      "source_file": "engine/mod.rs",
+      "source_location": "L277",
+      "weight": 1.0,
+      "context": "generic_arg"
+    },
+    {
+      "source": "engine_mod_run_with_retries",
+      "target": "ingesterror",
+      "relation": "references",
+      "confidence": "EXTRACTED",
+      "source_file": "engine/mod.rs",
+      "source_location": "L277",
+      "weight": 1.0,
+      "context": "generic_arg"
+    },
+    {
+      "source": "engine_mod",
+      "target": "super",
+      "relation": "imports_from",
+      "confidence": "EXTRACTED",
+      "source_file": "engine/mod.rs",
+      "source_location": "L358",
+      "weight": 1.0,
+      "context": "import"
+    },
+    {
+      "source": "engine_mod",
+      "target": "countingprogress",
+      "relation": "imports_from",
+      "confidence": "EXTRACTED",
+      "source_file": "engine/mod.rs",
+      "source_location": "L359",
+      "weight": 1.0,
+      "context": "import"
+    },
+    {
+      "source": "engine_mod",
+      "target": "testkit",
+      "relation": "imports_from",
+      "confidence": "EXTRACTED",
+      "source_file": "engine/mod.rs",
+      "source_location": "L360",
+      "weight": 1.0,
+      "context": "import"
+    },
+    {
+      "source": "engine_mod",
+      "target": "engine_mod_request",
+      "relation": "contains",
+      "confidence": "EXTRACTED",
+      "source_file": "engine/mod.rs",
+      "source_location": "L362",
+      "weight": 1.0
+    },
+    {
+      "source": "engine_mod_request",
+      "target": "engine_mod_copyrequest",
+      "relation": "references",
+      "confidence": "EXTRACTED",
+      "source_file": "engine/mod.rs",
+      "source_location": "L362",
+      "weight": 1.0,
+      "context": "return_type"
+    },
+    {
+      "source": "engine_mod",
+      "target": "engine_mod_backoff_is_exponential_and_capped",
+      "relation": "contains",
+      "confidence": "EXTRACTED",
+      "source_file": "engine/mod.rs",
+      "source_location": "L385",
+      "weight": 1.0
+    },
+    {
+      "source": "engine_mod",
+      "target": "engine_mod_success_on_first_attempt_does_not_sleep",
+      "relation": "contains",
+      "confidence": "EXTRACTED",
+      "source_file": "engine/mod.rs",
+      "source_location": "L396",
+      "weight": 1.0
+    },
+    {
+      "source": "engine_mod",
+      "target": "engine_mod_transient_failure_is_retried_with_exponential_backoff",
+      "relation": "contains",
+      "confidence": "EXTRACTED",
+      "source_file": "engine/mod.rs",
+      "source_location": "L416",
+      "weight": 1.0
+    },
+    {
+      "source": "engine_mod",
+      "target": "engine_mod_elapsed_time_accumulates_across_attempts",
+      "relation": "contains",
+      "confidence": "EXTRACTED",
+      "source_file": "engine/mod.rs",
+      "source_location": "L440",
+      "weight": 1.0
+    },
+    {
+      "source": "engine_mod",
+      "target": "engine_mod_fatal_exit_code_is_not_retried",
+      "relation": "contains",
+      "confidence": "EXTRACTED",
+      "source_file": "engine/mod.rs",
+      "source_location": "L458",
+      "weight": 1.0
+    },
+    {
+      "source": "engine_mod",
+      "target": "engine_mod_retry_budget_is_exhausted_then_reported",
+      "relation": "contains",
+      "confidence": "EXTRACTED",
+      "source_file": "engine/mod.rs",
+      "source_location": "L485",
+      "weight": 1.0
+    },
+    {
+      "source": "engine_mod",
+      "target": "engine_mod_zero_retries_runs_exactly_once",
+      "relation": "contains",
+      "confidence": "EXTRACTED",
+      "source_file": "engine/mod.rs",
+      "source_location": "L511",
+      "weight": 1.0
+    },
+    {
+      "source": "engine_mod",
+      "target": "engine_mod_transient_io_errors_are_retried_then_surfaced",
+      "relation": "contains",
+      "confidence": "EXTRACTED",
+      "source_file": "engine/mod.rs",
+      "source_location": "L530",
+      "weight": 1.0
+    },
+    {
+      "source": "engine_mod",
+      "target": "engine_mod_non_transient_errors_abort_immediately",
+      "relation": "contains",
+      "confidence": "EXTRACTED",
+      "source_file": "engine/mod.rs",
+      "source_location": "L554",
+      "weight": 1.0
+    },
+    {
+      "source": "engine_mod",
+      "target": "engine_mod_engine_without_exit_code_is_successful",
+      "relation": "contains",
+      "confidence": "EXTRACTED",
+      "source_file": "engine/mod.rs",
+      "source_location": "L574",
+      "weight": 1.0
+    },
+    {
+      "source": "engine_mod",
+      "target": "engine_mod_informational_exit_codes_are_accepted",
+      "relation": "contains",
+      "confidence": "EXTRACTED",
+      "source_file": "engine/mod.rs",
+      "source_location": "L584",
+      "weight": 1.0
+    },
+    {
+      "source": "engine_mod_copyrequestbuilder_new",
+      "target": "engine_mod_retrypolicy_new",
+      "relation": "calls",
+      "context": "call",
+      "confidence": "EXTRACTED",
+      "source_file": "engine/mod.rs",
+      "source_location": "L92",
+      "weight": 1.0
+    },
+    {
+      "source": "engine_mod_copyrequest_builder",
+      "target": "engine_mod_retrypolicy_new",
+      "relation": "calls",
+      "context": "call",
+      "confidence": "EXTRACTED",
+      "source_file": "engine/mod.rs",
+      "source_location": "L154",
+      "weight": 1.0
+    },
+    {
+      "source": "engine_mod_copyoutcome_is_success",
+      "target": "engine_mod_copyoutcome_status",
+      "relation": "calls",
+      "context": "call",
+      "confidence": "EXTRACTED",
+      "source_file": "engine/mod.rs",
+      "source_location": "L193",
+      "weight": 1.0
+    },
+    {
+      "source": "engine_mod_copyoutcome_should_retry",
+      "target": "engine_mod_copyoutcome_status",
+      "relation": "calls",
+      "context": "call",
+      "confidence": "EXTRACTED",
+      "source_file": "engine/mod.rs",
+      "source_location": "L199",
+      "weight": 1.0
+    },
+    {
+      "source": "engine_mod_copyoutcome_describe_status",
+      "target": "engine_mod_copyoutcome_status",
+      "relation": "calls",
+      "context": "call",
+      "confidence": "EXTRACTED",
+      "source_file": "engine/mod.rs",
+      "source_location": "L205",
+      "weight": 1.0
+    },
+    {
+      "source": "engine_mod_run_with_retries",
+      "target": "engine_mod_retrypolicy_total_attempts",
+      "relation": "calls",
+      "context": "call",
+      "confidence": "EXTRACTED",
+      "source_file": "engine/mod.rs",
+      "source_location": "L286",
+      "weight": 1.0
+    },
+    {
+      "source": "engine_mod_run_with_retries",
+      "target": "engine_mod_copyoutcome_is_success",
+      "relation": "calls",
+      "context": "call",
+      "confidence": "EXTRACTED",
+      "source_file": "engine/mod.rs",
+      "source_location": "L294",
+      "weight": 1.0
+    },
+    {
+      "source": "engine_mod_run_with_retries",
+      "target": "engine_mod_copyoutcome_describe_status",
+      "relation": "calls",
+      "context": "call",
+      "confidence": "EXTRACTED",
+      "source_file": "engine/mod.rs",
+      "source_location": "L305",
+      "weight": 1.0
+    },
+    {
+      "source": "engine_mod_run_with_retries",
+      "target": "engine_mod_copyoutcome_should_retry",
+      "relation": "calls",
+      "context": "call",
+      "confidence": "EXTRACTED",
+      "source_file": "engine/mod.rs",
+      "source_location": "L306",
+      "weight": 1.0
+    },
+    {
+      "source": "engine_mod_run_with_retries",
+      "target": "engine_mod_retrypolicy_backoff",
+      "relation": "calls",
+      "context": "call",
+      "confidence": "EXTRACTED",
+      "source_file": "engine/mod.rs",
+      "source_location": "L320",
+      "weight": 1.0
+    },
+    {
+      "source": "engine_mod_run_with_retries",
+      "target": "engine_mod_threadsleeper_sleep",
+      "relation": "calls",
+      "context": "call",
+      "confidence": "EXTRACTED",
+      "source_file": "engine/mod.rs",
+      "source_location": "L329",
+      "weight": 1.0
+    },
+    {
+      "source": "engine_mod_backoff_is_exponential_and_capped",
+      "target": "engine_mod_retrypolicy_new",
+      "relation": "calls",
+      "context": "call",
+      "confidence": "EXTRACTED",
+      "source_file": "engine/mod.rs",
+      "source_location": "L386",
+      "weight": 1.0
+    },
+    {
+      "source": "engine_mod_success_on_first_attempt_does_not_sleep",
+      "target": "engine_mod_run_with_retries",
+      "relation": "calls",
+      "context": "call",
+      "confidence": "EXTRACTED",
+      "source_file": "engine/mod.rs",
+      "source_location": "L401",
+      "weight": 1.0
+    },
+    {
+      "source": "engine_mod_success_on_first_attempt_does_not_sleep",
+      "target": "engine_mod_request",
+      "relation": "calls",
+      "context": "call",
+      "confidence": "EXTRACTED",
+      "source_file": "engine/mod.rs",
+      "source_location": "L403",
+      "weight": 1.0
+    },
+    {
+      "source": "engine_mod_success_on_first_attempt_does_not_sleep",
+      "target": "engine_mod_retrypolicy_new",
+      "relation": "calls",
+      "context": "call",
+      "confidence": "EXTRACTED",
+      "source_file": "engine/mod.rs",
+      "source_location": "L405",
+      "weight": 1.0
+    },
+    {
+      "source": "engine_mod_transient_failure_is_retried_with_exponential_backoff",
+      "target": "engine_mod_run_with_retries",
+      "relation": "calls",
+      "context": "call",
+      "confidence": "EXTRACTED",
+      "source_file": "engine/mod.rs",
+      "source_location": "L421",
+      "weight": 1.0
+    },
+    {
+      "source": "engine_mod_transient_failure_is_retried_with_exponential_backoff",
+      "target": "engine_mod_request",
+      "relation": "calls",
+      "context": "call",
+      "confidence": "EXTRACTED",
+      "source_file": "engine/mod.rs",
+      "source_location": "L423",
+      "weight": 1.0
+    },
+    {
+      "source": "engine_mod_transient_failure_is_retried_with_exponential_backoff",
+      "target": "engine_mod_retrypolicy_new",
+      "relation": "calls",
+      "context": "call",
+      "confidence": "EXTRACTED",
+      "source_file": "engine/mod.rs",
+      "source_location": "L425",
+      "weight": 1.0
+    },
+    {
+      "source": "engine_mod_elapsed_time_accumulates_across_attempts",
+      "target": "engine_mod_run_with_retries",
+      "relation": "calls",
+      "context": "call",
+      "confidence": "EXTRACTED",
+      "source_file": "engine/mod.rs",
+      "source_location": "L445",
+      "weight": 1.0
+    },
+    {
+      "source": "engine_mod_elapsed_time_accumulates_across_attempts",
+      "target": "engine_mod_request",
+      "relation": "calls",
+      "context": "call",
+      "confidence": "EXTRACTED",
+      "source_file": "engine/mod.rs",
+      "source_location": "L447",
+      "weight": 1.0
+    },
+    {
+      "source": "engine_mod_elapsed_time_accumulates_across_attempts",
+      "target": "engine_mod_retrypolicy_new",
+      "relation": "calls",
+      "context": "call",
+      "confidence": "EXTRACTED",
+      "source_file": "engine/mod.rs",
+      "source_location": "L449",
+      "weight": 1.0
+    },
+    {
+      "source": "engine_mod_fatal_exit_code_is_not_retried",
+      "target": "engine_mod_run_with_retries",
+      "relation": "calls",
+      "context": "call",
+      "confidence": "EXTRACTED",
+      "source_file": "engine/mod.rs",
+      "source_location": "L463",
+      "weight": 1.0
+    },
+    {
+      "source": "engine_mod_fatal_exit_code_is_not_retried",
+      "target": "engine_mod_request",
+      "relation": "calls",
+      "context": "call",
+      "confidence": "EXTRACTED",
+      "source_file": "engine/mod.rs",
+      "source_location": "L465",
+      "weight": 1.0
+    },
+    {
+      "source": "engine_mod_fatal_exit_code_is_not_retried",
+      "target": "engine_mod_retrypolicy_new",
+      "relation": "calls",
+      "context": "call",
+      "confidence": "EXTRACTED",
+      "source_file": "engine/mod.rs",
+      "source_location": "L467",
+      "weight": 1.0
+    },
+    {
+      "source": "engine_mod_retry_budget_is_exhausted_then_reported",
+      "target": "engine_mod_run_with_retries",
+      "relation": "calls",
+      "context": "call",
+      "confidence": "EXTRACTED",
+      "source_file": "engine/mod.rs",
+      "source_location": "L490",
+      "weight": 1.0
+    },
+    {
+      "source": "engine_mod_retry_budget_is_exhausted_then_reported",
+      "target": "engine_mod_request",
+      "relation": "calls",
+      "context": "call",
+      "confidence": "EXTRACTED",
+      "source_file": "engine/mod.rs",
+      "source_location": "L492",
+      "weight": 1.0
+    },
+    {
+      "source": "engine_mod_retry_budget_is_exhausted_then_reported",
+      "target": "engine_mod_retrypolicy_new",
+      "relation": "calls",
+      "context": "call",
+      "confidence": "EXTRACTED",
+      "source_file": "engine/mod.rs",
+      "source_location": "L494",
+      "weight": 1.0
+    },
+    {
+      "source": "engine_mod_zero_retries_runs_exactly_once",
+      "target": "engine_mod_run_with_retries",
+      "relation": "calls",
+      "context": "call",
+      "confidence": "EXTRACTED",
+      "source_file": "engine/mod.rs",
+      "source_location": "L516",
+      "weight": 1.0
+    },
+    {
+      "source": "engine_mod_zero_retries_runs_exactly_once",
+      "target": "engine_mod_request",
+      "relation": "calls",
+      "context": "call",
+      "confidence": "EXTRACTED",
+      "source_file": "engine/mod.rs",
+      "source_location": "L518",
+      "weight": 1.0
+    },
+    {
+      "source": "engine_mod_zero_retries_runs_exactly_once",
+      "target": "engine_mod_retrypolicy_new",
+      "relation": "calls",
+      "context": "call",
+      "confidence": "EXTRACTED",
+      "source_file": "engine/mod.rs",
+      "source_location": "L520",
+      "weight": 1.0
+    },
+    {
+      "source": "engine_mod_transient_io_errors_are_retried_then_surfaced",
+      "target": "engine_mod_run_with_retries",
+      "relation": "calls",
+      "context": "call",
+      "confidence": "EXTRACTED",
+      "source_file": "engine/mod.rs",
+      "source_location": "L540",
+      "weight": 1.0
+    },
+    {
+      "source": "engine_mod_transient_io_errors_are_retried_then_surfaced",
+      "target": "engine_mod_request",
+      "relation": "calls",
+      "context": "call",
+      "confidence": "EXTRACTED",
+      "source_file": "engine/mod.rs",
+      "source_location": "L542",
+      "weight": 1.0
+    },
+    {
+      "source": "engine_mod_transient_io_errors_are_retried_then_surfaced",
+      "target": "engine_mod_retrypolicy_new",
+      "relation": "calls",
+      "context": "call",
+      "confidence": "EXTRACTED",
+      "source_file": "engine/mod.rs",
+      "source_location": "L544",
+      "weight": 1.0
+    },
+    {
+      "source": "engine_mod_non_transient_errors_abort_immediately",
+      "target": "engine_mod_run_with_retries",
+      "relation": "calls",
+      "context": "call",
+      "confidence": "EXTRACTED",
+      "source_file": "engine/mod.rs",
+      "source_location": "L559",
+      "weight": 1.0
+    },
+    {
+      "source": "engine_mod_non_transient_errors_abort_immediately",
+      "target": "engine_mod_request",
+      "relation": "calls",
+      "context": "call",
+      "confidence": "EXTRACTED",
+      "source_file": "engine/mod.rs",
+      "source_location": "L561",
+      "weight": 1.0
+    },
+    {
+      "source": "engine_mod_non_transient_errors_abort_immediately",
+      "target": "engine_mod_retrypolicy_new",
+      "relation": "calls",
+      "context": "call",
+      "confidence": "EXTRACTED",
+      "source_file": "engine/mod.rs",
+      "source_location": "L563",
+      "weight": 1.0
+    },
+    {
+      "source": "engine_mod_engine_without_exit_code_is_successful",
+      "target": "engine_mod_retrypolicy_new",
+      "relation": "calls",
+      "context": "call",
+      "confidence": "EXTRACTED",
+      "source_file": "engine/mod.rs",
+      "source_location": "L575",
+      "weight": 1.0
+    },
+    {
+      "source": "engine_mod_informational_exit_codes_are_accepted",
+      "target": "engine_mod_run_with_retries",
+      "relation": "calls",
+      "context": "call",
+      "confidence": "EXTRACTED",
+      "source_file": "engine/mod.rs",
+      "source_location": "L588",
+      "weight": 1.0
+    },
+    {
+      "source": "engine_mod_informational_exit_codes_are_accepted",
+      "target": "engine_mod_request",
+      "relation": "calls",
+      "context": "call",
+      "confidence": "EXTRACTED",
+      "source_file": "engine/mod.rs",
+      "source_location": "L590",
+      "weight": 1.0
+    },
+    {
+      "source": "engine_mod_informational_exit_codes_are_accepted",
+      "target": "engine_mod_retrypolicy_new",
+      "relation": "calls",
+      "context": "call",
+      "confidence": "EXTRACTED",
+      "source_file": "engine/mod.rs",
+      "source_location": "L592",
+      "weight": 1.0
+    }
+  ],
+  "hyperedges": [],
+  "input_tokens": 0,
+  "output_tokens": 0
+}
