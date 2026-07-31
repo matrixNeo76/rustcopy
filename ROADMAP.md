@@ -2,7 +2,7 @@
 
 > **Stato Attuale**: 🟢 **Release 5.4.0 Notify Server (axum) rilasciata** (`Cargo.toml` = 5.4.0)
 > | 🔴 **3 difetti P0 aperti** dall'audit post-5.1.0 — `--restore-from` irraggiungibile, cifratura in OOM, nessuna decifratura: vedi `ANALYSIS.md` Parte 3 e la milestone 5.2.0
-> | 🎯 **Analisi di parità** vs TeraCopy / Cobian / ntfy nella sezione dedicata: le milestone 6.0.0, 6.1.0 e 7.0.0 ne derivano.
+> | 🎯 **Analisi di parità** vs TeraCopy / Cobian / ntfy nella sezione dedicata: le milestone 6.0.0, 6.1.0, 7.0.0 e 8.0.0 ne derivano.
 >
 > **Nota sulla numerazione**: i numeri di versione seguono le milestone funzionali, **non** una
 > sequenza rigida. La 5.4.0 (notify-server) è stata rilasciata prima della 5.2.0 (correttezza), che
@@ -11,7 +11,7 @@
 
 ---
 
-## 📅 Diagramma Gantt delle Release (v1.0 - v5.1)
+## 📅 Diagramma Gantt delle Release (v1.0 → v8.0)
 
 ```mermaid
 gantt
@@ -53,10 +53,18 @@ gantt
     F43-F45 Telegram, email, priorita                 :f43, 2026-10-20, 4d
     F32 Endpoint metriche Prometheus                  :f32, 2026-10-24, 3d
 
-    section 7.0.0 Interattivita desktop (parita TeraCopy)
+    section 7.0.0 Motore controllabile (parita TeraCopy)
     F46 Modalita sposta                               :f46, 2026-10-29, 2d
     F47-F49 Controlli interattivi e coda              :f47, 2026-11-01, 10d
     F50-F51 Cronologia e shell extension              :f50, 2026-11-12, 10d
+
+    section 8.0.0 Interfaccia grafica (Tauri)
+    F52 Ristrutturazione in workspace                 :f52, 2026-11-24, 3d
+    F53 Scheletro Tauri e comandi IPC                 :f53, 2026-11-27, 5d
+    F56 Gestione credenziali (Credential Manager)     :crit, f56, 2026-12-02, 4d
+    F54-F55 Sezioni Job e Settings                    :f54, 2026-12-06, 8d
+    F57-F59 Ruoli, progresso live, cronologia         :f57, 2026-12-14, 8d
+    F60 Installer, bundle e firma                     :f60, 2026-12-22, 4d
 ```
 
 ---
@@ -187,17 +195,20 @@ ma senza effetto).
 | **F41** | Notify-server come servizio persistente | 🟠 P1 | Parità ntfy | Dipende da F37. Oggi va avviato a mano o via NSSM/Task Scheduler. |
 | **F42** | Coda persistente + retry di consegna | 🟠 P1 | Parità ntfy | Oggi una notifica verso un canale irraggiungibile è **persa**: `dispatch_to_all` prova una volta sola. Il caso "il canale era giù per 30 secondi" oggi non è recuperabile. |
 | **F43** | `TelegramSink` | 🟡 P2 | Debito 5.4.0 | Era opzionale nel piano originale e non è stato implementato. |
-| **F44** | `EmailSink` (SMTP) | 🟡 P2 | Parità Cobian | Canale di notifica classico per gli ambienti enterprise, oggi assente. |
+| **F44** | `EmailSink` (SMTP) | 🟠 P1 | Parità Cobian | Canale di notifica classico degli ambienti enterprise, oggi assente. Implementazione come nuovo `NotificationSink` in `src/notify_sink.rs` — il trait esiste già, non serve toccare l'architettura. Candidato: crate `lettre` (client SMTP di riferimento in Rust), con **STARTTLS/SMTPS obbligatorio** e credenziali lette da env/keyring, **mai dal TOML di configurazione** (stessa regola di `crypto::resolve_key`). Da prevedere: destinatari multipli, oggetto configurabile con l'esito, e corpo derivato da `report_summary`. |
 | **F45** | Priorità e tag nel payload | 🟢 P3 | Parità ntfy | Oggi l'unico header inviato a ntfy è `Title`. |
 
 ---
 
-## 🖱️ Milestone 7.0.0 — Interattività desktop (parità TeraCopy)
+## 🖱️ Milestone 7.0.0 — Motore controllabile (parità TeraCopy)
 
-> ⚠️ Questa milestone cambia la natura del prodotto: da CLI a strumento desktop. Va affrontata solo
-> dopo che 5.2.0 (correttezza) e 6.0.0 (backup core) sono chiuse — costruire una GUI sopra
-> `--restore-from` rotto e una cifratura non ripristinabile amplificherebbe i difetti invece di
-> risolverli.
+> ⚠️ Questa milestone cambia la natura del prodotto: da CLI a strumento interattivo. Va affrontata
+> solo dopo che 5.2.0 (correttezza) e 6.0.0 (backup core) sono chiuse.
+>
+> È il **lavoro di libreria** che rende possibile la UI della milestone 8.0.0: pausa, ripresa e skip
+> per-file non sono un problema di interfaccia ma di motore, perché `robocopy.exe` è un processo
+> esterno non pilotabile a runtime. Va fatta **prima** della GUI, altrimenti si ottiene una finestra
+> con pulsanti collegati a nulla.
 
 | ID | Task | Priorità | Origine | Descrizione |
 |---|---|---|---|---|
@@ -207,6 +218,60 @@ ma senza effetto).
 | **F49** | Coda di job gestibile | 🟡 P2 | Parità TeraCopy | Dipende da F33 (concetto di job). |
 | **F50** | Cronologia trasferimenti navigabile | 🟢 P3 | Parità TeraCopy | I report JSON esistono già: serve un indice consultabile, non nuovi dati. |
 | **F51** | Shell extension per Explorer ("Copia con rustcopy") | 🟢 P3 | Parità TeraCopy | **Deliverable separato**: DLL COM registrata nel sistema (fattibile in Rust con `windows-rs`, ma è un binario di natura diversa, con installer e registrazione COM). Il costo più alto dell'intera roadmap. |
+
+---
+
+## 🖥️ Milestone 8.0.0 — Interfaccia grafica (Tauri)
+
+> ⚠️ **Fase finale della roadmap, e va mantenuta tale.** Una UI moltiplica la superficie di ciò che
+> c'è sotto: costruirla sopra i 3 difetti P0 aperti significherebbe dare un pulsante "Ripristina" a
+> una modalità restore irraggiungibile (**D1**) e un pulsante "Cifra" a una cifratura che va in OOM e
+> che nessun comando sa decifrare (**D3**/**D4**). Prerequisito non negoziabile: **5.2.0 chiusa**.
+
+### Relazione con la milestone 7.0.0
+
+7.0.0 e 8.0.0 si sovrappongono solo in apparenza. La divisione corretta è:
+
+- **7.0.0 rende il motore controllabile** (parte difficile): pausa/ripresa e skip per-file richiedono
+  di non usare `robocopy.exe` come processo esterno — un processo figlio non è pilotabile a runtime.
+  È lavoro di libreria, indipendente da qualunque UI.
+- **8.0.0 mette una faccia** su ciò che 7.0.0 ha reso possibile.
+
+Costruire la UI prima porterebbe a una finestra con pulsanti Pausa/Salta non collegati a nulla.
+L'unica parte di 7.0.0 che resta fuori dall'app Tauri è la shell extension (**F51**): una DLL COM che
+al massimo *lancia* l'app.
+
+| ID | Task | Priorità | Descrizione |
+|---|---|---|---|
+| **F52** | **Ristrutturazione in workspace Cargo** | 🔴 Prerequisito | Oggi il repo è un **package singolo**. Tauri porta con sé una toolchain JS (npm/vite), `tauri.conf.json`, icone e bundler: non deve entrare nel crate della CLI. Struttura proposta: `crates/rustcopy-core` (la lib attuale), `crates/rustcopy-cli`, `crates/rustcopy-gui`. Il notify-server può restare un bin feature-gated perché è puro Rust; la GUI no. |
+| **F53** | Scheletro Tauri + comandi IPC | 🟠 P1 | Tauri 2.x. La GUI è un **consumatore della lib** come lo è `notify-server`: i comandi `#[tauri::command]` chiamano `CopyEngine`/`ScanSummary`/`IngestReport`, non reimplementano logica. Nessuna regola di business nel frontend. |
+| **F54** | Sezione **Job** | 🟠 P1 | Creare/modificare/eseguire job. Dipende da **F33** (concetto di job) e **F34** (tipi di backup): senza, la UI può solo lanciare copie singole. |
+| **F55** | Sezione **Settings**: variabili e script | 🟠 P1 | Frontend di **F39** (comandi pre/post job) e delle variabili di configurazione. **Vedi l'avviso di sicurezza sotto: non è una semplice pagina di form.** |
+| **F56** | **Gestione credenziali** | 🔴 P0 della milestone | Credenziali SMB/NAS, SMTP, token notify, chiavi di cifratura. **Non implementare uno storage proprio**: usare il Windows Credential Manager (DPAPI) tramite il crate `keyring`. Deve **estendere** la convenzione esistente (`env:`/`file:` di `crypto::resolve_key`), non sostituirla con un formato nuovo. Nessun segreto nei file TOML/JSON scritti dalla UI. |
+| **F57** | Ruoli admin / operatore | 🟡 P2 | **Vedi l'avviso di sicurezza sotto.** Utile come prevenzione degli errori, non come confine di sicurezza. |
+| **F58** | Progresso live e controlli interattivi | 🟠 P1 | Dipende da **F47**. Progress bar, pausa/riprendi/salta, esito per-file. |
+| **F59** | Cronologia e report navigabili | 🟡 P2 | Dipende da **F50**. I report JSON esistono già: serve l'indice e la navigazione, non nuovi dati. |
+| **F60** | Installer, bundle e firma del codice | 🟡 P2 | MSI/NSIS via il bundler Tauri. Su Windows un eseguibile non firmato che chiede privilegi genera avvisi SmartScreen: da mettere in conto se distribuito. |
+
+### 🔐 Avvisi di sicurezza per F55/F56/F57 (da leggere prima di progettare)
+
+1. **I ruoli in un'app desktop non sono un confine di sicurezza.** Chiunque abbia una sessione locale
+   può eseguire `rustcopy.exe` direttamente, leggere il TOML o modificare i file dei job, scavalcando
+   completamente la UI. Il ruolo "operatore" serve a **impedire errori** (evitare che chi non deve
+   riconfiguri un job `--mirror`), non a impedire un'azione deliberata. Se serve un controllo accessi
+   reale, va messo lato server (API dei job autenticata), non nel client desktop: dichiaralo nella UI
+   invece di lasciar credere il contrario.
+
+2. **Script configurabili + servizio privilegiato = escalation di privilegi locale.** Se il servizio
+   di F37 gira come SYSTEM ed esegue gli script pre/post configurati dalla UI (F39/F55), un utente
+   non amministratore che può scrivere quello script ottiene esecuzione di codice come SYSTEM.
+   Mitigazioni: far girare il servizio con un account dedicato a privilegi minimi, **e/o** far
+   rifiutare al servizio gli script scrivibili da utenti non amministratori (verifica delle ACL prima
+   dell'esecuzione).
+
+3. **La UI non deve diventare una nuova sede dei segreti.** Il repository ha già una convenzione
+   funzionante (`env:NAME`, `file:PATH`, file `*.local.ps1` esclusi da git): F56 la estende al
+   Credential Manager, non introduce un formato parallelo.
 
 ---
 
