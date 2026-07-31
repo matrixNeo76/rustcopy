@@ -65,7 +65,7 @@ graph LR
 | `--hash-algo <ALGO>` | `sha256` | — | Algoritmo per la verifica checksum: `sha256` o `blake3`. |
 | `--html-report-path <PATH>`| *nessuno* | — | Genera un report visivo autonomo in formato HTML (valori interpolati sempre sottoposti ad escaping). |
 | `--webhook-url <URL>` | *nessuno* | — | Trasmette una notifica HTTP/HTTPS POST JSON a fine job (timeout 10s, errori reali riportati, non più ignorati). |
-| `--restore-from <PATH>` | *nessuno* | — | **[ROTTO — vedi D1/F24]** Modalità Disaster Recovery: inverte il backup Dest -> Source dal report JSON. Attualmente **non eseguibile**: clap richiede comunque `--source`/`--dest` e rifiuta il valore vuoto, quindi la modalità non è raggiungibile dalla CLI. |
+| `--restore-from <PATH>` | *nessuno* | — | Modalità Disaster Recovery: inverte il backup Dest -> Source dal report JSON. `--source`/`--dest` non richiesti in questa modalità (fix F24, verificato con test black-box). |
 | `--cloud-sync-target <URI>`| *nessuno* | — | **[NON IMPLEMENTATO]** Accettato per compatibilità futura; nessuna sincronizzazione viene eseguita. |
 | `--encrypt-aes256 <KEY>` | *nessuno* | — | Cifra ogni file in destinazione con **AES-256-GCM** dopo il trasferimento (nonce casuale per file). `KEY` può essere `env:NOME`, `file:PERCORSO` o una passphrase letterale (sconsigliata: visibile nella process list). |
 | `--install-service` | `false` | — | **[NON IMPLEMENTATO]** Accettato per compatibilità futura; nessun servizio viene registrato. |
@@ -101,15 +101,16 @@ webhook custom) — oppure al **notify-server** incluso in questo repo (`cargo b
 un solo punto di configurazione. Vedi la sezione [Notify Server](#-notify-server-notifiche-di-backup)
 più sotto.
 
-### 3. Ripristino da Disastro (Disaster Recovery Mode) — ⚠️ NON FUNZIONANTE
+### 3. Ripristino da Disastro (Disaster Recovery Mode)
 ```powershell
 robocopy_ingest.exe --restore-from E:\reports\robocopy_ingest_report.json
 ```
-> **Attenzione**: questo esempio **non funziona** nella versione corrente. Il comando termina con
-> `error: a value is required for '--source <PATH>'` perché `--source`/`--dest` restano obbligatori
-> anche in modalità restore. Difetto tracciato come **D1** in `ANALYSIS.md` e pianificato come **F24**
-> nella milestone 5.2.0. Nel frattempo il ripristino va eseguito come copia normale invertendo
-> manualmente sorgente e destinazione.
+`--source`/`--dest` non sono richiesti in questa modalità: vengono derivati (e invertiti) dal
+report JSON indicato. **Corretto e verificato con un test black-box reale** (F24, `ANALYSIS.md`
+D1): `--source`/`--dest` erano dichiarati `PathBuf` con `default_value = ""`, e clap tratta un
+default a stringa vuota come "nessun default", ignorando `required_unless_present` — l'eseguibile
+richiedeva sempre `--source` anche con `--restore-from` presente. Ora sono `Option<PathBuf>`,
+`None` quando omessi, esattamente come già avviene per `--config`.
 
 ---
 
@@ -146,7 +147,7 @@ del PATH di sistema, disinstallazione con ripristino del PATH — ciclo completo
 
 ```powershell
 # Installazione silenziosa (utile per deploy automatizzati)
-rustcopy-5.4.0-setup.exe /VERYSILENT /SUPPRESSMSGBOXES /NORESTART /TASKS="addtopath"
+rustcopy-5.4.1-setup.exe /VERYSILENT /SUPPRESSMSGBOXES /NORESTART /TASKS="addtopath"
 ```
 
 L'installer impacchetta il tool **così com'è oggi** (CLI, nessuna GUI). Non va confuso con la
@@ -219,11 +220,11 @@ Per dettagli tecnici approfonditi, diagrammi architetturali e roadmap di svilupp
 
 ---
 
-## 🧪 Esecuzione dei Test (149 di Base, 162 con `notify-server`)
+## 🧪 Esecuzione dei Test (152 di Base, 165 con `notify-server`)
 
 ```bash
-cargo test                              # 149 test: 131 unit di libreria, 12 black-box del binario, 6 di integrazione
-cargo test --features notify-server     # 162 test: +10 unit sul router axum, +3 end-to-end sui binari reali
+cargo test                              # 152 test: 133 unit di libreria, 13 black-box del binario, 6 di integrazione
+cargo test --features notify-server     # 165 test: +10 unit sul router axum, +3 end-to-end sui binari reali
 ```
 
 Esito atteso: `test result: ok.` su tutti i target, in entrambe le modalità.

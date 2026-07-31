@@ -80,21 +80,21 @@ fn baseline_copy_then_integrity_check_passes_and_report_is_written() {
         ],
     );
 
-    let inventory = scan::scan(&args.source, &args.pattern).expect("scan");
+    let inventory = scan::scan(args.source(), &args.pattern).expect("scan");
     assert_eq!(inventory.file_count(), 2, "only CSV files are ingested");
     assert_eq!(inventory.total_bytes, 350_000);
 
     let progress = ThroughputProgress::hidden(inventory.total_bytes);
     let outcome = NaiveCopyEngine::new()
-        .copy(&args.copy_request(args.dest.clone()), progress.as_ref())
+        .copy(&args.copy_request(args.dest().to_path_buf()), progress.as_ref())
         .expect("baseline copy");
     assert_eq!(outcome.files_copied, 2);
     assert_eq!(outcome.bytes_copied, 350_000);
     assert_eq!(progress.current_bytes(), 350_000);
 
     let check = integrity::verify(
-        &args.source,
-        &args.dest,
+        args.source(),
+        args.dest(),
         &inventory.files,
         args.hash_algo,
         progress.as_ref(),
@@ -118,10 +118,10 @@ fn integrity_failure_is_reported_end_to_end() {
     let dest = tempfile::tempdir().expect("dest");
     let args = args_for(source.path(), dest.path(), &["--verify-integrity"]);
 
-    let inventory = scan::scan(&args.source, &args.pattern).expect("scan");
+    let inventory = scan::scan(args.source(), &args.pattern).expect("scan");
     let outcome = NaiveCopyEngine::new()
         .copy(
-            &args.copy_request(args.dest.clone()),
+            &args.copy_request(args.dest().to_path_buf()),
             &CountingProgress::default(),
         )
         .expect("copy");
@@ -131,8 +131,8 @@ fn integrity_failure_is_reported_end_to_end() {
     std::fs::remove_file(dest.path().join("b.csv")).expect("remove");
 
     let check = integrity::verify(
-        &args.source,
-        &args.dest,
+        args.source(),
+        args.dest(),
         &inventory.files,
         args.hash_algo,
         &CountingProgress::default(),
@@ -165,7 +165,7 @@ fn mocked_robocopy_run_retries_then_produces_a_full_report() {
         ],
     );
 
-    let inventory = scan::scan(&args.source, &args.pattern).expect("scan");
+    let inventory = scan::scan(args.source(), &args.pattern).expect("scan");
 
     // First attempt: exit code 9 (copied something, but some files failed) -> retried.
     // Second attempt: exit code 1 (files copied) -> success.
@@ -179,7 +179,7 @@ fn mocked_robocopy_run_retries_then_produces_a_full_report() {
 
     let outcome = run_with_retries(
         &engine,
-        &args.copy_request(args.dest.clone()),
+        &args.copy_request(args.dest().to_path_buf()),
         &CountingProgress::default(),
         &args.retry_policy(),
         &sleeper,
@@ -224,7 +224,7 @@ fn mocked_robocopy_failure_is_reported_after_exhausting_retries() {
 
     let error = run_with_retries(
         &engine,
-        &args.copy_request(args.dest.clone()),
+        &args.copy_request(args.dest().to_path_buf()),
         &CountingProgress::default(),
         &args.retry_policy(),
         &RecordingSleeper::default(),
@@ -252,7 +252,7 @@ fn robocopy_and_baseline_metrics_are_compared_in_the_report() {
     let baseline_dest = tempfile::tempdir().expect("baseline dest");
     let args = args_for(source.path(), dest.path(), &["--compare-baseline"]);
 
-    let inventory = scan::scan(&args.source, &args.pattern).expect("scan");
+    let inventory = scan::scan(args.source(), &args.pattern).expect("scan");
 
     let engine = RobocopyEngine::with_runner(ScriptedRunner::new(vec![(
         robocopy_output(&[("a.csv", 1_000_000)]),
@@ -260,7 +260,7 @@ fn robocopy_and_baseline_metrics_are_compared_in_the_report() {
     )]));
     let mut robocopy_outcome = engine
         .copy(
-            &args.copy_request(args.dest.clone()),
+            &args.copy_request(args.dest().to_path_buf()),
             &CountingProgress::default(),
         )
         .expect("mocked robocopy");
@@ -304,7 +304,7 @@ fn dry_run_does_not_touch_the_destination() {
     let dest = dest_parent.path().join("untouched");
     let args = args_for(source.path(), &dest, &["--dry-run"]);
 
-    let request = args.copy_request(args.dest.clone());
+    let request = args.copy_request(args.dest().to_path_buf());
     assert!(request.dry_run);
     assert!(
         robocopy::build_args(&request).contains(&"/L".to_string()),
@@ -329,7 +329,7 @@ fn the_real_engine_reports_that_robocopy_needs_windows() {
 
     let error = RobocopyEngine::new()
         .copy(
-            &args.copy_request(args.dest.clone()),
+            &args.copy_request(args.dest().to_path_buf()),
             &CountingProgress::default(),
         )
         .expect_err("robocopy.exe cannot exist here");

@@ -376,6 +376,71 @@ fn unreachable_webhook_does_not_fail_the_backup() {
     );
 }
 
+#[cfg(windows)]
+#[test]
+fn restore_from_runs_end_to_end_without_source_or_dest() {
+    // F24 black-box test: everything lives under one tempdir, so nothing outside this test's own
+    // sandbox can ever be touched (no real user paths, no network shares — see D1/F24 in
+    // ANALYSIS.md/ROADMAP.md for why this is exactly the kind of scenario a unit test parsing
+    // clap args in isolation cannot catch: the previous "fix" passed its own test while the real
+    // binary remained unusable).
+    let sandbox = tempfile::tempdir().expect("sandbox");
+    let original = sandbox.path().join("original");
+    let backup_dest = sandbox.path().join("backup");
+    let report_path = sandbox.path().join("backup_report.json");
+
+    // 1. Seed the "original" data and back it up to "backup" (a normal, forward run).
+    std::fs::create_dir_all(&original).expect("create original");
+    std::fs::write(original.join("important.csv"), b"irreplaceable,data\n1,2\n").expect("seed file");
+
+    let backup_output = run(&[
+        "--source",
+        original.to_str().expect("utf8"),
+        "--dest",
+        backup_dest.to_str().expect("utf8"),
+        "--verify-integrity",
+        "--report-path",
+        report_path.to_str().expect("utf8"),
+        "--log-path",
+        sandbox.path().join("backup.log").to_str().expect("utf8"),
+    ]);
+    assert!(
+        backup_output.status.success(),
+        "seed backup must succeed; stderr: {}",
+        stderr_of(&backup_output)
+    );
+    assert!(backup_dest.join("important.csv").is_file());
+
+    // 2. Simulate data loss: remove the file from "original".
+    std::fs::remove_file(original.join("important.csv")).expect("simulate data loss");
+    assert!(!original.join("important.csv").exists());
+
+    // 3. Restore mode: `--restore-from` alone, with NEITHER `--source` NOR `--dest` on the
+    // command line. This is the exact invocation the README documents and the one that used to
+    // fail immediately with "a value is required for '--source <PATH>'" before clap ever got to
+    // read the report — the whole point of this test is that the compiled binary, not just
+    // clap's own arg parser in isolation, accepts and executes this.
+    let restore_output = run(&[
+        "--restore-from",
+        report_path.to_str().expect("utf8"),
+        "--log-path",
+        sandbox.path().join("restore.log").to_str().expect("utf8"),
+        "--report-path",
+        sandbox.path().join("restore_report.json").to_str().expect("utf8"),
+    ]);
+    assert!(
+        restore_output.status.success(),
+        "restore must succeed; stderr: {}",
+        stderr_of(&restore_output)
+    );
+
+    // 4. The "lost" file must be back, with its original content, restored FROM the backup
+    // destination BACK TO the original source path (the direction is reversed, by design).
+    let restored_content =
+        std::fs::read_to_string(original.join("important.csv")).expect("file must be restored");
+    assert_eq!(restored_content, "irreplaceable,data\n1,2\n");
+}
+
 /// Guards the assumption the Linux tests rely on: the fixture helper is deterministic.
 #[test]
 fn fixtures_are_created_where_expected() {

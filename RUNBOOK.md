@@ -94,17 +94,18 @@ un file TOML.
 
 ---
 
-### 5. Disaster Recovery / Ripristino da Report JSON (Reverse Restore) — ⚠️ NON FUNZIONANTE
+### 5. Disaster Recovery / Ripristino da Report JSON (Reverse Restore)
 Ripristino guidato in caso di guasto del server principale partendo dal report JSON di backup:
 ```powershell
 .\target\release\robocopy_ingest.exe `
   --restore-from "\\FILESERV01\dati01\provarust\robocopy_ingest_report.json"
 ```
-> **⚠️ Questo comando NON è tra quelli verificati sul campo** (a differenza dei casi 1-4) e allo stato
-> attuale fallisce con `error: a value is required for '--source <PATH>'`. Difetto **D1** in
-> `ANALYSIS.md`, pianificato come **F24**. **Procedura di ripristino alternativa da usare finché non è
-> risolto**: eseguire una copia normale invertendo manualmente sorgente e destinazione, es.
-> `--source "\\FILESERV01\dati01\provarust" --dest "C:\Users\auresystem\repos"`.
+**Corretto e verificato** (F24, `ANALYSIS.md` D1): `--source`/`--dest` sono ora `Option<PathBuf>`
+e non richiesti in questa modalità — il difetto precedente (`--source`/`--dest` sempre obbligatori
+a causa di un `default_value = ""` che clap trattava come "nessun default") è stato risolto. Test
+black-box dedicato in `tests/cli_smoke.rs` (`restore_from_runs_end_to_end_without_source_or_dest`):
+simula una perdita di file in una sandbox temporanea isolata e ne verifica il recupero completo
+tramite questo stesso comando, senza `--source`/`--dest`.
 
 ---
 
@@ -115,5 +116,5 @@ Ripristino guidato in caso di guasto del server principale partendo dal report J
 | 📘 **[README.md](file:///c:/Users/auresystem/repos/robocopy-ingest-cli/README.md)** | Guida generale, tabella flag CLI e panoramica di alto livello. |
 | 📖 **[RUNBOOK.md](file:///c:/Users/auresystem/repos/robocopy-ingest-cli/RUNBOOK.md)** | **[QUESTO DOCUMENTO]** Guida operativa, backup multi-sorgente e comandi reali testati. |
 | 📄 **[ARCHITECTURE.md](file:///c:/Users/auresystem/repos/robocopy-ingest-cli/ARCHITECTURE.md)** | Architettura interna v5.1.0, diagrammi di flusso e mappa dei moduli Rust. |
-| 📊 **[ANALYSIS.md](file:///c:/Users/auresystem/repos/robocopy-ingest-cli/ANALYSIS.md)** | Diagnosi di robustezza, tuning 3x performance e 149 test di validazione (162 con `notify-server`). |
+| 📊 **[ANALYSIS.md](file:///c:/Users/auresystem/repos/robocopy-ingest-cli/ANALYSIS.md)** | Diagnosi di robustezza, tuning 3x performance e 152 test di validazione (165 con `notify-server`). |
 | 🗺️ **[ROADMAP.md](file:///c:/Users/auresystem/repos/robocopy-ingest-cli/ROADMAP.md)** | Diagramma Gantt dello storico delle release (v1.0 - v5.1). |

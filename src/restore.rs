@@ -91,8 +91,8 @@ mod tests {
         std::fs::write(&path, json).expect("write");
 
         let restore_args = build_restore_args(&path, None).expect("restore args");
-        assert_eq!(restore_args.source, PathBuf::from("E:/warehouse"));
-        assert_eq!(restore_args.dest, PathBuf::from("D:/landing"));
+        assert_eq!(restore_args.source, Some(PathBuf::from("E:/warehouse")));
+        assert_eq!(restore_args.dest, Some(PathBuf::from("D:/landing")));
         assert_eq!(restore_args.pattern, "*.csv");
         assert!(restore_args.verify_integrity);
     }

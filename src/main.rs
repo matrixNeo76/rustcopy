@@ -77,8 +77,8 @@ async fn run(mut args: Args) -> Result<bool> {
 
     let log = logging::init(&args.log_path).context("cannot initialise the log file")?;
     tracing::info!(
-        source = %args.source.display(),
-        dest = %args.dest.display(),
+        source = %args.source().display(),
+        dest = %args.dest().display(),
         pattern = %args.pattern,
         threads = args.threads,
         retries = args.retries,
@@ -165,7 +165,7 @@ async fn execute(args: &Args, child_pid: Arc<AtomicU32>) -> Result<RunOutcome> {
         println!(
             "warning: no file matching {} found in {}",
             args.pattern,
-            args.source.display()
+            args.source().display()
         );
     }
 
@@ -174,9 +174,9 @@ async fn execute(args: &Args, child_pid: Arc<AtomicU32>) -> Result<RunOutcome> {
     check_mirror_safety(args, &inventory)?;
 
     if !args.dry_run {
-        tokio::fs::create_dir_all(&args.dest)
+        tokio::fs::create_dir_all(args.dest())
             .await
-            .map_err(|error| IngestError::io(&args.dest, error))
+            .map_err(|error| IngestError::io(args.dest(), error))
             .context("cannot create the destination directory")?;
     }
 
@@ -289,7 +289,7 @@ async fn execute(args: &Args, child_pid: Arc<AtomicU32>) -> Result<RunOutcome> {
 /// which counts files/bytes without materialising every path in RAM — the whole point of the
 /// flag on multi-million file trees.
 async fn inventory_source(args: &Args) -> Result<ScanSummary> {
-    let source = args.source.clone();
+    let source = args.source().to_path_buf();
     let pattern = args.pattern.clone();
     let no_prescan = args.no_prescan;
 
@@ -335,7 +335,7 @@ async fn inventory_source(args: &Args) -> Result<ScanSummary> {
 /// `--force-purge` wasn't given, the run aborts (or, on an interactive terminal, asks for
 /// confirmation) rather than proceeding blind.
 fn check_mirror_safety(args: &Args, inventory: &ScanSummary) -> Result<()> {
-    if !args.mirror || args.force_purge || !args.dest.exists() {
+    if !args.mirror || args.force_purge || !args.dest().exists() {
         return Ok(());
     }
     if inventory.total_files_hint.is_some() {
@@ -354,7 +354,7 @@ fn check_mirror_safety(args: &Args, inventory: &ScanSummary) -> Result<()> {
         .map(|f| normalize_for_compare(&f.relative_path))
         .collect();
 
-    let dest_all = scan::scan(&args.dest, "*").context("cannot scan the destination for the mirror safety check")?;
+    let dest_all = scan::scan(args.dest(), "*").context("cannot scan the destination for the mirror safety check")?;
     let extraneous: Vec<&Path> = dest_all
         .files
         .iter()
@@ -369,7 +369,7 @@ fn check_mirror_safety(args: &Args, inventory: &ScanSummary) -> Result<()> {
     let count = extraneous.len();
     tracing::warn!(
         count,
-        dest = %args.dest.display(),
+        dest = %args.dest().display(),
         "mirror mode would purge destination files not present in the source"
     );
 
@@ -377,7 +377,7 @@ fn check_mirror_safety(args: &Args, inventory: &ScanSummary) -> Result<()> {
         eprintln!(
             "\n--mirror would delete {count} file(s) from {} that are not in the source \
              (first few: {}).",
-            args.dest.display(),
+            args.dest().display(),
             extraneous
                 .iter()
                 .take(5)
@@ -408,7 +408,7 @@ fn normalize_for_compare(path: &Path) -> PathBuf {
 async fn encrypt_destination(args: &Args, inventory: &ScanSummary, key_spec: &str) -> Result<usize> {
     let key = robocopy_ingest::crypto::resolve_key(key_spec)?;
     let manager = CryptoManager::new(&key)?;
-    let dest_root = args.dest.clone();
+    let dest_root = args.dest().to_path_buf();
     let files = inventory.files.clone();
 
     let count = tokio::task::spawn_blocking(move || -> Result<usize, IngestError> {
@@ -447,7 +447,7 @@ async fn transfer(
     let progress = new_progress(args, inventory.total_bytes, "robocopy");
     let poller = spawn_dest_poller(args, Arc::clone(&progress));
 
-    let request = args.copy_request(args.dest.clone());
+    let request = args.copy_request(args.dest().to_path_buf());
     let policy = args.retry_policy();
     let sink = Arc::clone(&progress);
     let started = Instant::now();
@@ -491,7 +491,7 @@ async fn transfer(
             // times robocopy retries) kept exhausting the retry budget. A real scan of what's
             // actually on disk at the destination is the only way to get a trustworthy total
             // in that case.
-            let dest_for_count = args.dest.clone();
+            let dest_for_count = args.dest().to_path_buf();
             let observed = tokio::task::spawn_blocking(move || scan::inventory(&dest_for_count, "*"))
                 .await
                 .ok()
@@ -532,7 +532,7 @@ async fn transfer(
 
 /// Time the naive baseline copy into a temporary directory next to the destination.
 async fn baseline(args: &Args, inventory: &ScanSummary) -> Result<CopyOutcome> {
-    let temp = baseline_dir(&args.dest)?;
+    let temp = baseline_dir(args.dest())?;
     let dest = temp.path().to_path_buf();
     tracing::info!(path = %dest.display(), "starting naive baseline copy");
     println!("\nRunning the naive baseline copy (single threaded, file by file)...");
@@ -576,8 +576,8 @@ async fn verify(args: &Args, inventory: &ScanSummary) -> Result<IntegrityCheck> 
     println!("\nVerifying integrity with {:?}...", args.hash_algo);
     let progress = new_progress(args, inventory.total_bytes, "verify");
 
-    let source = args.source.clone();
-    let dest = args.dest.clone();
+    let source = args.source().to_path_buf();
+    let dest = args.dest().to_path_buf();
     let files = inventory.files.clone();
     let algo = args.hash_algo;
     let sink = Arc::clone(&progress);
@@ -618,7 +618,7 @@ fn spawn_dest_poller(
     if args.dry_run {
         return None;
     }
-    let dest = args.dest.clone();
+    let dest = args.dest().to_path_buf();
     let already_present = scan::directory_size(&dest);
 
     Some(tokio::spawn(async move {

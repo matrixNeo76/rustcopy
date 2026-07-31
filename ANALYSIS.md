@@ -116,10 +116,14 @@ Se l'applicazione Rust intercetta `Ctrl+C` e si arresta senza terminare il proce
 
 ## 🛑 3.1 Difetti aperti confermati
 
-### D1 — `--restore-from` è tuttora inutilizzabile (REGRESSIONE DICHIARATA COME RISOLTA)
+### D1 — `--restore-from` era tuttora inutilizzabile ✅ RISOLTO (F24, 31 Luglio 2026)
 
-**Gravità: ALTA.** La 5.1.0 dichiarava risolto il problema "`--source`/`--dest` obbligatori anche in
-modalità restore". **Non lo è.** Il fix applicato è stato:
+**Stato: chiuso e verificato.** Vedi in fondo alla voce per il fix reale e la prova. Il resto della
+sezione è lasciato intatto come diagnosi storica di **come** il difetto è stato mancato due volte
+di seguito — è la parte istruttiva.
+
+**Gravità (storica): ALTA.** La 5.1.0 dichiarava risolto il problema "`--source`/`--dest` obbligatori
+anche in modalità restore". **Non lo era.** Il fix applicato era stato:
 
 ```rust
 #[arg(long, required_unless_present = "restore_from", default_value = "")]
@@ -149,6 +153,38 @@ layer di verifica era allineato alla narrazione, non al comportamento.
 **Correzione proposta**: rimuovere `default_value = ""` e portare `source`/`dest` a `Option<PathBuf>`
 (con accessor che fallisce esplicitamente fuori dalla modalità restore), oppure `default_value_if` su
 `restore_from`. In entrambi i casi **serve un test black-box** che esegua il binario.
+
+#### ✅ Fix reale e verifica (31 Luglio 2026)
+
+Prima di applicare la correzione proposta sopra, la causa esatta è stata isolata con una
+**riproduzione minima fuori da questo crate** (progetto Rust a parte, solo `clap`), per escludere
+qualunque interferenza da altro codice del progetto:
+
+```rust
+#[arg(long, required_unless_present = "restore_from", default_value = "")]
+source: PathBuf,
+```
+→ `cargo run -- --restore-from foo.json` fallisce con lo stesso errore, **anche in un progetto
+minimale**. Con `default_value = "."` (non vuoto) funziona. Con `Option<PathBuf>` e nessun
+`default_value` funziona. **Causa esatta confermata**: clap tratta un `default_value` a stringa
+vuota come "nessun default", quindi ignora `required_unless_present` e mantiene l'argomento
+obbligatorio sempre — non è un problema di `PathBuf`, è specifico della stringa vuota.
+
+Applicato `Option<PathBuf>` (la correzione architetturalmente corretta già indicata sopra):
+`Args::source()`/`Args::dest()` restituiscono `&Path`, con un invariante documentato (clap garantisce
+`Some` fuori dalla modalità restore) verificato anche da un test dedicato che il panic scatti solo se
+quell'invariante viene violato direttamente in Rust, non dalla CLI reale.
+
+**La lezione del "Perché i test non l'hanno intercettato" è stata applicata, non solo annotata**:
+aggiunto `tests/cli_smoke.rs::restore_from_runs_end_to_end_without_source_or_dest`, che esegue il
+**binario compilato** (non `build_restore_args()` in isolamento) dentro una sandbox `tempfile::tempdir()`
+dedicata: crea un backup reale, simula una perdita di file, lancia
+`--restore-from <report> ` **senza `--source`/`--dest`**, e verifica che il file torni con il
+contenuto originale. Verificato anche manualmente via PowerShell nativa (non solo tramite l'harness
+di test Rust) per escludere artefatti di quoting della shell.
+
+`cargo test` (base): 133 unit + 13 black-box + 6 integrazione = **152** (era 149).
+`cargo test --features notify-server`: **165** (era 162).
 
 ---
 
@@ -313,7 +349,7 @@ Proposte ordinate per rapporto valore/rischio, motivate da problemi osservati su
 
 | Priorità | Voci | Razionale |
 |---|---|---|
-| **P0** | D1, D3, D4 | Funzionalità dichiarate funzionanti che non lo sono, di cui due riguardano il **recupero dei dati**. |
+| **P0** | ~~D1~~ ✅, D3, D4 | Funzionalità dichiarate funzionanti che non lo sono, di cui due riguardano il **recupero dei dati**. D1 risolto e verificato il 31 Luglio 2026 (F24). |
 | **P1** | D2, D5, D6, D7 | Correttezza e coerenza: flag muti, blocco del runtime, versionamento dello schema, semantica delle junction. |
 | **P2** | D8, D9, D10 + O1-O10 | Debito tecnico, ergonomia operativa ed evoluzione funzionale. |
 

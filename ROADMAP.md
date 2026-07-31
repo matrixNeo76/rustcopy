@@ -1,7 +1,8 @@
 # 🗺️ Roadmap di Progetto — robocopy-ingest-cli
 
 > **Stato Attuale**: 🟢 **Release 5.4.0 Notify Server (axum) rilasciata** (`Cargo.toml` = 5.4.0)
-> | 🔴 **3 difetti P0 aperti** dall'audit post-5.1.0 — `--restore-from` irraggiungibile, cifratura in OOM, nessuna decifratura: vedi `ANALYSIS.md` Parte 3 e la milestone 5.2.0
+> | ✅ **F24 (`--restore-from`) risolto e verificato** il 31 Luglio 2026 — vedi `ANALYSIS.md` D1
+> | 🔴 **2 difetti P0 ancora aperti** dall'audit post-5.1.0 — cifratura in OOM (D3), nessuna decifratura (D4): vedi `ANALYSIS.md` Parte 3 e la milestone 5.2.0
 > | 🎯 **Analisi di parità** vs TeraCopy / Cobian / ntfy nella sezione dedicata: le milestone 6.0.0, 6.1.0, 7.0.0 e 8.0.0 ne derivano.
 >
 > **Nota sulla numerazione**: i numeri di versione seguono le milestone funzionali, **non** una
@@ -25,7 +26,7 @@ gantt
     Release 5.1.0 Robustness & Encoding (F21/F22/F23) :done, m3, 2026-07-30, 1d
 
     section 5.2.0 Correttezza (P0/P1)
-    F24 Restore Mode realmente eseguibile             :crit, f24, 2026-08-03, 2d
+    F24 Restore Mode realmente eseguibile             :done, f24, 2026-07-31, 1d
     F25 Cifratura a blocchi + decifratura             :crit, f25, 2026-08-05, 3d
     F26 Flag muti e coerenza schema/junction          :f26, 2026-08-08, 2d
 
@@ -80,7 +81,7 @@ gantt
 | **v5.1.0** | **F23: Child Process Kill Guard** | `[x] Completato` | PID del child `robocopy.exe` tracciato via `Arc<AtomicU32>`; Ctrl+C termina solo quel processo, non più ogni `robocopy.exe` sull'host. |
 | **v5.1.0** | **Crypto reale (AES-256-GCM)** | `[x] Completato` | `--encrypt-aes256` cifra realmente i file in destinazione (in precedenza era uno XOR mai invocato). Testato end-to-end su Windows. |
 | **v5.1.0** | **Webhook HTTPS affidabile** | `[x] Completato` | `src/notify.rs` riscritto su `reqwest`+`rustls`: HTTPS, timeout, controllo status code, errore propagato nel report (`webhook_error`). |
-| **v5.1.0** | **Restore Mode senza `--source`/`--dest`** | `[!] NON RIUSCITO` | Dichiarato risolto ma **non funzionante**: clap rifiuta `default_value = ""` su `PathBuf`, quindi `--source` resta obbligatorio in ogni invocazione. Vedi D1 in `ANALYSIS.md`. Ripianificato come **F24**. |
+| **v5.1.0** | **Restore Mode senza `--source`/`--dest`** | `[x] Completato in F24` (31 Luglio 2026) | Il tentativo originale in 5.1.0 non aveva funzionato (clap trattava `default_value = ""` come "nessun default", ignorando `required_unless_present"). Risolto con `Option<PathBuf>` e verificato con test black-box reale. Vedi D1 in `ANALYSIS.md` e **F24** qui sotto. |
 
 ---
 
@@ -91,7 +92,7 @@ verificati eseguendo il binario**, non ipotesi.
 
 | ID | Task | Priorità | Difetto | Descrizione |
 |---|---|---|---|---|
-| **F24** | Restore Mode realmente eseguibile | 🔴 P0 | D1 | Rimuovere `default_value = ""` (clap lo rifiuta prima di valutare `required_unless_present`); portare `source`/`dest` a `Option<PathBuf>` o usare `default_value_if`. **Obbligatorio**: test black-box che esegua il binario con `--restore-from`, non solo `build_restore_args()`. |
+| **F24** | Restore Mode realmente eseguibile | `[x] Completato` (31 Luglio 2026) | D1 | Causa isolata con una riproduzione minima fuori dal crate: clap tratta `default_value = ""` come "nessun default", ignorando `required_unless_present`. Portato `source`/`dest` a `Option<PathBuf>` con accessor `Args::source()`/`Args::dest()`. Verificato con `tests/cli_smoke.rs::restore_from_runs_end_to_end_without_source_or_dest`: backup reale → perdita di file simulata in sandbox `tempdir` isolata → `--restore-from` senza `--source`/`--dest` → file recuperato con contenuto corretto. Confermato anche via PowerShell nativa. |
 | **F25a** | Cifratura a blocchi (streaming) | 🔴 P0 | D3 | `std::fs::read` carica ogni file interamente in RAM: 50 GB → OOM. Passare ad AEAD a chunk da 1 MiB su file temporaneo + rename atomico. |
 | **F25b** | Comando di decifratura | 🔴 P0 | D4 | Oggi un backup cifrato **non è ripristinabile con lo strumento stesso**. Aggiungere `--decrypt` e integrare la decifratura in `--restore-from`. |
 | **F26a** | Flag muti censiti | 🟠 P1 | D2 | `--fast-verify` e `--ignore-transient-missing` non sono letti da nessun modulo: implementarli (vedi F28) o marcarli `[NON IMPLEMENTATO]` come gli altri. |
@@ -225,9 +226,9 @@ ma senza effetto).
 ## 🖥️ Milestone 8.0.0 — Interfaccia grafica (Tauri)
 
 > ⚠️ **Fase finale della roadmap, e va mantenuta tale.** Una UI moltiplica la superficie di ciò che
-> c'è sotto: costruirla sopra i 3 difetti P0 aperti significherebbe dare un pulsante "Ripristina" a
-> una modalità restore irraggiungibile (**D1**) e un pulsante "Cifra" a una cifratura che va in OOM e
-> che nessun comando sa decifrare (**D3**/**D4**). Prerequisito non negoziabile: **5.2.0 chiusa**.
+> c'è sotto: costruirla sopra i difetti P0 ancora aperti significherebbe dare un pulsante "Cifra" a
+> una cifratura che va in OOM e che nessun comando sa decifrare (**D3**/**D4** — **D1**, il restore
+> irraggiungibile, è stato risolto in **F24**). Prerequisito non negoziabile: **5.2.0 chiusa**.
 
 ### Relazione con la milestone 7.0.0
 
@@ -316,7 +317,7 @@ insidie note — rimane nel repo come riferimento storico).
 - **v3.0.0**: Standalone HTML5 Dashboard Generator, State Cache & Deduplicazione (`.ingest_cache`) — *cache mai collegata alla pipeline, vedi v5.0.0*.
 - **v4.0.0**: Live Web Server HTTP Dashboard (pagina statica), Zero-Trust AES-256 Streaming Encryption (all'epoca uno XOR, corretto in v5.1.0).
 - **v5.0.0**: Scaffolding per Direct Cloud Sync (S3/Azure) e Windows Service Daemon — entrambi mock, non implementati.
-- **v5.1.0**: Mirror Safety Threshold reale, decodifica CP850 reale, kill mirato del child process, crypto AES-256-GCM reale, webhook HTTPS affidabile. *(Il fix Restore Mode dichiarato in questa release non ha funzionato — vedi F24.)*
+- **v5.1.0**: Mirror Safety Threshold reale, decodifica CP850 reale, kill mirato del child process, crypto AES-256-GCM reale, webhook HTTPS affidabile. *(Il fix Restore Mode dichiarato in questa release non aveva funzionato — risolto definitivamente in **F24**, 31 Luglio 2026.)*
 - **v5.4.0**: Notify Server basato su axum (binario separato, feature-gated), canali multipli (log/ntfy/webhook generico) da configurazione TOML. Sostituisce `--serve-dashboard`/`src/server.rs` (rimossi).
 
 ## 📌 Debito tecnico noto (non ancora pianificato)

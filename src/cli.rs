@@ -1,6 +1,6 @@
 //! Command line interface definition.
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use clap::Parser;
 
@@ -38,13 +38,23 @@ pub struct Args {
 
     /// Source directory containing the CSV files to ingest.
     /// Not required when --restore-from is given (it is derived from the backup report).
-    #[arg(long, value_name = "PATH", required_unless_present = "restore_from", default_value = "")]
-    pub source: PathBuf,
+    ///
+    /// F24 fix: this used to be a plain `PathBuf` with `default_value = ""` alongside
+    /// `required_unless_present`, on the assumption that an empty-string default would let clap
+    /// skip the arg when --restore-from was present. It didn't: clap treats an empty-string
+    /// default as no default at all, so the arg stayed unconditionally required and
+    /// `--restore-from` was unreachable from the CLI no matter what was passed (reproduced with a
+    /// minimal clap repro outside this crate, and confirmed native PowerShell, not just this
+    /// crate's own test harness, hit the same error). `Option<PathBuf>` sidesteps the whole
+    /// default-value question: clap simply leaves it `None` when omitted, exactly like it already
+    /// does for `--config`/`--restore-from` above.
+    #[arg(long, value_name = "PATH", required_unless_present = "restore_from")]
+    pub source: Option<PathBuf>,
 
     /// Destination directory for the ingested files.
     /// Not required when --restore-from is given (it is derived from the backup report).
-    #[arg(long, value_name = "PATH", required_unless_present = "restore_from", default_value = "")]
-    pub dest: PathBuf,
+    #[arg(long, value_name = "PATH", required_unless_present = "restore_from")]
+    pub dest: Option<PathBuf>,
 
     /// File pattern to match (robocopy file filter / glob on the file name). Defaults to "*" (all files).
     #[arg(long, default_value = "*", value_name = "GLOB")]
@@ -200,17 +210,33 @@ pub struct Args {
 }
 
 impl Args {
+    /// Real path to the source directory.
+    ///
+    /// Panics if called before `validate()` has confirmed `--source` was supplied — clap's
+    /// `required_unless_present = "restore_from"` guarantees it is `Some` on every code path that
+    /// isn't short-circuited by restore mode (`validate()` returns early for that case, and
+    /// `restore::build_restore_args` always supplies both paths explicitly), so this is an
+    /// invariant violation, not a user-facing error, if it ever fires.
+    pub fn source(&self) -> &Path {
+        self.source
+            .as_deref()
+            .expect("--source is required unless --restore-from is given, enforced by clap")
+    }
+
+    /// Real path to the destination directory. See [`Self::source`] for the invariant.
+    pub fn dest(&self) -> &Path {
+        self.dest
+            .as_deref()
+            .expect("--dest is required unless --restore-from is given, enforced by clap")
+    }
+
     /// Merge non-None fields from `config` into `self` where CLI flags were not explicitly passed.
     pub fn merge_config(&mut self, config: crate::config::IngestConfig) {
-        if self.source.as_os_str().is_empty() {
-            if let Some(src) = config.source {
-                self.source = src;
-            }
+        if self.source.is_none() {
+            self.source = config.source;
         }
-        if self.dest.as_os_str().is_empty() {
-            if let Some(dst) = config.dest {
-                self.dest = dst;
-            }
+        if self.dest.is_none() {
+            self.dest = config.dest;
         }
         if let Some(pat) = config.pattern {
             // Only apply the config file's pattern when the CLI still holds clap's own default
@@ -294,21 +320,23 @@ impl Args {
         if !(MIN_THREADS as u16..=MAX_THREADS).contains(&self.threads) {
             return Err(IngestError::InvalidThreads(self.threads));
         }
-        if !self.source.exists() {
-            return Err(IngestError::SourceMissing(self.source.clone()));
+        let source = self.source();
+        let dest = self.dest();
+        if !source.exists() {
+            return Err(IngestError::SourceMissing(source.to_path_buf()));
         }
-        if !self.source.is_dir() {
-            return Err(IngestError::SourceNotADirectory(self.source.clone()));
+        if !source.is_dir() {
+            return Err(IngestError::SourceNotADirectory(source.to_path_buf()));
         }
-        if self.dest.exists() && !self.dest.is_dir() {
-            return Err(IngestError::DestNotADirectory(self.dest.clone()));
+        if dest.exists() && !dest.is_dir() {
+            return Err(IngestError::DestNotADirectory(dest.to_path_buf()));
         }
         if self.pattern.trim().is_empty() {
             return Err(IngestError::EmptyPattern);
         }
         // F3.4: prevent copying a directory into itself.
-        let source_canonical = self.source.canonicalize().unwrap_or_else(|_| self.source.clone());
-        let dest_canonical = self.dest.canonicalize().unwrap_or_else(|_| self.dest.clone());
+        let source_canonical = source.canonicalize().unwrap_or_else(|_| source.to_path_buf());
+        let dest_canonical = dest.canonicalize().unwrap_or_else(|_| dest.to_path_buf());
         if source_canonical == dest_canonical {
             return Err(IngestError::SourceEqualsDestination(source_canonical));
         }
@@ -357,7 +385,7 @@ impl Args {
     /// Request handed to the copy engines.
     pub fn copy_request(&self, dest: PathBuf) -> CopyRequest {
         CopyRequest {
-            source: self.source.clone(),
+            source: self.source().to_path_buf(),
             dest,
             pattern: self.pattern.clone(),
             threads: self.threads,
@@ -421,6 +449,37 @@ mod tests {
     fn source_and_dest_are_required() {
         assert!(Args::try_parse_from(["robocopy_ingest"]).is_err());
         assert!(Args::try_parse_from(["robocopy_ingest", "--source", "."]).is_err());
+    }
+
+    /// F24 regression test: `--restore-from` alone, with neither `--source` nor `--dest`, must
+    /// parse successfully. This is the exact invocation from the README's disaster-recovery
+    /// example, and the one a minimal clap repro (outside this crate) proved would fail with
+    /// "a value is required for '--source <PATH>' but none was supplied" — caused by
+    /// `default_value = ""` making clap treat the arg as unconditionally required, silently
+    /// ignoring `required_unless_present`. This test parses only (no filesystem access, no
+    /// tempdir needed): it exists to catch a clap-level regression, not to exercise the restore
+    /// flow itself (see `tests/cli_smoke.rs` for a black-box test that actually runs the compiled
+    /// binary end-to-end against a tempdir-only fixture).
+    #[test]
+    fn restore_from_alone_is_sufficient() {
+        let args = Args::try_parse_from(["robocopy_ingest", "--restore-from", "report.json"])
+            .expect("--restore-from alone must parse without --source/--dest");
+        assert!(args.source.is_none());
+        assert!(args.dest.is_none());
+        assert_eq!(args.restore_from, Some(PathBuf::from("report.json")));
+        // validate() must also accept this shape (it short-circuits for restore mode without
+        // ever touching the None source/dest).
+        assert!(args.validate().is_ok());
+    }
+
+    #[test]
+    #[should_panic(expected = "--source is required unless --restore-from is given")]
+    fn source_accessor_panics_if_invariant_is_violated() {
+        // Directly exercises the accessor's documented invariant (never reachable via the real
+        // CLI, since clap enforces required_unless_present before validate() ever runs).
+        let args = Args::try_parse_from(["robocopy_ingest", "--restore-from", "report.json"])
+            .expect("parse");
+        let _ = args.source();
     }
 
     #[test]
@@ -525,7 +584,7 @@ mod tests {
 
         let request = args.copy_request(PathBuf::from("/tmp/baseline"));
         assert_eq!(request.dest, PathBuf::from("/tmp/baseline"));
-        assert_eq!(request.source, args.source);
+        assert_eq!(request.source, args.source());
         assert_eq!(request.threads, 16);
         assert_eq!(request.pattern, "*");
         assert!(request.dry_run);
