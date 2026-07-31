@@ -27,6 +27,20 @@ toml = "0.8"
 num_cpus = "1"
 aes-gcm = "0.10"
 reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "json"] }
+async-trait = "0.1"
+axum = { version = "0.8", optional = true }
+
+[features]
+notify-server = ["dep:axum"]
+
+[[bin]]
+name = "robocopy_ingest"
+path = "src/main.rs"
+
+[[bin]]
+name = "notify-server"
+path = "src/bin/notify_server.rs"
+required-features = ["notify-server"]
 
 [dev-dependencies]
 tempfile = "3"

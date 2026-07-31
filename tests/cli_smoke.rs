@@ -340,6 +340,42 @@ fn permanently_uncopyable_file_does_not_undercount_the_rest_of_the_transfer() {
     );
 }
 
+#[cfg(windows)]
+#[test]
+fn unreachable_webhook_does_not_fail_the_backup() {
+    let source = fixture_tree(&[("a.csv", 10)]);
+    let workdir = tempfile::tempdir().expect("workdir");
+    let report_path = workdir.path().join("report.json");
+
+    let output = run(&[
+        "--source",
+        source.path().to_str().expect("utf8"),
+        "--dest",
+        workdir.path().join("out").to_str().expect("utf8"),
+        "--log-path",
+        workdir.path().join("ingest.log").to_str().expect("utf8"),
+        "--report-path",
+        report_path.to_str().expect("utf8"),
+        // Port 0 is never a valid connection target: the webhook delivery must fail, but the
+        // ingestion itself must still complete successfully (a missing/unreachable notify-server
+        // must never take down the backup it is only supposed to report on).
+        "--webhook-url",
+        "http://127.0.0.1:0/notify",
+    ]);
+
+    assert!(
+        output.status.success(),
+        "an unreachable webhook must not fail the backup; stderr: {}",
+        stderr_of(&output)
+    );
+    let report: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(&report_path).expect("read")).expect("json");
+    assert!(
+        report["webhook_error"].is_string(),
+        "webhook_error must be populated when delivery fails; report: {report}"
+    );
+}
+
 /// Guards the assumption the Linux tests rely on: the fixture helper is deterministic.
 #[test]
 fn fixtures_are_created_where_expected() {

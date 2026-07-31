@@ -29,7 +29,11 @@ graph TD
         Main -->|Report Output| JSONReport[src/report.rs - JSON Report & Host Metadata]
         Main -->|HTML Dashboard| HTMLReport[src/html_report.rs - Standalone Dashboard HTML]
         Main -->|HTTP Webhook| Notify[src/notify.rs - Async HTTP Webhook Dispatcher]
-        Main -->|Live Monitoring| Server[src/server.rs - Live Web Dashboard Server HTTP]
+    end
+
+    subgraph Notify Server [Binario separato, feature notify-server]
+        Main -->|POST /notify| NotifyServer[src/bin/notify_server.rs + src/notify_server.rs - axum Router]
+        NotifyServer -->|dispatch| Sinks[src/notify_sink.rs - LogSink / NtfySink / GenericWebhookSink]
     end
 
     subgraph Disaster Recovery
@@ -54,7 +58,9 @@ graph TD
 | `src/report.rs` | Generazione dello schema JSON completo. | Serializzazione `serde_json`, conteggio temporizzazioni di fase (`PhaseTiming`), metadati host (`HostMetadata`), più `log_lines_dropped`, `encrypted` e `webhook_error`. |
 | `src/html_report.rs` | Dashboard visiva HTML standalone. | Template HTML5 autonomo con CSS incorporato; ogni valore interpolato (path, pattern, versione) passa da `escape_html`. |
 | `src/notify.rs` | Invio notifiche verso endpoint Webhook. | Client `reqwest` + `rustls` (HTTP e HTTPS), timeout 10s, verifica dello status code, errore reale propagato (non più `Ok(())` silenzioso). |
-| `src/server.rs` | Server HTTP di stato. | **[PARZIALE]** Server multithread su `std::net::TcpListener` che serve una pagina statica "ACTIVE"; non trasmette progresso live né ha uno shutdown pulito. |
+| `src/notify.rs` | Invio del webhook di completamento. | `WebhookPayload` (con `schema_version`, `BackupStatus` tipizzato) inviato via `reqwest`+`rustls` a `--webhook-url`. |
+| `src/notify_sink.rs` | Canali di notifica per il notify-server. | Trait `NotificationSink` (stesso pattern di `CommandRunner`/`CopyEngine`); `LogSink`/`NtfySink`/`GenericWebhookSink`; config TOML (`NotifyServerConfig`). Sempre compilato (nessuna dipendenza da axum), testabile con un doppio scriptato. |
+| `src/notify_server.rs` + `src/bin/notify_server.rs` | Server HTTP di ricezione notifiche. | Router axum (`GET /health`, `POST /notify`), autenticazione a token via header, bind loopback forzato senza token, `DefaultBodyLimit`, graceful shutdown. Feature-gated (`notify-server`): axum non entra nelle dipendenze del binario di backup. Sostituisce l'ex `src/server.rs` (pagina statica mock, rimosso). |
 | `src/restore.rs` | Disaster Recovery e Ripristino guidato. | Costruisce gli `Args` di ripristino con `Args::try_parse_from` (non più `Args::default()`, che azzerava `report_path`/`log_path`), invertendo Sorgente/Destinazione dal report JSON. |
 | `src/cache.rs` | **[NON IMPLEMENTATO]** Deduplica e Cache di Stato incrementale. | Modulo presente (`.ingest_cache`) ma non collegato alla pipeline: `--enable-dedup` non ha effetto. |
 | `src/cloud.rs` | **[NON IMPLEMENTATO]** Sincronizzazione Cloud diretta. | `sync_to_cloud` è un mock che ritorna sempre `Ok(100)`; `--cloud-sync-target` non ha effetto. |
@@ -102,4 +108,4 @@ Per garantire la stabilità su dataset da **milioni di file**:
 
 ## 5. Matrice di Cross-Platform & Mock Testability
 
-Nonostante `robocopy.exe` sia un binario esclusivamente Windows, l'intera suite di **140 test** (124 unit + 10 black-box del binario + 6 di integrazione della pipeline) viene eseguita ed è al 100% passante sia su Windows che su Linux / macOS grazie al trait `CommandRunner` ed al mock `ScriptedRunner` che simula perfettamente gli exit code ed i flussi stdout di Robocopy. Su Windows, alcuni test aggiuntivi eseguono `robocopy.exe` realmente (dry-run, cifratura AES-256-GCM end-to-end, blocco del mirror-purge).
+Nonostante `robocopy.exe` sia un binario esclusivamente Windows, l'intera suite di **149 test** (`cargo test` di base: 131 unit + 12 black-box del binario + 6 di integrazione della pipeline) viene eseguita ed è al 100% passante sia su Windows che su Linux / macOS grazie al trait `CommandRunner` ed al mock `ScriptedRunner` che simula perfettamente gli exit code ed i flussi stdout di Robocopy. Su Windows, alcuni test aggiuntivi eseguono `robocopy.exe` realmente (dry-run, cifratura AES-256-GCM end-to-end, blocco del mirror-purge, webhook irraggiungibile). Con `cargo test --features notify-server` (162 test totali) si aggiungono 10 unit test sul router axum (su socket TCP reale) e 3 test end-to-end che eseguono i binari `notify-server` e `robocopy_ingest` realmente compilati l'uno contro l'altro.

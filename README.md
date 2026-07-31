@@ -37,7 +37,7 @@ graph LR
 3. **Retry Esterni & Resilience**: Se Robocopy restituisce exit code transitori di blocco file (codici 8, 9, 11), l'invocazione viene ripetuta automaticamente con backoff esponenziale. Se si preme `Ctrl+C`, l'applicazione intercetta il segnale e termina **solo** il processo `robocopy.exe` figlio effettivamente in corso (tramite il suo PID), senza toccare altri eventuali processi robocopy in esecuzione sull'host.
 4. **Verifica Integrità Multi-Threaded**: Verifica la corrispondenza dei checksum tra sorgente e destinazione utilizzando **Rayon** su tutte le CPU dell'host. Supporta **SHA-256** ed l'algoritmo **BLAKE3** (3-5x più veloce).
 5. **Cifratura**: Supporta la cifratura **AES-256-GCM** reale (`--encrypt-aes256`) dei file in destinazione a fine trasferimento, con nonce casuale per file. La sincronizzazione diretta verso S3/Azure (`--cloud-sync-target`) è **riservata ma non implementata** (vedi tabella flag).
-6. **Reporting & Notifiche**: Scrive un report JSON completo con metadati sull'host, genera una **Dashboard HTML Standalone** (`--html-report-path`, con escaping di ogni valore interpolato) e invia un alert **HTTP/HTTPS Webhook** (`--webhook-url`, con timeout ed errori realmente riportati). `--serve-dashboard` avvia un server HTTP che espone **una pagina di stato statica**, non un dashboard con dati live.
+6. **Reporting & Notifiche**: Scrive un report JSON completo con metadati sull'host, genera una **Dashboard HTML Standalone** (`--html-report-path`, con escaping di ogni valore interpolato) e invia un alert **HTTP/HTTPS Webhook** (`--webhook-url`, con timeout ed errori realmente riportati). Il **notify-server** opzionale incluso nel repo riceve queste notifiche e le inoltra su più canali.
 
 ---
 
@@ -64,7 +64,6 @@ graph LR
 | `--verify-integrity` | `false` | — | Esegue la verifica dei checksum sorgente vs destinazione a fine copia. |
 | `--hash-algo <ALGO>` | `sha256` | — | Algoritmo per la verifica checksum: `sha256` o `blake3`. |
 | `--html-report-path <PATH>`| *nessuno* | — | Genera un report visivo autonomo in formato HTML (valori interpolati sempre sottoposti ad escaping). |
-| `--serve-dashboard <PORT>`| *nessuno* | — | **[PARZIALE]** Avvia un server HTTP che serve una pagina di stato statica; non trasmette dati live. |
 | `--webhook-url <URL>` | *nessuno* | — | Trasmette una notifica HTTP/HTTPS POST JSON a fine job (timeout 10s, errori reali riportati, non più ignorati). |
 | `--restore-from <PATH>` | *nessuno* | — | **[ROTTO — vedi D1/F24]** Modalità Disaster Recovery: inverte il backup Dest -> Source dal report JSON. Attualmente **non eseguibile**: clap richiede comunque `--source`/`--dest` e rifiuta il valore vuoto, quindi la modalità non è raggiungibile dalla CLI. |
 | `--cloud-sync-target <URI>`| *nessuno* | — | **[NON IMPLEMENTATO]** Accettato per compatibilità futura; nessuna sincronizzazione viene eseguita. |
@@ -82,7 +81,7 @@ graph LR
 robocopy_ingest.exe --source D:\landing --dest E:\warehouse
 ```
 
-### 2. Ingestion Enterprise con Dashboard Live, Webhook e Hashing BLAKE3
+### 2. Ingestion Enterprise con Notifica, Dashboard HTML e Hashing BLAKE3
 ```powershell
 robocopy_ingest.exe `
   --source D:\landing\2026-07 `
@@ -93,10 +92,14 @@ robocopy_ingest.exe `
   --long-paths `
   --verify-integrity `
   --hash-algo blake3 `
-  --serve-dashboard 8080 `
   --html-report-path E:\reports\dashboard.html `
-  --webhook-url "http://api.company.local/webhook/backup"
+  --webhook-url "http://127.0.0.1:3000/notify"
 ```
+`--webhook-url` può puntare a **qualunque** endpoint che accetti una POST JSON (Slack, Teams, un
+webhook custom) — oppure al **notify-server** incluso in questo repo (`cargo build --release
+--features notify-server`), che inoltra la notifica su più canali (log, ntfy, webhook generico) da
+un solo punto di configurazione. Vedi la sezione [Notify Server](#-notify-server-notifiche-di-backup)
+più sotto.
 
 ### 3. Ripristino da Disastro (Disaster Recovery Mode) — ⚠️ NON FUNZIONANTE
 ```powershell
@@ -107,6 +110,59 @@ robocopy_ingest.exe --restore-from E:\reports\robocopy_ingest_report.json
 > anche in modalità restore. Difetto tracciato come **D1** in `ANALYSIS.md` e pianificato come **F24**
 > nella milestone 5.2.0. Nel frattempo il ripristino va eseguito come copia normale invertendo
 > manualmente sorgente e destinazione.
+
+---
+
+## 📬 Notify Server: notifiche di backup
+
+`notify-server` è un secondo binario opzionale (non compilato di default: richiede
+`--features notify-server`) che riceve le notifiche inviate da `--webhook-url` e le inoltra su più
+canali configurabili da un solo file TOML, invece di replicare la logica in ogni script di backup.
+
+```powershell
+# Build (il binario di backup normale NON include axum a meno di questa feature)
+cargo build --release --features notify-server
+
+# Avvio: senza token, resta sul solo loopback (nessuna esposizione di rete)
+.\target\release\notify-server.exe
+
+# Avvio con canali configurati e autenticazione
+$env:ROBOCOPY_NOTIFY_TOKEN = "un-token-lungo-e-casuale"
+.\target\release\notify-server.exe --config notify-server.toml --bind 127.0.0.1:3000
+```
+
+Esempio di `notify-server.toml`:
+```toml
+bind = "127.0.0.1:3000"
+
+[ntfy]
+enabled = true
+topic_url = "https://ntfy.sh/i-miei-backup"
+
+[generic_webhook]
+enabled = false
+url = "https://hooks.slack.com/services/..."
+```
+
+Collegare un backup al server:
+```powershell
+robocopy_ingest.exe --source D:\dati --dest \\SERVER\share `
+  --verify-integrity --hash-algo blake3 `
+  --webhook-url "http://127.0.0.1:3000/notify"
+```
+
+**Sicurezza**: `/notify` richiede `Authorization: Bearer <token>` quando `ROBOCOPY_NOTIFY_TOKEN` è
+impostato. Il server **si rifiuta di avviarsi** se il bind non è un indirizzo loopback (127.0.0.1 /
+::1) e nessun token è configurato — esporre un endpoint non autenticato sulla rete permetterebbe a
+chiunque di iniettare notifiche di backup false.
+
+**Comportamento se il server è spento o irraggiungibile**: il backup **non fallisce**. L'errore di
+consegna viene registrato nel report JSON (campo `webhook_error`) — una notifica mancata è visibile,
+non silenziosa.
+
+**Endpoint disponibili**: `GET /health` (stato + versione schema), `POST /notify` (riceve il payload
+di `--webhook-url`; risponde `200` se consegnato su tutti i canali, `401` senza/con token errato,
+`422` per payload malformato, `502` se un canale fallisce la consegna).
 
 ---
 
@@ -121,13 +177,14 @@ Per dettagli tecnici approfonditi, diagrammi architetturali e roadmap di svilupp
 
 ---
 
-## 🧪 Esecuzione dei Test (140 Test Superati)
+## 🧪 Esecuzione dei Test (149 di Base, 162 con `notify-server`)
 
 ```bash
-cargo test
+cargo test                              # 149 test: 131 unit di libreria, 12 black-box del binario, 6 di integrazione
+cargo test --features notify-server     # 162 test: +10 unit sul router axum, +3 end-to-end sui binari reali
 ```
 
-Esito: `test result: ok.` su tutti i target (124 unit test di libreria, 10 test black-box del binario, 6 test di integrazione della pipeline).
+Esito atteso: `test result: ok.` su tutti i target, in entrambe le modalità.
 
 ---
 

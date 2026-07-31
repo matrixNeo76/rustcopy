@@ -75,17 +75,22 @@ Test di verifica senza scrivere o alterare i dati di destinazione:
 
 ---
 
-### 4. Backup Enterprise con Web Server di Stato (Porta 8080)
-Avvio dell'ingestion con un server HTTP di stato visibile via browser su `http://localhost:8080`. **Nota**: `--serve-dashboard` espone al momento solo una pagina statica ("Status: ACTIVE"), non un dashboard con progresso in tempo reale — per il progresso vero usare la progress bar in console o il report JSON/HTML a fine job:
+### 4. Backup Enterprise con Notifica e Dashboard HTML
+`--serve-dashboard` è stato **rimosso** (era una pagina statica mock, mai un dashboard live — vedi
+`ROADMAP.md`). Per il progresso in tempo reale usare la progress bar in console; per la notifica di
+completamento e un report visivo a fine job:
 ```powershell
 .\target\release\robocopy_ingest.exe `
   --source "C:\Users\auresystem\repos" `
   --dest "\\FILESERV01\dati01\provarust" `
-  --serve-dashboard 8080 `
   --html-report-path "\\FILESERV01\dati01\provarust\dashboard.html" `
+  --webhook-url "http://127.0.0.1:3000/notify" `
   --verify-integrity `
   --hash-algo blake3
 ```
+Il `--webhook-url` può puntare al **notify-server** incluso nel repo (`cargo build --release
+--features notify-server`, vedi `README.md`), che inoltra la notifica su più canali configurati in
+un file TOML.
 
 ---
 
@@ -110,5 +115,5 @@ Ripristino guidato in caso di guasto del server principale partendo dal report J
 | 📘 **[README.md](file:///c:/Users/auresystem/repos/robocopy-ingest-cli/README.md)** | Guida generale, tabella flag CLI e panoramica di alto livello. |
 | 📖 **[RUNBOOK.md](file:///c:/Users/auresystem/repos/robocopy-ingest-cli/RUNBOOK.md)** | **[QUESTO DOCUMENTO]** Guida operativa, backup multi-sorgente e comandi reali testati. |
 | 📄 **[ARCHITECTURE.md](file:///c:/Users/auresystem/repos/robocopy-ingest-cli/ARCHITECTURE.md)** | Architettura interna v5.1.0, diagrammi di flusso e mappa dei moduli Rust. |
-| 📊 **[ANALYSIS.md](file:///c:/Users/auresystem/repos/robocopy-ingest-cli/ANALYSIS.md)** | Diagnosi di robustezza, tuning 3x performance e 140 test di validazione. |
+| 📊 **[ANALYSIS.md](file:///c:/Users/auresystem/repos/robocopy-ingest-cli/ANALYSIS.md)** | Diagnosi di robustezza, tuning 3x performance e 149 test di validazione (162 con `notify-server`). |
 | 🗺️ **[ROADMAP.md](file:///c:/Users/auresystem/repos/robocopy-ingest-cli/ROADMAP.md)** | Diagramma Gantt dello storico delle release (v1.0 - v5.1). |

@@ -177,12 +177,6 @@ pub struct Args {
     #[arg(long, default_value_t = false)]
     pub enable_dedup: bool,
 
-    // ── F14.1: Live Web Dashboard Server ─────────────────────────────────────
-    /// [PARTIAL] Start an HTTP server on this port serving a static status page.
-    /// It does not yet stream live progress data; treat it as a placeholder, not a dashboard.
-    #[arg(long, value_name = "PORT")]
-    pub serve_dashboard: Option<u16>,
-
     // ── F15.1: Zero-Trust Streaming Encryption ──────────────────────────────
     /// Encrypt every copied file in the destination with AES-256-GCM after the transfer
     /// completes. VALUE is the key material: `env:NAME` reads it from environment variable

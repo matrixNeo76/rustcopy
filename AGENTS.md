@@ -17,7 +17,8 @@ Welcome to `robocopy-ingest-cli` (`rustcopy`). This document serves as the prima
    - Report mismatch lists MUST be capped to `10_000` items (`MAX_REPORTED_ERRORS`).
 5. **Path Normalization & Signal Handling**: Strip trailing separators from arguments. `Ctrl+C` terminates *only* the tracked child PID (published into an `Arc<AtomicU32>` by `ProcessRunner`), never every `robocopy.exe` process on the host (`taskkill /IM` by image name is banned — use `/PID`).
 6. **Mirror Safety**: `--mirror` runs `check_mirror_safety` before the transfer, which diffs the destination against the source inventory and aborts (dedicated exit code 3) unless `--force-purge` is given or the run is interactive and confirmed. Never remove this check or make `--force-purge` the default.
-7. **Real vs. Mock Features**: `src/cache.rs`, `src/cloud.rs`, `src/service.rs` are not wired into the pipeline (`--enable-dedup`, `--cloud-sync-target`, `--install-service` are no-ops, marked `[NOT IMPLEMENTED]` in `--help`). `--serve-dashboard` only serves a static status page. Do not describe these as working in docs or fix requests without actually wiring them up first. `--encrypt-aes256` (`src/crypto.rs`) and the webhook (`src/notify.rs`) *are* fully implemented (AES-256-GCM; HTTPS via reqwest+rustls).
+7. **Real vs. Mock Features**: `src/cache.rs`, `src/cloud.rs`, `src/service.rs` are not wired into the pipeline (`--enable-dedup`, `--cloud-sync-target`, `--install-service` are no-ops, marked `[NOT IMPLEMENTED]` in `--help`). Do not describe these as working in docs or fix requests without actually wiring them up first. `--encrypt-aes256` (`src/crypto.rs`) and the webhook (`src/notify.rs`) *are* fully implemented (AES-256-GCM; HTTPS via reqwest+rustls). `--serve-dashboard`/`src/server.rs` were removed (Release 5.4.0), replaced by the `notify-server` binary.
+8. **`notify-server` stays feature-gated**: axum, and anything that depends on it, must live behind `#[cfg(feature = "notify-server")]` (`src/notify_server.rs`, `src/bin/notify_server.rs`). `src/notify_sink.rs` (the channel trait and implementations) has no axum dependency and must stay always-compiled and always-tested. Verify with `cargo tree | grep -i axum` (must be empty without the feature) before committing any change here.
 
 ---
 
@@ -35,7 +36,10 @@ src/
 ├── report.rs        # JSON report generator with HostMetadata & PhaseTiming.
 ├── html_report.rs   # Standalone HTML5/SVG interactive dashboard generator.
 ├── notify.rs        # Async HTTP Webhook POST notification client.
-├── server.rs        # Integrated Live Web Dashboard HTTP server.
+├── notify_sink.rs   # NotificationSink trait + LogSink/NtfySink/GenericWebhookSink (always compiled).
+├── notify_server.rs # axum Router for the notify-server binary (feature "notify-server" only).
+├── bin/
+│   └── notify_server.rs  # Thin notify-server binary entrypoint (feature "notify-server" only).
 ├── restore.rs       # Disaster Recovery reverse restore engine.
 ├── cache.rs         # Incremental state cache (.ingest_cache) manager.
 ├── crypto.rs        # Zero-Trust AES-256 streaming encryption manager.
@@ -54,17 +58,23 @@ src/
 
 ## 3. Mandatory Testing Guidelines
 
-- **Never declare success without running `cargo test`**.
-- All **140 unit and integration tests** MUST pass before committing changes.
-- Cross-Platform Constraint: Unit tests inside `src/engine/robocopy.rs`, `src/integrity.rs`, `src/notify.rs`, etc. MUST pass on Linux and macOS using `ScriptedRunner`.
+- **Never declare success without running `cargo test`** (and `cargo test --features notify-server` if you touched `src/notify_server.rs`, `src/notify_sink.rs`, or `src/bin/notify_server.rs`).
+- All **149 unit and integration tests** (default build) MUST pass before committing changes. With `--features notify-server`, **162** must pass.
+- Cross-Platform Constraint: Unit tests inside `src/engine/robocopy.rs`, `src/integrity.rs`, `src/notify.rs`, `src/notify_sink.rs`, etc. MUST pass on Linux and macOS using `ScriptedRunner`/scripted test doubles.
 
 ### Test Commands:
 ```bash
-# Run full test suite
+# Run full test suite (default: no axum, no notify-server)
 cargo test
+
+# Run the notify-server test suite too (builds axum + both binaries)
+cargo test --features notify-server
 
 # Run tests with backtrace on failure
 RUST_BACKTRACE=1 cargo test
+
+# Verify axum never leaks into the default dependency tree
+cargo tree | grep -i axum   # must print nothing
 ```
 
 ---

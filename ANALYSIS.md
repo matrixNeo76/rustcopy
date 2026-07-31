@@ -303,7 +303,7 @@ Proposte ordinate per rapporto valore/rischio, motivate da problemi osservati su
 | **O5** | **Checkpoint e ripresa dei trasferimenti interrotti** | Un `Ctrl+C` o un calo della share su un trasferimento da ore riparte oggi da zero. |
 | **O6** | **xxHash3 come terzo algoritmo di integrità** | Per rilevare corruzione (non manomissione) è ~5-10x più veloce di BLAKE3. La verifica è la fase più lenta della pipeline. |
 | **O7** | **Exit code dedicato per fallimento di integrità** | Oggi `1` copre sia "robocopy ha fallito" sia "i checksum non tornano": uno scheduler non può distinguerli. |
-| **O8** | **Endpoint metriche reale (Prometheus/OpenMetrics)** | Sostituirebbe `--serve-dashboard`, oggi una pagina statica, con qualcosa di realmente osservabile. |
+| **O8** | **Endpoint metriche reale (Prometheus/OpenMetrics)** | `--serve-dashboard` è stato rimosso (era una pagina statica mock). Il notify-server axum introdotto in F-notify è il punto naturale su cui montare un endpoint `/metrics` scrapabile — stesso processo, stesso runtime. |
 | **O9** | **`--exclude-junctions` (`/XJ`) e `--exclude-attributes` (`/XA`)** | Risolve D7 e copre i casi enterprise (file di sistema/nascosti). |
 | **O10** | **Profilo multi-sorgente nel file TOML** | Il RUNBOOK descrive workflow multi-sorgente eseguiti a mano, un run per sorgente: il config potrebbe descriverli in un file solo. |
 

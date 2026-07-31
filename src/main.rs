@@ -75,10 +75,6 @@ async fn run(mut args: Args) -> Result<bool> {
 
     args.validate()?;
 
-    if let Some(port) = args.serve_dashboard {
-        let _ = robocopy_ingest::server::start_dashboard_server(port).await;
-    }
-
     let log = logging::init(&args.log_path).context("cannot initialise the log file")?;
     tracing::info!(
         source = %args.source.display(),

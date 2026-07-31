@@ -4,7 +4,7 @@
 > senza il contesto della conversazione in cui è stato prodotto. Contiene le decisioni di design già
 > prese (con le motivazioni), le fasi ordinate, i criteri di completamento e le insidie note.
 >
-> *Creato: 31 Luglio 2026 | Target: Release 5.4.0 | Stato: da eseguire*
+> *Creato: 31 Luglio 2026 | Target: Release 5.4.0 | Stato: **Eseguito il 31 Luglio 2026** — vedi `ROADMAP.md` milestone 5.4.0 per il riepilogo finale.*
 
 ---
 

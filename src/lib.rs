@@ -26,11 +26,13 @@ pub mod html_report;
 pub mod integrity;
 pub mod logging;
 pub mod notify;
+#[cfg(feature = "notify-server")]
+pub mod notify_server;
+pub mod notify_sink;
 pub mod oem_codec;
 pub mod progress;
 pub mod report;
 pub mod restore;
 pub mod scan;
-pub mod server;
 pub mod service;
 pub mod testkit;

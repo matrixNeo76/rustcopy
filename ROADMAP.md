@@ -1,7 +1,8 @@
 # 🗺️ Roadmap di Progetto — robocopy-ingest-cli
 
 > **Stato Attuale**: 🟢 **Release 5.1.0 Robustness & Encoding Enhancement Completata** (F21/F22/F23 implementate e verificate con test end-to-end)
-> | 🔴 **Audit post-5.1.0 ha individuato 3 difetti P0 aperti** — vedi `ANALYSIS.md` Parte 3 e la milestone 5.2.0 qui sotto.
+> | 🔴 **Audit post-5.1.0 ha individuato 3 difetti P0 aperti** — vedi `ANALYSIS.md` Parte 3 e la milestone 5.2.0 qui sotto (**non ancora risolti**)
+> | 🟢 **Release 5.4.0 Notify Server (axum) Completata** — vedi milestone dedicata qui sotto.
 
 ---
 
@@ -32,6 +33,9 @@ gantt
     F30 Snapshot VSS per file bloccati                :f30, 2026-08-20, 5d
     F31 Checkpoint e ripresa trasferimenti            :f31, 2026-08-25, 5d
     F32 Endpoint metriche Prometheus                  :f32, 2026-08-30, 3d
+
+    section 5.4.0 Notify Server (axum)
+    F-notify Server di notifica multi-canale          :done, fns, 2026-07-31, 1d
 ```
 
 ---
@@ -86,8 +90,24 @@ verificati eseguendo il binario**, non ipotesi.
 |---|---|---|---|---|
 | **F30** | Snapshot VSS (Volume Shadow Copy) | 🟠 P1 | O1 | I file bloccati da altri processi falliscono in modo permanente ed esauriscono il budget di retry (osservato realmente in sessione). È la funzionalità che separa un tool di backup da una copia. |
 | **F31** | Checkpoint e ripresa | 🟡 P2 | O5 | Un `Ctrl+C` o un calo della share su un trasferimento da ore oggi obbliga a ripartire da zero. |
-| **F32** | Endpoint metriche Prometheus | 🟡 P2 | O8 | Sostituisce `--serve-dashboard` (pagina statica) con osservabilità reale, scrapabile. |
+| **F32** | Endpoint metriche Prometheus | 🟡 P2 | O8 | Da montare sulla stessa istanza axum del notify-server (Release 5.4.0). |
 | **F33** | Profilo multi-sorgente nel TOML | 🟢 P3 | O10 | Il RUNBOOK descrive workflow multi-sorgente eseguiti a mano con un run per sorgente. |
+
+---
+
+## 📬 Milestone 5.4.0 — Notify Server (axum)
+
+Implementata seguendo `PIANO_NOTIFY_SERVER.md` (piano dettagliato con le decisioni di design e le
+insidie note — rimane nel repo come riferimento storico).
+
+| Task | Stato | Descrizione |
+|---|---|---|
+| Binario feature-gated | `[x] Completato` | `src/bin/notify_server.rs`, feature `notify-server`, axum **non** entra nelle dipendenze del binario di backup (verificato con `cargo tree`). |
+| Contratto condiviso | `[x] Completato` | `WebhookPayload` esteso con `schema_version`, `BackupStatus` tipizzato (serializza comunque `"SUCCESS"`/`"FAILED"`), `source`/`dest`/`host`/`tool_version`/`exit_code`/`integrity_status`. |
+| Sicurezza | `[x] Completato` | Token via `ROBOCOPY_NOTIFY_TOKEN`, rifiuto di avvio su bind non-loopback senza token, `DefaultBodyLimit`, graceful shutdown. |
+| Canali | `[x] Completato` | Trait `NotificationSink` (`src/notify_sink.rs`, sempre compilato, testabile senza la feature); `LogSink`, `NtfySink`, `GenericWebhookSink`; config TOML. |
+| Rimozione mock | `[x] Completato` | `src/server.rs` e `--serve-dashboard` rimossi. |
+| Test | `[x] Completato` | Unit test su 401/422/502/200 con router reale su socket TCP reale; test black-box end-to-end con il binario compilato. |
 
 ---
 
@@ -99,11 +119,12 @@ verificati eseguendo il binario**, non ipotesi.
 - **v4.0.0**: Live Web Server HTTP Dashboard (pagina statica), Zero-Trust AES-256 Streaming Encryption (all'epoca uno XOR, corretto in v5.1.0).
 - **v5.0.0**: Scaffolding per Direct Cloud Sync (S3/Azure) e Windows Service Daemon — entrambi mock, non implementati.
 - **v5.1.0**: Mirror Safety Threshold reale, decodifica CP850 reale, kill mirato del child process, crypto AES-256-GCM reale, webhook HTTPS affidabile. *(Il fix Restore Mode dichiarato in questa release non ha funzionato — vedi F24.)*
+- **v5.4.0**: Notify Server basato su axum (binario separato, feature-gated), canali multipli (log/ntfy/webhook generico) da configurazione TOML. Sostituisce `--serve-dashboard`/`src/server.rs` (rimossi).
 
 ## 📌 Debito tecnico noto (non ancora pianificato)
 
 - `src/cache.rs`, `src/cloud.rs`, `src/service.rs` restano scaffolding non collegati; i relativi flag (`--enable-dedup`, `--cloud-sync-target`, `--install-service`) sono marcati `[NOT IMPLEMENTED]` in `--help`. `cache.rs` verrebbe finalmente utilizzato da F28.
-- `--serve-dashboard` serve solo una pagina di stato statica, senza dati live (sostituzione proposta: F32).
+- Il notify-server implementa solo `LogSink`/`NtfySink`/`GenericWebhookSink`; `TelegramSink` era segnato come opzionale nel piano e non è stato implementato in questa passata.
 - `integrity::verify` richiede ancora l'intera lista file in RAM (`Vec<ScannedFile>`); `--no-prescan` evita solo la sua costruzione, disabilitando la verifica di integrità in quel modo, ma non introduce hashing in streaming.
 - `Args::merge_config` applica il pattern del TOML solo quando la CLI è ancora sul default `"*"`; non distingue un `--pattern "*"` esplicito da nessun flag passato (richiederebbe `ArgMatches::value_source`), e la stessa limitazione vale per gli altri campi booleani.
-- Il grafo `graphify-out/` copre ora tutti i 24 file (580 nodi / 1174 archi / 22 community), ma i nodi metodo non sono qualificati con il tipo proprietario (`.encrypt()` invece di `CryptoManager::encrypt`): la query di reachability da `main`/`lib` resta inaffidabile (33/580) e **non va usata come gate anti-dead-code**. Il codice morto reale (D8) è stato individuato per grep.
+- Il grafo `graphify-out/` copre ora tutti i 26 file (685 nodi / 1374 archi / 24 community, rigenerato dopo l'aggiunta del notify-server), ma i nodi metodo non sono qualificati con il tipo proprietario (`.encrypt()` invece di `CryptoManager::encrypt`): la query di reachability da `main`/`lib` resta inaffidabile e **non va usata come gate anti-dead-code**. Il codice morto reale (D8) è stato individuato per grep.

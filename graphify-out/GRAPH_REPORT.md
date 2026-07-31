@@ -1,17 +1,19 @@
-# Graph Report - .  (2026-07-30)
+# Graph Report - .  (2026-07-31)
 
 ## Corpus Check
-- Corpus is ~20,666 words - fits in a single context window. You may not need a graph.
+- Corpus is ~23,806 words - fits in a single context window. You may not need a graph.
 
 ## Summary
-- 580 nodes · 1174 edges · 22 communities
-- Extraction: 98% EXTRACTED · 2% INFERRED · 0% AMBIGUOUS · INFERRED: 20 edges (avg confidence: 0.8)
+- 685 nodes · 1374 edges · 24 communities
+- Extraction: 98% EXTRACTED · 2% INFERRED · 0% AMBIGUOUS · INFERRED: 23 edges (avg confidence: 0.8)
 - Token cost: 0 input · 0 output
 
 ## Community Hubs (Navigation)
 - [[_COMMUNITY_Robocopy Process Engine|Robocopy Process Engine]]
 - [[_COMMUNITY_Copy Engine Abstraction & Retries|Copy Engine Abstraction & Retries]]
 - [[_COMMUNITY_Throughput Progress Tracking|Throughput Progress Tracking]]
+- [[_COMMUNITY_Notification Sinks & Channel Config|Notification Sinks & Channel Config]]
+- [[_COMMUNITY_Notify Server (axum Router)|Notify Server (axum Router)]]
 - [[_COMMUNITY_Naive Baseline Copy Engine|Naive Baseline Copy Engine]]
 - [[_COMMUNITY_Test Doubles & Mocks|Test Doubles & Mocks]]
 - [[_COMMUNITY_JSON Report Generation|JSON Report Generation]]
@@ -21,10 +23,10 @@
 - [[_COMMUNITY_Integrity Verification (Hashing)|Integrity Verification (Hashing)]]
 - [[_COMMUNITY_Robocopy Exit Code Decoding|Robocopy Exit Code Decoding]]
 - [[_COMMUNITY_AES-256-GCM Encryption|AES-256-GCM Encryption]]
+- [[_COMMUNITY_Webhook Payload & Backup Status|Webhook Payload & Backup Status]]
 - [[_COMMUNITY_Dedup Cache (Unimplemented)|Dedup Cache (Unimplemented)]]
 - [[_COMMUNITY_TOML Configuration|TOML Configuration]]
 - [[_COMMUNITY_HTML Report Escaping|HTML Report Escaping]]
-- [[_COMMUNITY_Webhook Notifications|Webhook Notifications]]
 - [[_COMMUNITY_CP850 OEM Decoding|CP850 OEM Decoding]]
 - [[_COMMUNITY_Cloud Sync (Unimplemented)|Cloud Sync (Unimplemented)]]
 - [[_COMMUNITY_Error Types & Retry Classification|Error Types & Retry Classification]]
@@ -56,6 +58,8 @@
   src/integrity.rs → src/testkit.rs
 
 ## Import Cycles
+- 1-file cycle: `src/bin/notify_server.rs -> src/bin/notify_server.rs`
+- 1-file cycle: `src/notify_server.rs -> src/notify_server.rs`
 - 1-file cycle: `src/cache.rs -> src/cache.rs`
 - 1-file cycle: `src/cli.rs -> src/cli.rs`
 - 1-file cycle: `src/cloud.rs -> src/cloud.rs`
@@ -72,11 +76,10 @@
 - 1-file cycle: `src/logging.rs -> src/logging.rs`
 - 1-file cycle: `src/main.rs -> src/main.rs`
 - 1-file cycle: `src/notify.rs -> src/notify.rs`
+- 1-file cycle: `src/notify_sink.rs -> src/notify_sink.rs`
 - 1-file cycle: `src/restore.rs -> src/restore.rs`
-- 1-file cycle: `src/scan.rs -> src/scan.rs`
-- 1-file cycle: `src/testkit.rs -> src/testkit.rs`
 
-## Communities (22 total, 0 thin omitted)
+## Communities (24 total, 0 thin omitted)
 
 ### Community 0 - "Robocopy Process Engine"
 Cohesion: 0.07
@@ -90,93 +93,101 @@ Nodes (33): backoff_is_exponential_and_capped(), CopyEngine, CopyOutcome, CopyRe
 Cohesion: 0.06
 Nodes (22): Instant, ProgressBar, ProgressStyle, counting_sink_accumulates(), CountingProgress, hidden_bar_tracks_max_of_both_sources(), NoopProgress, observed_total_never_regresses() (+14 more)
 
-### Community 3 - "Naive Baseline Copy Engine"
+### Community 3 - "Notification Sinks & Channel Config"
+Cohesion: 0.08
+Nodes (33): BackupStatus, Client, GenericWebhookChannelConfig, NtfyChannelConfig, config_adds_enabled_channels_only(), config_always_includes_the_log_sink(), dispatch_to_all(), dispatch_tries_every_sink_even_after_a_failure() (+25 more)
+
+### Community 4 - "Notify Server (axum Router)"
+Cohesion: 0.07
+Nodes (43): Args, main(), HeaderMap, IntoResponse, Json, JsonRejection, NotificationSink, NotifyError (+35 more)
+
+### Community 5 - "Naive Baseline Copy Engine"
 Cohesion: 0.09
 Nodes (39): copied_content_is_identical(), copies_matching_files_preserving_the_tree(), copy_one(), creates_a_missing_destination_directory(), dry_run_counts_without_writing(), empty_source_yields_an_empty_outcome(), missing_source_directory_is_an_error(), NaiveCopyEngine (+31 more)
 
-### Community 4 - "Test Doubles & Mocks"
+### Community 6 - "Test Doubles & Mocks"
 Cohesion: 0.07
-Nodes (33): AtomicUsize, Box, CommandRunner, F, Fn, I, Invocations, Mutex (+25 more)
+Nodes (33): CommandRunner, F, Fn, I, Invocations, OutcomeResult, Sleeper, fixture_bytes() (+25 more)
 
-### Community 5 - "JSON Report Generation"
+### Community 7 - "JSON Report Generation"
 Cohesion: 0.13
 Nodes (36): DateTime, From, args(), baseline_outcome(), ConfigurationReport, failed_integrity_is_serialized_with_details(), format_bytes(), HostMetadata (+28 more)
 
-### Community 6 - "Async Bounded Logger"
-Cohesion: 0.11
-Nodes (31): DefaultGuard, MakeWriter, Sender, appends_to_an_existing_log(), build(), ChannelWriter, dropped_lines_starts_at_zero(), init() (+23 more)
+### Community 8 - "Async Bounded Logger"
+Cohesion: 0.14
+Nodes (27): DefaultGuard, MakeWriter, Sender, appends_to_an_existing_log(), build(), ChannelWriter, dropped_lines_starts_at_zero(), init() (+19 more)
 
-### Community 7 - "CLI Orchestration & Safety Checks"
+### Community 9 - "CLI Orchestration & Safety Checks"
 Cohesion: 0.17
 Nodes (31): ExitCode, baseline(), baseline_dir(), check_mirror_safety(), encrypt_destination(), execute(), inventory_source(), kill_active_child() (+23 more)
 
-### Community 8 - "CLI Argument Parsing"
+### Community 10 - "CLI Argument Parsing"
 Cohesion: 0.09
 Nodes (19): IngestConfig, RetryPolicy, Args, bandwidth_ipg_conversion_is_correct(), base_args(), copy_request_targets_the_given_destination(), defaults_match_specification(), flags_are_parsed() (+11 more)
 
-### Community 9 - "Integrity Verification (Hashing)"
+### Community 11 - "Integrity Verification (Hashing)"
 Cohesion: 0.15
 Nodes (26): ScannedFile, blake3_file(), blake3_hashing_passes_and_is_correct(), copy_tree(), corrupted_destination_is_detected(), empty_inventory_passes(), FileVerificationOutcome, hash_file() (+18 more)
 
-### Community 10 - "Robocopy Exit Code Decoding"
+### Community 12 - "Robocopy Exit Code Decoding"
 Cohesion: 0.17
 Nodes (8): abnormal_termination_is_retried(), bit_decoding_is_correct(), codes_one_to_seven_are_success(), describe_lists_every_active_bit(), RobocopyStatus, Self, String, zero_means_nothing_to_do()
 
-### Community 11 - "AES-256-GCM Encryption"
+### Community 13 - "AES-256-GCM Encryption"
 Cohesion: 0.18
 Nodes (12): Aes256Gcm, crypto_round_trip_is_symmetric(), CryptoManager, each_encryption_uses_a_fresh_nonce(), resolve_key(), IngestError, Result, Self (+4 more)
 
-### Community 12 - "Dedup Cache (Unimplemented)"
+### Community 14 - "Webhook Payload & Backup Status"
+Cohesion: 0.15
+Nodes (12): Display, Formatter, BackupStatus, payload_from_report_includes_every_new_field(), IngestReport, Option, Result, Self (+4 more)
+
+### Community 15 - "Dedup Cache (Unimplemented)"
 Cohesion: 0.19
 Nodes (11): HashMap, cache_skips_unchanged_files(), default_cache_path(), FileCacheEntry, IngestCache, Option, Path, PathBuf (+3 more)
 
-### Community 13 - "TOML Configuration"
+### Community 16 - "TOML Configuration"
 Cohesion: 0.19
 Nodes (10): IngestConfig, HashAlgorithm, IngestError, Option, Path, PathBuf, Result, Self (+2 more)
 
-### Community 14 - "HTML Report Escaping"
+### Community 17 - "HTML Report Escaping"
 Cohesion: 0.29
 Nodes (8): escape_html(), generate_html_report(), html_report_generates_valid_content(), malicious_path_in_report_is_escaped_in_the_generated_html(), IngestReport, Path, Result, String
 
-### Community 15 - "Webhook Notifications"
-Cohesion: 0.31
-Nodes (7): IngestReport, Result, Self, String, send_webhook(), unreachable_host_surfaces_a_real_error(), WebhookPayload
-
-### Community 16 - "CP850 OEM Decoding"
+### Community 18 - "CP850 OEM Decoding"
 Cohesion: 0.33
 Nodes (6): active_oem_code_page(), decode_cp850(), decode_robocopy_output(), every_byte_value_has_a_mapping(), Option, String
 
-### Community 17 - "Cloud Sync (Unimplemented)"
+### Community 19 - "Cloud Sync (Unimplemented)"
 Cohesion: 0.39
 Nodes (7): cloud_sync_request_constructs_properly(), CloudProvider, CloudSyncRequest, Path, Result, String, sync_to_cloud()
 
-### Community 18 - "Error Types & Retry Classification"
+### Community 20 - "Error Types & Retry Classification"
 Cohesion: 0.32
 Nodes (5): IngestError, Error, Into, PathBuf, Self
 
-### Community 19 - "Disaster Recovery Restore"
+### Community 21 - "Disaster Recovery Restore"
 Cohesion: 0.36
 Nodes (7): build_restore_args(), restore_args_reverses_source_and_dest(), Args, Option, Path, PathBuf, Result
 
-### Community 20 - "Windows Service (Unimplemented)"
+### Community 22 - "Windows Service (Unimplemented)"
 Cohesion: 0.29
 Nodes (3): register_windows_service(), Result, String
 
 ## Knowledge Gaps
-- **89 isolated node(s):** `Self`, `Result`, `PathBuf`, `String`, `HashAlgorithm` (+84 more)
+- **108 isolated node(s):** `Option`, `String`, `Result`, `Self`, `Result` (+103 more)
   These have ≤1 connection - possible missing edges or undocumented components.
 
 ## Suggested Questions
 _Questions this graph is uniquely positioned to answer:_
 
 - **Why does `fixture_tree()` connect `Naive Baseline Copy Engine` to `Integrity Verification (Hashing)`, `Test Doubles & Mocks`?**
-  _High betweenness centrality (0.153) - this node is a cross-community bridge._
+  _High betweenness centrality (0.110) - this node is a cross-community bridge._
 - **Why does `Instant` connect `Throughput Progress Tracking` to `Robocopy Process Engine`, `Naive Baseline Copy Engine`?**
-  _High betweenness centrality (0.142) - this node is a cross-community bridge._
+  _High betweenness centrality (0.102) - this node is a cross-community bridge._
 - **Are the 17 inferred relationships involving `fixture_tree()` (e.g. with `copied_content_is_identical()` and `copies_matching_files_preserving_the_tree()`) actually correct?**
   _`fixture_tree()` has 17 INFERRED edges - model-reasoned connections that need verification._
-- **What connects `Self`, `Result`, `PathBuf` to the rest of the system?**
-  _89 weakly-connected nodes found - possible documentation gaps or missing edges._
+- **What connects `Option`, `String`, `Result` to the rest of the system?**
+  _108 weakly-connected nodes found - possible documentation gaps or missing edges._
 - **Should `Robocopy Process Engine` be split into smaller, more focused modules?**
   _Cohesion score 0.06923076923076923 - nodes in this community are weakly interconnected._
 - **Should `Copy Engine Abstraction & Retries` be split into smaller, more focused modules?**
