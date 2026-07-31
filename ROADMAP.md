@@ -1,8 +1,13 @@
 # 🗺️ Roadmap di Progetto — robocopy-ingest-cli
 
-> **Stato Attuale**: 🟢 **Release 5.1.0 Robustness & Encoding Enhancement Completata** (F21/F22/F23 implementate e verificate con test end-to-end)
-> | 🔴 **Audit post-5.1.0 ha individuato 3 difetti P0 aperti** — vedi `ANALYSIS.md` Parte 3 e la milestone 5.2.0 qui sotto (**non ancora risolti**)
-> | 🟢 **Release 5.4.0 Notify Server (axum) Completata** — vedi milestone dedicata qui sotto.
+> **Stato Attuale**: 🟢 **Release 5.4.0 Notify Server (axum) rilasciata** (`Cargo.toml` = 5.4.0)
+> | 🔴 **3 difetti P0 aperti** dall'audit post-5.1.0 — `--restore-from` irraggiungibile, cifratura in OOM, nessuna decifratura: vedi `ANALYSIS.md` Parte 3 e la milestone 5.2.0
+> | 🎯 **Analisi di parità** vs TeraCopy / Cobian / ntfy nella sezione dedicata: le milestone 6.0.0, 6.1.0 e 7.0.0 ne derivano.
+>
+> **Nota sulla numerazione**: i numeri di versione seguono le milestone funzionali, **non** una
+> sequenza rigida. La 5.4.0 (notify-server) è stata rilasciata prima della 5.2.0 (correttezza), che
+> resta aperta. `Cargo.toml` è la fonte di verità della versione rilasciata ed è ciò che finisce nel
+> campo `tool_version` dei report.
 
 ---
 
@@ -29,13 +34,29 @@ gantt
     F28 Fast-verify via cache di stato                :f28, 2026-08-13, 3d
     F29 xxHash3 e exit code integrita                 :f29, 2026-08-16, 2d
 
-    section 6.0.0 Backup Enterprise
-    F30 Snapshot VSS per file bloccati                :f30, 2026-08-20, 5d
-    F31 Checkpoint e ripresa trasferimenti            :f31, 2026-08-25, 5d
-    F32 Endpoint metriche Prometheus                  :f32, 2026-08-30, 3d
-
     section 5.4.0 Notify Server (axum)
     F-notify Server di notifica multi-canale          :done, fns, 2026-07-31, 1d
+
+    section 6.0.0 Backup Enterprise (parita Cobian)
+    F33 Profili multi-sorgente e job                  :f33, 2026-09-01, 4d
+    F34 Tipi backup completo/incr/diff                :crit, f34, 2026-09-05, 8d
+    F35 Ritenzione e rotazione                        :f35, 2026-09-13, 4d
+    F30 Snapshot VSS per file bloccati                :f30, 2026-09-17, 5d
+    F37 Servizio Windows reale                        :f37, 2026-09-22, 4d
+    F36 Scheduler integrato                           :f36, 2026-09-26, 5d
+    F31 Checkpoint e ripresa trasferimenti            :f31, 2026-10-01, 5d
+    F38-F40 Compressione, hook, cloud reale           :f38, 2026-10-06, 8d
+
+    section 6.1.0 Notifiche avanzate
+    F41 Notify-server come servizio                   :f41, 2026-10-14, 2d
+    F42 Coda persistente e retry consegna             :f42, 2026-10-16, 4d
+    F43-F45 Telegram, email, priorita                 :f43, 2026-10-20, 4d
+    F32 Endpoint metriche Prometheus                  :f32, 2026-10-24, 3d
+
+    section 7.0.0 Interattivita desktop (parita TeraCopy)
+    F46 Modalita sposta                               :f46, 2026-10-29, 2d
+    F47-F49 Controlli interattivi e coda              :f47, 2026-11-01, 10d
+    F50-F51 Cronologia e shell extension              :f50, 2026-11-12, 10d
 ```
 
 ---
@@ -84,14 +105,125 @@ verificati eseguendo il binario**, non ipotesi.
 
 ---
 
-## 🏢 Milestone 6.0.0 — Backup Enterprise
+## 🎯 Analisi di Parità Funzionale (31 Luglio 2026)
+
+Confronto verificato **sul codice compilato**, non sulla documentazione, contro i tre strumenti che
+`rustcopy` punta a sostituire. Legenda: ✅ presente · 🟡 parziale · ❌ assente · 💀 mock (flag accettato
+ma senza effetto).
+
+### vs TeraCopy (copia interattiva desktop)
+
+| Funzionalità | Stato | Nota di verifica |
+|---|---|---|
+| Verifica checksum post-copia | ✅ | BLAKE3/SHA-256 parallelizzati su Rayon — **superiore** al CRC32 di TeraCopy. |
+| Preservazione timestamp/ACL | ✅ | `--preserve-timestamps`, `--preserve-acl`. |
+| Esclusioni e filtri | ✅ | `--exclude-files`, `--exclude-dirs`, `--min/max-age-days`. |
+| Benchmark di velocità | 🟡 | `--compare-baseline` misura robocopy contro una copia naive; **non** è il disk speed test di TeraCopy. |
+| Integrazione shell di Explorer ("Copia con...") | ❌ | Richiede una shell extension COM (DLL separata). |
+| Finestra di progresso interattiva (pausa/riprendi/salta) | ❌ | Solo progress bar `indicatif` non interattiva; nessun `pause`/`resume` nel codice. |
+| Coda di copie gestibile a video | ❌ | Un job per invocazione. |
+| Scelta utente su errore per-file (salta/riprova/ignora) | ❌ | Solo retry automatico su exit code robocopy transitori. |
+| Cronologia trasferimenti navigabile | ❌ | Solo report JSON/HTML per singolo job. |
+| **Modalità "sposta"** (elimina sorgente dopo verifica) | ❌ | *Non presente nella tua analisi*: TeraCopy la offre, qui non esiste alcun flag `--move`. |
+| **Salvataggio/ricarica lista file** | ❌ | *Non presente nella tua analisi*. |
+
+### vs Cobian Backup (backup schedulato enterprise)
+
+| Funzionalità | Stato | Nota di verifica |
+|---|---|---|
+| Mirror / sync con protezione purge | ✅ | `--mirror` + `check_mirror_safety` (exit code 3 dedicato). |
+| Notifiche di completamento | ✅ | `--webhook-url` + notify-server multi-canale. |
+| Scheduler integrato | ❌ | Assente: si dipende da Task Scheduler/cron esterni. |
+| Esecuzione come servizio Windows | 💀 | `register_windows_service()` è un mock che ritorna `Ok(())`. |
+| Compressione (zip/7z) | ❌ | Nessun flag, nessuna dipendenza. |
+| Snapshot VSS per file bloccati | ❌ | Pianificato **F30**. Problema osservato realmente sul campo. |
+| Sync cloud / FTP / SFTP | 💀 | `sync_to_cloud()` ritorna sempre `Ok(100)` senza trasferire nulla. |
+| Profili multi-sorgente / job multipli | ❌ | Pianificato **F33**. Un solo `source`/`dest` per invocazione. |
+| Cifratura utilizzabile | 🟡 | AES-256-GCM reale ma **inutilizzabile in produzione**: OOM su file grandi (**D3**) e nessun comando di decifratura (**D4**). |
+| Restore mode | ❌ | `--restore-from` irraggiungibile da CLI (**D1**). |
+| **Tipi di backup: completo / incrementale / differenziale** | ❌ | *Non presente nella tua analisi ed è il concetto centrale di Cobian*: oggi esiste solo "copia/mirror lo stato attuale", senza generazioni. |
+| **Politica di ritenzione (conserva N copie, rotazione)** | ❌ | *Non presente nella tua analisi*: conseguenza diretta del punto sopra. |
+| **Comandi pre/post job** | ❌ | *Non presente nella tua analisi*: Cobian li chiama "eventi" (es. fermare un servizio prima del backup). |
+| **Notifica via email/SMTP** | ❌ | *Non presente nella tua analisi*: il notify-server ha log/ntfy/webhook, non SMTP. |
+
+### vs ntfy (sistema di notifica push)
+
+| Funzionalità | Stato | Nota di verifica |
+|---|---|---|
+| Inoltro evento verso canali esterni | ✅ | Reale e testato end-to-end (Release 5.4.0). |
+| Autenticazione a token | ✅ | `ROBOCOPY_NOTIFY_TOKEN`, rifiuto di bind non-loopback senza token. |
+| `TelegramSink` | ❌ | Segnato come opzionale nel piano, non implementato. |
+| Push su mobile senza dipendere da ntfy | ❌ | `NtfySink` fa POST verso un'istanza ntfy esistente: **non la elimina dallo stack**. |
+| Modello pub/sub a topic multipli | ❌ | Un solo endpoint `/notify`, sink statici da TOML. |
+| Priorità, allegati, pulsanti azione, tag | ❌ | Verificato: l'unico header inviato è `Title`. |
+| Persistenza/cronologia messaggi | ❌ | Nessuna coda: se il server è spento il messaggio è perso (resta solo `webhook_error` nel report del backup). |
+| Retry di consegna lato server | ❌ | Verificato: `dispatch_to_all` prova ogni sink **una volta sola**. |
+| Esecuzione come servizio persistente | ❌ | Stesso mock `service.rs` del punto Cobian. |
+
+---
+
+## 🏢 Milestone 6.0.0 — Backup Enterprise (parità Cobian)
 
 | ID | Task | Priorità | Origine | Descrizione |
 |---|---|---|---|---|
 | **F30** | Snapshot VSS (Volume Shadow Copy) | 🟠 P1 | O1 | I file bloccati da altri processi falliscono in modo permanente ed esauriscono il budget di retry (osservato realmente in sessione). È la funzionalità che separa un tool di backup da una copia. |
 | **F31** | Checkpoint e ripresa | 🟡 P2 | O5 | Un `Ctrl+C` o un calo della share su un trasferimento da ore oggi obbliga a ripartire da zero. |
-| **F32** | Endpoint metriche Prometheus | 🟡 P2 | O8 | Da montare sulla stessa istanza axum del notify-server (Release 5.4.0). |
-| **F33** | Profilo multi-sorgente nel TOML | 🟢 P3 | O10 | Il RUNBOOK descrive workflow multi-sorgente eseguiti a mano con un run per sorgente. |
+| **F32** | Endpoint metriche Prometheus | 🟡 P2 | O8 | Da montare sulla stessa istanza axum del notify-server. |
+| **F33** | Profili multi-sorgente / job multipli nel TOML | 🟠 P1 | O10 | Prerequisito di F34 e F35: senza un concetto di "job" non esistono né scheduling né ritenzione. |
+| **F34** | **Tipi di backup: completo / incrementale / differenziale** | 🔴 P0 | Parità Cobian | Il concetto centrale di Cobian, oggi del tutto assente. Richiede un manifesto di generazione persistente, non solo i flag robocopy. È il vero spartiacque tra "strumento di copia" e "strumento di backup". |
+| **F35** | **Politica di ritenzione e rotazione** | 🟠 P1 | Parità Cobian | Conserva N generazioni, elimina le più vecchie. Dipende da F34. |
+| **F36** | **Scheduler integrato** | 🟠 P1 | Parità Cobian | Oggi si dipende da Task Scheduler esterno. Da valutare: scheduler interno al servizio (F37) oppure generazione automatica di attività Task Scheduler. |
+| **F37** | **Servizio Windows reale** | 🟠 P1 | Parità Cobian | Sostituisce il mock `service.rs`. Serve sia al backup schedulato sia al notify-server persistente (vedi F41). |
+| **F38** | **Compressione degli archivi (zip/7z)** | 🟡 P2 | Parità Cobian | Da valutare l'interazione con la verifica di integrità e con la cifratura (F25). |
+| **F39** | **Comandi pre/post job** | 🟡 P2 | Parità Cobian | Gli "eventi" di Cobian: fermare un servizio/database prima del backup e riavviarlo dopo. |
+| **F40** | **Cloud/FTP/SFTP reale** | 🟡 P2 | Parità Cobian | Sostituisce il mock `sync_to_cloud()`. Alternativa più economica: documentare rclone come backend esterno invece di reimplementarlo. |
+
+---
+
+## 📨 Milestone 6.1.0 — Notifiche avanzate
+
+| ID | Task | Priorità | Origine | Descrizione |
+|---|---|---|---|---|
+| **F41** | Notify-server come servizio persistente | 🟠 P1 | Parità ntfy | Dipende da F37. Oggi va avviato a mano o via NSSM/Task Scheduler. |
+| **F42** | Coda persistente + retry di consegna | 🟠 P1 | Parità ntfy | Oggi una notifica verso un canale irraggiungibile è **persa**: `dispatch_to_all` prova una volta sola. Il caso "il canale era giù per 30 secondi" oggi non è recuperabile. |
+| **F43** | `TelegramSink` | 🟡 P2 | Debito 5.4.0 | Era opzionale nel piano originale e non è stato implementato. |
+| **F44** | `EmailSink` (SMTP) | 🟡 P2 | Parità Cobian | Canale di notifica classico per gli ambienti enterprise, oggi assente. |
+| **F45** | Priorità e tag nel payload | 🟢 P3 | Parità ntfy | Oggi l'unico header inviato a ntfy è `Title`. |
+
+---
+
+## 🖱️ Milestone 7.0.0 — Interattività desktop (parità TeraCopy)
+
+> ⚠️ Questa milestone cambia la natura del prodotto: da CLI a strumento desktop. Va affrontata solo
+> dopo che 5.2.0 (correttezza) e 6.0.0 (backup core) sono chiuse — costruire una GUI sopra
+> `--restore-from` rotto e una cifratura non ripristinabile amplificherebbe i difetti invece di
+> risolverli.
+
+| ID | Task | Priorità | Origine | Descrizione |
+|---|---|---|---|---|
+| **F46** | Modalità "sposta" (elimina sorgente dopo verifica) | 🟡 P2 | Parità TeraCopy | Sicura solo *dopo* la verifica di integrità: la sequenza copia → verifica → elimina è già tutta presente, manca solo l'ultimo passo. Il candidato a costo più basso di questa milestone. |
+| **F47** | Controlli interattivi: pausa / riprendi / salta file | 🟠 P1 | Parità TeraCopy | Difficile con robocopy come motore (processo esterno non pilotabile a runtime): potrebbe richiedere di usare il motore di copia nativo invece di robocopy per i job interattivi. **Da prototipare prima di impegnarsi.** |
+| **F48** | Scelta utente sull'errore per-file | 🟡 P2 | Parità TeraCopy | Stessa dipendenza architetturale di F47. |
+| **F49** | Coda di job gestibile | 🟡 P2 | Parità TeraCopy | Dipende da F33 (concetto di job). |
+| **F50** | Cronologia trasferimenti navigabile | 🟢 P3 | Parità TeraCopy | I report JSON esistono già: serve un indice consultabile, non nuovi dati. |
+| **F51** | Shell extension per Explorer ("Copia con rustcopy") | 🟢 P3 | Parità TeraCopy | **Deliverable separato**: DLL COM registrata nel sistema (fattibile in Rust con `windows-rs`, ma è un binario di natura diversa, con installer e registrazione COM). Il costo più alto dell'intera roadmap. |
+
+---
+
+## 🚫 Fuori perimetro (deciso, non "da fare più avanti")
+
+Sostituire **ntfy per intero** non è un obiettivo sensato per questo progetto, e vale la pena
+dichiararlo invece di lasciarlo come debito implicito:
+
+- **Push nativo su mobile** richiede app iOS/Android proprie e integrazione con APNs/FCM. È un
+  prodotto a sé, non una funzionalità di uno strumento di backup.
+- **Modello pub/sub a topic con sottoscrizione dinamica** implica gestione utenti, ACL per topic,
+  connessioni long-lived e una web UI.
+- **Caching dei messaggi per client offline** è il cuore di ntfy come servizio, non di un relay.
+
+La posizione corretta di `rustcopy` è **integrarsi** con ntfy (come fa già `NtfySink`), non
+rimpiazzarlo. Il sottoinsieme che ha davvero valore per un tool di backup — Telegram, email, retry
+con coda persistente, esecuzione come servizio — è pianificato in **6.1.0**.
 
 ---
 
@@ -124,7 +256,7 @@ insidie note — rimane nel repo come riferimento storico).
 ## 📌 Debito tecnico noto (non ancora pianificato)
 
 - `src/cache.rs`, `src/cloud.rs`, `src/service.rs` restano scaffolding non collegati; i relativi flag (`--enable-dedup`, `--cloud-sync-target`, `--install-service`) sono marcati `[NOT IMPLEMENTED]` in `--help`. `cache.rs` verrebbe finalmente utilizzato da F28.
-- Il notify-server implementa solo `LogSink`/`NtfySink`/`GenericWebhookSink`; `TelegramSink` era segnato come opzionale nel piano e non è stato implementato in questa passata.
+- Il notify-server implementa solo `LogSink`/`NtfySink`/`GenericWebhookSink` e prova ogni sink **una volta sola**: una notifica verso un canale momentaneamente irraggiungibile è persa. Pianificato in 6.1.0 (F42 coda persistente, F43 Telegram, F44 email).
 - `integrity::verify` richiede ancora l'intera lista file in RAM (`Vec<ScannedFile>`); `--no-prescan` evita solo la sua costruzione, disabilitando la verifica di integrità in quel modo, ma non introduce hashing in streaming.
 - `Args::merge_config` applica il pattern del TOML solo quando la CLI è ancora sul default `"*"`; non distingue un `--pattern "*"` esplicito da nessun flag passato (richiederebbe `ArgMatches::value_source`), e la stessa limitazione vale per gli altri campi booleani.
 - Il grafo `graphify-out/` copre ora tutti i 26 file (685 nodi / 1374 archi / 24 community, rigenerato dopo l'aggiunta del notify-server), ma i nodi metodo non sono qualificati con il tipo proprietario (`.encrypt()` invece di `CryptoManager::encrypt`): la query di reachability da `main`/`lib` resta inaffidabile e **non va usata come gate anti-dead-code**. Il codice morto reale (D8) è stato individuato per grep.
