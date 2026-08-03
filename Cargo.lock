@@ -1307,7 +1307,7 @@ dependencies = [
 
 [[package]]
 name = "robocopy_ingest"
-version = "5.4.1"
+version = "5.4.2"
 dependencies = [
  "aes-gcm",
  "anyhow",

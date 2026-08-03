@@ -205,9 +205,13 @@ nulla e non sono marcati `[NON IMPLEMENTATO]`.
 
 ---
 
-### D3 — `--encrypt-aes256` carica ogni file interamente in RAM
+### D3 — `--encrypt-aes256` carica ogni file interamente in RAM ✅ RISOLTO (F25a, 3 Agosto 2026)
 
-**Gravità: ALTA.** Difetto **introdotto dai fix della 5.1.0**. `encrypt_destination` in `main.rs`:
+**Stato: chiuso e verificato.** Vedi in fondo per il fix reale. Il resto della sezione resta come
+diagnosi storica.
+
+**Gravità (storica): ALTA.** Difetto **introdotto dai fix della 5.1.0**. `encrypt_destination` in
+`main.rs`:
 
 ```rust
 let data = std::fs::read(&path)?;          // file intero in RAM
@@ -223,17 +227,78 @@ cap sulle liste di errori). Il modulo si chiama "Streaming Encryption" ma **non 
 scrittura su file temporaneo e rename atomico) — la stessa struttura già usata da `integrity.rs` per
 l'hashing a buffer.
 
+#### ✅ Fix reale e verifica (3 Agosto 2026)
+
+Implementato esattamente come proposto: `CryptoManager::encrypt_stream`/`decrypt_stream` in
+`src/crypto.rs` processano il file a blocchi da **1 MiB** (`CHUNK_SIZE`), ognuno con un nonce
+casuale fresco e un prefisso di lunghezza esplicito a 4 byte (invece di un framing implicito a
+dimensione fissa, per evitare ambiguità sull'ultimo blocco parziale). Formato su disco: header
+`RCE1` (4 byte) + record ripetuti `nonce(12) || len(4, LE) || ciphertext+tag(len)`. La memoria di
+picco è quindi O(dimensione blocco), non O(dimensione file), indipendentemente da quanto è grande
+il file. `CryptoManager::encrypt_file`/`decrypt_file` scrivono su un file temporaneo sibling e fanno
+`rename` atomico solo a completamento riuscito (nessun file a metà cifrato in caso di crash o
+errore a metà scrittura).
+
+**Verificato con un file reale da 5,24 MB** (5 blocchi, non allineato a un multiplo esatto di
+1 MiB) attraverso il binario compilato: backup con `--encrypt-aes256` → confronto SHA-256
+byte-per-byte tra l'originale e il file ripristinato dopo `--restore-from --decrypt` → **identico**.
+Il file di backup inizia realmente con l'header `RCE1` (verificato con `xxd`), non è un artefatto
+di test. Coperto anche da 9 nuovi unit test in `src/crypto.rs` (file multi-blocco, dimensione
+esattamente multipla del chunk, file vuoto, header mancante/corrotto, lunghezza di record
+oversize rifiutata **prima** di allocare).
+
 ---
 
-### D4 — Non esiste alcun percorso di decifratura
+### D4 — Non esisteva alcun percorso di decifratura ✅ RISOLTO (F25b, 3 Agosto 2026)
 
-**Gravità: ALTA.** Difetto **introdotto dai fix della 5.1.0**. `CryptoManager::decrypt()` esiste ed è
-testato, ma **non è raggiungibile da nessun comando CLI**: non c'è un flag `--decrypt`, e
-`--restore-from` non decifra nulla. Un backup creato con `--encrypt-aes256` **non è ripristinabile con
-questo strumento**: servirebbe scrivere codice Rust ad hoc contro `CryptoManager`.
+**Stato: chiuso e verificato.** Vedi in fondo per il fix reale. Il resto della sezione resta come
+diagnosi storica.
 
-Sommato a D3 e D1, la conclusione onesta è che `--encrypt-aes256` **non è pronto per la produzione**:
-cifra dati che poi lo strumento non sa recuperare, e il comando di recupero è a sua volta rotto.
+**Gravità (storica): ALTA.** Difetto **introdotto dai fix della 5.1.0**. `CryptoManager::decrypt()`
+esisteva ed era testato, ma **non era raggiungibile da nessun comando CLI**: non c'era un flag
+`--decrypt`, e `--restore-from` non decifrava nulla. Un backup creato con `--encrypt-aes256` **non
+era ripristinabile con questo strumento**: sarebbe servito scrivere codice Rust ad hoc contro
+`CryptoManager`.
+
+Sommato a D3 e D1, la conclusione onesta era che `--encrypt-aes256` **non fosse pronto per la
+produzione**: cifrava dati che poi lo strumento non sapeva recuperare, e il comando di recupero era
+a sua volta rotto.
+
+#### ✅ Fix reale e verifica (3 Agosto 2026)
+
+Aggiunto il flag `--decrypt <KEY>`, simmetrico a `--encrypt-aes256` (stesso formato chiave
+`env:`/`file:`/letterale), che decifra ogni file in destinazione dopo un trasferimento riuscito.
+`validate()` rifiuta la combinazione `--encrypt-aes256` + `--decrypt` nello stesso run, **con il
+controllo posizionato prima del bypass della modalità restore** (non dopo), perché `--decrypt` va
+usato proprio insieme a `--restore-from`.
+
+**Un secondo difetto reale, distinto, è stato scoperto proprio dal test black-box end-to-end** (non
+da un test unitario in isolamento — di nuovo la lezione di D1): il primo tentativo di collegare
+`--decrypt` falliva silenziosamente. La causa non era nel modulo crypto ma in `restore.rs`:
+`build_restore_args` costruiva un `Args` **completamente nuovo** da zero via
+`Args::try_parse_from(["--source", ..., "--dest", ...])` e copiava solo 5 campi dal report
+(`pattern`, `threads`, `retries`, `retry_wait_seconds`, `verify_integrity`). Qualunque altro flag
+digitato sulla riga di comando reale insieme a `--restore-from` — `--decrypt`, un `--log-path`
+personalizzato, `--webhook-url`, `--hash-algo` — veniva **silenziosamente scartato**, perché
+`main.rs` sostituisce interamente `args` con il valore restituito da questa funzione. Il test di
+`restore_from_runs_end_to_end_without_source_or_dest` (F24) non l'aveva mai notato perché non usava
+nessun flag oltre a `--restore-from`.
+
+**Correzione**: `build_restore_args` ora accetta `original: &Args` (gli argomenti realmente
+parsati per questa invocazione) e parte da un **clone** di quello, sovrascrivendo solo i campi che
+devono provenire dal report (source/dest invertiti, e le impostazioni che descrivono *cosa* è stato
+salvato: pattern, thread, policy di retry, se l'integrità era verificata). Tutto il resto —
+`--decrypt` incluso — sopravvive intatto.
+
+**Verificato end-to-end con il binario compilato, ciclo completo**: backup con `--encrypt-aes256` →
+perdita simulata del file originale (cancellato, dentro una sandbox `tempdir` isolata) →
+`--restore-from <report> --decrypt <chiave>` in un solo comando, senza `--source`/`--dest` → file
+recuperato in **chiaro**, byte-identico all'originale. Test
+`tests/cli_smoke.rs::encrypted_backup_restores_and_decrypts_end_to_end`. Ripetuto anche su un file
+reale da 5,24 MB fuori dalla suite di test (vedi D3) per escludere che il round-trip funzionasse
+solo su input piccoli a singolo blocco.
+
+`cargo test`: 164 (era 152). `cargo test --features notify-server`: 177 (era 165).
 
 ---
 
@@ -349,7 +414,7 @@ Proposte ordinate per rapporto valore/rischio, motivate da problemi osservati su
 
 | Priorità | Voci | Razionale |
 |---|---|---|
-| **P0** | ~~D1~~ ✅, D3, D4 | Funzionalità dichiarate funzionanti che non lo sono, di cui due riguardano il **recupero dei dati**. D1 risolto e verificato il 31 Luglio 2026 (F24). |
+| **P0** | ~~D1~~ ✅, ~~D3~~ ✅, ~~D4~~ ✅ | Tutte e tre risolte e verificate: D1 il 31 Luglio 2026 (F24), D3/D4 il 3 Agosto 2026 (F25a/F25b). Nessun difetto P0 aperto al momento. |
 | **P1** | D2, D5, D6, D7 | Correttezza e coerenza: flag muti, blocco del runtime, versionamento dello schema, semantica delle junction. |
 | **P2** | D8, D9, D10 + O1-O10 | Debito tecnico, ergonomia operativa ed evoluzione funzionale. |
 

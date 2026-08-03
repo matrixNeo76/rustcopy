@@ -76,6 +76,10 @@ pub enum IngestError {
 
     #[error("encryption error: {0}")]
     Crypto(String),
+
+    /// F25b: --encrypt-aes256 and --decrypt are mutually exclusive in a single run.
+    #[error("--encrypt-aes256 and --decrypt cannot both be given in the same run")]
+    EncryptAndDecryptConflict,
 }
 
 impl IngestError {
@@ -121,7 +125,8 @@ impl IngestError {
             | IngestError::InvalidPattern { .. }
             | IngestError::IntegrityFailed { .. }
             | IngestError::MirrorPurgeAborted { .. }
-            | IngestError::Crypto(_) => false,
+            | IngestError::Crypto(_)
+            | IngestError::EncryptAndDecryptConflict => false,
         }
     }
 }

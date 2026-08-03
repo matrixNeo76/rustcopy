@@ -276,14 +276,16 @@ fn encrypt_aes256_actually_encrypts_destination_files() {
     let encrypted = std::fs::read(dest.join("a.csv")).expect("read encrypted file");
     let plaintext = std::fs::read(source.path().join("a.csv")).expect("read source file");
     assert_ne!(
-        encrypted[robocopy_ingest::crypto::NONCE_LEN..],
-        plaintext[..],
+        encrypted, plaintext,
         "destination content must not be the plaintext"
     );
 
     let manager =
         robocopy_ingest::crypto::CryptoManager::new("test-passphrase").expect("build manager");
-    let decrypted = manager.decrypt(&encrypted).expect("decrypt with the right key");
+    let mut decrypted = Vec::new();
+    manager
+        .decrypt_stream(std::io::Cursor::new(&encrypted), &mut decrypted)
+        .expect("decrypt with the right key");
     assert_eq!(decrypted, plaintext, "must decrypt back to the original bytes");
 }
 
@@ -439,6 +441,104 @@ fn restore_from_runs_end_to_end_without_source_or_dest() {
     let restored_content =
         std::fs::read_to_string(original.join("important.csv")).expect("file must be restored");
     assert_eq!(restored_content, "irreplaceable,data\n1,2\n");
+}
+
+#[cfg(windows)]
+#[test]
+fn encrypted_backup_restores_and_decrypts_end_to_end() {
+    // F25b black-box test: the full disaster-recovery story for an encrypted backup, all inside
+    // one tempdir sandbox (no real user paths touched). Encrypting a backup that can never be
+    // decrypted again is exactly the failure mode D4 described — this proves the whole loop
+    // (encrypt on backup -> data loss -> --restore-from + --decrypt) produces the original
+    // plaintext back, using the compiled binary end-to-end, not CryptoManager calls in isolation.
+    let sandbox = tempfile::tempdir().expect("sandbox");
+    let original = sandbox.path().join("original");
+    let backup_dest = sandbox.path().join("backup");
+    let report_path = sandbox.path().join("backup_report.json");
+    let key = "correct-horse-battery-staple";
+
+    // 1. Seed data and back it up WITH encryption.
+    std::fs::create_dir_all(&original).expect("create original");
+    std::fs::write(original.join("secret.csv"), b"classified,data\n42,99\n").expect("seed file");
+
+    let backup_output = run(&[
+        "--source",
+        original.to_str().expect("utf8"),
+        "--dest",
+        backup_dest.to_str().expect("utf8"),
+        "--verify-integrity",
+        "--encrypt-aes256",
+        key,
+        "--report-path",
+        report_path.to_str().expect("utf8"),
+        "--log-path",
+        sandbox.path().join("backup.log").to_str().expect("utf8"),
+    ]);
+    assert!(
+        backup_output.status.success(),
+        "encrypted backup must succeed; stderr: {}",
+        stderr_of(&backup_output)
+    );
+    let encrypted_at_dest = std::fs::read(backup_dest.join("secret.csv")).expect("read backup");
+    assert_ne!(
+        encrypted_at_dest, b"classified,data\n42,99\n",
+        "the backup destination must hold ciphertext, not plaintext"
+    );
+
+    // 2. Simulate data loss.
+    std::fs::remove_file(original.join("secret.csv")).expect("simulate data loss");
+    assert!(!original.join("secret.csv").exists());
+
+    // 3. Restore AND decrypt in one command: --restore-from (no --source/--dest, per F24) plus
+    // --decrypt with the same key.
+    let restore_output = run(&[
+        "--restore-from",
+        report_path.to_str().expect("utf8"),
+        "--decrypt",
+        key,
+        "--log-path",
+        sandbox.path().join("restore.log").to_str().expect("utf8"),
+        "--report-path",
+        sandbox.path().join("restore_report.json").to_str().expect("utf8"),
+    ]);
+    assert!(
+        restore_output.status.success(),
+        "restore+decrypt must succeed; stderr: {}",
+        stderr_of(&restore_output)
+    );
+
+    // 4. The recovered file must be back in PLAINTEXT (decrypted), not still ciphertext.
+    let recovered = std::fs::read(original.join("secret.csv")).expect("file must be restored");
+    assert_eq!(
+        recovered, b"classified,data\n42,99\n",
+        "recovered file must be the original plaintext, not ciphertext"
+    );
+}
+
+#[test]
+fn encrypt_and_decrypt_together_are_rejected() {
+    let source = fixture_tree(&[("a.csv", 10)]);
+    let workdir = tempfile::tempdir().expect("workdir");
+
+    let output = run(&[
+        "--source",
+        source.path().to_str().expect("utf8"),
+        "--dest",
+        workdir.path().join("out").to_str().expect("utf8"),
+        "--log-path",
+        workdir.path().join("ingest.log").to_str().expect("utf8"),
+        "--encrypt-aes256",
+        "key-a",
+        "--decrypt",
+        "key-b",
+    ]);
+
+    assert_eq!(output.status.code(), Some(2), "must be an unrecoverable usage error");
+    assert!(
+        stderr_of(&output).contains("cannot both be given"),
+        "got: {}",
+        stderr_of(&output)
+    );
 }
 
 /// Guards the assumption the Linux tests rely on: the fixture helper is deterministic.

@@ -137,6 +137,10 @@ pub struct IngestReport {
     /// Whether destination files were encrypted with AES-256-GCM after the transfer.
     #[serde(default)]
     pub encrypted: bool,
+    /// Whether destination files were decrypted with AES-256-GCM after the transfer (F25b,
+    /// typically set during `--restore-from` of an encrypted backup).
+    #[serde(default)]
+    pub decrypted: bool,
     /// Non-fatal problem encountered while delivering the completion webhook, if any.
     #[serde(skip_serializing_if = "Option::is_none", default)]
     pub webhook_error: Option<String>,
@@ -185,6 +189,7 @@ impl IngestReport {
             configuration: ConfigurationReport::from(args),
             log_lines_dropped: 0,
             encrypted: false,
+            decrypted: false,
             webhook_error: None,
         }
     }

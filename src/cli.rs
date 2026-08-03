@@ -196,6 +196,15 @@ pub struct Args {
     #[arg(long, value_name = "KEY")]
     pub encrypt_aes256: Option<String>,
 
+    // ── F25b: Zero-Trust Streaming Decryption ─────────────────────────────────
+    /// Decrypt every copied file in the destination with AES-256-GCM after the transfer
+    /// completes — the counterpart to --encrypt-aes256, using the same VALUE key format
+    /// (`env:NAME`, `file:PATH`, or a literal passphrase). Typically combined with
+    /// --restore-from to decrypt a backup while restoring it, but works after any successful
+    /// transfer. Cannot be combined with --encrypt-aes256 in the same run.
+    #[arg(long, value_name = "KEY")]
+    pub decrypt: Option<String>,
+
     // ── F18.1: Direct Cloud Sync ─────────────────────────────────────────────
     /// [NOT IMPLEMENTED] Reserved for direct S3/Azure Blob sync; accepted for forward
     /// compatibility but currently has no effect (no cloud transfer is performed).
@@ -314,6 +323,11 @@ impl Args {
         }
     }
     pub fn validate(&self) -> Result<(), IngestError> {
+        // Checked before the restore-mode short-circuit below: --decrypt's primary use case is
+        // exactly --restore-from, so this conflict must still be caught in that mode.
+        if self.encrypt_aes256.is_some() && self.decrypt.is_some() {
+            return Err(IngestError::EncryptAndDecryptConflict);
+        }
         if self.restore_from.is_some() {
             return Ok(());
         }

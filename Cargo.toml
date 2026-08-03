@@ -1,6 +1,6 @@
 [package]
 name = "robocopy_ingest"
-version = "5.4.1"
+version = "5.4.2"
 edition = "2021"
 rust-version = "1.74"
 description = "CLI Rust per l'ingestion di grandi volumi CSV via Robocopy, con benchmark contro copia naive"

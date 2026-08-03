@@ -65,8 +65,8 @@ async fn main() -> ExitCode {
 
 /// Returns `Ok(true)` when the ingestion is fully acceptable.
 async fn run(mut args: Args) -> Result<bool> {
-    if let Some(restore_report) = &args.restore_from {
-        args = robocopy_ingest::restore::build_restore_args(restore_report, None)?;
+    if let Some(restore_report) = args.restore_from.clone() {
+        args = robocopy_ingest::restore::build_restore_args(&args, &restore_report, None)?;
     } else if let Some(config_path) = &args.config {
         let config = robocopy_ingest::config::IngestConfig::load_from(config_path)
             .with_context(|| format!("cannot load config file from {}", config_path.display()))?;
@@ -214,12 +214,21 @@ async fn execute(args: &Args, child_pid: Arc<AtomicU32>) -> Result<RunOutcome> {
         (None, None)
     };
 
-    // Encrypt destination files only after verification, so integrity checks still compare
-    // plaintext against plaintext.
+    // Encrypt/decrypt destination files only after verification, so integrity checks still
+    // compare same-form bytes on both sides (plaintext vs plaintext on a normal run, or
+    // ciphertext vs ciphertext while restoring an encrypted backup). `validate()` already
+    // rejects passing both --encrypt-aes256 and --decrypt together, so at most one of these runs.
     let encrypted_count = if let (Some(key_spec), None, false) =
         (&args.encrypt_aes256, &copy_failure, args.dry_run)
     {
         Some(encrypt_destination(args, &inventory, key_spec).await?)
+    } else {
+        None
+    };
+    let decrypted_count = if let (Some(key_spec), None, false) =
+        (&args.decrypt, &copy_failure, args.dry_run)
+    {
+        Some(decrypt_destination(args, &inventory, key_spec).await?)
     } else {
         None
     };
@@ -241,6 +250,7 @@ async fn execute(args: &Args, child_pid: Arc<AtomicU32>) -> Result<RunOutcome> {
         timing,
     );
     report.encrypted = encrypted_count.unwrap_or(0) > 0;
+    report.decrypted = decrypted_count.unwrap_or(0) > 0;
 
     if let Some(webhook_url) = &args.webhook_url {
         match robocopy_ingest::notify::send_webhook(webhook_url, &report).await {
@@ -405,6 +415,10 @@ fn normalize_for_compare(path: &Path) -> PathBuf {
 }
 
 /// Encrypt every file the transfer touched, in place in the destination, with AES-256-GCM.
+///
+/// F25a fix: streams each file through [`CryptoManager::encrypt_file`] in fixed-size chunks
+/// instead of reading it whole into RAM — the previous `std::fs::read`/`std::fs::write` pair
+/// meant a single large file could OOM the process.
 async fn encrypt_destination(args: &Args, inventory: &ScanSummary, key_spec: &str) -> Result<usize> {
     let key = robocopy_ingest::crypto::resolve_key(key_spec)?;
     let manager = CryptoManager::new(&key)?;
@@ -415,12 +429,10 @@ async fn encrypt_destination(args: &Args, inventory: &ScanSummary, key_spec: &st
         let mut encrypted = 0usize;
         for file in &files {
             let path = dest_root.join(&file.relative_path);
-            let data = match std::fs::read(&path) {
-                Ok(data) => data,
-                Err(_) => continue, // file missing at dest (copy skipped/failed): nothing to encrypt
-            };
-            let ciphertext = manager.encrypt(&data)?;
-            std::fs::write(&path, ciphertext).map_err(|e| IngestError::io(&path, e))?;
+            if !path.is_file() {
+                continue; // file missing at dest (copy skipped/failed): nothing to encrypt
+            }
+            manager.encrypt_file(&path)?;
             encrypted += 1;
         }
         Ok(encrypted)
@@ -431,6 +443,38 @@ async fn encrypt_destination(args: &Args, inventory: &ScanSummary, key_spec: &st
     if count > 0 {
         tracing::info!(count, "destination files encrypted with AES-256-GCM");
         println!("Encrypted {count} file(s) in the destination with AES-256-GCM.");
+    }
+    Ok(count)
+}
+
+/// Decrypt every file the transfer touched, in place in the destination, with AES-256-GCM — the
+/// counterpart to [`encrypt_destination`]. Streams each file in fixed-size chunks for the same
+/// anti-OOM reason (F25a). Typically run as part of `--restore-from`, where "the destination" is
+/// the original source path the backup is being restored to.
+async fn decrypt_destination(args: &Args, inventory: &ScanSummary, key_spec: &str) -> Result<usize> {
+    let key = robocopy_ingest::crypto::resolve_key(key_spec)?;
+    let manager = CryptoManager::new(&key)?;
+    let dest_root = args.dest().to_path_buf();
+    let files = inventory.files.clone();
+
+    let count = tokio::task::spawn_blocking(move || -> Result<usize, IngestError> {
+        let mut decrypted = 0usize;
+        for file in &files {
+            let path = dest_root.join(&file.relative_path);
+            if !path.is_file() {
+                continue; // file missing at dest (copy skipped/failed): nothing to decrypt
+            }
+            manager.decrypt_file(&path)?;
+            decrypted += 1;
+        }
+        Ok(decrypted)
+    })
+    .await
+    .context("the decryption task panicked")??;
+
+    if count > 0 {
+        tracing::info!(count, "destination files decrypted with AES-256-GCM");
+        println!("Decrypted {count} file(s) in the destination.");
     }
     Ok(count)
 }

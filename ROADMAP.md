@@ -1,8 +1,7 @@
 # 🗺️ Roadmap di Progetto — robocopy-ingest-cli
 
-> **Stato Attuale**: 🟢 **Release 5.4.0 Notify Server (axum) rilasciata** (`Cargo.toml` = 5.4.0)
-> | ✅ **F24 (`--restore-from`) risolto e verificato** il 31 Luglio 2026 — vedi `ANALYSIS.md` D1
-> | 🔴 **2 difetti P0 ancora aperti** dall'audit post-5.1.0 — cifratura in OOM (D3), nessuna decifratura (D4): vedi `ANALYSIS.md` Parte 3 e la milestone 5.2.0
+> **Stato Attuale**: 🟢 **Release 5.4.2** (`Cargo.toml` = 5.4.2) — F24, F25a, F25b completate e verificate
+> | ✅ **Nessun difetto P0 aperto**: D1 (31 Luglio 2026, F24), D3/D4 (3 Agosto 2026, F25a/F25b) — vedi `ANALYSIS.md` Parte 3
 > | 🎯 **Analisi di parità** vs TeraCopy / Cobian / ntfy nella sezione dedicata: le milestone 6.0.0, 6.1.0, 7.0.0 e 8.0.0 ne derivano.
 >
 > **Nota sulla numerazione**: i numeri di versione seguono le milestone funzionali, **non** una
@@ -85,16 +84,17 @@ gantt
 
 ---
 
-## 🚨 Milestone 5.2.0 — Correttezza (difetti P0/P1 aperti)
+## 🚨 Milestone 5.2.0 — Correttezza
 
 Deriva interamente dall'audit post-5.1.0 (`ANALYSIS.md` Parte 3). Tutte le voci sono **difetti
-verificati eseguendo il binario**, non ipotesi.
+verificati eseguendo il binario**, non ipotesi. **I 3 difetti P0 (F24, F25a, F25b) sono tutti
+risolti**; restano aperti i 4 P1 (F26a-d).
 
 | ID | Task | Priorità | Difetto | Descrizione |
 |---|---|---|---|---|
 | **F24** | Restore Mode realmente eseguibile | `[x] Completato` (31 Luglio 2026) | D1 | Causa isolata con una riproduzione minima fuori dal crate: clap tratta `default_value = ""` come "nessun default", ignorando `required_unless_present`. Portato `source`/`dest` a `Option<PathBuf>` con accessor `Args::source()`/`Args::dest()`. Verificato con `tests/cli_smoke.rs::restore_from_runs_end_to_end_without_source_or_dest`: backup reale → perdita di file simulata in sandbox `tempdir` isolata → `--restore-from` senza `--source`/`--dest` → file recuperato con contenuto corretto. Confermato anche via PowerShell nativa. |
-| **F25a** | Cifratura a blocchi (streaming) | 🔴 P0 | D3 | `std::fs::read` carica ogni file interamente in RAM: 50 GB → OOM. Passare ad AEAD a chunk da 1 MiB su file temporaneo + rename atomico. |
-| **F25b** | Comando di decifratura | 🔴 P0 | D4 | Oggi un backup cifrato **non è ripristinabile con lo strumento stesso**. Aggiungere `--decrypt` e integrare la decifratura in `--restore-from`. |
+| **F25a** | Cifratura a blocchi (streaming) | `[x] Completato` (3 Agosto 2026) | D3 | `CryptoManager::encrypt_stream`/`decrypt_stream`: chunk da 1 MiB, nonce fresco per blocco, header `RCE1` + record length-prefixed, file temporaneo sibling + rename atomico. Verificato su un file reale da 5,24 MB (5 blocchi) con confronto SHA-256 byte-per-byte. |
+| **F25b** | Comando di decifratura | `[x] Completato` (3 Agosto 2026) | D4 | Flag `--decrypt <KEY>` aggiunto, simmetrico a `--encrypt-aes256`. **Ha scoperto un secondo difetto reale**: `build_restore_args` ricostruiva `Args` da zero scartando ogni flag della riga di comando reale (incluso `--decrypt`) tranne i 5 campi copiati dal report — risolto facendolo partire da un clone degli argomenti realmente digitati. Verificato end-to-end: backup cifrato → perdita simulata → `--restore-from --decrypt` in un solo comando → file recuperato in chiaro, byte-identico. |
 | **F26a** | Flag muti censiti | 🟠 P1 | D2 | `--fast-verify` e `--ignore-transient-missing` non sono letti da nessun modulo: implementarli (vedi F28) o marcarli `[NON IMPLEMENTATO]` come gli altri. |
 | **F26b** | `check_mirror_safety` non bloccante | 🟠 P1 | D5 | Spostare il walk della destinazione in `spawn_blocking`: oggi congela l'executor tokio (e la gestione del `Ctrl+C`) per tutta la scansione. |
 | **F26c** | `SCHEMA_VERSION` a 2 + retrocompatibilità | 🟠 P1 | D6 | Lo schema `Mismatch` è cambiato in modo breaking senza incrementare la versione; aggiungere `#[serde(default)]` per continuare a leggere i report storici. |
@@ -149,7 +149,7 @@ ma senza effetto).
 | Snapshot VSS per file bloccati | ❌ | Pianificato **F30**. Problema osservato realmente sul campo. |
 | Sync cloud / FTP / SFTP | 💀 | `sync_to_cloud()` ritorna sempre `Ok(100)` senza trasferire nulla. |
 | Profili multi-sorgente / job multipli | ❌ | Pianificato **F33**. Un solo `source`/`dest` per invocazione. |
-| Cifratura utilizzabile | 🟡 | AES-256-GCM reale ma **inutilizzabile in produzione**: OOM su file grandi (**D3**) e nessun comando di decifratura (**D4**). |
+| Cifratura utilizzabile | ✅ | AES-256-GCM reale, a blocchi (niente OOM su file grandi, **D3** risolto), con comando `--decrypt` funzionante (**D4** risolto). |
 | Restore mode | ❌ | `--restore-from` irraggiungibile da CLI (**D1**). |
 | **Tipi di backup: completo / incrementale / differenziale** | ❌ | *Non presente nella tua analisi ed è il concetto centrale di Cobian*: oggi esiste solo "copia/mirror lo stato attuale", senza generazioni. |
 | **Politica di ritenzione (conserva N copie, rotazione)** | ❌ | *Non presente nella tua analisi*: conseguenza diretta del punto sopra. |
@@ -226,9 +226,10 @@ ma senza effetto).
 ## 🖥️ Milestone 8.0.0 — Interfaccia grafica (Tauri)
 
 > ⚠️ **Fase finale della roadmap, e va mantenuta tale.** Una UI moltiplica la superficie di ciò che
-> c'è sotto: costruirla sopra i difetti P0 ancora aperti significherebbe dare un pulsante "Cifra" a
-> una cifratura che va in OOM e che nessun comando sa decifrare (**D3**/**D4** — **D1**, il restore
-> irraggiungibile, è stato risolto in **F24**). Prerequisito non negoziabile: **5.2.0 chiusa**.
+> c'è sotto. I 3 difetti P0 originari (**D1** restore irraggiungibile, **D3** cifratura in OOM,
+> **D4** nessuna decifratura) sono stati risolti (F24, F25a, F25b) — ma restano 4 difetti P1
+> aperti in 5.2.0 (F26a-d: flag muti, blocco del runtime su mirror safety, versionamento schema,
+> junction). Prerequisito non negoziabile: **5.2.0 chiusa per intero**, P1 inclusi.
 
 ### Relazione con la milestone 7.0.0
 
@@ -319,6 +320,8 @@ insidie note — rimane nel repo come riferimento storico).
 - **v5.0.0**: Scaffolding per Direct Cloud Sync (S3/Azure) e Windows Service Daemon — entrambi mock, non implementati.
 - **v5.1.0**: Mirror Safety Threshold reale, decodifica CP850 reale, kill mirato del child process, crypto AES-256-GCM reale, webhook HTTPS affidabile. *(Il fix Restore Mode dichiarato in questa release non aveva funzionato — risolto definitivamente in **F24**, 31 Luglio 2026.)*
 - **v5.4.0**: Notify Server basato su axum (binario separato, feature-gated), canali multipli (log/ntfy/webhook generico) da configurazione TOML. Sostituisce `--serve-dashboard`/`src/server.rs` (rimossi).
+- **v5.4.1**: F24 (restore mode realmente eseguibile).
+- **v5.4.2**: F25a (cifratura a blocchi anti-OOM), F25b (comando `--decrypt`, e fix del difetto correlato in `build_restore_args` che scartava i flag reali della riga di comando). I 3 difetti P0 dell'audit post-5.1.0 sono ora tutti chiusi.
 
 ## 📌 Debito tecnico noto (non ancora pianificato)
 

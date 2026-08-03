@@ -36,7 +36,7 @@ graph LR
 2. **Trasferimento Robocopy Streaming**: Invoca `robocopy.exe` su Windows iniettando i flag ottimali (`/MT:N` thread automatici sulle CPU dell'host, `/COPYALL` permessi ACL, `/DCOPY:DAT` timestamp directory, `/MIR` mirroring, `/IPG` throttling). Legge stdout e stderr tramite buffer binario riutilizzato (drenati su thread separati per evitare deadlock), decodificando i caratteri OEM (CP850) con una tabella dedicata (`src/oem_codec.rs`) invece di un fallback UTF-8 silenzioso.
 3. **Retry Esterni & Resilience**: Se Robocopy restituisce exit code transitori di blocco file (codici 8, 9, 11), l'invocazione viene ripetuta automaticamente con backoff esponenziale. Se si preme `Ctrl+C`, l'applicazione intercetta il segnale e termina **solo** il processo `robocopy.exe` figlio effettivamente in corso (tramite il suo PID), senza toccare altri eventuali processi robocopy in esecuzione sull'host.
 4. **Verifica Integrità Multi-Threaded**: Verifica la corrispondenza dei checksum tra sorgente e destinazione utilizzando **Rayon** su tutte le CPU dell'host. Supporta **SHA-256** ed l'algoritmo **BLAKE3** (3-5x più veloce).
-5. **Cifratura**: Supporta la cifratura **AES-256-GCM** reale (`--encrypt-aes256`) dei file in destinazione a fine trasferimento, con nonce casuale per file. La sincronizzazione diretta verso S3/Azure (`--cloud-sync-target`) è **riservata ma non implementata** (vedi tabella flag).
+5. **Cifratura**: Supporta la cifratura **AES-256-GCM** reale a blocchi da 1 MiB (`--encrypt-aes256`, memoria O(dimensione blocco) anche su file enormi) e la sua controparte funzionante `--decrypt`, tipicamente usata insieme a `--restore-from` per ripristinare un backup cifrato. La sincronizzazione diretta verso S3/Azure (`--cloud-sync-target`) è **riservata ma non implementata** (vedi tabella flag).
 6. **Reporting & Notifiche**: Scrive un report JSON completo con metadati sull'host, genera una **Dashboard HTML Standalone** (`--html-report-path`, con escaping di ogni valore interpolato) e invia un alert **HTTP/HTTPS Webhook** (`--webhook-url`, con timeout ed errori realmente riportati). Il **notify-server** opzionale incluso nel repo riceve queste notifiche e le inoltra su più canali.
 
 ---
@@ -67,7 +67,8 @@ graph LR
 | `--webhook-url <URL>` | *nessuno* | — | Trasmette una notifica HTTP/HTTPS POST JSON a fine job (timeout 10s, errori reali riportati, non più ignorati). |
 | `--restore-from <PATH>` | *nessuno* | — | Modalità Disaster Recovery: inverte il backup Dest -> Source dal report JSON. `--source`/`--dest` non richiesti in questa modalità (fix F24, verificato con test black-box). |
 | `--cloud-sync-target <URI>`| *nessuno* | — | **[NON IMPLEMENTATO]** Accettato per compatibilità futura; nessuna sincronizzazione viene eseguita. |
-| `--encrypt-aes256 <KEY>` | *nessuno* | — | Cifra ogni file in destinazione con **AES-256-GCM** dopo il trasferimento (nonce casuale per file). `KEY` può essere `env:NOME`, `file:PERCORSO` o una passphrase letterale (sconsigliata: visibile nella process list). |
+| `--encrypt-aes256 <KEY>` | *nessuno* | — | Cifra ogni file in destinazione con **AES-256-GCM a blocchi da 1 MiB** dopo il trasferimento (nonce fresco per blocco; memoria di picco indipendente dalla dimensione del file). `KEY` può essere `env:NOME`, `file:PERCORSO` o una passphrase letterale (sconsigliata: visibile nella process list). |
+| `--decrypt <KEY>` | *nessuno* | — | Decifra ogni file in destinazione dopo il trasferimento — il simmetrico di `--encrypt-aes256`, stesso formato `KEY`. Tipicamente usato con `--restore-from` per ripristinare un backup cifrato. Non combinabile con `--encrypt-aes256` nello stesso comando. |
 | `--install-service` | `false` | — | **[NON IMPLEMENTATO]** Accettato per compatibilità futura; nessun servizio viene registrato. |
 | `--enable-dedup` | `false` | — | **[NON IMPLEMENTATO]** Accettato per compatibilità futura; nessuna cache di stato viene usata. |
 | `--dry-run` | `false` | `/L` | Simula le operazioni senza modificare o copiare file. |
@@ -147,7 +148,7 @@ del PATH di sistema, disinstallazione con ripristino del PATH — ciclo completo
 
 ```powershell
 # Installazione silenziosa (utile per deploy automatizzati)
-rustcopy-5.4.1-setup.exe /VERYSILENT /SUPPRESSMSGBOXES /NORESTART /TASKS="addtopath"
+rustcopy-5.4.2-setup.exe /VERYSILENT /SUPPRESSMSGBOXES /NORESTART /TASKS="addtopath"
 ```
 
 L'installer impacchetta il tool **così com'è oggi** (CLI, nessuna GUI). Non va confuso con la
@@ -220,11 +221,11 @@ Per dettagli tecnici approfonditi, diagrammi architetturali e roadmap di svilupp
 
 ---
 
-## 🧪 Esecuzione dei Test (152 di Base, 165 con `notify-server`)
+## 🧪 Esecuzione dei Test (164 di Base, 177 con `notify-server`)
 
 ```bash
-cargo test                              # 152 test: 133 unit di libreria, 13 black-box del binario, 6 di integrazione
-cargo test --features notify-server     # 165 test: +10 unit sul router axum, +3 end-to-end sui binari reali
+cargo test                              # 164 test: 143 unit di libreria, 15 black-box del binario, 6 di integrazione
+cargo test --features notify-server     # 177 test: +10 unit sul router axum, +3 end-to-end sui binari reali
 ```
 
 Esito atteso: `test result: ok.` su tutti i target, in entrambe le modalità.
