@@ -1,7 +1,6 @@
 //! JSON report produced at the end of every run.
 
 use std::path::Path;
-use std::time::Duration;
 
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
@@ -299,11 +298,6 @@ pub fn format_bytes(bytes: u64) -> String {
     }
 }
 
-/// Duration helper used by the CLI when it needs to report a partial elapsed time.
-pub fn seconds(duration: Duration) -> f64 {
-    round3(duration.as_secs_f64())
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -311,6 +305,7 @@ mod tests {
     use crate::scan::ScannedFile;
     use clap::Parser;
     use std::path::PathBuf;
+    use std::time::Duration;
 
     fn args() -> Args {
         Args::try_parse_from([
@@ -337,10 +332,12 @@ mod tests {
                 ScannedFile {
                     relative_path: PathBuf::from("a.csv"),
                     size_bytes: 600_000_000,
+                    modified_timestamp: 0,
                 },
                 ScannedFile {
                     relative_path: PathBuf::from("b.csv"),
                     size_bytes: 400_000_000,
+                    modified_timestamp: 0,
                 },
             ],
             total_bytes: 1_000_000_000,
@@ -382,6 +379,7 @@ mod tests {
             status: IntegrityStatus::Passed,
             truncated: false,
             total_errors: 0,
+            skipped_unchanged: 0,
         }
     }
 
@@ -471,6 +469,7 @@ mod tests {
             status: IntegrityStatus::Failed,
             truncated: false,
             total_errors: 2,
+            skipped_unchanged: 0,
         };
         let report = IngestReport::new(
             &args(),
@@ -551,6 +550,6 @@ mod tests {
         assert_eq!(round3(1.23456), 1.235);
         assert_eq!(round3(f64::NAN), 0.0);
         assert_eq!(round3(f64::INFINITY), 0.0);
-        assert_eq!(seconds(Duration::from_millis(1234)), 1.234);
+        assert_eq!(round3(Duration::from_millis(1234).as_secs_f64()), 1.234);
     }
 }

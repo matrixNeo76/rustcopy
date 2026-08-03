@@ -114,10 +114,11 @@ Se l'applicazione Rust intercetta `Ctrl+C` e si arresta senza terminare il proce
 > (non solo letto). Ogni voce qui sotto è stata **verificata empiricamente** — comando eseguito, output
 > osservato — non dedotta. Dove un difetto è stato introdotto dai fix della 5.1.0 stessa, è dichiarato.
 >
-> **Stato (3 Agosto 2026): milestone 5.2.0 chiusa.** Tutti e 7 i difetti P0+P1 di questo giro di
-> audit (D1-D2, D5-D7) sono risolti e verificati: D1/D3/D4 (F24/F25a/F25b, 31 Luglio) e
-> D2/D5/D6/D7 (F26a-d, 3 Agosto). D8-D10 restano aperti come opportunità di miglioramento a priorità
-> più bassa (vedi 5.3.0 in `ROADMAP.md`).
+> **Stato (3 Agosto 2026): milestone 5.2.0 e 5.3.0 entrambe chiuse.** Di tutti i 10 difetti di
+> questo giro di audit solo D10 (strumentazione del grafo, bassa priorità) resta aperto: D1/D3/D4
+> (F24/F25a/F25b), D2/D5/D6/D7 (F26a-d) e D8/D9 (F29c/F27) sono tutti risolti e verificati, insieme
+> a O2/O3/O4/O6/O7 delle opportunità di miglioramento (§3.2) — solo O1 (VSS) e O5 (checkpoint/resume)
+> restano da valutare.
 
 ## 🛑 3.1 Difetti aperti confermati
 
@@ -445,9 +446,11 @@ esegue il **binario compilato** due volte contro la stessa junction reale: senza
 
 ---
 
-### D8 — Codice morto in produzione
+### D8 — Codice morto in produzione ✅ RISOLTO (F29c, 3 Agosto 2026)
 
-**Gravità: BASSA.** Verificato per grep sull'intero `src/`, escludendo i moduli di test:
+**Stato: chiuso e verificato.** Il resto della sezione resta come diagnosi storica.
+
+**Gravità (storica): BASSA.** Verificato per grep sull'intero `src/`, escludendo i moduli di test:
 
 | Elemento | Stato |
 |---|---|
@@ -459,12 +462,28 @@ esegue il **binario compilato** due volte contro la stessa junction reale: senza
 Essendo tutto `pub` dietro `lib.rs`, il `dead_code` lint di rustc non li segnala: la superficie
 pubblica maschera il codice morto.
 
+#### ✅ Fix reale e verifica (3 Agosto 2026)
+
+Rimossi `CopyRequestBuilder`, `CopyRequest::builder()`, `IngestError::IntegrityFailed` (e il suo
+match arm in `is_transient()`), `report::seconds()`. **`IngestCache` non è stato rimosso**: F28
+(vedi sotto) l'ha reso il cuore di `--fast-verify`, quindi è passato da "scaffolding orfano" a
+codice di produzione con chiamanti reali — resta nella tabella storica sopra solo come nota, non
+è più vero che sia morto. `sync_to_cloud`/`register_windows_service` restano scaffolding dietro
+flag ancora `[NON IMPLEMENTATO]` (`--cloud-sync-target`/`--install-service`), non toccati da
+questo fix.
+
+`cargo build` pulito (nessun warning `dead_code` residuo su questi simboli, che comunque il lint
+non avrebbe mai segnalato da solo — vedi sopra).
+
 ---
 
-### D9 — Volume dei log ingestibile su dataset reali
+### D9 — Volume dei log ingestibile su dataset reali ✅ RISOLTO (F27, 3 Agosto 2026)
 
-**Gravità: MEDIA.** `DEFAULT_FILTER = "robocopy_ingest=debug,warn"` produce **una riga di log per
-file** (`robocopy transferred file`, `checksum matches`). Misurato sui run reali di questa sessione:
+**Stato: chiuso e verificato.** Il resto della sezione resta come diagnosi storica.
+
+**Gravità (storica): MEDIA.** `DEFAULT_FILTER = "robocopy_ingest=debug,warn"` produce **una riga di
+log per file** (`robocopy transferred file`, `checksum matches`). Misurato sui run reali di questa
+sessione:
 
 | Run | File | Righe di log | Dimensione |
 |---|---|---|---|
@@ -474,6 +493,22 @@ file** (`robocopy transferred file`, `checksum matches`). Misurato sui run reali
 Estrapolando ai "milioni di file" dichiarati come caso d'uso: **log da diversi GB per singola
 esecuzione**, senza rotazione, senza `--log-level`, senza `--quiet`. Il canale bounded protegge la RAM
 ma non il disco.
+
+#### ✅ Fix reale e verifica (3 Agosto 2026)
+
+Aggiunti `--log-level <trace|debug|info|warn|error>` (default `debug`, invariato) e `--quiet`
+(scorciatoia per `--log-level warn`, mutuamente esclusivo con `--log-level` via `conflicts_with` di
+clap — non un "vince il primo" silenzioso). `RUST_LOG` continua a vincere su entrambi, come prima.
+Rotazione (`logging::rotate_if_needed`): se il log esistente al path indicato supera
+`--log-max-bytes` (default 20 MB, la soglia osservata sopra) all'avvio, viene spostato in
+`<path>.1` (shiftando `.1`→`.2` ecc. fino a `--log-max-backups`, default 3, il più vecchio
+scartato) prima di aprire un file fresco — non è una rotazione "live" durante l'esecuzione.
+
+**Verificato con il binario compilato**: `tests/cli_smoke.rs::quiet_suppresses_per_file_debug_lines_in_the_real_log`
+confronta il log reale di due run (con e senza `--quiet`) e conferma l'assenza delle righe `DEBUG`
+per-file; `tests/cli_smoke.rs::oversized_log_is_rotated_by_a_real_run` pre-semina un log da 1000
+byte, lancia il binario con `--log-max-bytes 500 --log-max-backups 2`, e verifica che il contenuto
+vecchio sia preservato in `<path>.1` mentre il nuovo run scrive in un file fresco.
 
 ---
 
@@ -502,12 +537,12 @@ Proposte ordinate per rapporto valore/rischio, motivate da problemi osservati su
 | # | Proposta | Motivazione operativa |
 |---|---|---|
 | **O1** | **Snapshot VSS (Volume Shadow Copy)** prima della copia | I file bloccati da altri processi falliscono in modo permanente e fanno esaurire il budget di retry. Osservato realmente in sessione. È *la* funzionalità che distingue un tool di backup da una copia. |
-| **O2** | **`--fast-verify` implementato via cache di stato** | Riusa `cache.rs` (oggi orfano): hash solo dei file che robocopy dichiara copiati, saltando gli invariati. Sui run incrementali reali (905 file nuovi su 55.269) ridurrebbe la verifica da minuti a secondi. |
-| **O3** | **Cifratura a blocchi + comando di decifratura** | Risolve D3+D4 insieme e rende `--encrypt-aes256` effettivamente utilizzabile. |
-| **O4** | **`--log-level` / `--quiet` + rotazione dei log** | Risolve D9 senza perdere l'audit trail quando serve. |
+| **O2** | ✅ **Implementato (F28, 3 Agosto 2026)**: `--fast-verify` via `cache.rs` | Deviazione consapevole dal testo originale: non "file che robocopy dichiara copiati" (il parser dell'output di robocopy non espone nomi file, solo byte totali, e reimplementarlo per questo sarebbe stato più rischioso del guadagno) ma file il cui size+mtime **sorgente** coincidono con l'ultima verifica riuscita in `<dest>/.ingest_cache`. Un file che fallisce non viene mai messo in cache come fidato. Verificato su tre scenari black-box reali: skip su run invariato, ri-verifica del solo file cambiato, mai-fidarsi-di-un-file-fallito. |
+| **O3** | ✅ **Implementato (F25a/F25b, 3 Agosto 2026)**: Cifratura a blocchi + comando di decifratura | Risolve D3+D4 insieme e rende `--encrypt-aes256` effettivamente utilizzabile. |
+| **O4** | ✅ **Implementato (F27, 3 Agosto 2026)**: `--log-level` / `--quiet` + rotazione dei log | Risolve D9 senza perdere l'audit trail quando serve. |
 | **O5** | **Checkpoint e ripresa dei trasferimenti interrotti** | Un `Ctrl+C` o un calo della share su un trasferimento da ore riparte oggi da zero. |
-| **O6** | **xxHash3 come terzo algoritmo di integrità** | Per rilevare corruzione (non manomissione) è ~5-10x più veloce di BLAKE3. La verifica è la fase più lenta della pipeline. |
-| **O7** | **Exit code dedicato per fallimento di integrità** | Oggi `1` copre sia "robocopy ha fallito" sia "i checksum non tornano": uno scheduler non può distinguerli. |
+| **O6** | ✅ **Implementato (F29a, 3 Agosto 2026)**: xxHash3 come terzo algoritmo di integrità | Per rilevare corruzione (non manomissione) è ~5-10x più veloce di BLAKE3. Aggiunta la dipendenza `xxhash-rust`; documentato chiaramente come non-crittografico in help text e report. |
+| **O7** | ✅ **Implementato (F29b, 3 Agosto 2026)**: Exit code dedicato per fallimento di integrità | `EXIT_INTEGRITY_FAILED = 4`, distinto da `1` (trasferimento fallito). `run()` ora restituisce l'exit code direttamente invece di un `bool`. |
 | **O8** | **Endpoint metriche reale (Prometheus/OpenMetrics)** | `--serve-dashboard` è stato rimosso (era una pagina statica mock). Il notify-server axum introdotto in F-notify è il punto naturale su cui montare un endpoint `/metrics` scrapabile — stesso processo, stesso runtime. |
 | **O9** | **`--exclude-junctions` (`/XJ`) e `--exclude-attributes` (`/XA`)** | Risolve D7 e copre i casi enterprise (file di sistema/nascosti). |
 | **O10** | **Profilo multi-sorgente nel file TOML** | Il RUNBOOK descrive workflow multi-sorgente eseguiti a mano, un run per sorgente: il config potrebbe descriverli in un file solo. |

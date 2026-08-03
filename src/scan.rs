@@ -21,6 +21,10 @@ pub struct ScannedFile {
     /// Path relative to the scan root, so it can be joined onto any destination.
     pub relative_path: PathBuf,
     pub size_bytes: u64,
+    /// F28: modification time as Unix seconds (`0` if the filesystem didn't report one). Used by
+    /// `--fast-verify` to decide, together with `size_bytes`, whether a file has changed since
+    /// the last `.ingest_cache`-backed run and therefore needs re-hashing.
+    pub modified_timestamp: u64,
 }
 
 /// Inventory of everything the ingestion will move.
@@ -46,6 +50,20 @@ impl ScanSummary {
     pub fn is_empty(&self) -> bool {
         self.file_count() == 0
     }
+}
+
+/// F28: extract `(size_bytes, modified_timestamp)` from filesystem metadata in one place, so
+/// `scan`/`inventory` agree on how a missing/unavailable mtime is represented (`0`, rather than
+/// failing the whole entry — unlike a missing size, an unknown mtime just means `--fast-verify`
+/// treats the file as always-changed, which is safe, merely non-optimal).
+fn size_bytes_and_mtime(metadata: &std::fs::Metadata) -> (u64, u64) {
+    let modified_timestamp = metadata
+        .modified()
+        .ok()
+        .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
+        .map(|d| d.as_secs())
+        .unwrap_or(0);
+    (metadata.len(), modified_timestamp)
 }
 
 /// Compile a file pattern such as `*.csv` into a matcher.
@@ -104,8 +122,8 @@ pub fn scan(root: &Path, pattern: &str, follow_links: bool) -> Result<ScanSummar
             continue;
         }
 
-        let size_bytes = match entry.metadata() {
-            Ok(metadata) => metadata.len(),
+        let (size_bytes, modified_timestamp) = match entry.metadata() {
+            Ok(metadata) => size_bytes_and_mtime(&metadata),
             Err(error) => {
                 tracing::warn!(path = %entry.path().display(), "skipping file without metadata: {error}");
                 continue;
@@ -116,6 +134,7 @@ pub fn scan(root: &Path, pattern: &str, follow_links: bool) -> Result<ScanSummar
         summary.files.push(ScannedFile {
             relative_path,
             size_bytes,
+            modified_timestamp,
         });
     }
 
@@ -230,12 +249,11 @@ mod tests {
 
         assert_eq!(summary.file_count(), 3);
         assert_eq!(summary.total_bytes, 600);
-        assert_eq!(
-            summary.files[0],
-            ScannedFile {
-                relative_path: PathBuf::from("a.csv"),
-                size_bytes: 100
-            }
+        assert_eq!(summary.files[0].relative_path, PathBuf::from("a.csv"));
+        assert_eq!(summary.files[0].size_bytes, 100);
+        assert!(
+            summary.files[0].modified_timestamp > 0,
+            "a freshly written file must have a real mtime"
         );
         assert!(summary
             .files

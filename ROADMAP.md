@@ -1,13 +1,13 @@
 # 🗺️ Roadmap di Progetto — robocopy-ingest-cli
 
-> **Stato Attuale**: 🟢 **Release 5.4.2** (`Cargo.toml` = 5.4.2) — F24, F25a, F25b completate e verificate
-> | ✅ **Nessun difetto P0 aperto**: D1 (31 Luglio 2026, F24), D3/D4 (3 Agosto 2026, F25a/F25b) — vedi `ANALYSIS.md` Parte 3
+> **Stato Attuale**: 🟢 **Release 5.4.2** (`Cargo.toml` = 5.4.2) — Milestone 5.2.0 (Correttezza) **e** 5.3.0 (Operabilità) **entrambe chiuse**: F24, F25a, F25b, F26a-d, F27, F28, F29a-d tutte completate e verificate
+> | ✅ **Solo D10 aperto** (strumentazione grafo, bassa priorità) su 10 difetti totali dell'audit post-5.1.0 — vedi `ANALYSIS.md` Parte 3
 > | 🎯 **Analisi di parità** vs TeraCopy / Cobian / ntfy nella sezione dedicata: le milestone 6.0.0, 6.1.0, 7.0.0 e 8.0.0 ne derivano.
 >
 > **Nota sulla numerazione**: i numeri di versione seguono le milestone funzionali, **non** una
-> sequenza rigida. La 5.4.0 (notify-server) è stata rilasciata prima della 5.2.0 (correttezza), che
-> resta aperta. `Cargo.toml` è la fonte di verità della versione rilasciata ed è ciò che finisce nel
-> campo `tool_version` dei report.
+> sequenza rigida. La 5.4.0 (notify-server) è stata rilasciata prima della 5.2.0/5.3.0 (correttezza
+> e operabilità), entrambe ora chiuse. `Cargo.toml` è la fonte di verità della versione rilasciata
+> ed è ciò che finisce nel campo `tool_version` dei report.
 
 ---
 
@@ -104,16 +104,21 @@ verificati eseguendo il binario**, non ipotesi. **Milestone chiusa**: tutti e 7 
 
 ---
 
-## ⚙️ Milestone 5.3.0 — Operabilità
+## ⚙️ Milestone 5.3.0 — Operabilità `[x] Chiusa` (3 Agosto 2026)
+
+Tutte le voci sotto sono completate e verificate, sia con unit test sia con test black-box che
+eseguono il binario compilato reale.
 
 | ID | Task | Priorità | Origine | Descrizione |
 |---|---|---|---|---|
-| **F27** | `--log-level` / `--quiet` + rotazione | 🟡 P2 | D9 | Il livello `debug` di default scrive una riga per file: 59.963 file → 121.576 righe (~19 MB) misurati sul campo. Su milioni di file sono GB per esecuzione, senza rotazione. |
-| **F28** | `--fast-verify` via cache di stato | 🟡 P2 | O2 | Riusa `cache.rs` (oggi orfano): hash solo dei file dichiarati copiati da robocopy. Su un incrementale reale (905 nuovi su 55.269) la verifica passerebbe da minuti a secondi. |
-| **F29a** | xxHash3 come terzo algoritmo | 🟡 P2 | O6 | Per la sola rilevazione di corruzione è ~5-10x più veloce di BLAKE3; la verifica è la fase più lenta della pipeline. |
-| **F29b** | Exit code dedicato per integrità | 🟡 P2 | O7 | Oggi `1` significa sia "robocopy ha fallito" sia "checksum non tornano": indistinguibili per uno scheduler. |
-| **F29c** | Rimozione codice morto | 🟢 P3 | D8 | `CopyRequestBuilder`, `CopyRequest::builder()`, `IngestError::IntegrityFailed`, `report::seconds()` non hanno chiamanti. |
+| **F27** | `--log-level` / `--quiet` + rotazione | `[x] Completato` | D9 | `--log-level <trace\|debug\|info\|warn\|error>` e `--quiet` (scorciatoia per `warn`, mutuamente esclusivo con `--log-level`), `RUST_LOG` continua a vincere su entrambi. `--log-max-bytes`/`--log-max-backups` (default 20 MB / 3 backup) ruotano il log precedente prima dell'apertura, non durante l'esecuzione. Verificato con `tests/cli_smoke.rs::quiet_suppresses_per_file_debug_lines_in_the_real_log` e `oversized_log_is_rotated_by_a_real_run` sul binario compilato. |
+| **F28** | `--fast-verify` via cache di stato | `[x] Completato` | O2 | **Deviazione consapevole dal testo originale**: non "file dichiarati copiati da robocopy" (il parser dello stdout di robocopy non espone nomi file, solo byte totali, ed è già delicato/testato a fondo per la progress bar) ma `cache.rs`/`IngestCache` keyed su size+mtime **sorgente**, persistita in `<dest>/.ingest_cache`. Un file che fallisce la verifica non viene mai messo in cache come fidato — resta segnalato ad ogni run finché non è davvero corretto. Limite noto e documentato in help text: non rileva una corruzione della *destinazione* se la sorgente resta identica. Verificato con 3 test black-box sul binario compilato: skip su run invariato, ri-verifica del solo file cambiato, mai-fidarsi-di-un-file-fallito. |
+| **F29a** | xxHash3 come terzo algoritmo | `[x] Completato` | O6 | Aggiunta la dipendenza `xxhash-rust` (MIT, pure Rust). `--hash-algo xxh3`, documentato come non-crittografico (solo rilevamento corruzione) sia nel flag che nel codice. Verificato con test di rilevamento corruzione e un test black-box end-to-end sul binario compilato. |
+| **F29b** | Exit code dedicato per integrità | `[x] Completato` | O7 | Nuovo `EXIT_INTEGRITY_FAILED = 4`, distinto da `1` (trasferimento fallito). `run()` in `main.rs` restituisce ora l'exit code (`u8`) direttamente invece di un `bool`. Verificato con due test black-box distinti: uno che produce exit 1 (file bloccato, il trasferimento fallisce) e uno che produce exit 4 (trasferimento riuscito, verifica fallita). |
+| **F29c** | Rimozione codice morto | `[x] Completato` | D8 | Rimossi `CopyRequestBuilder`, `CopyRequest::builder()`, `IngestError::IntegrityFailed`, `report::seconds()` — zero chiamanti. `IngestCache` **non** rimosso: F28 l'ha reso codice di produzione, non più orfano. |
 | **F29d** | **Installer Windows per la CLI attuale** | `[x] Completato` | Richiesta diretta | `installer/rustcopy.iss` (Inno Setup): impacchetta `robocopy_ingest.exe` + `notify-server.exe`, rileva il Visual C++ Redistributable mancante, offre l'aggiunta al PATH, genera un uninstaller. **Testato realmente**: ciclo installazione silenziosa → verifica PATH → disinstallazione → PATH ripristinato, tutto verde. Non sostituisce **F60** (bundler Tauri per la futura GUI 8.0.0): impacchetta la CLI così com'è, non un prerequisito né un'alternativa a quella milestone. |
+
+`cargo test`: 195 (era 174). `cargo test --features notify-server`: 208 (era 187).
 
 ---
 

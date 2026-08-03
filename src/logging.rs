@@ -28,6 +28,36 @@ const CHANNEL_CAPACITY: usize = 10_000;
 /// Default verbosity: DEBUG for this crate (per-file detail), WARN for dependencies.
 pub const DEFAULT_FILTER: &str = "robocopy_ingest=debug,warn";
 
+/// F27 (closes D9): default rotation threshold. ~20MB matches the field-observed ~19MB for
+/// 59,963 files at the default DEBUG level (see `ANALYSIS.md` D9) — past this, the *previous*
+/// run's log is rotated aside rather than left to grow unbounded across repeated runs against the
+/// same `--log-path`.
+pub const DEFAULT_MAX_LOG_BYTES: u64 = 20 * 1024 * 1024;
+/// F27: default number of rotated backups kept (`<path>.1` .. `<path>.N`, oldest dropped first).
+pub const DEFAULT_MAX_LOG_BACKUPS: u32 = 3;
+
+/// F27: what verbosity to log at and how aggressively to rotate. `filter` is only the *fallback*
+/// used when the `RUST_LOG` env var isn't set — `RUST_LOG` still wins, exactly as before this
+/// struct existed.
+#[derive(Debug, Clone)]
+pub struct LogConfig {
+    pub filter: String,
+    /// Rotate the previous log aside once it reaches this size. `0` disables rotation.
+    pub max_bytes: u64,
+    /// How many rotated backups to keep. `0` disables rotation (nothing to rotate into).
+    pub max_backups: u32,
+}
+
+impl Default for LogConfig {
+    fn default() -> Self {
+        Self {
+            filter: DEFAULT_FILTER.to_string(),
+            max_bytes: DEFAULT_MAX_LOG_BYTES,
+            max_backups: DEFAULT_MAX_LOG_BACKUPS,
+        }
+    }
+}
+
 enum LogMessage {
     Line(Vec<u8>),
     Flush(oneshot::Sender<()>),
@@ -104,8 +134,8 @@ impl LogHandle {
 /// Install the global tracing subscriber writing asynchronously to `path`.
 ///
 /// Must be called from within a tokio runtime. Returns the handle used to flush on shutdown.
-pub fn init(path: &Path) -> Result<LogHandle, IngestError> {
-    let (subscriber, handle) = build(path)?;
+pub fn init(path: &Path, config: &LogConfig) -> Result<LogHandle, IngestError> {
+    let (subscriber, handle) = build(path, config)?;
     if tracing::subscriber::set_global_default(subscriber).is_err() {
         tracing::debug!("a tracing subscriber was already installed; reusing it");
     }
@@ -116,17 +146,54 @@ pub fn init(path: &Path) -> Result<LogHandle, IngestError> {
 /// process. Used by the tests, where a single global subscriber would be shared across cases.
 pub fn init_scoped(
     path: &Path,
+    config: &LogConfig,
 ) -> Result<(tracing::subscriber::DefaultGuard, LogHandle), IngestError> {
-    let (subscriber, handle) = build(path)?;
+    let (subscriber, handle) = build(path, config)?;
     Ok((tracing::subscriber::set_default(subscriber), handle))
 }
 
-fn build(path: &Path) -> Result<(impl tracing::Subscriber + Send + Sync, LogHandle), IngestError> {
+/// F27: rotate the existing log aside (`<path>` -> `<path>.1`, `<path>.1` -> `<path>.2`, ...,
+/// oldest beyond `max_backups` dropped) if it's already at or past `max_bytes`. Best-effort: a
+/// failed rotation (e.g. a backup file locked by another process) must never stop logging from
+/// starting, so errors here are swallowed rather than propagated.
+fn rotate_if_needed(path: &Path, max_bytes: u64, max_backups: u32) {
+    if max_bytes == 0 || max_backups == 0 {
+        return;
+    }
+    let Ok(metadata) = std::fs::metadata(path) else {
+        return; // nothing to rotate yet
+    };
+    if metadata.len() < max_bytes {
+        return;
+    }
+
+    let _ = std::fs::remove_file(backup_path(path, max_backups));
+    for n in (1..max_backups).rev() {
+        let from = backup_path(path, n);
+        if from.exists() {
+            let _ = std::fs::rename(&from, backup_path(path, n + 1));
+        }
+    }
+    let _ = std::fs::rename(path, backup_path(path, 1));
+}
+
+fn backup_path(path: &Path, n: u32) -> PathBuf {
+    let mut os = path.as_os_str().to_owned();
+    os.push(format!(".{n}"));
+    PathBuf::from(os)
+}
+
+fn build(
+    path: &Path,
+    config: &LogConfig,
+) -> Result<(impl tracing::Subscriber + Send + Sync, LogHandle), IngestError> {
     if let Some(parent) = path.parent() {
         if !parent.as_os_str().is_empty() {
             std::fs::create_dir_all(parent).map_err(|error| IngestError::io(parent, error))?;
         }
     }
+
+    rotate_if_needed(path, config.max_bytes, config.max_backups);
 
     let file = std::fs::OpenOptions::new()
         .create(true)
@@ -160,8 +227,8 @@ fn build(path: &Path) -> Result<(impl tracing::Subscriber + Send + Sync, LogHand
         let _ = file.flush().await;
     });
 
-    let filter =
-        EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new(DEFAULT_FILTER));
+    let filter = EnvFilter::try_from_default_env()
+        .unwrap_or_else(|_| EnvFilter::new(config.filter.clone()));
     let subscriber = tracing_subscriber::fmt()
         .with_env_filter(filter)
         .with_writer(ChannelWriter {
@@ -193,7 +260,7 @@ mod tests {
         let dir = tempfile::tempdir().expect("tempdir");
         let path = dir.path().join("logs/ingest.log");
 
-        let (_guard, handle) = init_scoped(&path).expect("logger starts");
+        let (_guard, handle) = init_scoped(&path, &LogConfig::default()).expect("logger starts");
         tracing::info!("ingestion started");
         tracing::debug!(file = "part-0001.csv", "per-file detail");
         handle.flush().await;
@@ -213,7 +280,7 @@ mod tests {
         let dir = tempfile::tempdir().expect("tempdir");
         let path = dir.path().join("ingest.log");
 
-        let (_guard, handle) = init_scoped(&path).expect("logger starts");
+        let (_guard, handle) = init_scoped(&path, &LogConfig::default()).expect("logger starts");
         tracing::warn!("retrying after incomplete copy");
         handle.flush().await;
 
@@ -233,7 +300,7 @@ mod tests {
     async fn parent_directories_are_created() {
         let dir = tempfile::tempdir().expect("tempdir");
         let path = dir.path().join("deep/nested/tree/ingest.log");
-        let (_guard, handle) = init_scoped(&path).expect("logger starts");
+        let (_guard, handle) = init_scoped(&path, &LogConfig::default()).expect("logger starts");
         handle.shutdown().await;
         assert!(path.is_file());
     }
@@ -244,7 +311,7 @@ mod tests {
         let path = dir.path().join("ingest.log");
         std::fs::write(&path, "previous run\n").expect("seed log");
 
-        let (_guard, handle) = init_scoped(&path).expect("logger starts");
+        let (_guard, handle) = init_scoped(&path, &LogConfig::default()).expect("logger starts");
         tracing::error!("second run");
         handle.flush().await;
 
@@ -261,7 +328,7 @@ mod tests {
     async fn dropped_lines_starts_at_zero() {
         let dir = tempfile::tempdir().expect("tempdir");
         let path = dir.path().join("ingest.log");
-        let (_guard, handle) = init_scoped(&path).expect("logger starts");
+        let (_guard, handle) = init_scoped(&path, &LogConfig::default()).expect("logger starts");
         assert_eq!(handle.dropped_lines(), 0);
         handle.shutdown().await;
     }
@@ -271,9 +338,102 @@ mod tests {
         let dir = tempfile::tempdir().expect("tempdir");
         let path = dir.path().join("ingest.log");
 
-        let (guard, handle) = init_scoped(&path).expect("logger starts");
+        let (guard, handle) = init_scoped(&path, &LogConfig::default()).expect("logger starts");
         handle.shutdown().await;
         tracing::info!("dropped on the floor");
         drop(guard);
+    }
+
+    /// F27: a `warn`-only filter (what `--quiet` and `--log-level warn` both produce) drops
+    /// per-file DEBUG noise but keeps WARN/ERROR — the actual point of the flag.
+    #[tokio::test]
+    async fn quiet_style_filter_drops_debug_but_keeps_warnings() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let path = dir.path().join("ingest.log");
+        let config = LogConfig {
+            filter: "robocopy_ingest=warn,warn".to_string(),
+            ..LogConfig::default()
+        };
+
+        let (_guard, handle) = init_scoped(&path, &config).expect("logger starts");
+        tracing::debug!(file = "part-0001.csv", "per-file detail");
+        tracing::warn!("retrying after incomplete copy");
+        handle.flush().await;
+
+        let contents = std::fs::read_to_string(&path).expect("read log");
+        assert!(
+            !contents.contains("per-file detail"),
+            "DEBUG must be suppressed under a warn-only filter, got: {contents}"
+        );
+        assert!(contents.contains("retrying after incomplete copy"));
+
+        handle.shutdown().await;
+    }
+
+    /// F27 (closes D9): the previous run's log is rotated aside once it reaches `max_bytes`,
+    /// instead of growing without bound across repeated runs against the same `--log-path`.
+    #[tokio::test]
+    async fn oversized_log_is_rotated_aside_before_a_new_run_starts() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let path = dir.path().join("ingest.log");
+        std::fs::write(&path, "x".repeat(100)).expect("seed an oversized log");
+
+        let config = LogConfig {
+            max_bytes: 50,
+            max_backups: 2,
+            ..LogConfig::default()
+        };
+        let (_guard, handle) = init_scoped(&path, &config).expect("logger starts");
+        tracing::info!("fresh run");
+        handle.flush().await;
+        handle.shutdown().await;
+
+        let rotated = std::fs::read_to_string(backup_path(&path, 1)).expect("rotated backup exists");
+        assert_eq!(rotated, "x".repeat(100), "the old oversized content must be preserved, not lost");
+
+        let fresh = std::fs::read_to_string(&path).expect("fresh log exists");
+        assert!(!fresh.contains(&"x".repeat(100)), "old content must not linger in the fresh file");
+        assert!(fresh.contains("fresh run"), "the new run must log into a fresh file");
+    }
+
+    /// F27: rotation keeps only `max_backups` files, oldest dropped, not accumulated forever.
+    #[tokio::test]
+    async fn rotation_respects_max_backups() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let path = dir.path().join("ingest.log");
+        let config = LogConfig {
+            max_bytes: 10,
+            max_backups: 2,
+            ..LogConfig::default()
+        };
+
+        for generation in 0..4 {
+            std::fs::write(&path, format!("generation-{generation}-{}", "x".repeat(10)))
+                .expect("seed oversized log");
+            let (_guard, handle) = init_scoped(&path, &config).expect("logger starts");
+            handle.shutdown().await;
+        }
+
+        assert!(backup_path(&path, 1).is_file());
+        assert!(backup_path(&path, 2).is_file());
+        assert!(
+            !backup_path(&path, 3).exists(),
+            "only max_backups=2 rotated files must be kept"
+        );
+        // 4 iterations rotate generation-0..generation-3 in turn; with max_backups=2 only the two
+        // most recent (2 and 3) survive — 0 and 1 must have been dropped as the oldest.
+        let newest_backup = std::fs::read_to_string(backup_path(&path, 1)).expect("read slot 1");
+        assert!(newest_backup.contains("generation-3"), "got: {newest_backup}");
+        let older_backup = std::fs::read_to_string(backup_path(&path, 2)).expect("read slot 2");
+        assert!(older_backup.contains("generation-2"), "got: {older_backup}");
+    }
+
+    #[test]
+    fn rotation_is_skipped_when_disabled_via_zero_max_bytes() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let path = dir.path().join("ingest.log");
+        std::fs::write(&path, "x".repeat(1000)).expect("seed");
+        rotate_if_needed(&path, 0, 3);
+        assert!(!backup_path(&path, 1).exists(), "max_bytes=0 must disable rotation");
     }
 }

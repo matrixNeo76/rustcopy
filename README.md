@@ -57,12 +57,19 @@ graph LR
 | `--force-purge` | `false` | — | Disattiva la soglia di protezione per la modalità `--mirror` (F21). |
 | `--exclude-files <GLOB>` | *nessuno* | `/XF` | Esclude file corrispondenti ai pattern indicati (ripetibile). |
 | `--exclude-dirs <GLOB>` | *nessuno* | `/XD` | Esclude directory corrispondenti ai pattern indicati (ripetibile). |
+| `--exclude-junctions` | `false` | `/XJ` | Esclude junction point e directory symlinkate. Senza questo flag, Robocopy le segue (suo default) e il prescan fa lo stesso, così i due contano sempre lo stesso albero (F26d). |
 | `--min-age-days <N>` | *nessuno* | `/MINAGE:N` | Esclude i file modificati negli ultimi N giorni. |
 | `--max-age-days <N>` | *nessuno* | `/MAXAGE:N` | Esclude i file più vecchi di N giorni. |
 | `--bandwidth-limit-mbps <N>`| *nessuno* | `/IPG` | Limita la banda di trasferimento a N MB/s. |
 | `--no-prescan` | `false` | — | Salta la scansione preventiva ed avvia immediatamente la copia. |
-| `--verify-integrity` | `false` | — | Esegue la verifica dei checksum sorgente vs destinazione a fine copia. |
-| `--hash-algo <ALGO>` | `sha256` | — | Algoritmo per la verifica checksum: `sha256` o `blake3`. |
+| `--verify-integrity` | `false` | — | Esegue la verifica dei checksum sorgente vs destinazione a fine copia. Un fallimento di sola integrità (trasferimento riuscito ma checksum non tornano) termina con **exit code 4**, distinto dall'exit code 1 di un trasferimento fallito (F29b). |
+| `--fast-verify` | `false` | — | Salta il ri-hashing dei file il cui size+mtime sorgente coincidono con l'ultima verifica riuscita, tracciata in `<dest>/.ingest_cache`. Un file che fallisce la verifica non viene mai messo in cache come "fidato", quindi resta segnalato ad ogni run finché non è davvero corretto (F28). |
+| `--ignore-transient-missing` | `false` | — | Dopo `--verify-integrity`, non considera un fallimento l'assenza di file con pattern transienti noti (`.log`, `.tmp`, `.git/objects/`) (F26a). |
+| `--hash-algo <ALGO>` | `sha256` | — | Algoritmo per la verifica checksum: `sha256`, `blake3` (3-5x più veloce) o `xxh3` (~5-10x più veloce di blake3, **non crittografico** — solo per rilevare corruzioni accidentali, non per un backup dove un attaccante potrebbe aver manomesso i dati). |
+| `--log-level <LIVELLO>` | `debug` | — | Verbosità scritta su `--log-path` (trace/debug/info/warn/error). Ignorato se `RUST_LOG` è impostata. |
+| `--quiet` | `false` | — | Scorciatoia per `--log-level warn`: elimina le righe DEBUG per-file, la causa principale dei log da GB su alberi grandi (F27). |
+| `--log-max-bytes <N>` | 20 MB | — | Ruota il log precedente (`<path>.1`, `.2`, ...) quando raggiunge N byte. `0` disattiva la rotazione. |
+| `--log-max-backups <N>` | `3` | — | Numero di backup di log ruotati da mantenere. |
 | `--html-report-path <PATH>`| *nessuno* | — | Genera un report visivo autonomo in formato HTML (valori interpolati sempre sottoposti ad escaping). |
 | `--webhook-url <URL>` | *nessuno* | — | Trasmette una notifica HTTP/HTTPS POST JSON a fine job (timeout 10s, errori reali riportati, non più ignorati). |
 | `--restore-from <PATH>` | *nessuno* | — | Modalità Disaster Recovery: inverte il backup Dest -> Source dal report JSON. `--source`/`--dest` non richiesti in questa modalità (fix F24, verificato con test black-box). |

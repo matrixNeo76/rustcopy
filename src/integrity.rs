@@ -7,6 +7,7 @@ use std::path::Path;
 use rayon::prelude::*;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
+use xxhash_rust::xxh3::Xxh3;
 
 use crate::errors::IngestError;
 use crate::progress::ProgressSink;
@@ -23,6 +24,11 @@ pub enum HashAlgorithm {
     Sha256,
     #[serde(rename = "blake3")]
     Blake3,
+    /// F29a: ~5-10x faster than BLAKE3 for corruption detection, but **not cryptographic** — a
+    /// motivated adversary could construct a colliding payload. Fine for "did this bit flip
+    /// during transfer", not for a backup where an attacker could have tampered with the data.
+    #[serde(rename = "xxh3")]
+    Xxh3,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -95,6 +101,11 @@ pub struct IntegrityCheck {
     pub truncated: bool,
     #[serde(default)]
     pub total_errors: usize,
+    /// F28: files `--fast-verify` skipped re-hashing because their size+mtime matched the
+    /// `.ingest_cache` entry from the last run that verified them clean. `0` when `--fast-verify`
+    /// wasn't used (or nothing was in the cache yet).
+    #[serde(default)]
+    pub skipped_unchanged: usize,
 }
 
 impl IntegrityCheck {
@@ -103,11 +114,12 @@ impl IntegrityCheck {
     }
 }
 
-/// Hash a file using the specified algorithm (Sha256 or Blake3), lowercase hex output.
+/// Hash a file using the specified algorithm, lowercase hex output.
 pub fn hash_file(path: &Path, algo: HashAlgorithm) -> Result<String, IngestError> {
     match algo {
         HashAlgorithm::Sha256 => sha256_file(path),
         HashAlgorithm::Blake3 => blake3_file(path),
+        HashAlgorithm::Xxh3 => xxh3_file(path),
     }
 }
 
@@ -145,6 +157,24 @@ pub fn blake3_file(path: &Path) -> Result<String, IngestError> {
         hasher.update(&buffer[..read]);
     }
     Ok(hasher.finalize().to_hex().to_string())
+}
+
+/// XXH3-64 of a file, lowercase hex (F29a). Not cryptographic — see [`HashAlgorithm::Xxh3`].
+pub fn xxh3_file(path: &Path) -> Result<String, IngestError> {
+    let mut file = File::open(path).map_err(|error| IngestError::io(path, error))?;
+    let mut hasher = Xxh3::new();
+    let mut buffer = vec![0u8; HASH_BUFFER_BYTES];
+
+    loop {
+        let read = file
+            .read(&mut buffer)
+            .map_err(|error| IngestError::io(path, error))?;
+        if read == 0 {
+            break;
+        }
+        hasher.update(&buffer[..read]);
+    }
+    Ok(format!("{:016x}", hasher.digest()))
 }
 
 fn hex(bytes: &[u8]) -> String {
@@ -231,6 +261,7 @@ pub fn verify(
                             algorithm: match algo {
                                 HashAlgorithm::Sha256 => "sha256".to_string(),
                                 HashAlgorithm::Blake3 => "blake3".to_string(),
+                                HashAlgorithm::Xxh3 => "xxh3".to_string(),
                             },
                             source_digest: source_hash,
                             dest_digest: dest_hash,
@@ -254,6 +285,7 @@ pub fn verify(
         status: IntegrityStatus::Passed,
         truncated: false,
         total_errors: 0,
+        skipped_unchanged: 0,
     };
 
     let total_err_count = results.iter().filter(|r| !matches!(r, FileVerificationOutcome::Passed { .. })).count();
@@ -479,6 +511,46 @@ mod tests {
         assert_eq!(check.files_checked, 1);
     }
 
+    /// F29a: xxh3 hashing catches a real corruption exactly like sha256/blake3 do.
+    #[test]
+    fn xxh3_hashing_passes_and_is_correct() {
+        let source = fixture_tree(&[("a.csv", 4096)]);
+        let dest = tempfile::tempdir().expect("dest");
+        copy_tree(source.path(), dest.path());
+
+        let inventory = scan::scan(source.path(), "*.csv", false).expect("scan");
+        let check = verify(source.path(), dest.path(), &inventory.files, HashAlgorithm::Xxh3, &NoopProgress);
+        assert!(check.passed());
+        assert_eq!(check.files_checked, 1);
+    }
+
+    #[test]
+    fn xxh3_detects_corruption() {
+        let source = fixture_tree(&[("a.csv", 4096)]);
+        let dest = tempfile::tempdir().expect("dest");
+        copy_tree(source.path(), dest.path());
+        // Corrupt one byte at the destination without changing its size, so the size pre-check
+        // can't catch it — only the hash comparison can.
+        let dest_file = dest.path().join("a.csv");
+        let mut bytes = std::fs::read(&dest_file).expect("read");
+        bytes[0] ^= 0xFF;
+        std::fs::write(&dest_file, bytes).expect("corrupt");
+
+        let inventory = scan::scan(source.path(), "*.csv", false).expect("scan");
+        let check = verify(source.path(), dest.path(), &inventory.files, HashAlgorithm::Xxh3, &NoopProgress);
+        assert!(!check.passed());
+        assert_eq!(check.mismatches.len(), 1);
+        assert_eq!(check.mismatches[0].algorithm, "xxh3");
+    }
+
+    #[test]
+    fn xxh3_file_produces_a_16_char_lowercase_hex_digest() {
+        let dir = fixture_tree(&[("a.csv", 100)]);
+        let digest = xxh3_file(&dir.path().join("a.csv")).expect("hash");
+        assert_eq!(digest.len(), 16);
+        assert!(digest.chars().all(|c| c.is_ascii_hexdigit() && !c.is_ascii_uppercase()));
+    }
+
     #[test]
     fn relative_paths_are_reported_with_forward_slashes() {
         assert_eq!(to_display(Path::new("nested\\b.csv")), "nested/b.csv");
@@ -509,6 +581,7 @@ mod tests {
             status: IntegrityStatus::Passed,
             truncated: false,
             total_errors: 0,
+            skipped_unchanged: 0,
         };
         if !check.missing_in_dest.is_empty() || !check.unreadable.is_empty() {
             check.status = IntegrityStatus::Failed;

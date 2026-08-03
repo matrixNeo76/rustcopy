@@ -12,6 +12,7 @@ use anyhow::{Context, Result};
 use clap::Parser;
 use tempfile::TempDir;
 
+use robocopy_ingest::cache::{self, IngestCache};
 use robocopy_ingest::cli::Args;
 use robocopy_ingest::crypto::CryptoManager;
 use robocopy_ingest::engine::naive::NaiveCopyEngine;
@@ -22,7 +23,7 @@ use robocopy_ingest::integrity::{self, IntegrityCheck};
 use robocopy_ingest::logging;
 use robocopy_ingest::progress::{ProgressSink, ThroughputProgress};
 use robocopy_ingest::report::{format_bytes, IngestReport};
-use robocopy_ingest::scan::{self, ScanSummary};
+use robocopy_ingest::scan::{self, ScannedFile, ScanSummary};
 
 /// How often the destination directory is sampled to estimate live throughput.
 ///
@@ -33,21 +34,26 @@ use robocopy_ingest::scan::{self, ScanSummary};
 /// copies, so a long interval is sufficient.
 const POLL_INTERVAL: Duration = Duration::from_secs(30);
 
-/// Exit code when the ingestion ran but the outcome is not acceptable.
+/// Exit code when the transfer itself failed (robocopy exhausted its retries on some item).
 const EXIT_INGESTION_PROBLEM: u8 = 1;
 /// Exit code for usage errors and unrecoverable environment problems.
 const EXIT_UNRECOVERABLE: u8 = 2;
 /// Exit code when `--mirror` was aborted because it would have purged destination files and
 /// neither `--force-purge` nor an interactive confirmation was given.
 const EXIT_MIRROR_ABORTED: u8 = 3;
+/// F29b (closes half of D-none/O7): exit code when the transfer itself succeeded but
+/// `--verify-integrity` found a mismatch/missing/unreadable file. Previously this collapsed into
+/// the same `EXIT_INGESTION_PROBLEM` (1) as an actual robocopy transfer failure, which a scheduler
+/// can't tell apart from "some files couldn't be copied at all" — a materially different failure
+/// mode (data landed but doesn't match, vs. data never landed).
+const EXIT_INTEGRITY_FAILED: u8 = 4;
 
 #[tokio::main]
 async fn main() -> ExitCode {
     let args = Args::parse();
 
     match run(args).await {
-        Ok(true) => ExitCode::SUCCESS,
-        Ok(false) => ExitCode::from(EXIT_INGESTION_PROBLEM),
+        Ok(code) => ExitCode::from(code),
         Err(error) => {
             if matches!(
                 error.downcast_ref::<IngestError>(),
@@ -63,8 +69,9 @@ async fn main() -> ExitCode {
     }
 }
 
-/// Returns `Ok(true)` when the ingestion is fully acceptable.
-async fn run(mut args: Args) -> Result<bool> {
+/// Returns the process exit code: `0` on a fully acceptable run, or one of the `EXIT_*`
+/// constants above otherwise.
+async fn run(mut args: Args) -> Result<u8> {
     if let Some(restore_report) = args.restore_from.clone() {
         args = robocopy_ingest::restore::build_restore_args(&args, &restore_report, None)?;
     } else if let Some(config_path) = &args.config {
@@ -75,7 +82,8 @@ async fn run(mut args: Args) -> Result<bool> {
 
     args.validate()?;
 
-    let log = logging::init(&args.log_path).context("cannot initialise the log file")?;
+    let log = logging::init(&args.log_path, &args.log_config())
+        .context("cannot initialise the log file")?;
     tracing::info!(
         source = %args.source().display(),
         dest = %args.dest().display(),
@@ -99,20 +107,16 @@ async fn run(mut args: Args) -> Result<bool> {
             kill_active_child(&child_pid);
             log.flush().await;
             log.shutdown().await;
-            return Ok(false);
+            return Ok(EXIT_INGESTION_PROBLEM);
         }
     };
 
     log.flush().await;
 
-    let acceptable = match &result {
-        Ok(outcome) => outcome.acceptable,
-        Err(error) => {
-            tracing::error!("ingestion aborted: {error:#}");
-            false
-        }
-    };
-    tracing::info!(acceptable, "ingestion finished");
+    match &result {
+        Ok(outcome) => tracing::info!(exit_code = outcome.exit_code, "ingestion finished"),
+        Err(error) => tracing::error!("ingestion aborted: {error:#}"),
+    }
     let dropped = log.dropped_lines();
     log.shutdown().await;
     if dropped > 0 {
@@ -123,10 +127,10 @@ async fn run(mut args: Args) -> Result<bool> {
     println!("\n{}", outcome.summary);
     println!("\nJSON report: {}", outcome.report_path.display());
     println!("Log file   : {}", args.log_path.display());
-    if !acceptable {
+    if outcome.exit_code != 0 {
         eprintln!("\nthe ingestion completed with problems, see the report for details");
     }
-    Ok(acceptable)
+    Ok(outcome.exit_code)
 }
 
 /// Terminate only the tracked child PID (if any), never every `robocopy.exe` on the host.
@@ -148,7 +152,8 @@ fn kill_active_child(child_pid: &Arc<AtomicU32>) {
 fn kill_active_child(_child_pid: &Arc<AtomicU32>) {}
 
 struct RunOutcome {
-    acceptable: bool,
+    /// One of the `EXIT_*` constants; `0` means fully acceptable.
+    exit_code: u8,
     summary: String,
     report_path: PathBuf,
 }
@@ -285,8 +290,19 @@ async fn execute(args: &Args, child_pid: Arc<AtomicU32>) -> Result<RunOutcome> {
         eprintln!("transfer failed: {error}");
     }
 
+    // F29b: distinguish "the transfer itself failed" from "the transfer succeeded but
+    // verification found a problem" — a scheduler needs to react differently to the two (retry
+    // the whole job vs. flag a data-integrity incident).
+    let exit_code = if copy_failure.is_some() {
+        EXIT_INGESTION_PROBLEM
+    } else if !integrity_ok {
+        EXIT_INTEGRITY_FAILED
+    } else {
+        0
+    };
+
     Ok(RunOutcome {
-        acceptable: copy_failure.is_none() && integrity_ok,
+        exit_code,
         summary: report.human_summary(),
         report_path: args.report_path.clone(),
     })
@@ -635,21 +651,103 @@ fn baseline_dir(dest: &Path) -> Result<TempDir> {
         .context("cannot create the temporary directory for the baseline copy")
 }
 
+/// F28: forward-slash relative path, matching exactly how `integrity::verify` labels
+/// `mismatches`/`missing_in_dest`/`unreadable` entries — the two must agree for the "don't cache
+/// a file that just failed" check in [`verify`] to actually match failures against cache keys.
+fn fast_verify_cache_key(file: &ScannedFile) -> String {
+    file.relative_path.to_string_lossy().replace('\\', "/")
+}
+
 async fn verify(args: &Args, inventory: &ScanSummary) -> Result<IntegrityCheck> {
     println!("\nVerifying integrity with {:?}...", args.hash_algo);
-    let progress = new_progress(args, inventory.total_bytes, "verify");
+
+    let all_files = inventory.files.clone();
+    let cache_path = cache::default_cache_path(args.dest());
+    let fast_verify = args.fast_verify;
+
+    // F28 (closes D2's --fast-verify half): trust a file as unchanged (and skip re-hashing it)
+    // only when its size+mtime still match the `.ingest_cache` entry left by the last run that
+    // actually verified it clean. This is the same trust model robocopy's own /A and rsync use —
+    // not a substitute for a cryptographic re-check, but real on an incremental run where most
+    // files are untouched.
+    let (files_to_check, cache) = if fast_verify {
+        let candidates = all_files.clone();
+        let load_path = cache_path.clone();
+        tokio::task::spawn_blocking(move || {
+            let cache = IngestCache::load_from(&load_path);
+            let changed: Vec<ScannedFile> = candidates
+                .into_iter()
+                .filter(|f| {
+                    !cache.should_skip(&fast_verify_cache_key(f), f.size_bytes, f.modified_timestamp)
+                })
+                .collect();
+            (changed, cache)
+        })
+        .await
+        .context("the fast-verify cache lookup task panicked")?
+    } else {
+        (all_files.clone(), IngestCache::default())
+    };
+
+    let skipped_unchanged = all_files.len() - files_to_check.len();
+    if fast_verify {
+        println!(
+            "Fast-verify: {skipped_unchanged} of {} file(s) skipped as unchanged since the last \
+             verified run (cache: {})",
+            all_files.len(),
+            cache_path.display()
+        );
+    }
+
+    // The progress bar's denominator must match what's actually going to be hashed — with
+    // --fast-verify skipping most of the tree, sizing it off inventory.total_bytes would leave it
+    // stuck well short of 100%.
+    let bytes_to_verify: u64 = files_to_check.iter().map(|f| f.size_bytes).sum();
+    let progress = new_progress(args, bytes_to_verify, "verify");
 
     let source = args.source().to_path_buf();
     let dest = args.dest().to_path_buf();
-    let files = inventory.files.clone();
     let algo = args.hash_algo;
     let sink = Arc::clone(&progress);
+    let files_for_verify = files_to_check.clone();
 
-    let check = tokio::task::spawn_blocking(move || {
-        integrity::verify(&source, &dest, &files, algo, sink.as_ref())
+    let mut check = tokio::task::spawn_blocking(move || {
+        integrity::verify(&source, &dest, &files_for_verify, algo, sink.as_ref())
     })
     .await
     .context("the integrity task panicked")?;
+    check.skipped_unchanged = skipped_unchanged;
+
+    if fast_verify {
+        // Only remember files that were freshly re-checked *and* passed this run: never a file
+        // that just failed (it must keep being re-checked every run until it's actually fixed,
+        // not silently start being trusted), and never a file we skipped without looking at it
+        // (its existing cache entry is already correct — touching it would be redundant I/O, and
+        // computed from the failure set captured *before* --ignore-transient-missing runs below,
+        // so a transient-missing file that gets forgiven for reporting purposes still isn't
+        // wrongly cached as "confirmed present and matching").
+        let failed: HashSet<String> = check
+            .mismatches
+            .iter()
+            .map(|m| m.path.clone())
+            .chain(check.missing_in_dest.iter().cloned())
+            .chain(check.unreadable.iter().cloned())
+            .collect();
+        let mut cache = cache;
+        for file in &files_to_check {
+            let key = fast_verify_cache_key(file);
+            if !failed.contains(&key) {
+                cache.update(key, file.size_bytes, file.modified_timestamp, None);
+            }
+        }
+        let save_path = cache_path.clone();
+        let save_result = tokio::task::spawn_blocking(move || cache.save_to(&save_path))
+            .await
+            .context("the fast-verify cache save task panicked")?;
+        if let Err(error) = save_result {
+            tracing::warn!(error = %error, path = %cache_path.display(), "could not persist the fast-verify cache");
+        }
+    }
 
     // F26a (closes half of D2): treat transient files (.log/.tmp/.git/objects) that vanished
     // between the copy and this verification pass as expected rather than a failure.

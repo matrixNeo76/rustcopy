@@ -57,9 +57,6 @@ pub enum IngestError {
         attempts: u32,
     },
 
-    #[error("integrity verification failed: {mismatches} mismatch(es), {missing} missing file(s)")]
-    IntegrityFailed { mismatches: usize, missing: usize },
-
     #[error("I/O error on {path}: {source}")]
     Io {
         path: PathBuf,
@@ -123,7 +120,6 @@ impl IngestError {
             | IngestError::DestInsideSource { .. }
             | IngestError::EmptyPattern
             | IngestError::InvalidPattern { .. }
-            | IngestError::IntegrityFailed { .. }
             | IngestError::MirrorPurgeAborted { .. }
             | IngestError::Crypto(_)
             | IngestError::EncryptAndDecryptConflict => false,

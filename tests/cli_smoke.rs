@@ -37,6 +37,14 @@ fn help_documents_every_flag() {
         "--report-path",
         "--log-path",
         "--dry-run",
+        "--log-level",
+        "--quiet",
+        "--log-max-bytes",
+        "--log-max-backups",
+        "--exclude-junctions",
+        "--ignore-transient-missing",
+        "--hash-algo",
+        "--fast-verify",
     ] {
         assert!(help.contains(flag), "{flag} missing from --help:\n{help}");
     }
@@ -78,6 +86,250 @@ fn an_invalid_thread_count_is_reported_clearly() {
     ]);
     assert_eq!(output.status.code(), Some(2));
     assert!(stderr_of(&output).contains("between 1 and 128"));
+}
+
+/// F27 black-box test (closes D9): `--quiet` suppresses the per-file DEBUG lines in the real log
+/// file written by the compiled binary — those lines are what drove the multi-GB logs observed
+/// in the field on large trees (see `ANALYSIS.md` D9).
+#[cfg(windows)]
+#[test]
+fn quiet_suppresses_per_file_debug_lines_in_the_real_log() {
+    let source = fixture_tree(&[("a.csv", 10), ("b.csv", 20)]);
+    let workdir = tempfile::tempdir().expect("workdir");
+    let dest = workdir.path().join("out");
+    let log_default = workdir.path().join("default.log");
+    let log_quiet = workdir.path().join("quiet.log");
+
+    let output_default = run(&[
+        "--source",
+        source.path().to_str().expect("utf8"),
+        "--dest",
+        dest.to_str().expect("utf8"),
+        "--log-path",
+        log_default.to_str().expect("utf8"),
+        "--report-path",
+        workdir.path().join("default-report.json").to_str().expect("utf8"),
+    ]);
+    assert!(output_default.status.success(), "stderr: {}", stderr_of(&output_default));
+    let default_log = std::fs::read_to_string(&log_default).expect("read default log");
+    assert!(
+        default_log.contains("DEBUG"),
+        "the default log level must include per-file DEBUG detail; got: {default_log}"
+    );
+
+    let dest2 = workdir.path().join("out2");
+    let output_quiet = run(&[
+        "--source",
+        source.path().to_str().expect("utf8"),
+        "--dest",
+        dest2.to_str().expect("utf8"),
+        "--log-path",
+        log_quiet.to_str().expect("utf8"),
+        "--report-path",
+        workdir.path().join("quiet-report.json").to_str().expect("utf8"),
+        "--quiet",
+    ]);
+    assert!(output_quiet.status.success(), "stderr: {}", stderr_of(&output_quiet));
+    let quiet_log = std::fs::read_to_string(&log_quiet).expect("read quiet log");
+    assert!(
+        !quiet_log.contains("DEBUG"),
+        "--quiet must suppress DEBUG lines; got: {quiet_log}"
+    );
+}
+
+/// F27 black-box test (closes D9): a real run against an already-oversized `--log-path`, driven
+/// through the compiled binary, rotates the previous content aside instead of appending forever.
+#[cfg(windows)]
+#[test]
+fn oversized_log_is_rotated_by_a_real_run() {
+    let source = fixture_tree(&[("a.csv", 10)]);
+    let workdir = tempfile::tempdir().expect("workdir");
+    let dest = workdir.path().join("out");
+    let log_path = workdir.path().join("ingest.log");
+    std::fs::write(&log_path, "x".repeat(1000)).expect("seed an oversized log");
+
+    let output = run(&[
+        "--source",
+        source.path().to_str().expect("utf8"),
+        "--dest",
+        dest.to_str().expect("utf8"),
+        "--log-path",
+        log_path.to_str().expect("utf8"),
+        "--report-path",
+        workdir.path().join("report.json").to_str().expect("utf8"),
+        "--log-max-bytes",
+        "500",
+        "--log-max-backups",
+        "2",
+    ]);
+    assert!(output.status.success(), "stderr: {}", stderr_of(&output));
+
+    let mut rotated_path = log_path.clone().into_os_string();
+    rotated_path.push(".1");
+    let rotated = std::fs::read_to_string(&rotated_path).expect("rotated backup must exist");
+    assert_eq!(rotated, "x".repeat(1000), "old content must be preserved in the rotated file");
+
+    let fresh = std::fs::read_to_string(&log_path).expect("fresh log must exist");
+    assert!(
+        fresh.contains("ingestion starting"),
+        "the new run must log into the freshly-rotated file; got: {fresh}"
+    );
+}
+
+/// F28 black-box test: on a second run against an unchanged source, `--fast-verify` skips
+/// re-hashing every file (all size+mtime matches from the `.ingest_cache` written by the first
+/// run), rather than always hashing everything as `--verify-integrity` alone does.
+#[cfg(windows)]
+#[test]
+fn fast_verify_skips_unchanged_files_on_a_second_run() {
+    let source = fixture_tree(&[("a.csv", 4096), ("b.csv", 8192)]);
+    let workdir = tempfile::tempdir().expect("workdir");
+    let dest = workdir.path().join("out");
+
+    let base_args = |report: &Path| -> Vec<String> {
+        vec![
+            "--source".into(),
+            source.path().to_str().expect("utf8").to_string(),
+            "--dest".into(),
+            dest.to_str().expect("utf8").to_string(),
+            "--log-path".into(),
+            workdir.path().join("ingest.log").to_str().expect("utf8").to_string(),
+            "--report-path".into(),
+            report.to_str().expect("utf8").to_string(),
+            "--verify-integrity".into(),
+            "--fast-verify".into(),
+        ]
+    };
+
+    let report1 = workdir.path().join("report1.json");
+    let owned1 = base_args(&report1);
+    let argv1: Vec<&str> = owned1.iter().map(String::as_str).collect();
+    let output1 = run(&argv1);
+    assert!(output1.status.success(), "stderr: {}", stderr_of(&output1));
+    let json1: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(&report1).expect("read")).expect("json");
+    assert_eq!(
+        json1["integrity_check"]["skipped_unchanged"], 0,
+        "nothing is cached yet on the first run"
+    );
+    assert_eq!(json1["integrity_check"]["files_checked"], 2);
+
+    let report2 = workdir.path().join("report2.json");
+    let owned2 = base_args(&report2);
+    let argv2: Vec<&str> = owned2.iter().map(String::as_str).collect();
+    let output2 = run(&argv2);
+    assert!(output2.status.success(), "stderr: {}", stderr_of(&output2));
+    let json2: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(&report2).expect("read")).expect("json");
+    assert_eq!(
+        json2["integrity_check"]["skipped_unchanged"], 2,
+        "both unchanged files must be skipped on the second run: {json2}"
+    );
+    assert_eq!(json2["integrity_check"]["files_checked"], 0);
+    assert_eq!(json2["integrity_check"]["status"], "PASSED");
+}
+
+/// F28 black-box test: `--fast-verify` correctly re-checks only the file whose *source* changed
+/// between two runs, still trusting the untouched one from the cache.
+#[cfg(windows)]
+#[test]
+fn fast_verify_recatches_only_the_file_whose_source_changed() {
+    let source = fixture_tree(&[("a.csv", 4096), ("b.csv", 8192)]);
+    let workdir = tempfile::tempdir().expect("workdir");
+    let dest = workdir.path().join("out");
+
+    let base_args = |report: &Path| -> Vec<String> {
+        vec![
+            "--source".into(),
+            source.path().to_str().expect("utf8").to_string(),
+            "--dest".into(),
+            dest.to_str().expect("utf8").to_string(),
+            "--log-path".into(),
+            workdir.path().join("ingest.log").to_str().expect("utf8").to_string(),
+            "--report-path".into(),
+            report.to_str().expect("utf8").to_string(),
+            "--verify-integrity".into(),
+            "--fast-verify".into(),
+        ]
+    };
+
+    let report1 = workdir.path().join("report1.json");
+    let owned1 = base_args(&report1);
+    let argv1: Vec<&str> = owned1.iter().map(String::as_str).collect();
+    assert!(run(&argv1).status.success());
+
+    // Change only a.csv's content at the source (which also bumps its mtime).
+    std::fs::write(source.path().join("a.csv"), b"changed,content,here\n1,2,3\n").expect("modify a.csv");
+
+    let report2 = workdir.path().join("report2.json");
+    let owned2 = base_args(&report2);
+    let argv2: Vec<&str> = owned2.iter().map(String::as_str).collect();
+    let output2 = run(&argv2);
+    assert!(output2.status.success(), "stderr: {}", stderr_of(&output2));
+    let json2: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(&report2).expect("read")).expect("json");
+    assert_eq!(
+        json2["integrity_check"]["skipped_unchanged"], 1,
+        "only b.csv (untouched) should be trusted from the cache: {json2}"
+    );
+    assert_eq!(
+        json2["integrity_check"]["files_checked"], 1,
+        "a.csv changed at the source and must be re-hashed: {json2}"
+    );
+    assert_eq!(json2["integrity_check"]["status"], "PASSED");
+}
+
+/// F28 black-box test: a file that fails verification must never be cached as trusted — otherwise
+/// a genuinely broken file would silently stop being reported after the first run.
+#[cfg(windows)]
+#[test]
+fn fast_verify_never_caches_a_failed_file_so_it_keeps_being_reported() {
+    let source = fixture_tree(&[("a.csv", 10), ("stale.log", 20)]);
+    let workdir = tempfile::tempdir().expect("workdir");
+    let dest = workdir.path().join("out");
+
+    let base_args = |report: &Path| -> Vec<String> {
+        vec![
+            "--source".into(),
+            source.path().to_str().expect("utf8").to_string(),
+            "--dest".into(),
+            dest.to_str().expect("utf8").to_string(),
+            "--log-path".into(),
+            workdir.path().join("ingest.log").to_str().expect("utf8").to_string(),
+            "--report-path".into(),
+            report.to_str().expect("utf8").to_string(),
+            "--verify-integrity".into(),
+            "--fast-verify".into(),
+            "--exclude-files".into(),
+            "*.log".into(),
+        ]
+    };
+
+    let report1 = workdir.path().join("report1.json");
+    let owned1 = base_args(&report1);
+    let argv1: Vec<&str> = owned1.iter().map(String::as_str).collect();
+    let output1 = run(&argv1);
+    assert_eq!(output1.status.code(), Some(4), "stale.log is excluded from the copy, so verification must fail");
+    let json1: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(&report1).expect("read")).expect("json");
+    assert_eq!(json1["integrity_check"]["missing_in_dest"].as_array().expect("array").len(), 1);
+
+    let report2 = workdir.path().join("report2.json");
+    let owned2 = base_args(&report2);
+    let argv2: Vec<&str> = owned2.iter().map(String::as_str).collect();
+    let output2 = run(&argv2);
+    assert_eq!(
+        output2.status.code(),
+        Some(4),
+        "the same missing file must be reported again, not silently forgiven by a bad cache entry"
+    );
+    let json2: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(&report2).expect("read")).expect("json");
+    assert_eq!(
+        json2["integrity_check"]["skipped_unchanged"], 1,
+        "only a.csv (which passed) should be trusted from the cache; stale.log must have been re-checked: {json2}"
+    );
+    assert_eq!(json2["integrity_check"]["missing_in_dest"].as_array().expect("array").len(), 1);
 }
 
 #[cfg(not(windows))]
@@ -325,6 +577,9 @@ fn permanently_uncopyable_file_does_not_undercount_the_rest_of_the_transfer() {
         "0",
     ]);
 
+    // F29b: exit 1 means the transfer itself failed (robocopy couldn't copy everything), distinct
+    // from exit 4 (EXIT_INTEGRITY_FAILED, see ignore_transient_missing_turns_an_excluded_log_into_a_pass
+    // below) which means the transfer succeeded but --verify-integrity found a problem afterwards.
     assert_eq!(output.status.code(), Some(1), "some items could not be copied");
     assert!(report_path.is_file());
     let report: serde_json::Value =
@@ -541,6 +796,37 @@ fn encrypt_and_decrypt_together_are_rejected() {
     );
 }
 
+/// F29a black-box test: `--hash-algo xxh3` runs end-to-end through the compiled binary (real
+/// robocopy transfer + real verification pass), not just the `xxh3_file`/`verify` unit tests.
+#[cfg(windows)]
+#[test]
+fn hash_algo_xxh3_verifies_successfully_end_to_end() {
+    let source = fixture_tree(&[("a.csv", 4096), ("nested/b.csv", 8192)]);
+    let workdir = tempfile::tempdir().expect("workdir");
+    let dest = workdir.path().join("out");
+    let report_path = workdir.path().join("report.json");
+
+    let output = run(&[
+        "--source",
+        source.path().to_str().expect("utf8"),
+        "--dest",
+        dest.to_str().expect("utf8"),
+        "--log-path",
+        workdir.path().join("ingest.log").to_str().expect("utf8"),
+        "--report-path",
+        report_path.to_str().expect("utf8"),
+        "--verify-integrity",
+        "--hash-algo",
+        "xxh3",
+    ]);
+    assert!(output.status.success(), "stderr: {}", stderr_of(&output));
+
+    let report: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(&report_path).expect("read")).expect("json");
+    assert_eq!(report["integrity_check"]["status"], "PASSED");
+    assert_eq!(report["integrity_check"]["files_checked"], 2);
+}
+
 /// F26a black-box test (closes half of D2): `scan.rs`'s prescan doesn't apply `--exclude-files`
 /// (only robocopy's own `/XF` does, at copy time), so a file matched by the pattern but excluded
 /// from the actual transfer is a deterministic, non-racy way to reproduce "file present in the
@@ -571,8 +857,9 @@ fn ignore_transient_missing_turns_an_excluded_log_into_a_pass() {
     ]);
     assert_eq!(
         output_a.status.code(),
-        Some(1),
-        "stale.log missing at dest must fail verification without --ignore-transient-missing; stderr: {}",
+        Some(4),
+        "stale.log missing at dest must fail verification (F29b: exit 4, integrity-only failure) \
+         without --ignore-transient-missing; stderr: {}",
         stderr_of(&output_a)
     );
 

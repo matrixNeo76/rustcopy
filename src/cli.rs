@@ -6,9 +6,33 @@ use clap::Parser;
 
 use crate::engine::{CopyRequest, RetryPolicy};
 use crate::errors::IngestError;
+use crate::logging;
 
 pub const MIN_THREADS: u8 = 1;
 pub const MAX_THREADS: u16 = 128;
+
+/// F27: verbosity level for `--log-level`, mapped to a per-crate `tracing` filter.
+#[derive(clap::ValueEnum, Clone, Copy, Debug, PartialEq, Eq, Default)]
+pub enum LogLevel {
+    Trace,
+    #[default]
+    Debug,
+    Info,
+    Warn,
+    Error,
+}
+
+impl LogLevel {
+    fn as_str(self) -> &'static str {
+        match self {
+            LogLevel::Trace => "trace",
+            LogLevel::Debug => "debug",
+            LogLevel::Info => "info",
+            LogLevel::Warn => "warn",
+            LogLevel::Error => "error",
+        }
+    }
+}
 
 /// Number of copy threads to use when --threads is not specified.
 fn default_threads() -> u16 {
@@ -76,12 +100,14 @@ pub struct Args {
     #[arg(long, default_value_t = false)]
     pub verify_integrity: bool,
 
-    /// [NOT IMPLEMENTED] Reserved for selective integrity verification (only hash files this run
-    /// actually modified/copied, via the incremental state cache); accepted for forward
-    /// compatibility but currently has no effect — --verify-integrity always hashes every file in
-    /// the source inventory. Real per-file "was this touched this run" tracking needs the
-    /// incremental cache (see ROADMAP.md F28, which reuses cache.rs — a separate, currently-
-    /// orphaned subsystem this fix was not scoped to wire up).
+    /// Selective integrity verification: skip re-hashing files whose size and modification time
+    /// still match the last verified-clean run, recorded in <dest>/.ingest_cache. Has no effect
+    /// without --verify-integrity. Trust model note: this trusts the SOURCE file's identity
+    /// (size+mtime), not a re-check of the destination's actual bytes — if a destination file were
+    /// corrupted independently (e.g. silent disk bit rot) while its source counterpart stays
+    /// byte-for-byte unchanged, --fast-verify won't catch it on a run where that file gets skipped.
+    /// A file that fails verification is never cached as trusted, so it keeps being re-checked on
+    /// every subsequent run until it actually passes.
     #[arg(long, default_value_t = false)]
     pub fast_verify: bool,
 
@@ -93,7 +119,9 @@ pub struct Args {
     #[arg(long, default_value_t = false)]
     pub ignore_transient_missing: bool,
 
-    /// Hash algorithm for integrity checks: sha256 (default) or blake3 (3-5x faster).
+    /// Hash algorithm for integrity checks: sha256 (default), blake3 (3-5x faster), or xxh3
+    /// (~5-10x faster than blake3). xxh3 is NOT cryptographic — fine for detecting accidental
+    /// corruption, not for a backup where an attacker could have tampered with the data.
     #[arg(long, default_value = "sha256", value_name = "ALGO")]
     pub hash_algo: crate::integrity::HashAlgorithm,
 
@@ -112,6 +140,29 @@ pub struct Args {
     /// Path of the asynchronous log file.
     #[arg(long, default_value = "./robocopy_ingest.log", value_name = "PATH")]
     pub log_path: PathBuf,
+
+    // ── F27: log verbosity, quiet mode and rotation ─────────────────────────
+    /// Verbosity written to --log-path (per-crate; dependencies always log at WARN). Ignored if
+    /// the RUST_LOG environment variable is set. debug (the default) writes one line per file,
+    /// which on multi-million-file trees means gigabytes per run — see --quiet or --log-level warn.
+    #[arg(long, value_enum, default_value_t = LogLevel::Debug, conflicts_with = "quiet")]
+    pub log_level: LogLevel,
+
+    /// Shorthand for --log-level warn: suppresses the per-file DEBUG lines responsible for most of
+    /// the log volume on large trees, keeping only warnings/errors.
+    #[arg(long, default_value_t = false, conflicts_with = "log_level")]
+    pub quiet: bool,
+
+    /// Rotate the previous run's log aside (--log-path.1, .2, ...) once it reaches this many
+    /// bytes, instead of letting repeated runs against the same --log-path grow it without bound.
+    /// 0 disables rotation.
+    #[arg(long, default_value_t = logging::DEFAULT_MAX_LOG_BYTES, value_name = "BYTES")]
+    pub log_max_bytes: u64,
+
+    /// Number of rotated log backups to keep (oldest dropped first). Has no effect if
+    /// --log-max-bytes is 0.
+    #[arg(long, default_value_t = logging::DEFAULT_MAX_LOG_BACKUPS, value_name = "N")]
+    pub log_max_backups: u32,
 
     /// Show what would happen without copying anything (robocopy /L).
     #[arg(long, default_value_t = false)]
@@ -387,6 +438,18 @@ impl Args {
         RetryPolicy::new(self.retries, self.retry_wait_seconds)
     }
 
+    /// F27: logger verbosity/rotation settings derived from `--log-level`/`--quiet`/
+    /// `--log-max-bytes`/`--log-max-backups`. `--quiet` and `--log-level` are mutually exclusive
+    /// (enforced by clap), so exactly one of them decides the effective level.
+    pub fn log_config(&self) -> logging::LogConfig {
+        let level = if self.quiet { "warn" } else { self.log_level.as_str() };
+        logging::LogConfig {
+            filter: format!("robocopy_ingest={level},warn"),
+            max_bytes: self.log_max_bytes,
+            max_backups: self.log_max_backups,
+        }
+    }
+
     /// Convert MB/s bandwidth limit to robocopy's /IPG (inter-packet gap in milliseconds).
     ///
     /// Robocopy's /IPG represents the gap in **milliseconds** inserted after every 64 KB packet.
@@ -474,6 +537,10 @@ mod tests {
         assert!(!args.exclude_junctions);
         assert!(!args.fast_verify);
         assert!(!args.ignore_transient_missing);
+        assert_eq!(args.log_level, LogLevel::Debug);
+        assert!(!args.quiet);
+        assert_eq!(args.log_max_bytes, crate::logging::DEFAULT_MAX_LOG_BYTES);
+        assert_eq!(args.log_max_backups, crate::logging::DEFAULT_MAX_LOG_BACKUPS);
         assert_eq!(
             args.report_path,
             PathBuf::from("./robocopy_ingest_report.json")
@@ -707,6 +774,52 @@ mod tests {
             args.validate(),
             Err(IngestError::SourceEqualsDestination(_))
         ));
+    }
+
+    /// F27: default --log-level maps to the pre-existing DEFAULT_FILTER string unchanged.
+    #[test]
+    fn log_config_defaults_match_the_previous_hardcoded_filter() {
+        let args = Args::try_parse_from(base_args()).expect("parse");
+        assert_eq!(args.log_config().filter, crate::logging::DEFAULT_FILTER);
+    }
+
+    #[test]
+    fn log_config_honours_an_explicit_log_level() {
+        let mut argv = base_args();
+        argv.extend(["--log-level", "warn"]);
+        let args = Args::try_parse_from(argv).expect("parse");
+        assert_eq!(args.log_config().filter, "robocopy_ingest=warn,warn");
+    }
+
+    /// F27: --quiet is shorthand for --log-level warn.
+    #[test]
+    fn quiet_produces_a_warn_only_filter() {
+        let mut argv = base_args();
+        argv.push("--quiet");
+        let args = Args::try_parse_from(argv).expect("parse");
+        assert!(args.quiet);
+        assert_eq!(args.log_config().filter, "robocopy_ingest=warn,warn");
+    }
+
+    /// F27: --quiet and --log-level are mutually exclusive — combining them is a usage error,
+    /// not a silent "one wins" ambiguity.
+    #[test]
+    fn quiet_and_log_level_together_are_rejected() {
+        let mut argv = base_args();
+        argv.extend(["--quiet", "--log-level", "warn"]);
+        assert!(Args::try_parse_from(argv).is_err());
+    }
+
+    #[test]
+    fn log_rotation_flags_are_parsed() {
+        let mut argv = base_args();
+        argv.extend(["--log-max-bytes", "1000", "--log-max-backups", "5"]);
+        let args = Args::try_parse_from(argv).expect("parse");
+        assert_eq!(args.log_max_bytes, 1000);
+        assert_eq!(args.log_max_backups, 5);
+        let config = args.log_config();
+        assert_eq!(config.max_bytes, 1000);
+        assert_eq!(config.max_backups, 5);
     }
 
     /// F3.4: destination inside source must be rejected.
