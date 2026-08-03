@@ -113,6 +113,11 @@ Se l'applicazione Rust intercetta `Ctrl+C` e si arresta senza terminare il proce
 > Secondo giro di audit, eseguito **dopo** i fix della 5.1.0 e su codice compilato/eseguito realmente
 > (non solo letto). Ogni voce qui sotto è stata **verificata empiricamente** — comando eseguito, output
 > osservato — non dedotta. Dove un difetto è stato introdotto dai fix della 5.1.0 stessa, è dichiarato.
+>
+> **Stato (3 Agosto 2026): milestone 5.2.0 chiusa.** Tutti e 7 i difetti P0+P1 di questo giro di
+> audit (D1-D2, D5-D7) sono risolti e verificati: D1/D3/D4 (F24/F25a/F25b, 31 Luglio) e
+> D2/D5/D6/D7 (F26a-d, 3 Agosto). D8-D10 restano aperti come opportunità di miglioramento a priorità
+> più bassa (vedi 5.3.0 in `ROADMAP.md`).
 
 ## 🛑 3.1 Difetti aperti confermati
 
@@ -188,20 +193,56 @@ di test Rust) per escludere artefatti di quoting della shell.
 
 ---
 
-### D2 — `--fast-verify` e `--ignore-transient-missing` sono no-op (MAI CENSITI)
+### D2 — `--fast-verify` e `--ignore-transient-missing` sono no-op (MAI CENSITI) 🟡 PARZIALMENTE RISOLTO (F26a, 3 Agosto 2026)
 
-**Gravità: MEDIA.** L'audit originale aveva individuato 5 flag no-op. Ne mancavano **altri due**:
+**Stato: `--ignore-transient-missing` chiuso e verificato. `--fast-verify` marcato esplicitamente
+`[NON IMPLEMENTATO]`** (vedi sotto per il perché). Il resto della sezione resta come diagnosi
+storica.
+
+**Gravità (storica): MEDIA.** L'audit originale aveva individuato 5 flag no-op. Ne mancavano
+**altri due**:
 
 ```
 src/cli.rs:71:    pub fast_verify: bool,
 src/cli.rs:75:    pub ignore_transient_missing: bool,
 ```
 
-Sono le **uniche due occorrenze in tutto `src/`**: nessun modulo li legge mai. `--fast-verify`
+Erano le **uniche due occorrenze in tutto `src/`**: nessun modulo li leggeva. `--fast-verify`
 prometteva di verificare solo i file toccati dal run (verifica completa su 60k file richiede minuti);
 `--ignore-transient-missing` prometteva di tollerare i file volatili (`.log`, `.tmp`) che spariscono
-tra copia e verifica — problema **realmente osservato** durante i test sul campo. Entrambi non fanno
-nulla e non sono marcati `[NON IMPLEMENTATO]`.
+tra copia e verifica — problema **realmente osservato** durante i test sul campo. Nessuno dei due
+faceva nulla e nessuno era marcato `[NON IMPLEMENTATO]`.
+
+#### ✅ Fix reale e verifica (`--ignore-transient-missing`, 3 Agosto 2026)
+
+Aggiunta `integrity::ignore_transient_missing()`: dopo `--verify-integrity`, filtra da
+`missing_in_dest`/`unreadable` le voci che matchano pattern transienti noti (`.log`, `.tmp`,
+qualunque cosa sotto `.git/objects/`) e ricalcola `status` di conseguenza. `total_errors` non viene
+ricalcolato quando `truncated` è vero, perché in quel caso rappresenta un conteggio reale oltre il
+tetto dei vettori (troncati a `MAX_REPORTED_ERRORS`) e filtrare solo le voci trattenute non potrebbe
+correggerlo senza sottostimarlo.
+
+**Verificato con un test black-box che sfrutta un comportamento reale e deterministico** (non una
+race condition): il prescan di `scan.rs` non applica `--exclude-files` (solo il `/XF` di robocopy lo
+fa, in fase di copia), quindi un file che matcha il pattern ma è escluso dalla copia reale finisce
+sempre in `missing_in_dest` alla verifica — esattamente lo scenario per cui esiste il flag, riprodotto
+senza bisogno di timing. `tests/cli_smoke.rs::ignore_transient_missing_turns_an_excluded_log_into_a_pass`
+esegue il binario compilato due volte (con e senza il flag) su un file `.log` escluso via
+`--exclude-files "*.log"` e verifica l'exit code e il contenuto del report JSON in entrambi i casi.
+
+#### ⚠️ `--fast-verify`: marcato `[NON IMPLEMENTATO]`, non implementato "per finta"
+
+Verificare selettivamente solo i file "toccati da questo run" richiede sapere **quali file
+robocopy ha effettivamente copiato**, non solo quanti (`CopyOutcome::files_copied` è un contatore,
+non una lista). Quella tracciabilità per-file esiste già come sottosistema separato
+(`cache.rs`, `IngestCache`) ma è **orfano**: nessun chiamante lo usa in produzione (vedi D8).
+Implementare `--fast-verify` "per davvero" in questo giro avrebbe significato o (a) cablare
+`cache.rs` in produzione — un lavoro a sé, tracciato separatamente come **F28** in `ROADMAP.md` — o
+(b) cambiare silenziosamente cosa verifica `--verify-integrity`, una modifica rilevante per la
+sicurezza dei dati che merita la propria review. Marcato esplicitamente `[NON IMPLEMENTATO]` in
+`src/cli.rs`, con puntatore a F28, invece di lasciarlo un no-op non dichiarato.
+
+`cargo test`: 174 (era 164). `cargo test --features notify-server`: 187 (era 177).
 
 ---
 
@@ -302,42 +343,105 @@ solo su input piccoli a singolo blocco.
 
 ---
 
-### D5 — `check_mirror_safety` blocca il runtime asincrono
+### D5 — `check_mirror_safety` blocca il runtime asincrono ✅ RISOLTO (F26b, 3 Agosto 2026)
 
-**Gravità: MEDIA.** In `main.rs` la funzione è invocata sincronamente dentro la `async fn execute()`:
+**Stato: chiuso e verificato.** Vedi in fondo per il fix reale. Il resto della sezione resta come
+diagnosi storica.
+
+**Gravità (storica): MEDIA.** In `main.rs` la funzione era invocata sincronamente dentro la
+`async fn execute()`:
 
 ```rust
 check_mirror_safety(args, &inventory)?;   // walk ricorsivo completo della destinazione
 ```
 
-Tutte le altre operazioni bloccanti del file sono correttamente incapsulate in
+Tutte le altre operazioni bloccanti del file erano correttamente incapsulate in
 `tokio::task::spawn_blocking` (inventario, trasferimento, verifica, cifratura, poller); questa no. Su
-una share SMB con milioni di file blocca l'intero executor tokio per minuti, congelando progress bar e
-gestione del `Ctrl+C` — proprio mentre l'utente potrebbe volerlo interrompere.
+una share SMB con milioni di file bloccava l'intero executor tokio per minuti, congelando progress bar
+e gestione del `Ctrl+C` — proprio mentre l'utente potrebbe volerlo interrompere.
+
+#### ✅ Fix reale e verifica (3 Agosto 2026)
+
+`check_mirror_safety` è ora `async fn`; il walk vero e proprio (`scan::scan(dest, "*", ...)`) è
+spostato dentro `tokio::task::spawn_blocking`, esattamente come tutte le altre operazioni bloccanti
+del file. `scan::scan` resta una funzione sync pura (è chiamata anche da percorsi non-async), è
+cambiato solo il call site. Copertura: i test black-box esistenti che eseguono davvero il binario
+attraverso questo percorso (`tests/cli_smoke.rs::mirror_without_force_purge_aborts_instead_of_deleting_extraneous_files`
+e `mirror_with_force_purge_proceeds`) continuano a passare invariati dopo il refactor, a conferma che
+il comportamento osservabile (abort, exit code 3, conferma interattiva) non è cambiato — solo dove
+gira il lavoro bloccante.
 
 ---
 
-### D6 — `SCHEMA_VERSION` non incrementato dopo una modifica breaking del report
+### D6 — `SCHEMA_VERSION` non incrementato dopo una modifica breaking del report ✅ RISOLTO (F26c, 3 Agosto 2026)
 
-**Gravità: MEDIA.** La 5.1.0 ha rinominato i campi di `Mismatch`
+**Stato: chiuso e verificato.** Vedi in fondo per il fix reale. Il resto della sezione resta come
+diagnosi storica.
+
+**Gravità (storica): MEDIA.** La 5.1.0 ha rinominato i campi di `Mismatch`
 (`source_sha256`/`dest_sha256` → `kind`/`algorithm`/`source_digest`/`dest_digest`) ma
-`report::SCHEMA_VERSION` è rimasto a `1`. Conseguenze:
+`report::SCHEMA_VERSION` era rimasto a `1`. Conseguenze:
 
-1. I consumatori a valle non hanno modo di distinguere i due formati: stesso `schema_version`,
+1. I consumatori a valle non avevano modo di distinguere i due formati: stesso `schema_version`,
    struttura diversa.
-2. I nuovi campi **non hanno `#[serde(default)]`**, quindi un report prodotto da una versione
-   precedente e contenente mismatch **non è più deserializzabile** — impatta `--restore-from` sui
-   report storici (quando D1 sarà risolto e la modalità sarà finalmente raggiungibile).
+2. I nuovi campi **non avevano `#[serde(default)]`**, quindi un report prodotto da una versione
+   precedente e contenente mismatch **non era più deserializzabile** — impattava `--restore-from`
+   sui report storici, e da quando D1 è stato risolto (F24) quella modalità è finalmente
+   raggiungibile per davvero, rendendo il difetto concretamente esercitabile.
+
+#### ✅ Fix reale e verifica (3 Agosto 2026)
+
+`report::SCHEMA_VERSION` portato a `2`. `integrity::Mismatch` ora ha `#[serde(default)]` su
+`kind`/`algorithm`/`source_digest`/`dest_digest` (con un `impl Default for MismatchKind` dedicato,
+documentato come puro fallback di deserializzazione, non un valore semanticamente significativo);
+`path` resta obbligatorio perché senza di esso non c'è modo di sapere a quale file si riferisca la
+voce. Un report v1 pre-rename con un `Mismatch` che ha solo `"path"` ora deserializza con i campi
+mancanti impostati ai default invece di far fallire l'intero `IngestReport`.
+
+**Verificato end-to-end con il binario compilato**: `tests/cli_smoke.rs::restore_from_accepts_a_legacy_report_with_pre_rename_mismatch_shape`
+scrive a mano un report JSON nella forma pre-rename esatta (`mismatches: [{"path": "important.csv"}]`,
+senza `kind`/`algorithm`/`source_digest`/`dest_digest`) ed esegue `--restore-from` su quel report,
+verificando che il ripristino vada a buon fine invece di fallire nel parsing JSON dentro
+`build_restore_args`. Coperto anche da unit test diretti in `integrity.rs`
+(`mismatch_with_missing_new_fields_still_deserializes`, e un test negativo che conferma che
+l'assenza di `path` continua a far fallire la deserializzazione, come deve).
 
 ---
 
-### D7 — Nessuna esclusione di junction/symlink (`/XJ`)
+### D7 — Nessuna esclusione di junction/symlink (`/XJ`) ✅ RISOLTO (F26d, 3 Agosto 2026)
 
-**Gravità: MEDIA.** `build_args` non passa mai `/XJ`. Robocopy segue quindi junction point e symlink
-di directory, con rischio di **ricorsione infinita** o duplicazione massiva dei dati su alberi che ne
-contengono. Peggio: `scan.rs` usa `WalkDir::follow_links(false)` in tutti e tre i punti di scansione,
-quindi **inventario e trasferimento seguono regole diverse** — il prescan conta un albero, robocopy ne
-copia un altro, e il confronto di integrità e la soglia mirror ereditano l'incoerenza.
+**Stato: chiuso e verificato.** Vedi in fondo per il fix reale. Il resto della sezione resta come
+diagnosi storica.
+
+**Gravità (storica): MEDIA.** `build_args` non passava mai `/XJ`. Robocopy seguiva quindi junction
+point e symlink di directory (comportamento di default), con rischio di **ricorsione infinita** o
+duplicazione massiva dei dati su alberi che ne contengono. Peggio: `scan.rs` usava
+`WalkDir::follow_links(false)` in tutti e tre i punti di scansione, quindi **inventario e
+trasferimento seguivano regole diverse** — il prescan contava un albero, robocopy ne copiava un
+altro, e il confronto di integrità e la soglia mirror ereditavano l'incoerenza.
+
+#### ✅ Fix reale e verifica (3 Agosto 2026)
+
+Aggiunto il flag `--exclude-junctions` (mappato su `/XJ` in `engine/robocopy.rs::build_args`) e un
+nuovo campo `CopyRequest::exclude_junctions`. `scan::scan`/`scan::inventory`/`scan::directory_size`
+prendono ora un parametro esplicito `follow_links: bool`, pilotato da `!args.exclude_junctions` in
+ogni punto di chiamata in `main.rs` (prescan sorgente, scansione destinazione per il mirror-safety
+check, conteggio destinazione dopo un fallimento parziale, poller di progresso) e da
+`!request.exclude_junctions` nell'engine naive — quindi prescan, verifica, mirror-safety check e
+trasferimento reale seguono sempre la stessa regola. Default: `false` (nessun `/XJ`), che replica
+esattamente il comportamento nativo di robocopy senza il flag.
+
+`WalkDir` rileva e rifiuta i cicli quando `follow_links(true)`, quindi una junction
+autoreferenziale produce un errore per-entry (loggato e saltato) invece di ricorrere per sempre.
+
+**Verificato contro una vera NTFS directory junction** (creata con `mklink /J`, che a differenza dei
+symlink non richiede privilegi elevati), non assunto dalla documentazione di `walkdir`:
+`scan::tests::windows_junction_is_followed_only_when_follow_links_is_true` crea una junction reale
+in un tempdir e conferma che `follow_links(true)` la segue (2 file contati) mentre `false` no (1
+file). Il test black-box `tests/cli_smoke.rs::exclude_junctions_flag_actually_changes_what_the_binary_copies`
+esegue il **binario compilato** due volte contro la stessa junction reale: senza
+`--exclude-junctions` robocopy segue la junction e il prescan conta 2 file (coerente); con
+`--exclude-junctions` la junction non viene nemmeno creata in destinazione e il prescan conta 1 file.
 
 ---
 

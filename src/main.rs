@@ -171,7 +171,7 @@ async fn execute(args: &Args, child_pid: Arc<AtomicU32>) -> Result<RunOutcome> {
 
     // F21 (fixed): a real mirror-purge safety check, run with the actual source inventory
     // available, instead of the previous no-op that only logged a message.
-    check_mirror_safety(args, &inventory)?;
+    check_mirror_safety(args, &inventory).await?;
 
     if !args.dry_run {
         tokio::fs::create_dir_all(args.dest())
@@ -302,15 +302,18 @@ async fn inventory_source(args: &Args) -> Result<ScanSummary> {
     let source = args.source().to_path_buf();
     let pattern = args.pattern.clone();
     let no_prescan = args.no_prescan;
+    // F26d: follow junctions/symlinked directories exactly when robocopy itself will (i.e.
+    // whenever /XJ is not passed), so the prescan and the actual transfer walk the same tree.
+    let follow_links = !args.exclude_junctions;
 
     let inventory = if no_prescan {
-        tokio::task::spawn_blocking(move || scan::inventory(&source, &pattern))
+        tokio::task::spawn_blocking(move || scan::inventory(&source, &pattern, follow_links))
             .await
             .context("the source scan task panicked")?
             .context("cannot scan the source directory")?
             .into_scan_summary()
     } else {
-        tokio::task::spawn_blocking(move || scan::scan(&source, &pattern))
+        tokio::task::spawn_blocking(move || scan::scan(&source, &pattern, follow_links))
             .await
             .context("the source scan task panicked")?
             .context("cannot scan the source directory")?
@@ -344,7 +347,14 @@ async fn inventory_source(args: &Args) -> Result<ScanSummary> {
 /// source inventory; the difference is exactly what `/MIR` would purge. If that's non-empty and
 /// `--force-purge` wasn't given, the run aborts (or, on an interactive terminal, asks for
 /// confirmation) rather than proceeding blind.
-fn check_mirror_safety(args: &Args, inventory: &ScanSummary) -> Result<()> {
+///
+/// F26b fix: the destination walk used to run synchronously right here, inside `async fn
+/// execute()` — every other blocking filesystem walk in this file (inventory, transfer, verify,
+/// crypto, the dest poller) is wrapped in `tokio::task::spawn_blocking`, but this one wasn't. On
+/// an SMB share with millions of files that froze the whole tokio executor, including `Ctrl+C`
+/// handling and the progress bar, for the entire scan. Only the call site changed: `scan::scan`
+/// itself stays a plain sync fn since it's also called from non-async code paths.
+async fn check_mirror_safety(args: &Args, inventory: &ScanSummary) -> Result<()> {
     if !args.mirror || args.force_purge || !args.dest().exists() {
         return Ok(());
     }
@@ -364,7 +374,14 @@ fn check_mirror_safety(args: &Args, inventory: &ScanSummary) -> Result<()> {
         .map(|f| normalize_for_compare(&f.relative_path))
         .collect();
 
-    let dest_all = scan::scan(args.dest(), "*").context("cannot scan the destination for the mirror safety check")?;
+    let dest = args.dest().to_path_buf();
+    // F26d: follow junctions in the destination scan exactly when the source scan did, so the
+    // mirror-purge diff isn't computed against a differently-shaped tree.
+    let follow_links = !args.exclude_junctions;
+    let dest_all = tokio::task::spawn_blocking(move || scan::scan(&dest, "*", follow_links))
+        .await
+        .context("the mirror safety scan task panicked")?
+        .context("cannot scan the destination for the mirror safety check")?;
     let extraneous: Vec<&Path> = dest_all
         .files
         .iter()
@@ -536,10 +553,12 @@ async fn transfer(
             // actually on disk at the destination is the only way to get a trustworthy total
             // in that case.
             let dest_for_count = args.dest().to_path_buf();
-            let observed = tokio::task::spawn_blocking(move || scan::inventory(&dest_for_count, "*"))
-                .await
-                .ok()
-                .and_then(Result::ok);
+            let follow_links = !args.exclude_junctions;
+            let observed =
+                tokio::task::spawn_blocking(move || scan::inventory(&dest_for_count, "*", follow_links))
+                    .await
+                    .ok()
+                    .and_then(Result::ok);
 
             let mut outcome = CopyOutcome::new(robocopy_ingest::engine::robocopy::ENGINE_NAME);
             outcome.exit_code = Some(code);
@@ -632,6 +651,14 @@ async fn verify(args: &Args, inventory: &ScanSummary) -> Result<IntegrityCheck> 
     .await
     .context("the integrity task panicked")?;
 
+    // F26a (closes half of D2): treat transient files (.log/.tmp/.git/objects) that vanished
+    // between the copy and this verification pass as expected rather than a failure.
+    let check = if args.ignore_transient_missing {
+        integrity::ignore_transient_missing(check)
+    } else {
+        check
+    };
+
     progress.finish(if check.passed() {
         "integrity PASSED"
     } else {
@@ -663,14 +690,15 @@ fn spawn_dest_poller(
         return None;
     }
     let dest = args.dest().to_path_buf();
-    let already_present = scan::directory_size(&dest);
+    let follow_links = !args.exclude_junctions;
+    let already_present = scan::directory_size(&dest, follow_links);
 
     Some(tokio::spawn(async move {
         let mut ticker = tokio::time::interval(POLL_INTERVAL);
         loop {
             ticker.tick().await;
             let sampled = dest.clone();
-            match tokio::task::spawn_blocking(move || scan::directory_size(&sampled)).await {
+            match tokio::task::spawn_blocking(move || scan::directory_size(&sampled, follow_links)).await {
                 Ok(size) => progress.observe_total_bytes(size.saturating_sub(already_present)),
                 Err(_) => break,
             }

@@ -44,15 +44,38 @@ pub enum MismatchKind {
     Hash,
 }
 
+/// F26c (closes D6): only a deserialization fallback for reports predating this field's
+/// existence (see `Mismatch`'s `#[serde(default)]` fields below) — not a meaningful "default
+/// kind of mismatch". `Size` is picked arbitrarily; a legacy report's `mismatches` entries carry
+/// no reliable kind information at all, so nothing derived from this value should be trusted for
+/// data reconstructed this way.
+impl Default for MismatchKind {
+    fn default() -> Self {
+        MismatchKind::Size
+    }
+}
+
 /// A file whose destination differs from the source.
+///
+/// F26c (closes D6): `kind`/`algorithm`/`source_digest`/`dest_digest` replaced an older
+/// `source_sha256`/`dest_sha256` shape without `report::SCHEMA_VERSION` being bumped at the time.
+/// `#[serde(default)]` on the fields below means a report written in that older shape (which
+/// won't have these field names at all) still deserializes — with these fields defaulted rather
+/// than the whole `IngestReport` (and therefore `--restore-from`, which parses the full report)
+/// failing outright. `path` has no default: without it there's nothing identifying which file the
+/// entry is even about, so failing loudly is correct.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Mismatch {
     pub path: String,
+    #[serde(default)]
     pub kind: MismatchKind,
     /// Hash algorithm used for `source_digest`/`dest_digest` when `kind` is `Hash`; the literal
     /// string `"size"` when `kind` is `Size` and the fields below hold byte counts instead.
+    #[serde(default)]
     pub algorithm: String,
+    #[serde(default)]
     pub source_digest: String,
+    #[serde(default)]
     pub dest_digest: String,
 }
 
@@ -276,6 +299,37 @@ fn to_display(path: &Path) -> String {
     path.to_string_lossy().replace('\\', "/")
 }
 
+/// True if `path` (a forward-slash relative path, as stored in `missing_in_dest`/`unreadable`)
+/// matches a well-known transient pattern: `.log`/`.tmp` files, or anything under a `.git/objects`
+/// tree. These can legitimately disappear between the copy and the verification pass (log
+/// rotation, temp-file cleanup, git garbage collection) — observed for real during field testing,
+/// per `ANALYSIS.md` D2. Used by `--ignore-transient-missing` (F26a).
+fn is_transient_path(path: &str) -> bool {
+    let lower = path.to_ascii_lowercase();
+    lower.ends_with(".log") || lower.ends_with(".tmp") || lower.contains(".git/objects/")
+}
+
+/// `--ignore-transient-missing` (F26a, closes half of D2): drop transient-pattern entries from
+/// `missing_in_dest`/`unreadable` and recompute `status` accordingly, so a file that merely
+/// vanished for an expected reason doesn't fail the whole verification pass.
+///
+/// `total_errors` is left untouched: when `truncated` is set, it reflects the *real* error count
+/// beyond what the (capped) vectors hold, and filtering only the retained entries can't correct
+/// that upper bound — recomputing it here would silently understate a truncated run instead.
+pub fn ignore_transient_missing(mut check: IntegrityCheck) -> IntegrityCheck {
+    check.missing_in_dest.retain(|p| !is_transient_path(p));
+    check.unreadable.retain(|p| !is_transient_path(p));
+    check.status = if check.mismatches.is_empty()
+        && check.missing_in_dest.is_empty()
+        && check.unreadable.is_empty()
+    {
+        IntegrityStatus::Passed
+    } else {
+        IntegrityStatus::Failed
+    };
+    check
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -306,6 +360,7 @@ mod tests {
                     long_paths: false,
                     preserve_timestamps: false,
                     preserve_acl: false,
+                    exclude_junctions: false,
                 },
                 &NoopProgress,
             )
@@ -345,7 +400,7 @@ mod tests {
         let dest = tempfile::tempdir().expect("dest");
         copy_tree(source.path(), dest.path());
 
-        let inventory = scan::scan(source.path(), "*.csv").expect("scan");
+        let inventory = scan::scan(source.path(), "*.csv", false).expect("scan");
         let check = verify(source.path(), dest.path(), &inventory.files, HashAlgorithm::Sha256, &NoopProgress);
 
         assert!(check.passed());
@@ -362,7 +417,7 @@ mod tests {
         copy_tree(source.path(), dest.path());
         std::fs::write(dest.path().join("b.csv"), vec![0u8; 1024]).expect("corrupt");
 
-        let inventory = scan::scan(source.path(), "*.csv").expect("scan");
+        let inventory = scan::scan(source.path(), "*.csv", false).expect("scan");
         let check = verify(source.path(), dest.path(), &inventory.files, HashAlgorithm::Sha256, &NoopProgress);
 
         assert!(!check.passed());
@@ -382,7 +437,7 @@ mod tests {
         copy_tree(source.path(), dest.path());
         write_fixture_file(&dest.path().join("a.csv"), 1024);
 
-        let inventory = scan::scan(source.path(), "*.csv").expect("scan");
+        let inventory = scan::scan(source.path(), "*.csv", false).expect("scan");
         let check = verify(source.path(), dest.path(), &inventory.files, HashAlgorithm::Sha256, &NoopProgress);
 
         assert!(!check.passed());
@@ -396,7 +451,7 @@ mod tests {
         copy_tree(source.path(), dest.path());
         std::fs::remove_file(dest.path().join("nested/b.csv")).expect("remove");
 
-        let inventory = scan::scan(source.path(), "*.csv").expect("scan");
+        let inventory = scan::scan(source.path(), "*.csv", false).expect("scan");
         let check = verify(source.path(), dest.path(), &inventory.files, HashAlgorithm::Sha256, &NoopProgress);
 
         assert!(!check.passed());
@@ -418,7 +473,7 @@ mod tests {
         let dest = tempfile::tempdir().expect("dest");
         copy_tree(source.path(), dest.path());
 
-        let inventory = scan::scan(source.path(), "*.csv").expect("scan");
+        let inventory = scan::scan(source.path(), "*.csv", false).expect("scan");
         let check = verify(source.path(), dest.path(), &inventory.files, HashAlgorithm::Blake3, &NoopProgress);
         assert!(check.passed());
         assert_eq!(check.files_checked, 1);
@@ -427,5 +482,76 @@ mod tests {
     #[test]
     fn relative_paths_are_reported_with_forward_slashes() {
         assert_eq!(to_display(Path::new("nested\\b.csv")), "nested/b.csv");
+    }
+
+    /// F26c regression test (closes D6): a `Mismatch` JSON object missing `kind`/`algorithm`/
+    /// `source_digest`/`dest_digest` entirely — exactly what a report written before those fields
+    /// existed looks like — must still deserialize instead of failing the whole report. Only
+    /// `path` is required.
+    #[test]
+    fn mismatch_with_missing_new_fields_still_deserializes() {
+        let mismatch: Mismatch =
+            serde_json::from_str(r#"{"path": "legacy.csv"}"#).expect("legacy shape must parse");
+        assert_eq!(mismatch.path, "legacy.csv");
+        assert_eq!(mismatch.kind, MismatchKind::Size);
+        assert_eq!(mismatch.algorithm, "");
+        assert_eq!(mismatch.source_digest, "");
+        assert_eq!(mismatch.dest_digest, "");
+    }
+
+    fn check_with(missing: Vec<&str>, unreadable: Vec<&str>) -> IntegrityCheck {
+        let mut check = IntegrityCheck {
+            files_checked: 0,
+            bytes_hashed: 0,
+            mismatches: Vec::new(),
+            missing_in_dest: missing.into_iter().map(str::to_string).collect(),
+            unreadable: unreadable.into_iter().map(str::to_string).collect(),
+            status: IntegrityStatus::Passed,
+            truncated: false,
+            total_errors: 0,
+        };
+        if !check.missing_in_dest.is_empty() || !check.unreadable.is_empty() {
+            check.status = IntegrityStatus::Failed;
+        }
+        check
+    }
+
+    /// F26a: transient-pattern entries (`.log`, `.tmp`, `.git/objects/...`) are dropped and the
+    /// check flips back to PASSED once nothing genuine remains.
+    #[test]
+    fn ignore_transient_missing_drops_only_transient_entries_and_recomputes_status() {
+        let check = check_with(
+            vec!["build.log", "nested/scratch.tmp", ".git/objects/ab/cdef"],
+            vec!["another.log"],
+        );
+        let filtered = ignore_transient_missing(check);
+        assert!(filtered.missing_in_dest.is_empty());
+        assert!(filtered.unreadable.is_empty());
+        assert!(filtered.passed());
+    }
+
+    /// F26a: a genuinely missing (non-transient) file must still fail verification even with
+    /// `--ignore-transient-missing`.
+    #[test]
+    fn ignore_transient_missing_keeps_non_transient_entries_failing() {
+        let check = check_with(vec!["build.log", "important.csv"], vec![]);
+        let filtered = ignore_transient_missing(check);
+        assert_eq!(filtered.missing_in_dest, vec!["important.csv".to_string()]);
+        assert!(!filtered.passed());
+    }
+
+    #[test]
+    fn is_transient_path_matches_documented_patterns() {
+        assert!(is_transient_path("build.log"));
+        assert!(is_transient_path("nested/scratch.TMP"));
+        assert!(is_transient_path(".git/objects/ab/cdef1234"));
+        assert!(!is_transient_path("important.csv"));
+    }
+
+    #[test]
+    fn mismatch_missing_path_fails_to_deserialize() {
+        // Unlike the other fields, `path` has no default: an entry with nothing identifying which
+        // file it's about is not a usable mismatch record.
+        assert!(serde_json::from_str::<Mismatch>(r#"{"kind": "size"}"#).is_err());
     }
 }

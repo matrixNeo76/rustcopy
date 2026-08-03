@@ -15,7 +15,15 @@ use crate::progress::{speedup_factor, throughput_mbps};
 use crate::scan::ScanSummary;
 
 /// Schema version, so downstream consumers can detect format changes.
-pub const SCHEMA_VERSION: u32 = 1;
+///
+/// F26c (closes D6): bumped 1 -> 2 because a past release renamed `integrity::Mismatch`'s fields
+/// (`source_sha256`/`dest_sha256` -> `kind`/`algorithm`/`source_digest`/`dest_digest`) without
+/// bumping this constant, so a v1-labelled report could actually be in either shape. Downstream
+/// consumers (and `restore::build_restore_args`, which parses the full report to drive
+/// `--restore-from`) can now tell the two apart. See `integrity::Mismatch` for the
+/// `#[serde(default)]` fields that keep genuinely old (v1, pre-rename) reports deserializable
+/// rather than failing outright.
+pub const SCHEMA_VERSION: u32 = 2;
 
 /// System host metadata for cross-machine benchmark comparison.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -389,7 +397,7 @@ mod tests {
         let json: serde_json::Value =
             serde_json::from_str(&report.to_json().expect("serialize")).expect("valid json");
 
-        assert_eq!(json["schema_version"], 1);
+        assert_eq!(json["schema_version"], SCHEMA_VERSION);
         assert!(json["timestamp"]
             .as_str()
             .expect("timestamp")

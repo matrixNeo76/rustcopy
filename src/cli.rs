@@ -76,11 +76,20 @@ pub struct Args {
     #[arg(long, default_value_t = false)]
     pub verify_integrity: bool,
 
-    /// Selective integrity verification: only calculate checksums for files modified or copied in this run.
+    /// [NOT IMPLEMENTED] Reserved for selective integrity verification (only hash files this run
+    /// actually modified/copied, via the incremental state cache); accepted for forward
+    /// compatibility but currently has no effect — --verify-integrity always hashes every file in
+    /// the source inventory. Real per-file "was this touched this run" tracking needs the
+    /// incremental cache (see ROADMAP.md F28, which reuses cache.rs — a separate, currently-
+    /// orphaned subsystem this fix was not scoped to wire up).
     #[arg(long, default_value_t = false)]
     pub fast_verify: bool,
 
-    /// Ignore temporary or transient files (.log, .tmp, .git/objects) that disappear during copy/verification.
+    /// After --verify-integrity, treat missing/unreadable files matching well-known transient
+    /// patterns (.log, .tmp, anything under .git/objects/) as expected rather than a verification
+    /// failure — these can legitimately disappear between the copy and the verification pass (log
+    /// rotation, temp-file cleanup, git garbage collection). Has no effect without
+    /// --verify-integrity.
     #[arg(long, default_value_t = false)]
     pub ignore_transient_missing: bool,
 
@@ -165,6 +174,15 @@ pub struct Args {
     /// Preserve NTFS ACL security permissions (maps to robocopy /COPYALL).
     #[arg(long, default_value_t = false)]
     pub preserve_acl: bool,
+
+    // ── F26d: junction/symlink consistency ───────────────────────────────────
+    /// Exclude junction points and symlinked directories from the copy (maps to robocopy /XJ).
+    /// Without this, robocopy follows them (its own default), which can duplicate data or
+    /// recurse into a self-referencing junction; the source inventory used for the progress
+    /// total and --verify-integrity follows the same rule, so what gets counted and what gets
+    /// copied always agree.
+    #[arg(long, default_value_t = false)]
+    pub exclude_junctions: bool,
 
     // ── F7.1: Webhook completion notifications ──────────────────────────────
     /// Send an HTTP POST JSON execution summary to this Webhook URL upon completion.
@@ -416,6 +434,7 @@ impl Args {
             long_paths: self.long_paths,
             preserve_timestamps: self.preserve_timestamps,
             preserve_acl: self.preserve_acl,
+            exclude_junctions: self.exclude_junctions,
         }
     }
 }
@@ -452,6 +471,9 @@ mod tests {
         assert!(args.max_age_days.is_none());
         assert!(args.bandwidth_limit_mbps.is_none());
         assert!(!args.no_prescan);
+        assert!(!args.exclude_junctions);
+        assert!(!args.fast_verify);
+        assert!(!args.ignore_transient_missing);
         assert_eq!(
             args.report_path,
             PathBuf::from("./robocopy_ingest_report.json")
@@ -624,6 +646,7 @@ mod tests {
             "--bandwidth-limit-mbps",
             "10",
             "--no-prescan",
+            "--exclude-junctions",
         ]);
         let args = Args::try_parse_from(argv).expect("parse");
 
@@ -634,6 +657,7 @@ mod tests {
         assert_eq!(args.max_age_days, Some(30));
         assert_eq!(args.bandwidth_limit_mbps, Some(10));
         assert!(args.no_prescan);
+        assert!(args.exclude_junctions);
 
         let request = args.copy_request(PathBuf::from("/dst"));
         assert!(request.mirror);
@@ -641,6 +665,7 @@ mod tests {
         // 65.536 / 10 = 6.5536 -> rounds to 7 ms
         assert_eq!(request.inter_packet_gap_ms, Some(7));
         assert!(!request.prescan);
+        assert!(request.exclude_junctions);
     }
 
     #[test]

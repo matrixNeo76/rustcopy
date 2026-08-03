@@ -44,6 +44,10 @@ pub trait CommandRunner: Send + Sync {
 /// * `/XD` exclude directories matching patterns (F4.1).
 /// * `/MINAGE`/`/MAXAGE` date-based filtering (F4.2).
 /// * `/IPG` inter-packet gap for bandwidth throttling (F4.5).
+/// * `/XJ` exclude junction points and symlinked directories (F26d). Robocopy's own default
+///   *without* this flag is to follow them, which `scan.rs`'s prescan never did — the two only
+///   agree once this flag and `scan::follow_links` are driven from the same
+///   `request.exclude_junctions` / `--exclude-junctions` value.
 ///
 /// F1.2: paths are normalised to strip trailing separators before use, preventing Windows
 /// argument-quoting bugs where a trailing `\` escapes the closing `"`.
@@ -104,6 +108,11 @@ pub fn build_args(request: &CopyRequest) -> Vec<String> {
     // F4.5: bandwidth throttling (inter-packet gap in milliseconds).
     if let Some(ipg) = request.inter_packet_gap_ms {
         args.push(format!("/IPG:{ipg}"));
+    }
+
+    // F26d: exclude junction points / symlinked directories.
+    if request.exclude_junctions {
+        args.push("/XJ".to_string());
     }
 
     if request.dry_run {
@@ -515,6 +524,7 @@ mod tests {
             long_paths: false,
             preserve_timestamps: false,
             preserve_acl: false,
+            exclude_junctions: false,
         }
     }
 
@@ -826,5 +836,17 @@ mod tests {
 
         let req2 = request(); // no throttle
         assert!(!build_args(&req2).iter().any(|a| a.starts_with("/IPG")));
+    }
+
+    /// F26d: `--exclude-junctions` produces /XJ; omitted by default (robocopy's own default is
+    /// to follow junctions/symlinked directories).
+    #[test]
+    fn exclude_junctions_flag_is_generated() {
+        let mut req = request();
+        req.exclude_junctions = true;
+        assert!(build_args(&req).contains(&"/XJ".to_string()));
+
+        let req2 = request(); // exclude_junctions not set
+        assert!(!build_args(&req2).contains(&"/XJ".to_string()));
     }
 }

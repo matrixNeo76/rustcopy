@@ -541,6 +541,232 @@ fn encrypt_and_decrypt_together_are_rejected() {
     );
 }
 
+/// F26a black-box test (closes half of D2): `scan.rs`'s prescan doesn't apply `--exclude-files`
+/// (only robocopy's own `/XF` does, at copy time), so a file matched by the pattern but excluded
+/// from the actual transfer is a deterministic, non-racy way to reproduce "file present in the
+/// prescan inventory but missing at the destination when `--verify-integrity` runs" — exactly the
+/// scenario `--ignore-transient-missing` exists for, without needing a real timing race.
+#[cfg(windows)]
+#[test]
+fn ignore_transient_missing_turns_an_excluded_log_into_a_pass() {
+    let source = fixture_tree(&[("a.csv", 10), ("stale.log", 20)]);
+    let workdir = tempfile::tempdir().expect("workdir");
+
+    // Without --ignore-transient-missing: stale.log is in the prescan inventory (matched by the
+    // default "*" pattern) but never reaches the destination (excluded via --exclude-files), so
+    // verification must fail.
+    let dest_a = workdir.path().join("out-a");
+    let output_a = run(&[
+        "--source",
+        source.path().to_str().expect("utf8"),
+        "--dest",
+        dest_a.to_str().expect("utf8"),
+        "--log-path",
+        workdir.path().join("a.log").to_str().expect("utf8"),
+        "--report-path",
+        workdir.path().join("a-report.json").to_str().expect("utf8"),
+        "--exclude-files",
+        "*.log",
+        "--verify-integrity",
+    ]);
+    assert_eq!(
+        output_a.status.code(),
+        Some(1),
+        "stale.log missing at dest must fail verification without --ignore-transient-missing; stderr: {}",
+        stderr_of(&output_a)
+    );
+
+    // With --ignore-transient-missing: the same missing stale.log must be tolerated.
+    let dest_b = workdir.path().join("out-b");
+    let report_b = workdir.path().join("b-report.json");
+    let output_b = run(&[
+        "--source",
+        source.path().to_str().expect("utf8"),
+        "--dest",
+        dest_b.to_str().expect("utf8"),
+        "--log-path",
+        workdir.path().join("b.log").to_str().expect("utf8"),
+        "--report-path",
+        report_b.to_str().expect("utf8"),
+        "--exclude-files",
+        "*.log",
+        "--verify-integrity",
+        "--ignore-transient-missing",
+    ]);
+    assert!(
+        output_b.status.success(),
+        "--ignore-transient-missing must turn the same failure into a pass; stderr: {}",
+        stderr_of(&output_b)
+    );
+    let report: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(&report_b).expect("read")).expect("json");
+    assert_eq!(report["integrity_check"]["status"], "PASSED");
+    assert_eq!(
+        report["integrity_check"]["missing_in_dest"].as_array().expect("array").len(),
+        0,
+        "stale.log must be filtered out of missing_in_dest, not just ignored for status; report: {report}"
+    );
+}
+
+/// F26d black-box test (closes D7): before this fix, `scan.rs` never followed junctions
+/// (`follow_links(false)` unconditionally) while robocopy followed them by default (no `/XJ`
+/// ever passed) — the prescan and the actual transfer walked different trees. Uses a real NTFS
+/// directory junction (`mklink /J`, which needs no elevated privilege, unlike symlinks) so this
+/// exercises the real compiled binary end-to-end, not just `scan::scan` in isolation.
+#[cfg(windows)]
+#[test]
+fn exclude_junctions_flag_actually_changes_what_the_binary_copies() {
+    let source = fixture_tree(&[("real/a.csv", 10)]);
+    let target = source.path().join("real");
+    let link = source.path().join("link");
+    let status = std::process::Command::new("cmd")
+        .args([
+            "/C",
+            "mklink",
+            "/J",
+            &link.display().to_string(),
+            &target.display().to_string(),
+        ])
+        .status()
+        .expect("run mklink");
+    assert!(status.success(), "mklink /J must succeed to exercise this test");
+
+    let workdir = tempfile::tempdir().expect("workdir");
+
+    // Default (no --exclude-junctions): robocopy's own default is to follow the junction, and the
+    // prescan now agrees, so a.csv is copied twice (once directly, once through the junction).
+    let dest_default = workdir.path().join("out-default");
+    let report_default = workdir.path().join("default-report.json");
+    let output_default = run(&[
+        "--source",
+        source.path().to_str().expect("utf8"),
+        "--dest",
+        dest_default.to_str().expect("utf8"),
+        "--log-path",
+        workdir.path().join("default.log").to_str().expect("utf8"),
+        "--report-path",
+        report_default.to_str().expect("utf8"),
+    ]);
+    assert!(
+        output_default.status.success(),
+        "stderr: {}",
+        stderr_of(&output_default)
+    );
+    assert!(dest_default.join("real").join("a.csv").is_file());
+    assert!(
+        dest_default.join("link").join("a.csv").is_file(),
+        "without --exclude-junctions, robocopy must follow the junction like it does by default"
+    );
+    let report_default: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(&report_default).expect("read")).expect("json");
+    assert_eq!(
+        report_default["total_files"], 2,
+        "the prescan must agree with what robocopy actually copies"
+    );
+
+    // --exclude-junctions: /XJ is passed, robocopy must not descend into the junction, and the
+    // prescan must agree (no more "1 counted, 2 copied" mismatch).
+    let dest_excl = workdir.path().join("out-excl");
+    let report_excl = workdir.path().join("excl-report.json");
+    let output_excl = run(&[
+        "--source",
+        source.path().to_str().expect("utf8"),
+        "--dest",
+        dest_excl.to_str().expect("utf8"),
+        "--log-path",
+        workdir.path().join("excl.log").to_str().expect("utf8"),
+        "--report-path",
+        report_excl.to_str().expect("utf8"),
+        "--exclude-junctions",
+    ]);
+    assert!(output_excl.status.success(), "stderr: {}", stderr_of(&output_excl));
+    assert!(dest_excl.join("real").join("a.csv").is_file());
+    assert!(
+        !dest_excl.join("link").exists(),
+        "--exclude-junctions must stop robocopy from descending into (or even creating) the junction"
+    );
+    let report_excl: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(&report_excl).expect("read")).expect("json");
+    assert_eq!(report_excl["total_files"], 1);
+}
+
+/// F26c black-box test (closes D6): a hand-written "legacy" report — the exact shape a report
+/// written before the `Mismatch` field rename would have (only `path`, no `kind`/`algorithm`/
+/// `source_digest`/`dest_digest`) — must still drive `--restore-from` through the compiled binary
+/// instead of failing at the JSON-parsing step inside `build_restore_args`.
+#[cfg(windows)]
+#[test]
+fn restore_from_accepts_a_legacy_report_with_pre_rename_mismatch_shape() {
+    let sandbox = tempfile::tempdir().expect("sandbox");
+    let original = sandbox.path().join("original");
+    let backup_dest = sandbox.path().join("backup");
+    let report_path = sandbox.path().join("legacy_report.json");
+
+    std::fs::create_dir_all(&backup_dest).expect("create backup dest");
+    std::fs::write(backup_dest.join("important.csv"), b"irreplaceable,data\n1,2\n")
+        .expect("seed backup file");
+
+    let legacy_json = format!(
+        r#"{{
+            "schema_version": 1,
+            "timestamp": "2026-07-30T09:14:22Z",
+            "tool_version": "1.0.0",
+            "host_platform": "windows",
+            "host_metadata": {{ "hostname": "srv", "os_name": "windows", "logical_cpus": 8 }},
+            "source": {source:?},
+            "dest": {dest:?},
+            "total_files": 1,
+            "total_bytes": 25,
+            "robocopy_transfer": {{
+                "engine": "robocopy",
+                "elapsed_seconds": 1.0,
+                "throughput_mbps": 1.0,
+                "bytes_copied": 25,
+                "files_copied": 1,
+                "retry_attempts_used": 0,
+                "dry_run": false
+            }},
+            "phase_timing": {{ "inventory_seconds": 0.1, "transfer_seconds": 1.0, "total_seconds": 1.1 }},
+            "configuration": {{
+                "threads": 8,
+                "retries": 3,
+                "retry_wait_seconds": 5,
+                "pattern": "*",
+                "verify_integrity": false,
+                "compare_baseline": false,
+                "dry_run": false
+            }},
+            "integrity_check": {{
+                "files_checked": 1,
+                "bytes_hashed": 25,
+                "mismatches": [ {{ "path": "important.csv" }} ],
+                "missing_in_dest": [],
+                "unreadable": [],
+                "status": "FAILED"
+            }}
+        }}"#,
+        source = original.to_str().expect("utf8"),
+        dest = backup_dest.to_str().expect("utf8"),
+    );
+    std::fs::write(&report_path, legacy_json).expect("write legacy report");
+
+    let restore_output = run(&[
+        "--restore-from",
+        report_path.to_str().expect("utf8"),
+        "--log-path",
+        sandbox.path().join("restore.log").to_str().expect("utf8"),
+        "--report-path",
+        sandbox.path().join("restore_report.json").to_str().expect("utf8"),
+    ]);
+    assert!(
+        restore_output.status.success(),
+        "a pre-rename Mismatch shape must not break --restore-from; stderr: {}",
+        stderr_of(&restore_output)
+    );
+    let restored = std::fs::read_to_string(original.join("important.csv")).expect("file must be restored");
+    assert_eq!(restored, "irreplaceable,data\n1,2\n");
+}
+
 /// Guards the assumption the Linux tests rely on: the fixture helper is deterministic.
 #[test]
 fn fixtures_are_created_where_expected() {

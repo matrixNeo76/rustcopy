@@ -257,6 +257,7 @@ mod tests {
             long_paths: false,
             preserve_timestamps: false,
             preserve_acl: false,
+            exclude_junctions: false,
         };
         let sink = crate::progress::NoopProgress;
         for _ in 0..3 {

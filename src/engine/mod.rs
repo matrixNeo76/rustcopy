@@ -54,6 +54,11 @@ pub struct CopyRequest {
     pub preserve_timestamps: bool,
     /// F6.2: preserve NTFS ACL security permissions (`/COPYALL`).
     pub preserve_acl: bool,
+    /// F26d: exclude junction points and symlinked directories from the copy (`/XJ`). Without
+    /// this, robocopy follows them (its own default), which can duplicate data or recurse
+    /// forever on a self-referencing junction. `scan.rs` mirrors this same flag when building the
+    /// source inventory, so the prescan and the actual transfer always walk the same tree.
+    pub exclude_junctions: bool,
 }
 
 /// Fluent builder pattern for constructing [`CopyRequest`] instances cleanly.
@@ -76,6 +81,7 @@ pub struct CopyRequestBuilder {
     long_paths: bool,
     preserve_timestamps: bool,
     preserve_acl: bool,
+    exclude_junctions: bool,
 }
 
 impl CopyRequestBuilder {
@@ -98,6 +104,7 @@ impl CopyRequestBuilder {
             long_paths: false,
             preserve_timestamps: false,
             preserve_acl: false,
+            exclude_junctions: false,
         }
     }
 
@@ -145,6 +152,7 @@ impl CopyRequestBuilder {
             long_paths: self.long_paths,
             preserve_timestamps: self.preserve_timestamps,
             preserve_acl: self.preserve_acl,
+            exclude_junctions: self.exclude_junctions,
         }
     }
 }
@@ -383,6 +391,7 @@ mod tests {
             long_paths: false,
             preserve_timestamps: false,
             preserve_acl: false,
+            exclude_junctions: false,
         }
     }
 
