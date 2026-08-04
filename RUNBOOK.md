@@ -29,6 +29,73 @@ Se vuoi unire più sorgenti direttamente nel root della destinazione senza sotto
 - **⚠️ REGOLA FONDAMENTALE (NON Usare `--mirror`)**: Quando si uniscono sorgenti multiple nello stesso root di destinazione, **NON si deve usare il flag `--mirror`**. Usando `--mirror` per la sorgente B, Robocopy cancellerebbe dalla destinazione i file precedentemente copiati dalla sorgente A!  
   *(Nota: Se si tenta di usare `--mirror`, la **Release 5.1.0** attiva la protezione `Mirror Safety Threshold` bloccando l'eliminazione accidentale).*
 
+#### 🔹 Modalità C: Un File di Configurazione con Più Job (`[[jobs]]`, dalla Release 6.0.0)
+Le Modalità A/B sopra richiedono di lanciare l'eseguibile una volta per sorgente, a mano o da uno
+script esterno. Dalla **Release 6.0.0** un singolo file TOML può descrivere più job indipendenti,
+eseguiti in sequenza da un solo comando:
+
+```toml
+# jobs.toml
+# Campi di primo livello = default condivisi, ereditati da ogni job che non li sovrascrive.
+verify_integrity = true
+hash_algo = "blake3"
+
+[[jobs]]
+name = "repos"
+source = "C:/repos"
+dest = "\\\\FILESERV01\\dati01\\provarust\\repos"
+
+[[jobs]]
+name = "projects"
+source = "D:/projects"
+dest = "\\\\FILESERV01\\dati01\\provarust\\projects"
+threads = 32   # sovrascrive il default solo per questo job
+```
+
+```powershell
+.\target\release\robocopy_ingest.exe --config jobs.toml
+```
+
+- Ogni job produce il proprio report JSON: se un job non imposta `report_path`, ne riceve uno
+  auto-generato con il nome del job inserito prima dell'estensione (es. `report.json` →
+  `report.repos.json`, `report.projects.json`) — i report non si sovrascrivono mai a vicenda.
+- Un job con `source`/`dest` mancanti o non validi viene segnalato ed **escluso**, senza abortire
+  gli altri job del file.
+- `Ctrl+C` interrompe il job in corso (con checkpoint, come sempre — vedi `--resume-from` più
+  sotto) e **interrompe anche i job successivi** del batch, non li salta soltanto.
+- Tutti i job condividono un solo file di log (`log_path` del file, o quello di default): il
+  logger è una risorsa di processo, non per-invocazione.
+- Path Windows nel TOML: usare `/` (accettato senza problemi da Windows) oppure raddoppiare i
+  backslash (`\\\\`) — un singolo `\` in una stringa TOML è un carattere di escape.
+
+## 📌 1bis. Backup a Generazioni (Full/Incrementale, dalla Release 6.0.0)
+
+A differenza delle Modalità A/B/C sopra — che sincronizzano sempre lo **stesso** stato in
+destinazione — `--backup-type` mantiene una **cronologia** di backup distinti, ciascuno nella
+propria sotto-cartella:
+
+```powershell
+# 1. Primo backup: sempre full — non c'è ancora nulla da cui calcolare un delta.
+.\target\release\robocopy_ingest.exe --source "C:\dati" --dest "E:\backup\dati" --backup-type full
+
+# 2. Backup successivi: incrementale, copia solo i file nuovi/cambiati dall'ultima generazione.
+.\target\release\robocopy_ingest.exe --source "C:\dati" --dest "E:\backup\dati" --backup-type incremental
+```
+
+- Ogni run crea `E:\backup\dati\<timestamp>_<tipo>\` con **solo** i file effettivamente copiati in
+  quel run (per `full`, tutti; per `incremental`, solo il delta).
+- `E:\backup\dati\.rustcopy_generations.json` registra ogni generazione con l'inventario
+  **completo** della sorgente al momento del run (non solo il delta), cosicché il prossimo
+  incrementale confronti sempre contro lo stato pieno più recente, non contro un delta parziale.
+- `--backup-type incremental` senza una generazione precedente in destinazione fallisce con un
+  errore chiaro (serve prima un `--backup-type full`).
+- Incompatibile con `--mirror` (rifiutato da `--backup-type` insieme a `--mirror`): la
+  destinazione qui è un archivio di generazioni, non un mirror 1:1 della sorgente.
+- **Limiti dichiarati di questo primo taglio**: non ancora collegati a `--backup-type`:
+  `--compare-baseline`, `--verify-integrity`, `--encrypt-aes256`/`--decrypt`, `--vss-snapshot`
+  (lato destinazione). Il tipo `differential` (delta contro l'ultimo full, non contro l'ultima
+  generazione qualsiasi) non è ancora implementato.
+
 ---
 
 ## 💻 2. Comandi Reali Eseguiti e Verificati con Successo

@@ -23,6 +23,7 @@ pub mod crypto;
 pub mod engine;
 pub mod errors;
 pub mod exit_code;
+pub mod generations;
 pub mod html_report;
 pub mod integrity;
 pub mod logging;

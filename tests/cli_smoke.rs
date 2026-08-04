@@ -1125,6 +1125,197 @@ fn restore_from_accepts_a_legacy_report_with_pre_rename_mismatch_shape() {
     assert_eq!(restored, "irreplaceable,data\n1,2\n");
 }
 
+/// F33 black-box test: a `[[jobs]]` config file actually runs every declared job, not just the
+/// first — each job gets its own destination and (since neither job sets its own `report_path`)
+/// its own namespaced report file, so one job's report can't silently clobber the other's.
+#[cfg(windows)]
+#[test]
+fn a_jobs_array_config_runs_every_job_with_its_own_report() {
+    let source_a = fixture_tree(&[("a.csv", 16)]);
+    let source_b = fixture_tree(&[("b.csv", 32)]);
+    let workdir = tempfile::tempdir().expect("workdir");
+    let to_toml_path = |p: &Path| p.to_str().expect("utf8").replace('\\', "/");
+
+    let config_path = workdir.path().join("jobs.toml");
+    let report_path = workdir.path().join("report.json");
+    let log_path = workdir.path().join("ingest.log");
+    let dest_alpha = workdir.path().join("out_alpha");
+    let dest_beta = workdir.path().join("out_beta");
+
+    std::fs::write(
+        &config_path,
+        format!(
+            r#"
+dry_run = true
+report_path = "{report}"
+log_path = "{log}"
+
+[[jobs]]
+name = "alpha"
+source = "{source_a}"
+dest = "{dest_alpha}"
+
+[[jobs]]
+name = "beta"
+source = "{source_b}"
+dest = "{dest_beta}"
+"#,
+            report = to_toml_path(&report_path),
+            log = to_toml_path(&log_path),
+            source_a = to_toml_path(source_a.path()),
+            dest_alpha = to_toml_path(&dest_alpha),
+            source_b = to_toml_path(source_b.path()),
+            dest_beta = to_toml_path(&dest_beta),
+        ),
+    )
+    .expect("write config");
+
+    let output = run(&["--config", config_path.to_str().expect("utf8")]);
+
+    assert!(output.status.success(), "stderr: {}", stderr_of(&output));
+    let stdout = stdout_of(&output);
+    assert!(stdout.contains("job 'alpha'"), "stdout: {stdout}");
+    assert!(stdout.contains("job 'beta'"), "stdout: {stdout}");
+
+    let report_alpha = workdir.path().join("report.alpha.json");
+    let report_beta = workdir.path().join("report.beta.json");
+    assert!(report_alpha.is_file(), "alpha's own report must exist");
+    assert!(report_beta.is_file(), "beta's own report must exist");
+
+    let alpha: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(&report_alpha).expect("read")).expect("json");
+    let beta: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(&report_beta).expect("read")).expect("json");
+    // Each job's report must point at that job's own destination, not the other job's.
+    assert!(
+        alpha["dest"].as_str().unwrap_or_default().contains("out_alpha"),
+        "alpha report: {alpha}"
+    );
+    assert!(
+        beta["dest"].as_str().unwrap_or_default().contains("out_beta"),
+        "beta report: {beta}"
+    );
+}
+
+/// F34 black-box test: `--backup-type full` then `--backup-type incremental` against the same
+/// destination actually produce two generation subfolders, a manifest recording both, and the
+/// incremental run copies only the file that changed (and the new one) — not the unchanged file.
+#[cfg(windows)]
+#[test]
+fn incremental_backup_copies_only_changed_files_since_the_last_generation() {
+    let source = fixture_tree(&[("a.csv", 8), ("b.csv", 8)]);
+    let workdir = tempfile::tempdir().expect("workdir");
+    let dest = workdir.path().join("dest");
+    let report1 = workdir.path().join("report1.json");
+    let report2 = workdir.path().join("report2.json");
+
+    let full_output = run(&[
+        "--source",
+        source.path().to_str().expect("utf8"),
+        "--dest",
+        dest.to_str().expect("utf8"),
+        "--log-path",
+        workdir.path().join("ingest.log").to_str().expect("utf8"),
+        "--report-path",
+        report1.to_str().expect("utf8"),
+        "--backup-type",
+        "full",
+    ]);
+    assert!(full_output.status.success(), "stderr: {}", stderr_of(&full_output));
+
+    let manifest_path = dest.join(".rustcopy_generations.json");
+    assert!(manifest_path.is_file(), "manifest must exist after the full backup");
+    let manifest_after_full: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(&manifest_path).expect("read")).expect("json");
+    assert_eq!(manifest_after_full["generations"].as_array().unwrap().len(), 1);
+
+    // A real filesystem mtime tick matters here: changed_since compares whole seconds.
+    std::thread::sleep(std::time::Duration::from_millis(1100));
+    std::fs::write(source.path().join("a.csv"), b"changed content!").expect("modify a.csv");
+    std::fs::write(source.path().join("c.csv"), b"brand new file").expect("add c.csv");
+
+    let inc_output = run(&[
+        "--source",
+        source.path().to_str().expect("utf8"),
+        "--dest",
+        dest.to_str().expect("utf8"),
+        "--log-path",
+        workdir.path().join("ingest.log").to_str().expect("utf8"),
+        "--report-path",
+        report2.to_str().expect("utf8"),
+        "--backup-type",
+        "incremental",
+    ]);
+    assert!(inc_output.status.success(), "stderr: {}", stderr_of(&inc_output));
+    let stdout = stdout_of(&inc_output);
+    assert!(
+        stdout.contains("(2 of 3 file(s) to copy)"),
+        "expected exactly a.csv+c.csv to be flagged as changed; stdout: {stdout}"
+    );
+
+    let manifest_after_inc: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(&manifest_path).expect("read")).expect("json");
+    let generations = manifest_after_inc["generations"].as_array().unwrap();
+    assert_eq!(generations.len(), 2, "both generations must be recorded");
+    assert_eq!(generations[1]["backup_type"], "incremental");
+    assert_eq!(generations[1]["files_copied"], 2);
+
+    let incremental_folder = generations[1]["id"].as_str().expect("id");
+    let incremental_dir = dest.join(incremental_folder);
+    assert!(incremental_dir.join("a.csv").is_file(), "changed file must be copied");
+    assert!(incremental_dir.join("c.csv").is_file(), "new file must be copied");
+    assert!(
+        !incremental_dir.join("b.csv").exists(),
+        "unchanged file must NOT be copied into the incremental generation"
+    );
+}
+
+/// F34 black-box test: `--backup-type incremental` with no prior generation at the destination
+/// must fail clearly instead of silently doing a full copy or crashing.
+#[cfg(windows)]
+#[test]
+fn incremental_backup_without_a_prior_generation_fails_clearly() {
+    let source = fixture_tree(&[("a.csv", 8)]);
+    let workdir = tempfile::tempdir().expect("workdir");
+
+    let output = run(&[
+        "--source",
+        source.path().to_str().expect("utf8"),
+        "--dest",
+        workdir.path().join("dest").to_str().expect("utf8"),
+        "--log-path",
+        workdir.path().join("ingest.log").to_str().expect("utf8"),
+        "--report-path",
+        workdir.path().join("report.json").to_str().expect("utf8"),
+        "--backup-type",
+        "incremental",
+    ]);
+
+    assert!(!output.status.success());
+    assert!(stderr_of(&output).contains("no prior generation"), "stderr: {}", stderr_of(&output));
+}
+
+/// F34 black-box test: `--backup-type` and `--mirror` together must be rejected by the real
+/// binary, not just at the `Args::validate()` unit-test level.
+#[test]
+fn backup_type_and_mirror_together_are_rejected_by_the_real_binary() {
+    let source = fixture_tree(&[("a.csv", 8)]);
+    let dest = tempfile::tempdir().expect("dest");
+
+    let output = run(&[
+        "--source",
+        source.path().to_str().expect("utf8"),
+        "--dest",
+        dest.path().to_str().expect("utf8"),
+        "--backup-type",
+        "full",
+        "--mirror",
+    ]);
+
+    assert_eq!(output.status.code(), Some(2));
+    assert!(stderr_of(&output).contains("--backup-type and --mirror"));
+}
+
 /// Guards the assumption the Linux tests rely on: the fixture helper is deterministic.
 #[test]
 fn fixtures_are_created_where_expected() {

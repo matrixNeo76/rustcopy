@@ -61,8 +61,8 @@ pub struct Args {
     pub config: Option<PathBuf>,
 
     /// Source directory containing the CSV files to ingest.
-    /// Not required when --restore-from or --resume-from is given (derived from the backup
-    /// report / interruption checkpoint respectively).
+    /// Not required when --restore-from, --resume-from or --config is given (derived from the
+    /// backup report / interruption checkpoint / config file respectively).
     ///
     /// F24 fix: this used to be a plain `PathBuf` with `default_value = ""` alongside
     /// `required_unless_present`, on the assumption that an empty-string default would let clap
@@ -73,19 +73,25 @@ pub struct Args {
     /// crate's own test harness, hit the same error). `Option<PathBuf>` sidesteps the whole
     /// default-value question: clap simply leaves it `None` when omitted, exactly like it already
     /// does for `--config`/`--restore-from` above.
+    ///
+    /// F33 fix: `--config` was missing from this list entirely, so even the pre-existing
+    /// single-job config-file mode could never be invoked with `--config` alone — clap demanded
+    /// `--source`/`--dest` as dummy CLI args regardless, defeating the point of a config file.
+    /// `--config`'s multi-job mode (`[[jobs]]`) never touches `Args::source()`/`dest()` at all
+    /// (each job builds its own `Args`), so this only had to be caught once job mode needed it.
     #[arg(
         long,
         value_name = "PATH",
-        required_unless_present_any = ["restore_from", "resume_from"]
+        required_unless_present_any = ["restore_from", "resume_from", "config"]
     )]
     pub source: Option<PathBuf>,
 
     /// Destination directory for the ingested files.
-    /// Not required when --restore-from or --resume-from is given.
+    /// Not required when --restore-from, --resume-from or --config is given.
     #[arg(
         long,
         value_name = "PATH",
-        required_unless_present_any = ["restore_from", "resume_from"]
+        required_unless_present_any = ["restore_from", "resume_from", "config"]
     )]
     pub dest: Option<PathBuf>,
 
@@ -176,6 +182,19 @@ pub struct Args {
     /// Show what would happen without copying anything (robocopy /L).
     #[arg(long, default_value_t = false)]
     pub dry_run: bool,
+
+    // ── F34: backup generations ─────────────────────────────────────────────
+    /// Run as a versioned backup generation instead of a plain sync into --dest: writes into a
+    /// new `<dest>/<timestamp>_<type>/` subfolder and records it in
+    /// `<dest>/.rustcopy_generations.json` for future runs to diff against. `full` copies
+    /// everything; `incremental` copies only files new or changed since the immediately
+    /// preceding generation (of either type) and requires at least one prior generation to
+    /// exist. Omitted (the default) keeps the pre-F34 behaviour: a plain sync directly into
+    /// --dest, no generation folder, no manifest. Not compatible with --mirror (mirror deletes
+    /// destination-only files, which makes no sense once --dest holds a manifest and multiple
+    /// generation subfolders rather than a 1:1 mirror of the source).
+    #[arg(long, value_enum, value_name = "TYPE")]
+    pub backup_type: Option<crate::generations::BackupType>,
 
     // ── F4.3: Mirror mode ───────────────────────────────────────────────────
     /// Mirror source to destination: delete files in the destination that are not in the source.
@@ -337,15 +356,26 @@ impl Args {
             .expect("--dest is required unless --restore-from is given, enforced by clap")
     }
 
-    /// Merge non-None fields from `config` into `self` where CLI flags were not explicitly passed.
+    /// Merge non-None fields from `config`'s top-level defaults into `self` where CLI flags were
+    /// not explicitly passed. Single-job entry point, unchanged in behaviour since before F33 —
+    /// the actual per-field merge lives in [`Self::apply_job_config`] so multi-job mode (F33) can
+    /// reuse the exact same rules for each resolved `[[jobs]]` entry.
     pub fn merge_config(&mut self, config: crate::config::IngestConfig) {
+        self.apply_job_config(&config.defaults);
+    }
+
+    /// Merge non-None fields from `job` into `self` where CLI flags were not explicitly passed.
+    /// Shared by the single-job config path ([`Self::merge_config`]) and F33's multi-job path,
+    /// which calls this once per resolved job (top-level defaults already folded in via
+    /// [`crate::config::JobConfig::merged_over`]).
+    pub fn apply_job_config(&mut self, job: &crate::config::JobConfig) {
         if self.source.is_none() {
-            self.source = config.source;
+            self.source = job.source.clone();
         }
         if self.dest.is_none() {
-            self.dest = config.dest;
+            self.dest = job.dest.clone();
         }
-        if let Some(pat) = config.pattern {
+        if let Some(pat) = &job.pattern {
             // Only apply the config file's pattern when the CLI still holds clap's own default
             // ("*"); otherwise an explicit `--pattern` on the command line would be silently
             // overwritten. This was previously checked against "*.csv", which never matched the
@@ -356,68 +386,71 @@ impl Args {
             // `ArgMatches::value_source`, which isn't threaded through yet for any of the
             // merge_config fields (all of them share this limitation, not just pattern).
             if self.pattern == "*" {
-                self.pattern = pat;
+                self.pattern = pat.clone();
             }
         }
-        if let Some(th) = config.threads {
+        if let Some(th) = job.threads {
             self.threads = th;
         }
-        if let Some(ret) = config.retries {
+        if let Some(ret) = job.retries {
             self.retries = ret;
         }
-        if let Some(w) = config.retry_wait_seconds {
+        if let Some(w) = job.retry_wait_seconds {
             self.retry_wait_seconds = w;
         }
-        if let Some(v) = config.verify_integrity {
+        if let Some(v) = job.verify_integrity {
             self.verify_integrity = v;
         }
-        if let Some(algo) = config.hash_algo {
+        if let Some(algo) = job.hash_algo {
             self.hash_algo = algo;
         }
-        if let Some(base) = config.compare_baseline {
+        if let Some(base) = job.compare_baseline {
             self.compare_baseline = base;
         }
-        if let Some(rep) = config.report_path {
-            self.report_path = rep;
+        if let Some(rep) = &job.report_path {
+            self.report_path = rep.clone();
         }
-        if let Some(log) = config.log_path {
-            self.log_path = log;
+        if let Some(log) = &job.log_path {
+            self.log_path = log.clone();
         }
-        if let Some(dry) = config.dry_run {
+        if let Some(dry) = job.dry_run {
             self.dry_run = dry;
         }
-        if let Some(mir) = config.mirror {
+        if let Some(bt) = job.backup_type {
+            self.backup_type = Some(bt);
+        }
+        if let Some(mir) = job.mirror {
             self.mirror = mir;
         }
-        if let Some(ex_files) = config.exclude_files {
-            self.exclude_files.extend(ex_files);
+        if let Some(ex_files) = &job.exclude_files {
+            self.exclude_files.extend(ex_files.iter().cloned());
         }
-        if let Some(ex_dirs) = config.exclude_dirs {
-            self.exclude_dirs.extend(ex_dirs);
+        if let Some(ex_dirs) = &job.exclude_dirs {
+            self.exclude_dirs.extend(ex_dirs.iter().cloned());
         }
-        if let Some(min_age) = config.min_age_days {
+        if let Some(min_age) = job.min_age_days {
             self.min_age_days = Some(min_age);
         }
-        if let Some(max_age) = config.max_age_days {
+        if let Some(max_age) = job.max_age_days {
             self.max_age_days = Some(max_age);
         }
-        if let Some(limit) = config.bandwidth_limit_mbps {
+        if let Some(limit) = job.bandwidth_limit_mbps {
             self.bandwidth_limit_mbps = Some(limit);
         }
-        if let Some(no_pre) = config.no_prescan {
+        if let Some(no_pre) = job.no_prescan {
             self.no_prescan = no_pre;
         }
-        if let Some(lp) = config.long_paths {
+        if let Some(lp) = job.long_paths {
             self.long_paths = lp;
         }
-        if let Some(pt) = config.preserve_timestamps {
+        if let Some(pt) = job.preserve_timestamps {
             self.preserve_timestamps = pt;
         }
-        if let Some(pa) = config.preserve_acl {
+        if let Some(pa) = job.preserve_acl {
             self.preserve_acl = pa;
         }
-        if let Some(wh) = config.webhook_url {
-            self.webhook_url = Some(wh);
+        if let Some(wh) = &job.webhook_url {
+            self.webhook_url = Some(wh.clone());
         }
     }
     pub fn validate(&self) -> Result<(), IngestError> {
@@ -426,11 +459,22 @@ impl Args {
         if self.encrypt_aes256.is_some() && self.decrypt.is_some() {
             return Err(IngestError::EncryptAndDecryptConflict);
         }
+        // F34: --mirror deletes destination-only files to match the source 1:1, which conflicts
+        // with --backup-type's destination layout (a manifest plus multiple generation
+        // subfolders, not a single mirrored tree).
+        if self.backup_type.is_some() && self.mirror {
+            return Err(IngestError::BackupTypeAndMirrorConflict);
+        }
         if self.restore_from.is_some() || self.resume_from.is_some() {
             return Ok(());
         }
         if !(MIN_THREADS as u16..=MAX_THREADS).contains(&self.threads) {
             return Err(IngestError::InvalidThreads(self.threads));
+        }
+        // See the F33 note on `IngestError::SourceOrDestMissingFromConfig`: with --config in the
+        // mix, clap no longer guarantees source/dest are set by the time we get here.
+        if self.source.is_none() || self.dest.is_none() {
+            return Err(IngestError::SourceOrDestMissingFromConfig);
         }
         let source = self.source();
         let dest = self.dest();
@@ -605,6 +649,38 @@ mod tests {
         assert!(args.validate().is_ok());
     }
 
+    /// F33: `apply_job_config` (shared by single-job `merge_config` and multi-job mode) must
+    /// behave exactly like the pre-F33 `merge_config` it was extracted from: `source`/`dest`
+    /// only fill in when unset, `pattern` only applies while the CLI still holds clap's own
+    /// default ("*"), and every other field unconditionally takes the config/job value when
+    /// present (a documented pre-existing limitation — see the comment on the pattern branch —
+    /// not something F33 introduced).
+    #[test]
+    fn apply_job_config_matches_merge_configs_established_field_rules() {
+        let mut args = Args::try_parse_from([
+            "robocopy_ingest",
+            "--source",
+            ".",
+            "--dest",
+            "./out",
+            "--threads",
+            "4",
+        ])
+        .expect("parse");
+
+        let job = crate::config::JobConfig {
+            threads: Some(64), // unconditionally wins, like merge_config always did
+            verify_integrity: Some(true), // must win: never set on the CLI
+            pattern: Some("*.csv".to_string()), // must win: pattern still holds clap's default
+            ..crate::config::JobConfig::default()
+        };
+        args.apply_job_config(&job);
+
+        assert_eq!(args.threads, 64);
+        assert!(args.verify_integrity);
+        assert_eq!(args.pattern, "*.csv");
+    }
+
     /// F31: `--resume-from` alone must parse without `--source`/`--dest`, mirroring F24's fix for
     /// `--restore-from` (both share the same `required_unless_present_any` mechanism).
     #[test]
@@ -627,6 +703,21 @@ mod tests {
             "checkpoint.json",
         ])
         .is_err());
+    }
+
+    /// F34: `--backup-type` and `--mirror` are mutually exclusive (the generation-folder+manifest
+    /// destination layout has nothing in common with `/MIR`'s "purge everything not in source").
+    #[test]
+    fn backup_type_and_mirror_together_are_rejected() {
+        use crate::generations::BackupType;
+        let mut args = Args::try_parse_from(["robocopy_ingest", "--source", ".", "--dest", "./out"])
+            .expect("parse");
+        args.backup_type = Some(BackupType::Full);
+        args.mirror = true;
+        assert!(matches!(
+            args.validate(),
+            Err(IngestError::BackupTypeAndMirrorConflict)
+        ));
     }
 
     #[test]

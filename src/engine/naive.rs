@@ -12,7 +12,7 @@ use std::time::Instant;
 
 use crate::errors::IngestError;
 use crate::progress::ProgressSink;
-use crate::scan;
+use crate::scan::{self, ScannedFile};
 
 use super::{CopyEngine, CopyOutcome, CopyRequest};
 
@@ -49,42 +49,73 @@ impl CopyEngine for NaiveCopyEngine {
             "starting baseline copy"
         );
 
-        let mut outcome = CopyOutcome::new(ENGINE_NAME);
-        outcome.dry_run = request.dry_run;
-        let started = Instant::now();
-
-        if !request.dry_run {
-            fs::create_dir_all(&request.dest)
-                .map_err(|source| IngestError::io(&request.dest, source))?;
-        }
-
-        for file in &inventory.files {
-            let source_path = request.source.join(&file.relative_path);
-            let dest_path = request.dest.join(&file.relative_path);
-
-            let bytes = if request.dry_run {
-                tracing::debug!(path = %file.relative_path.display(), "would copy");
-                file.size_bytes
-            } else {
-                copy_one(&source_path, &dest_path)?
-            };
-
-            outcome.bytes_copied += bytes;
-            outcome.files_copied += 1;
-            sink.add_bytes(bytes);
-            sink.add_file();
-            tracing::debug!(path = %file.relative_path.display(), bytes, "baseline copied file");
-        }
-
-        outcome.elapsed = started.elapsed();
-        tracing::info!(
-            files = outcome.files_copied,
-            bytes = outcome.bytes_copied,
-            elapsed_seconds = outcome.elapsed.as_secs_f64(),
-            "baseline copy finished"
-        );
-        Ok(outcome)
+        let files: Vec<&ScannedFile> = inventory.files.iter().collect();
+        copy_files(&request.source, &request.dest, &files, request.dry_run, sink, "baseline")
     }
+}
+
+/// F34: copy exactly the given files (preserving their relative paths), instead of walking the
+/// source tree by pattern like [`NaiveCopyEngine::copy`] does. This is what makes an incremental
+/// or differential generation possible at all: robocopy's own file-selection arguments match
+/// filenames uniformly across every directory it walks, not a specific manifest of relative
+/// paths, so there is no way to hand robocopy "copy exactly these N files, wherever they are in
+/// the tree" — the naive per-file engine can do it directly because it never delegates file
+/// selection to anything else. Used directly (not through the `CopyEngine` trait, which has no
+/// concept of an explicit file list) by `main.rs`'s generation-backup path.
+pub fn copy_selected(
+    source: &Path,
+    dest: &Path,
+    files: &[ScannedFile],
+    dry_run: bool,
+    sink: &dyn ProgressSink,
+) -> Result<CopyOutcome, IngestError> {
+    let files: Vec<&ScannedFile> = files.iter().collect();
+    copy_files(source, dest, &files, dry_run, sink, ENGINE_NAME)
+}
+
+fn copy_files(
+    source: &Path,
+    dest: &Path,
+    files: &[&ScannedFile],
+    dry_run: bool,
+    sink: &dyn ProgressSink,
+    log_label: &str,
+) -> Result<CopyOutcome, IngestError> {
+    let mut outcome = CopyOutcome::new(ENGINE_NAME);
+    outcome.dry_run = dry_run;
+    let started = Instant::now();
+
+    if !dry_run {
+        fs::create_dir_all(dest).map_err(|source_err| IngestError::io(dest, source_err))?;
+    }
+
+    for file in files {
+        let source_path = source.join(&file.relative_path);
+        let dest_path = dest.join(&file.relative_path);
+
+        let bytes = if dry_run {
+            tracing::debug!(path = %file.relative_path.display(), "would copy");
+            file.size_bytes
+        } else {
+            copy_one(&source_path, &dest_path)?
+        };
+
+        outcome.bytes_copied += bytes;
+        outcome.files_copied += 1;
+        sink.add_bytes(bytes);
+        sink.add_file();
+        tracing::debug!(path = %file.relative_path.display(), bytes, label = log_label, "copied file");
+    }
+
+    outcome.elapsed = started.elapsed();
+    tracing::info!(
+        files = outcome.files_copied,
+        bytes = outcome.bytes_copied,
+        elapsed_seconds = outcome.elapsed.as_secs_f64(),
+        label = log_label,
+        "copy finished"
+    );
+    Ok(outcome)
 }
 
 /// Stream one file, creating the destination directory tree as needed. Returns bytes written.

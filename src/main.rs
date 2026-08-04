@@ -80,6 +80,12 @@ async fn run(mut args: Args) -> Result<u8> {
     } else if let Some(config_path) = &args.config {
         let config = robocopy_ingest::config::IngestConfig::load_from(config_path)
             .with_context(|| format!("cannot load config file from {}", config_path.display()))?;
+        // F33: a `[[jobs]]` array switches into multi-job mode, handled entirely separately —
+        // each job gets its own `Args` built from a fresh clone of the original CLI invocation
+        // (see `run_jobs`). An empty/absent `jobs` array is the pre-F33 single-job path.
+        if config.jobs.as_ref().is_some_and(|jobs| !jobs.is_empty()) {
+            return run_jobs(args, config).await;
+        }
         args.merge_config(config);
     }
 
@@ -87,6 +93,125 @@ async fn run(mut args: Args) -> Result<u8> {
 
     let log = logging::init(&args.log_path, &args.log_config())
         .context("cannot initialise the log file")?;
+    let child_pid = Arc::new(AtomicU32::new(0));
+
+    let exit_code = match run_one(&args, &log, Arc::clone(&child_pid)).await? {
+        JobRunResult::Completed(code) => code,
+        JobRunResult::Interrupted => EXIT_INGESTION_PROBLEM,
+    };
+
+    let dropped = log.dropped_lines();
+    log.shutdown().await;
+    if dropped > 0 {
+        eprintln!("warning: {dropped} log line(s) were dropped (logger under load)");
+    }
+    Ok(exit_code)
+}
+
+/// F33: run every job declared in a `[[jobs]]` config file sequentially, in one process.
+///
+/// Each job gets its own `Args`, rebuilt from a fresh clone of the *original* CLI invocation (not
+/// the previous job's already-merged `Args`) so `apply_job_config`'s "CLI still holds clap's own
+/// default" checks behave identically to the single-job path for every job, not just the first.
+/// Logging is a whole-process resource — `logging::init` only actually installs a subscriber on
+/// its first call (see its doc comment) — so all jobs in a batch necessarily share one log file,
+/// picked from the file's top-level defaults (or the CLI default if unset). Each job still needs
+/// its own report (and, on Ctrl+C, its own checkpoint): if a job doesn't set its own
+/// `report_path`, one is namespaced with the job's name to avoid jobs silently overwriting each
+/// other's report.
+///
+/// A job that fails validation (e.g. missing source/dest) is reported and skipped rather than
+/// aborting the whole batch — one misconfigured job in a multi-job file shouldn't stop the others
+/// from running. A Ctrl+C, however, aborts the remaining jobs immediately.
+async fn run_jobs(base_args: Args, config: robocopy_ingest::config::IngestConfig) -> Result<u8> {
+    let jobs = config.jobs.clone().unwrap_or_default();
+
+    let mut log_args = base_args.clone();
+    log_args.apply_job_config(&config.defaults);
+    let log = logging::init(&log_args.log_path, &log_args.log_config())
+        .context("cannot initialise the log file")?;
+
+    println!("running {} job(s) from {}", jobs.len(), log_args.config.as_deref().unwrap_or(Path::new("<config>")).display());
+
+    let child_pid = Arc::new(AtomicU32::new(0));
+    let mut worst_exit_code: u8 = 0;
+
+    for (idx, job) in jobs.iter().enumerate() {
+        let resolved = job.merged_over(&config.defaults);
+        let job_name = resolved.name.clone().unwrap_or_else(|| format!("job{}", idx + 1));
+
+        let mut job_args = base_args.clone();
+        job_args.apply_job_config(&resolved);
+
+        if job_args.source.is_none() || job_args.dest.is_none() {
+            eprintln!(
+                "error: job '{job_name}' is missing source/dest (set them on the job itself or as top-level config defaults) — skipping"
+            );
+            worst_exit_code = worst_exit_code.max(EXIT_UNRECOVERABLE);
+            continue;
+        }
+        // Namespace off the *job's own* `report_path`, not `resolved`'s: `merged_over` already
+        // folded the top-level default's `report_path` into `resolved` even when the job itself
+        // never set one, which would otherwise defeat this check every time (every job "resolves"
+        // to a report_path as long as the file has one at all) and send every job's report to the
+        // exact same path.
+        if job.report_path.is_none() {
+            job_args.report_path = namespaced_path(&job_args.report_path, &job_name);
+        }
+        if let Err(error) = job_args.validate() {
+            eprintln!("error: job '{job_name}' failed validation: {error} — skipping");
+            worst_exit_code = worst_exit_code.max(EXIT_UNRECOVERABLE);
+            continue;
+        }
+
+        println!("\n=== job '{job_name}' ({}/{}) ===", idx + 1, jobs.len());
+        tracing::info!(job = %job_name, "starting job");
+
+        match run_one(&job_args, &log, Arc::clone(&child_pid)).await? {
+            JobRunResult::Completed(code) => worst_exit_code = worst_exit_code.max(code),
+            JobRunResult::Interrupted => {
+                worst_exit_code = worst_exit_code.max(EXIT_INGESTION_PROBLEM);
+                eprintln!("aborting remaining jobs after Ctrl+C");
+                break;
+            }
+        }
+    }
+
+    let dropped = log.dropped_lines();
+    log.shutdown().await;
+    if dropped > 0 {
+        eprintln!("warning: {dropped} log line(s) were dropped (logger under load)");
+    }
+    Ok(worst_exit_code)
+}
+
+/// Inserts `.{name}` before the file extension (or at the end, if there is none), used to give
+/// each job in a batch its own default report path instead of every job silently overwriting the
+/// same file. E.g. `report.json` + `photos` -> `report.photos.json`.
+fn namespaced_path(path: &Path, name: &str) -> PathBuf {
+    let stem = path
+        .file_stem()
+        .map(|s| s.to_string_lossy().into_owned())
+        .unwrap_or_default();
+    let file_name = match path.extension() {
+        Some(ext) => format!("{stem}.{name}.{}", ext.to_string_lossy()),
+        None => format!("{stem}.{name}"),
+    };
+    path.with_file_name(file_name)
+}
+
+/// Outcome of a single job run: either it completed (with the exit code the caller should surface)
+/// or Ctrl+C interrupted it (a checkpoint was written, if possible).
+enum JobRunResult {
+    Completed(u8),
+    Interrupted,
+}
+
+/// Runs one already-validated, already-logged-in job: the transfer itself, its Ctrl+C handling,
+/// and its summary output. Shared by the single-job path in `run` and F33's multi-job path in
+/// `run_jobs`, both of which own the `LogHandle`'s init/flush/shutdown lifecycle themselves since
+/// a batch of jobs shares one log file across multiple calls to this function.
+async fn run_one(args: &Args, log: &logging::LogHandle, child_pid: Arc<AtomicU32>) -> Result<JobRunResult> {
     tracing::info!(
         source = %args.source().display(),
         dest = %args.dest().display(),
@@ -100,10 +225,8 @@ async fn run(mut args: Args) -> Result<u8> {
     // Published with the actual robocopy.exe child's PID while it runs, so a Ctrl+C only
     // terminates *this* transfer instead of every robocopy.exe process on the host (the previous
     // `taskkill /IM robocopy.exe` behaviour).
-    let child_pid = Arc::new(AtomicU32::new(0));
-
     let result = tokio::select! {
-        res = execute(&args, Arc::clone(&child_pid)) => res,
+        res = execute(args, Arc::clone(&child_pid)) => res,
         _ = tokio::signal::ctrl_c() => {
             eprintln!("\nreceived Ctrl+C interrupt signal, terminating the active transfer...");
             tracing::warn!("ingestion interrupted by Ctrl+C signal");
@@ -113,7 +236,7 @@ async fn run(mut args: Args) -> Result<u8> {
             // --resume-from had nothing to read. Best-effort: a failure to write the checkpoint
             // must not mask the Ctrl+C itself, only be reported.
             let checkpoint_path = robocopy_ingest::checkpoint::checkpoint_path_for(&args.report_path);
-            let checkpoint = robocopy_ingest::checkpoint::Checkpoint::new(&args, "interrupted by Ctrl+C");
+            let checkpoint = robocopy_ingest::checkpoint::Checkpoint::new(args, "interrupted by Ctrl+C");
             match checkpoint.write_to(&checkpoint_path) {
                 Ok(()) => eprintln!(
                     "Checkpoint written to {} — resume with --resume-from {}",
@@ -127,8 +250,7 @@ async fn run(mut args: Args) -> Result<u8> {
             }
 
             log.flush().await;
-            log.shutdown().await;
-            return Ok(EXIT_INGESTION_PROBLEM);
+            return Ok(JobRunResult::Interrupted);
         }
     };
 
@@ -138,11 +260,6 @@ async fn run(mut args: Args) -> Result<u8> {
         Ok(outcome) => tracing::info!(exit_code = outcome.exit_code, "ingestion finished"),
         Err(error) => tracing::error!("ingestion aborted: {error:#}"),
     }
-    let dropped = log.dropped_lines();
-    log.shutdown().await;
-    if dropped > 0 {
-        eprintln!("warning: {dropped} log line(s) were dropped (logger under load)");
-    }
 
     let outcome = result?;
     println!("\n{}", outcome.summary);
@@ -151,7 +268,7 @@ async fn run(mut args: Args) -> Result<u8> {
     if outcome.exit_code != 0 {
         eprintln!("\nthe ingestion completed with problems, see the report for details");
     }
-    Ok(outcome.exit_code)
+    Ok(JobRunResult::Completed(outcome.exit_code))
 }
 
 /// Terminate only the tracked child PID (if any), never every `robocopy.exe` on the host.
@@ -280,6 +397,15 @@ async fn execute(args: &Args, child_pid: Arc<AtomicU32>) -> Result<RunOutcome> {
             args.pattern,
             args.source().display()
         );
+    }
+
+    // F34: --backup-type diverts into a completely different pipeline (a naive, explicit-file-list
+    // copy into a new generation subfolder, tracked in a manifest) rather than the plain-sync path
+    // below — see `execute_generation_backup`'s doc comment for why the two can't share `transfer()`.
+    // `validate()` already rejects --backup-type together with --mirror, so nothing past this
+    // point ever needs to consider the two together.
+    if let Some(backup_type) = args.backup_type {
+        return execute_generation_backup(args, backup_type, &effective_source, &inventory, inventory_seconds, start_all).await;
     }
 
     // F21 (fixed): a real mirror-purge safety check, run with the actual source inventory
@@ -412,6 +538,162 @@ async fn execute(args: &Args, child_pid: Arc<AtomicU32>) -> Result<RunOutcome> {
 
     Ok(RunOutcome {
         exit_code,
+        summary: report.human_summary(),
+        report_path: args.report_path.clone(),
+    })
+}
+
+/// F34: run one backup generation (full or incremental) instead of the plain sync above.
+///
+/// This deliberately does **not** reuse `transfer()` (robocopy): robocopy walks the source tree
+/// itself, filtered only by `--pattern`/`--exclude-*`/age — it has no way to be told "copy
+/// exactly these N specific relative paths and nothing else". Its own file-selection arguments
+/// match filenames uniformly at every directory level, not a manifest of exact relative paths.
+/// So a full generation can copy the whole (already-computed) `inventory` via the same
+/// per-file naive copy engine used for `--compare-baseline`, and an incremental generation can
+/// copy just the changed subset the same way — see `engine::naive::copy_selected`.
+///
+/// Known scope limit of this first cut (F34): no baseline comparison, no `--verify-integrity`,
+/// no encrypt/decrypt, no VSS remap of the *destination* side. These aren't fundamentally
+/// incompatible with generations, just not wired up yet — `--backup-type` is opt-in (`None` by
+/// default), so none of the existing single-destination flows lose anything by this existing
+/// alongside them rather than folding into `execute()`'s main body.
+async fn execute_generation_backup(
+    args: &Args,
+    backup_type: robocopy_ingest::generations::BackupType,
+    effective_source: &Path,
+    inventory: &ScanSummary,
+    inventory_seconds: f64,
+    start_all: Instant,
+) -> Result<RunOutcome> {
+    use robocopy_ingest::generations::{self, BackupType, GenerationManifest};
+
+    let dest_root = args.dest().to_path_buf();
+    let manifest = {
+        let dest_root = dest_root.clone();
+        tokio::task::spawn_blocking(move || GenerationManifest::load_or_default(&dest_root))
+            .await
+            .context("the generation manifest load task panicked")?
+            .context("cannot load the generation manifest")?
+    };
+
+    let files_to_copy: Vec<ScannedFile> = match backup_type {
+        BackupType::Full => inventory.files.clone(),
+        BackupType::Incremental => {
+            let reference = manifest.latest().ok_or_else(|| {
+                anyhow::anyhow!(
+                    "--backup-type incremental found no prior generation in {}; run --backup-type full first",
+                    dest_root.display()
+                )
+            })?;
+            generations::changed_since(&inventory.files, &reference.files)
+                .into_iter()
+                .cloned()
+                .collect()
+        }
+    };
+
+    let generation_id = generations::new_generation_id(backup_type);
+    let effective_dest = dest_root.join(&generation_id);
+
+    println!(
+        "Backup type     : {} ({} of {} file(s) to copy)",
+        backup_type.as_str(),
+        files_to_copy.len(),
+        inventory.file_count(),
+    );
+
+    if !args.dry_run {
+        tokio::fs::create_dir_all(&effective_dest)
+            .await
+            .map_err(|error| IngestError::io(&effective_dest, error))
+            .context("cannot create the generation destination directory")?;
+    }
+
+    let copied_bytes: u64 = files_to_copy.iter().map(|f| f.size_bytes).sum();
+    let progress = new_progress(args, copied_bytes, "generation");
+    // Kept for the report below (`IngestReport::with_timing` wants the file list, not just a
+    // count) — the naive copy call needs its own owned copy to move into `spawn_blocking`.
+    let copied_files = files_to_copy.clone();
+
+    let start_transfer = Instant::now();
+    let (source_owned, dest_owned, dry_run, sink) = (
+        effective_source.to_path_buf(),
+        effective_dest.clone(),
+        args.dry_run,
+        Arc::clone(&progress),
+    );
+    let copy_outcome = tokio::task::spawn_blocking(move || {
+        robocopy_ingest::engine::naive::copy_selected(
+            &source_owned,
+            &dest_owned,
+            &files_to_copy,
+            dry_run,
+            sink.as_ref(),
+        )
+    })
+    .await
+    .context("the generation copy task panicked")?
+    .context("generation copy failed")?;
+    let transfer_seconds = start_transfer.elapsed().as_secs_f64();
+
+    if !args.dry_run {
+        let mut manifest = manifest;
+        manifest.push(generations::Generation {
+            id: generation_id.clone(),
+            backup_type,
+            created_at: chrono::Utc::now().to_rfc3339(),
+            files_copied: copy_outcome.files_copied as usize,
+            files: generations::to_generation_files(&inventory.files),
+        });
+        let dest_root_for_save = dest_root.clone();
+        tokio::task::spawn_blocking(move || manifest.save(&dest_root_for_save))
+            .await
+            .context("the generation manifest save task panicked")?
+            .context("cannot save the generation manifest")?;
+    }
+
+    let timing = robocopy_ingest::report::PhaseTiming {
+        inventory_seconds,
+        transfer_seconds,
+        verification_seconds: None,
+        baseline_seconds: None,
+        total_seconds: start_all.elapsed().as_secs_f64(),
+    };
+
+    // The report documents where *this generation's* files actually landed, not the destination
+    // root — hence a clone of `args` with `dest` pointed at the generation subfolder, purely for
+    // `IngestReport::with_timing`'s benefit (nothing else uses `gen_args`). `total_files`/
+    // `total_bytes` in the report reflect what this generation actually copied (`copied_files`),
+    // not the full source inventory — for an incremental generation those are two very different
+    // numbers, and the report should describe the delta that was actually written to disk.
+    let mut gen_args = args.clone();
+    gen_args.dest = Some(effective_dest.clone());
+    let scoped_inventory = ScanSummary {
+        files: copied_files,
+        total_bytes: copied_bytes,
+        total_files_hint: None,
+    };
+
+    let mut report = IngestReport::with_timing(&gen_args, &scoped_inventory, &copy_outcome, None, None, timing);
+    if let Some(webhook_url) = &args.webhook_url {
+        match robocopy_ingest::notify::send_webhook(webhook_url, &report).await {
+            Ok(()) => tracing::info!("completion webhook delivered"),
+            Err(error) => {
+                tracing::error!(error = %error, "completion webhook delivery failed");
+                eprintln!("warning: completion webhook delivery failed: {error}");
+                report.webhook_error = Some(error);
+            }
+        }
+    }
+
+    report
+        .write_to(&args.report_path)
+        .with_context(|| format!("cannot write the report to {}", args.report_path.display()))?;
+    tracing::info!(path = %args.report_path.display(), "report written");
+
+    Ok(RunOutcome {
+        exit_code: 0,
         summary: report.human_summary(),
         report_path: args.report_path.clone(),
     })

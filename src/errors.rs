@@ -9,6 +9,20 @@ pub enum IngestError {
     #[error("--threads must be between 1 and 128, got {0}")]
     InvalidThreads(u16),
 
+    /// F33: `--config` is exempt from clap's `required_unless_present_any` on `--source`/`--dest`
+    /// (a config file is expected to supply them), which means `Args::source()`/`dest()`'s
+    /// documented "clap enforces this before validate() runs" invariant no longer holds
+    /// unconditionally for that path — a config file (or `[[jobs]]` defaults) that itself omits
+    /// `source`/`dest` must be caught here with a clear error instead of panicking.
+    #[error("--source and --dest must be set on the command line or in the config file (via --config)")]
+    SourceOrDestMissingFromConfig,
+
+    /// F34: `--mirror` purges destination-only files to match the source tree 1:1; that's
+    /// incompatible with `--backup-type`'s destination layout (a manifest plus one subfolder per
+    /// generation, not a single mirrored tree).
+    #[error("--backup-type and --mirror cannot both be given: --backup-type's destination holds a manifest and multiple generation subfolders, not a single mirrored tree")]
+    BackupTypeAndMirrorConflict,
+
     #[error("source directory does not exist: {0}")]
     SourceMissing(PathBuf),
 
@@ -117,6 +131,8 @@ impl IngestError {
             }
             IngestError::RobocopyUnavailable
             | IngestError::InvalidThreads(_)
+            | IngestError::SourceOrDestMissingFromConfig
+            | IngestError::BackupTypeAndMirrorConflict
             | IngestError::SourceMissing(_)
             | IngestError::SourceNotADirectory(_)
             | IngestError::DestNotADirectory(_)
