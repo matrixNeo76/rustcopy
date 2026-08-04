@@ -17,8 +17,10 @@ Welcome to `robocopy-ingest-cli` (`rustcopy`). This document serves as the prima
    - Report mismatch lists MUST be capped to `10_000` items (`MAX_REPORTED_ERRORS`).
 5. **Path Normalization & Signal Handling**: Strip trailing separators from arguments. `Ctrl+C` terminates *only* the tracked child PID (published into an `Arc<AtomicU32>` by `ProcessRunner`), never every `robocopy.exe` process on the host (`taskkill /IM` by image name is banned — use `/PID`).
 6. **Mirror Safety**: `--mirror` runs `check_mirror_safety` before the transfer, which diffs the destination against the source inventory and aborts (dedicated exit code 3) unless `--force-purge` is given or the run is interactive and confirmed. Never remove this check or make `--force-purge` the default.
-7. **Real vs. Mock Features**: `src/cache.rs`, `src/cloud.rs`, `src/service.rs` are not wired into the pipeline (`--enable-dedup`, `--cloud-sync-target`, `--install-service` are no-ops, marked `[NOT IMPLEMENTED]` in `--help`). Do not describe these as working in docs or fix requests without actually wiring them up first. `--encrypt-aes256` (`src/crypto.rs`) and the webhook (`src/notify.rs`) *are* fully implemented (AES-256-GCM; HTTPS via reqwest+rustls). `--serve-dashboard`/`src/server.rs` were removed (Release 5.4.0), replaced by the `notify-server` binary.
+7. **Real vs. Mock Features**: `src/cloud.rs` and `src/service.rs` are not wired into the pipeline (`--cloud-sync-target`, `--install-service` are no-ops, marked `[NOT IMPLEMENTED]` in `--help`). `src/cache.rs` is **partially wired**: `IngestCache` is used by `--fast-verify` (F28) to skip re-hashing files with unchanged source size+mtime, but `--enable-dedup` (transfer-level deduplication) remains a no-op. Do not describe unimplemented features as working in docs. `--encrypt-aes256` (`src/crypto.rs`) and the webhook (`src/notify.rs`) *are* fully implemented (AES-256-GCM; HTTPS via reqwest+rustls). `--serve-dashboard`/`src/server.rs` were removed (Release 5.4.0), replaced by the `notify-server` binary.
 8. **`notify-server` stays feature-gated**: axum, and anything that depends on it, must live behind `#[cfg(feature = "notify-server")]` (`src/notify_server.rs`, `src/bin/notify_server.rs`). `src/notify_sink.rs` (the channel trait and implementations) has no axum dependency and must stay always-compiled and always-tested. Verify with `cargo tree | grep -i axum` (must be empty without the feature) before committing any change here.
+9. **Backup Generations Use Naive Engine**: `src/generations.rs` uses `engine::naive::copy_selected` for selective file copies in incremental backups, **not** `robocopy.exe`. Robocopy's file-selection arguments match filenames by pattern at every directory level during its scan — there is no way to hand it an explicit list of specific relative paths to copy. Do not attempt to route incremental generation copies through `transfer()`/`RobocopyEngine`.
+10. **Multi-Job Args Discipline**: In multi-job mode (`[[jobs]]`), `main.rs::run_jobs` reconstructs `Args` for each job from a fresh **clone of the original CLI invocation**, never from `try_parse_from` nor from a previous job's already-merged `Args`. This is the same discipline as `restore::build_restore_args` / `checkpoint::build_resume_args` (lesson F25b: rebuilding via `try_parse_from` silently drops every flag not explicitly re-specified).
 
 ---
 
@@ -29,10 +31,10 @@ src/
 ├── main.rs          # Application entrypoint & signal handling (Ctrl+C).
 ├── lib.rs           # Library root exporting public modules.
 ├── cli.rs           # Clap argument parsing, validation, and TOML merging.
-├── config.rs        # TOML configuration file parser (IngestConfig).
+├── config.rs        # TOML configuration file parser (IngestConfig + JobConfig).
 ├── scan.rs          # Pre-scan inventory walking & directory sizing.
-├── integrity.rs     # Rayon parallel hashing (BLAKE3 & SHA-256) & OOM cap.
-├── logging.rs       # Non-blocking bounded file logging subscriber.
+├── integrity.rs     # Rayon parallel hashing (BLAKE3, SHA-256, xxHash3) & OOM cap.
+├── logging.rs       # Non-blocking bounded file logging subscriber with rotation.
 ├── report.rs        # JSON report generator with HostMetadata & PhaseTiming.
 ├── html_report.rs   # Standalone HTML5/SVG interactive dashboard generator.
 ├── notify.rs        # Async HTTP Webhook POST notification client.
@@ -41,7 +43,12 @@ src/
 ├── bin/
 │   └── notify_server.rs  # Thin notify-server binary entrypoint (feature "notify-server" only).
 ├── restore.rs       # Disaster Recovery reverse restore engine.
-├── cache.rs         # Incremental state cache (.ingest_cache) manager.
+├── checkpoint.rs    # Interrupted-run checkpoint save/resume (--resume-from).
+├── generations.rs   # Backup generation manifest (.rustcopy_generations.json) & diffing.
+├── vss.rs           # Volume Shadow Copy snapshot creation/cleanup (vssadmin).
+├── cache.rs         # Incremental state cache (.ingest_cache) — used by --fast-verify.
+├── cloud.rs         # Cloud provider sync abstraction (stub, NOT IMPLEMENTED).
+├── service.rs       # Windows Service SCM integration (stub, NOT IMPLEMENTED).
 ├── crypto.rs        # Zero-Trust AES-256 streaming encryption manager.
 ├── exit_code.rs     # Robocopy bitmask exit code decoder & status rules.
 ├── errors.rs        # IngestError enum & retry classification.
@@ -51,7 +58,7 @@ src/
 └── engine/
     ├── mod.rs       # CopyEngine trait & CopyRequest / CopyOutcome definitions.
     ├── robocopy.rs  # Windows Robocopy process builder & parser.
-    └── naive.rs     # Cross-platform baseline single-thread copy.
+    └── naive.rs     # Cross-platform baseline single-thread copy + selective copy for generations.
 ```
 
 ---
@@ -59,7 +66,7 @@ src/
 ## 3. Mandatory Testing Guidelines
 
 - **Never declare success without running `cargo test`** (and `cargo test --features notify-server` if you touched `src/notify_server.rs`, `src/notify_sink.rs`, or `src/bin/notify_server.rs`).
-- All **164 unit and integration tests** (default build) MUST pass before committing changes. With `--features notify-server`, **177** must pass.
+- All **223 unit and integration tests** (default build) MUST pass before committing changes. With `--features notify-server`, **236** must pass.
 - Cross-Platform Constraint: Unit tests inside `src/engine/robocopy.rs`, `src/integrity.rs`, `src/notify.rs`, `src/notify_sink.rs`, etc. MUST pass on Linux and macOS using `ScriptedRunner`/scripted test doubles.
 
 ### Test Commands:
