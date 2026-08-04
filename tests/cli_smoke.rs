@@ -45,6 +45,8 @@ fn help_documents_every_flag() {
         "--ignore-transient-missing",
         "--hash-algo",
         "--fast-verify",
+        "--vss-snapshot",
+        "--resume-from",
     ] {
         assert!(help.contains(flag), "{flag} missing from --help:\n{help}");
     }
@@ -330,6 +332,75 @@ fn fast_verify_never_caches_a_failed_file_so_it_keeps_being_reported() {
         "only a.csv (which passed) should be trusted from the cache; stale.log must have been re-checked: {json2}"
     );
     assert_eq!(json2["integrity_check"]["missing_in_dest"].as_array().expect("array").len(), 1);
+}
+
+/// F31 black-box test (closes O5): a hand-written checkpoint — the exact shape `run()`'s Ctrl+C
+/// branch writes — drives `--resume-from` through the compiled binary: source/dest/pattern are
+/// reconstructed and the transfer actually runs, unlike unit-testing `build_resume_args` alone
+/// (the F24/F25b lesson this project keeps re-learning: a unit test that skips clap and the real
+/// binary can hide a wiring bug a black-box run would have caught immediately).
+#[cfg(windows)]
+#[test]
+fn resume_from_reconstructs_and_runs_the_interrupted_invocation() {
+    let source = fixture_tree(&[("a.csv", 10), ("b.csv", 20)]);
+    let workdir = tempfile::tempdir().expect("workdir");
+    let dest = workdir.path().join("out");
+    let checkpoint_path = workdir.path().join("run.checkpoint.json");
+
+    let checkpoint_json = format!(
+        r#"{{
+            "schema_version": 1,
+            "timestamp": "2026-08-03T09:14:22Z",
+            "source": {source:?},
+            "dest": {dest:?},
+            "configuration": {{
+                "threads": 4,
+                "retries": 3,
+                "retry_wait_seconds": 5,
+                "pattern": "*.csv",
+                "verify_integrity": true,
+                "compare_baseline": false,
+                "dry_run": false
+            }},
+            "reason": "interrupted by Ctrl+C"
+        }}"#,
+        source = source.path().to_str().expect("utf8"),
+        dest = dest.to_str().expect("utf8"),
+    );
+    std::fs::write(&checkpoint_path, checkpoint_json).expect("write checkpoint");
+
+    let report_path = workdir.path().join("report.json");
+    let output = run(&[
+        "--resume-from",
+        checkpoint_path.to_str().expect("utf8"),
+        "--log-path",
+        workdir.path().join("resume.log").to_str().expect("utf8"),
+        "--report-path",
+        report_path.to_str().expect("utf8"),
+    ]);
+    assert!(output.status.success(), "stderr: {}", stderr_of(&output));
+
+    assert!(dest.join("a.csv").is_file());
+    assert!(dest.join("b.csv").is_file());
+    let report: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(&report_path).expect("read")).expect("json");
+    assert_eq!(report["configuration"]["pattern"], "*.csv");
+    // The checkpoint's verify_integrity: true must have survived into the resumed run.
+    assert_eq!(report["integrity_check"]["status"], "PASSED");
+}
+
+/// F31 black-box test: `--restore-from` and `--resume-from` together must be rejected at parse
+/// time (they mean opposite things: reversed direction vs. same direction).
+#[cfg(windows)]
+#[test]
+fn restore_from_and_resume_from_together_are_rejected_by_the_real_binary() {
+    let output = run(&[
+        "--restore-from",
+        "report.json",
+        "--resume-from",
+        "checkpoint.json",
+    ]);
+    assert!(!output.status.success());
 }
 
 #[cfg(not(windows))]

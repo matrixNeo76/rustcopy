@@ -77,6 +77,10 @@ pub enum IngestError {
     /// F25b: --encrypt-aes256 and --decrypt are mutually exclusive in a single run.
     #[error("--encrypt-aes256 and --decrypt cannot both be given in the same run")]
     EncryptAndDecryptConflict,
+
+    /// F30: --vss-snapshot could not create/parse/delete a Volume Shadow Copy via vssadmin.exe.
+    #[error("VSS snapshot error: {0}")]
+    Vss(String),
 }
 
 impl IngestError {
@@ -122,7 +126,8 @@ impl IngestError {
             | IngestError::InvalidPattern { .. }
             | IngestError::MirrorPurgeAborted { .. }
             | IngestError::Crypto(_)
-            | IngestError::EncryptAndDecryptConflict => false,
+            | IngestError::EncryptAndDecryptConflict
+            | IngestError::Vss(_) => false,
         }
     }
 }

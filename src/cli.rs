@@ -61,7 +61,8 @@ pub struct Args {
     pub config: Option<PathBuf>,
 
     /// Source directory containing the CSV files to ingest.
-    /// Not required when --restore-from is given (it is derived from the backup report).
+    /// Not required when --restore-from or --resume-from is given (derived from the backup
+    /// report / interruption checkpoint respectively).
     ///
     /// F24 fix: this used to be a plain `PathBuf` with `default_value = ""` alongside
     /// `required_unless_present`, on the assumption that an empty-string default would let clap
@@ -72,12 +73,20 @@ pub struct Args {
     /// crate's own test harness, hit the same error). `Option<PathBuf>` sidesteps the whole
     /// default-value question: clap simply leaves it `None` when omitted, exactly like it already
     /// does for `--config`/`--restore-from` above.
-    #[arg(long, value_name = "PATH", required_unless_present = "restore_from")]
+    #[arg(
+        long,
+        value_name = "PATH",
+        required_unless_present_any = ["restore_from", "resume_from"]
+    )]
     pub source: Option<PathBuf>,
 
     /// Destination directory for the ingested files.
-    /// Not required when --restore-from is given (it is derived from the backup report).
-    #[arg(long, value_name = "PATH", required_unless_present = "restore_from")]
+    /// Not required when --restore-from or --resume-from is given.
+    #[arg(
+        long,
+        value_name = "PATH",
+        required_unless_present_any = ["restore_from", "resume_from"]
+    )]
     pub dest: Option<PathBuf>,
 
     /// File pattern to match (robocopy file filter / glob on the file name). Defaults to "*" (all files).
@@ -226,6 +235,16 @@ pub struct Args {
     #[arg(long, default_value_t = false)]
     pub preserve_acl: bool,
 
+    // ── F30: VSS Snapshot ─────────────────────────────────────────────────────
+    /// Create a Volume Shadow Copy of the source volume before scanning/copying, so files locked
+    /// by other processes can still be read, instead of permanently failing and exhausting the
+    /// retry budget. Requires running as Administrator; fails clearly (no silent fallback to
+    /// reading the live volume) if the snapshot cannot be created. Windows only — ignored (with a
+    /// warning) elsewhere. The shadow copy is crash-consistent only: there is no VSS writer
+    /// coordination with an application such as a live database.
+    #[arg(long, default_value_t = false)]
+    pub vss_snapshot: bool,
+
     // ── F26d: junction/symlink consistency ───────────────────────────────────
     /// Exclude junction points and symlinked directories from the copy (maps to robocopy /XJ).
     /// Without this, robocopy follows them (its own default), which can duplicate data or
@@ -242,8 +261,18 @@ pub struct Args {
 
     // F8.1: Disaster Recovery & Restore Mode ──────────────────────────────
     /// Path to a previous backup report JSON file to initiate reverse restore mode.
-    #[arg(long, value_name = "REPORT_PATH")]
+    #[arg(long, value_name = "REPORT_PATH", conflicts_with = "resume_from")]
     pub restore_from: Option<PathBuf>,
+
+    // ── F31: Interrupted-run checkpoint & resume ─────────────────────────────
+    /// Path to a checkpoint file written when a previous run was interrupted (Ctrl+C), to
+    /// continue it. Unlike --restore-from, source and dest are NOT reversed — this continues the
+    /// same source -> dest direction, relying on robocopy's own default behaviour of skipping
+    /// destination files that already match the source, so whatever fully landed before the
+    /// interruption isn't re-copied. Not a substitute for true mid-file resume (this crate never
+    /// passes robocopy's /Z, deliberately, for its throughput cost on small files).
+    #[arg(long, value_name = "CHECKPOINT_PATH", conflicts_with = "restore_from")]
+    pub resume_from: Option<PathBuf>,
 
     // ── F10.1: HTML Standalone Dashboard Report ──────────────────────────────
     /// Path to write an interactive HTML summary report.
@@ -397,7 +426,7 @@ impl Args {
         if self.encrypt_aes256.is_some() && self.decrypt.is_some() {
             return Err(IngestError::EncryptAndDecryptConflict);
         }
-        if self.restore_from.is_some() {
+        if self.restore_from.is_some() || self.resume_from.is_some() {
             return Ok(());
         }
         if !(MIN_THREADS as u16..=MAX_THREADS).contains(&self.threads) {
@@ -541,6 +570,7 @@ mod tests {
         assert!(!args.quiet);
         assert_eq!(args.log_max_bytes, crate::logging::DEFAULT_MAX_LOG_BYTES);
         assert_eq!(args.log_max_backups, crate::logging::DEFAULT_MAX_LOG_BACKUPS);
+        assert!(!args.vss_snapshot);
         assert_eq!(
             args.report_path,
             PathBuf::from("./robocopy_ingest_report.json")
@@ -573,6 +603,30 @@ mod tests {
         // validate() must also accept this shape (it short-circuits for restore mode without
         // ever touching the None source/dest).
         assert!(args.validate().is_ok());
+    }
+
+    /// F31: `--resume-from` alone must parse without `--source`/`--dest`, mirroring F24's fix for
+    /// `--restore-from` (both share the same `required_unless_present_any` mechanism).
+    #[test]
+    fn resume_from_alone_is_sufficient() {
+        let args = Args::try_parse_from(["robocopy_ingest", "--resume-from", "checkpoint.json"])
+            .expect("--resume-from alone must parse without --source/--dest");
+        assert!(args.source.is_none());
+        assert!(args.dest.is_none());
+        assert_eq!(args.resume_from, Some(PathBuf::from("checkpoint.json")));
+        assert!(args.validate().is_ok());
+    }
+
+    #[test]
+    fn restore_from_and_resume_from_together_are_rejected() {
+        assert!(Args::try_parse_from([
+            "robocopy_ingest",
+            "--restore-from",
+            "report.json",
+            "--resume-from",
+            "checkpoint.json",
+        ])
+        .is_err());
     }
 
     #[test]

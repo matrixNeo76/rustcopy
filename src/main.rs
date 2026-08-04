@@ -74,6 +74,9 @@ async fn main() -> ExitCode {
 async fn run(mut args: Args) -> Result<u8> {
     if let Some(restore_report) = args.restore_from.clone() {
         args = robocopy_ingest::restore::build_restore_args(&args, &restore_report, None)?;
+    } else if let Some(checkpoint_path) = args.resume_from.clone() {
+        args = robocopy_ingest::checkpoint::build_resume_args(&args, &checkpoint_path)
+            .with_context(|| format!("cannot resume from checkpoint {}", checkpoint_path.display()))?;
     } else if let Some(config_path) = &args.config {
         let config = robocopy_ingest::config::IngestConfig::load_from(config_path)
             .with_context(|| format!("cannot load config file from {}", config_path.display()))?;
@@ -105,6 +108,24 @@ async fn run(mut args: Args) -> Result<u8> {
             eprintln!("\nreceived Ctrl+C interrupt signal, terminating the active transfer...");
             tracing::warn!("ingestion interrupted by Ctrl+C signal");
             kill_active_child(&child_pid);
+
+            // F31: nothing was written to record an interrupted run before this existed, so
+            // --resume-from had nothing to read. Best-effort: a failure to write the checkpoint
+            // must not mask the Ctrl+C itself, only be reported.
+            let checkpoint_path = robocopy_ingest::checkpoint::checkpoint_path_for(&args.report_path);
+            let checkpoint = robocopy_ingest::checkpoint::Checkpoint::new(&args, "interrupted by Ctrl+C");
+            match checkpoint.write_to(&checkpoint_path) {
+                Ok(()) => eprintln!(
+                    "Checkpoint written to {} — resume with --resume-from {}",
+                    checkpoint_path.display(),
+                    checkpoint_path.display()
+                ),
+                Err(error) => {
+                    tracing::warn!(error = %error, "could not write the interruption checkpoint");
+                    eprintln!("warning: could not write the interruption checkpoint: {error}");
+                }
+            }
+
             log.flush().await;
             log.shutdown().await;
             return Ok(EXIT_INGESTION_PROBLEM);
@@ -151,6 +172,84 @@ fn kill_active_child(child_pid: &Arc<AtomicU32>) {
 #[cfg(not(windows))]
 fn kill_active_child(_child_pid: &Arc<AtomicU32>) {}
 
+/// F30: holds a VSS shadow copy for the lifetime of the run and deletes it on drop.
+///
+/// A plain synchronous `Drop` impl (rather than an async cleanup step at the end of `execute()`)
+/// is deliberate: it is the only way cleanup still runs when `execute()`'s future is *cancelled*
+/// rather than completed — which is exactly what happens on Ctrl+C, since `run()`'s
+/// `tokio::select!` drops the losing branch's future outright instead of driving it to
+/// completion. Dropping a Rust future still runs `Drop` for its live locals at the point of
+/// cancellation, so a `VssGuard` held directly in `execute()`'s local scope (never moved into a
+/// `spawn_blocking` closure, which *would* detach it from the future and defeat this) is cleaned
+/// up on every exit path: normal completion, an early `?` return, or Ctrl+C.
+struct VssGuard {
+    shadow_id: String,
+    /// The path robocopy/scan should actually read from instead of the live volume.
+    remapped_source: PathBuf,
+}
+
+impl Drop for VssGuard {
+    fn drop(&mut self) {
+        #[cfg(windows)]
+        if let Err(error) = robocopy_ingest::vss::delete_shadow_copy(&self.shadow_id) {
+            tracing::warn!(
+                shadow_id = %self.shadow_id,
+                error = %error,
+                "failed to delete VSS shadow copy; it may need manual cleanup: `vssadmin delete shadows /shadow={}`",
+                self.shadow_id,
+            );
+            eprintln!(
+                "warning: could not delete VSS shadow copy {} — run `vssadmin delete shadows /shadow={}` manually",
+                self.shadow_id, self.shadow_id
+            );
+        }
+    }
+}
+
+/// F30: create the shadow copy `--vss-snapshot` asked for, if any. Windows only — on any other
+/// platform (or when the flag isn't set) this is a no-op, matching how the rest of this binary
+/// treats "real transfers need Windows" as informational rather than a hard error at parse time.
+#[cfg(windows)]
+async fn create_vss_snapshot(args: &Args) -> Result<Option<VssGuard>> {
+    if !args.vss_snapshot {
+        return Ok(None);
+    }
+    let source = args.source().to_path_buf();
+    let volume = robocopy_ingest::vss::volume_of(&source)
+        .context("cannot determine the source's volume for --vss-snapshot")?;
+
+    let shadow = {
+        let volume = volume.clone();
+        tokio::task::spawn_blocking(move || robocopy_ingest::vss::create_shadow_copy(&volume))
+            .await
+            .context("the VSS snapshot task panicked")?
+            .context(
+                "cannot create a VSS shadow copy (are you running as Administrator?); \
+                 aborting rather than silently reading the live volume",
+            )?
+    };
+
+    let remapped_source = robocopy_ingest::vss::remap_to_shadow(&source, &volume, &shadow);
+    println!(
+        "VSS snapshot created: {} (volume {volume}) — reading from the snapshot instead of the live volume",
+        shadow.shadow_id
+    );
+    tracing::info!(shadow_id = %shadow.shadow_id, volume = %volume, remapped = %remapped_source.display(), "VSS snapshot created");
+
+    Ok(Some(VssGuard {
+        shadow_id: shadow.shadow_id,
+        remapped_source,
+    }))
+}
+
+#[cfg(not(windows))]
+async fn create_vss_snapshot(args: &Args) -> Result<Option<VssGuard>> {
+    if args.vss_snapshot {
+        tracing::warn!("--vss-snapshot has no effect outside Windows; continuing without a snapshot");
+    }
+    Ok(None)
+}
+
 struct RunOutcome {
     /// One of the `EXIT_*` constants; `0` means fully acceptable.
     exit_code: u8,
@@ -161,8 +260,17 @@ struct RunOutcome {
 async fn execute(args: &Args, child_pid: Arc<AtomicU32>) -> Result<RunOutcome> {
     let start_all = Instant::now();
 
+    // F30: bound to `_vss_guard` (not `_`) so it lives for the rest of this function and its
+    // shadow copy is deleted on every exit path, including Ctrl+C cancellation — see `VssGuard`'s
+    // doc comment for why a plain `Drop` impl is what makes that work.
+    let _vss_guard = create_vss_snapshot(args).await?;
+    let effective_source = _vss_guard
+        .as_ref()
+        .map(|guard| guard.remapped_source.clone())
+        .unwrap_or_else(|| args.source().to_path_buf());
+
     let start_inv = Instant::now();
-    let inventory = inventory_source(args).await?;
+    let inventory = inventory_source(args, &effective_source).await?;
     let inventory_seconds = start_inv.elapsed().as_secs_f64();
 
     if inventory.is_empty() {
@@ -186,12 +294,13 @@ async fn execute(args: &Args, child_pid: Arc<AtomicU32>) -> Result<RunOutcome> {
     }
 
     let start_transfer = Instant::now();
-    let (robocopy_outcome, copy_failure) = transfer(args, &inventory, child_pid).await?;
+    let (robocopy_outcome, copy_failure) =
+        transfer(args, &effective_source, &inventory, child_pid).await?;
     let transfer_seconds = start_transfer.elapsed().as_secs_f64();
 
     let (baseline_outcome, baseline_seconds) = if args.compare_baseline && copy_failure.is_none() {
         let start_base = Instant::now();
-        let outcome = baseline(args, &inventory).await?;
+        let outcome = baseline(args, &effective_source, &inventory).await?;
         (Some(outcome), Some(start_base.elapsed().as_secs_f64()))
     } else {
         if args.compare_baseline {
@@ -209,7 +318,7 @@ async fn execute(args: &Args, child_pid: Arc<AtomicU32>) -> Result<RunOutcome> {
             (None, None)
         } else {
             let start_ver = Instant::now();
-            let check = verify(args, &inventory).await?;
+            let check = verify(args, &effective_source, &inventory).await?;
             (Some(check), Some(start_ver.elapsed().as_secs_f64()))
         }
     } else {
@@ -314,8 +423,8 @@ async fn execute(args: &Args, child_pid: Arc<AtomicU32>) -> Result<RunOutcome> {
 /// full walk regardless). It now actually switches to the lightweight `scan::inventory` walk,
 /// which counts files/bytes without materialising every path in RAM — the whole point of the
 /// flag on multi-million file trees.
-async fn inventory_source(args: &Args) -> Result<ScanSummary> {
-    let source = args.source().to_path_buf();
+async fn inventory_source(args: &Args, effective_source: &Path) -> Result<ScanSummary> {
+    let source = effective_source.to_path_buf();
     let pattern = args.pattern.clone();
     let no_prescan = args.no_prescan;
     // F26d: follow junctions/symlinked directories exactly when robocopy itself will (i.e.
@@ -518,13 +627,17 @@ async fn decrypt_destination(args: &Args, inventory: &ScanSummary, key_spec: &st
 /// still produced; any other error aborts the run.
 async fn transfer(
     args: &Args,
+    effective_source: &Path,
     inventory: &ScanSummary,
     child_pid: Arc<AtomicU32>,
 ) -> Result<(CopyOutcome, Option<IngestError>)> {
     let progress = new_progress(args, inventory.total_bytes, "robocopy");
     let poller = spawn_dest_poller(args, Arc::clone(&progress));
 
-    let request = args.copy_request(args.dest().to_path_buf());
+    let mut request = args.copy_request(args.dest().to_path_buf());
+    // F30: read from the VSS shadow copy instead of the live volume when --vss-snapshot created
+    // one; effective_source equals args.source() unchanged otherwise.
+    request.source = effective_source.to_path_buf();
     let policy = args.retry_policy();
     let sink = Arc::clone(&progress);
     let started = Instant::now();
@@ -610,14 +723,15 @@ async fn transfer(
 }
 
 /// Time the naive baseline copy into a temporary directory next to the destination.
-async fn baseline(args: &Args, inventory: &ScanSummary) -> Result<CopyOutcome> {
+async fn baseline(args: &Args, effective_source: &Path, inventory: &ScanSummary) -> Result<CopyOutcome> {
     let temp = baseline_dir(args.dest())?;
     let dest = temp.path().to_path_buf();
     tracing::info!(path = %dest.display(), "starting naive baseline copy");
     println!("\nRunning the naive baseline copy (single threaded, file by file)...");
 
     let progress = new_progress(args, inventory.total_bytes, "baseline");
-    let request = args.copy_request(dest);
+    let mut request = args.copy_request(dest);
+    request.source = effective_source.to_path_buf(); // F30: see transfer()
     let sink = Arc::clone(&progress);
 
     let outcome =
@@ -658,7 +772,7 @@ fn fast_verify_cache_key(file: &ScannedFile) -> String {
     file.relative_path.to_string_lossy().replace('\\', "/")
 }
 
-async fn verify(args: &Args, inventory: &ScanSummary) -> Result<IntegrityCheck> {
+async fn verify(args: &Args, effective_source: &Path, inventory: &ScanSummary) -> Result<IntegrityCheck> {
     println!("\nVerifying integrity with {:?}...", args.hash_algo);
 
     let all_files = inventory.files.clone();
@@ -705,7 +819,7 @@ async fn verify(args: &Args, inventory: &ScanSummary) -> Result<IntegrityCheck> 
     let bytes_to_verify: u64 = files_to_check.iter().map(|f| f.size_bytes).sum();
     let progress = new_progress(args, bytes_to_verify, "verify");
 
-    let source = args.source().to_path_buf();
+    let source = effective_source.to_path_buf();
     let dest = args.dest().to_path_buf();
     let algo = args.hash_algo;
     let sink = Arc::clone(&progress);

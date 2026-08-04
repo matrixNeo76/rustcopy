@@ -15,6 +15,7 @@
 //! * [`testkit`] test doubles shared by unit and integration tests.
 
 pub mod cache;
+pub mod checkpoint;
 pub mod cli;
 pub mod cloud;
 pub mod config;
@@ -36,3 +37,4 @@ pub mod restore;
 pub mod scan;
 pub mod service;
 pub mod testkit;
+pub mod vss;

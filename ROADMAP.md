@@ -1,7 +1,7 @@
 # 🗺️ Roadmap di Progetto — robocopy-ingest-cli
 
-> **Stato Attuale**: 🟢 **Release 5.4.2** (`Cargo.toml` = 5.4.2) — Milestone 5.2.0 (Correttezza) **e** 5.3.0 (Operabilità) **entrambe chiuse**: F24, F25a, F25b, F26a-d, F27, F28, F29a-d tutte completate e verificate
-> | ✅ **Solo D10 aperto** (strumentazione grafo, bassa priorità) su 10 difetti totali dell'audit post-5.1.0 — vedi `ANALYSIS.md` Parte 3
+> **Stato Attuale**: 🟢 **Release 5.4.2** (`Cargo.toml` = 5.4.2) — Milestone 5.2.0 (Correttezza) e 5.3.0 (Operabilità) **entrambe chiuse**; 6.0.0 (Backup Enterprise) **avviata**: F30 (VSS) e F31 (checkpoint/resume) completati
+> | ✅ **Solo D10 aperto** (strumentazione grafo, bassa priorità) su 10 difetti totali dell'audit post-5.1.0; O1-O7 delle opportunità di miglioramento tutte implementate — vedi `ANALYSIS.md` Parte 3
 > | 🎯 **Analisi di parità** vs TeraCopy / Cobian / ntfy nella sezione dedicata: le milestone 6.0.0, 6.1.0, 7.0.0 e 8.0.0 ne derivano.
 >
 > **Nota sulla numerazione**: i numeri di versione seguono le milestone funzionali, **non** una
@@ -181,10 +181,12 @@ ma senza effetto).
 
 ## 🏢 Milestone 6.0.0 — Backup Enterprise (parità Cobian)
 
+> F30/F31 completati e verificati (3 Agosto 2026); F32-F40 restano da affrontare.
+
 | ID | Task | Priorità | Origine | Descrizione |
 |---|---|---|---|---|
-| **F30** | Snapshot VSS (Volume Shadow Copy) | 🟠 P1 | O1 | I file bloccati da altri processi falliscono in modo permanente ed esauriscono il budget di retry (osservato realmente in sessione). È la funzionalità che separa un tool di backup da una copia. |
-| **F31** | Checkpoint e ripresa | 🟡 P2 | O5 | Un `Ctrl+C` o un calo della share su un trasferimento da ore oggi obbliga a ripartire da zero. |
+| **F30** | Snapshot VSS (Volume Shadow Copy) | `[x] Completato` | O1 | `--vss-snapshot` shella verso `vssadmin create/delete shadow` (non l'API COM diretta — vedi `ANALYSIS.md` O1 per il perché) e reindirizza scan/robocopy/verify sul device path della shadow copy, mentre report/log continuano a mostrare il percorso sorgente reale. Richiede Amministratore, fallisce in modo chiaro senza fallback silenzioso. Pulizia della shadow copy garantita anche su `Ctrl+C` da un `Drop` sincrono (`VssGuard` in `main.rs`) tenuto nello scope locale di `execute()`, mai spostato dentro uno `spawn_blocking`. **Limite di test dichiarato**: la creazione/cancellazione reale non è automatizzata (richiede elevazione e tocca stato di sistema vero); coperta da 6 unit test sulla logica pura di parsing/remap con output `vssadmin` reale catturato. |
+| **F31** | Checkpoint e ripresa | `[x] Completato` | O5 | **Deviazione consapevole dal testo originale**: non resume a metà file (richiederebbe `/Z`, evitato deliberatamente per le prestazioni — vedi Parte 2 di `ANALYSIS.md`) ma un checkpoint scritto quando `run()` intercetta `Ctrl+C` (`src/checkpoint.rs`) + `--resume-from <checkpoint>`, simmetrico a `--restore-from` ma senza invertire sorgente/destinazione. Sfrutta lo skip-automatico già esistente di robocopy sui file già corrispondenti a destinazione. Verificato con test black-box sul binario compilato (`resume_from_reconstructs_and_runs_the_interrupted_invocation`) e unit test che replicano esattamente la lezione F25b (flag della vera invocazione di resume devono sopravvivere, non essere scartati ricostruendo `Args` da zero). |
 | **F32** | Endpoint metriche Prometheus | 🟡 P2 | O8 | Da montare sulla stessa istanza axum del notify-server. |
 | **F33** | Profili multi-sorgente / job multipli nel TOML | 🟠 P1 | O10 | Prerequisito di F34 e F35: senza un concetto di "job" non esistono né scheduling né ritenzione. |
 | **F34** | **Tipi di backup: completo / incrementale / differenziale** | 🔴 P0 | Parità Cobian | Il concetto centrale di Cobian, oggi del tutto assente. Richiede un manifesto di generazione persistente, non solo i flag robocopy. È il vero spartiacque tra "strumento di copia" e "strumento di backup". |
@@ -194,6 +196,8 @@ ma senza effetto).
 | **F38** | **Compressione degli archivi (zip/7z)** | 🟡 P2 | Parità Cobian | Da valutare l'interazione con la verifica di integrità e con la cifratura (F25). |
 | **F39** | **Comandi pre/post job** | 🟡 P2 | Parità Cobian | Gli "eventi" di Cobian: fermare un servizio/database prima del backup e riavviarlo dopo. |
 | **F40** | **Cloud/FTP/SFTP reale** | 🟡 P2 | Parità Cobian | Sostituisce il mock `sync_to_cloud()`. Alternativa più economica: documentare rclone come backend esterno invece di reimplementarlo. |
+
+`cargo test`: 209 (era 195, F30+F31). `cargo test --features notify-server`: 222 (era 208).
 
 ---
 

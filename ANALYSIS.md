@@ -114,11 +114,11 @@ Se l'applicazione Rust intercetta `Ctrl+C` e si arresta senza terminare il proce
 > (non solo letto). Ogni voce qui sotto è stata **verificata empiricamente** — comando eseguito, output
 > osservato — non dedotta. Dove un difetto è stato introdotto dai fix della 5.1.0 stessa, è dichiarato.
 >
-> **Stato (3 Agosto 2026): milestone 5.2.0 e 5.3.0 entrambe chiuse.** Di tutti i 10 difetti di
-> questo giro di audit solo D10 (strumentazione del grafo, bassa priorità) resta aperto: D1/D3/D4
-> (F24/F25a/F25b), D2/D5/D6/D7 (F26a-d) e D8/D9 (F29c/F27) sono tutti risolti e verificati, insieme
-> a O2/O3/O4/O6/O7 delle opportunità di miglioramento (§3.2) — solo O1 (VSS) e O5 (checkpoint/resume)
-> restano da valutare.
+> **Stato (3 Agosto 2026): milestone 5.2.0, 5.3.0 e i primi due task della 6.0.0 (F30/F31) tutti
+> chiusi.** Di tutti i 10 difetti di questo giro di audit solo D10 (strumentazione del grafo, bassa
+> priorità) resta aperto: D1/D3/D4 (F24/F25a/F25b), D2/D5/D6/D7 (F26a-d) e D8/D9 (F29c/F27) sono
+> tutti risolti e verificati. Delle opportunità di miglioramento (§3.2), O1-O7 sono ora tutte
+> implementate; O8+ (metriche, checkpoint→UI, ecc.) restano nella 6.0.0/6.1.0 di `ROADMAP.md`.
 
 ## 🛑 3.1 Difetti aperti confermati
 
@@ -536,11 +536,11 @@ Proposte ordinate per rapporto valore/rischio, motivate da problemi osservati su
 
 | # | Proposta | Motivazione operativa |
 |---|---|---|
-| **O1** | **Snapshot VSS (Volume Shadow Copy)** prima della copia | I file bloccati da altri processi falliscono in modo permanente e fanno esaurire il budget di retry. Osservato realmente in sessione. È *la* funzionalità che distingue un tool di backup da una copia. |
+| **O1** | ✅ **Implementato (F30, 3 Agosto 2026)**: Snapshot VSS (Volume Shadow Copy) prima della copia | Deviazione consapevole dal testo originale: non binding diretto dell'API COM VSS (`IVssBackupComponents`, complessa e mai usata altrove nel progetto) ma shell-out a `vssadmin create/delete shadow`, coerente con come il resto del crate delega a tool nativi. Shadow copy solo crash-consistent (nessun coordinamento con VSS writer applicativi). Richiede Amministratore; fallisce in modo chiaro senza fallback silenzioso al volume live. **Limite di test dichiarato**: la creazione/cancellazione reale di una shadow copy non è automatizzata nei test (richiederebbe elevazione reale e tocca stato di sistema vero, fuori dal perimetro sandbox `tempdir` di tutti gli altri test) — coperti da unit test la logica pura di parsing/remap (6 test, fixture reali). |
 | **O2** | ✅ **Implementato (F28, 3 Agosto 2026)**: `--fast-verify` via `cache.rs` | Deviazione consapevole dal testo originale: non "file che robocopy dichiara copiati" (il parser dell'output di robocopy non espone nomi file, solo byte totali, e reimplementarlo per questo sarebbe stato più rischioso del guadagno) ma file il cui size+mtime **sorgente** coincidono con l'ultima verifica riuscita in `<dest>/.ingest_cache`. Un file che fallisce non viene mai messo in cache come fidato. Verificato su tre scenari black-box reali: skip su run invariato, ri-verifica del solo file cambiato, mai-fidarsi-di-un-file-fallito. |
 | **O3** | ✅ **Implementato (F25a/F25b, 3 Agosto 2026)**: Cifratura a blocchi + comando di decifratura | Risolve D3+D4 insieme e rende `--encrypt-aes256` effettivamente utilizzabile. |
 | **O4** | ✅ **Implementato (F27, 3 Agosto 2026)**: `--log-level` / `--quiet` + rotazione dei log | Risolve D9 senza perdere l'audit trail quando serve. |
-| **O5** | **Checkpoint e ripresa dei trasferimenti interrotti** | Un `Ctrl+C` o un calo della share su un trasferimento da ore riparte oggi da zero. |
+| **O5** | ✅ **Implementato (F31, 3 Agosto 2026)**: Checkpoint e ripresa dei trasferimenti interrotti | Deviazione consapevole dal testo originale: non resume a metà file (richiederebbe `/Z`, evitato deliberatamente per le prestazioni sui piccoli file — vedi Parte 2 §3) ma un checkpoint scritto su `Ctrl+C` + `--resume-from`, che riusa lo skip-automatico già esistente di robocopy sui file già corrispondenti a destinazione. Il gap reale chiuso: prima di F31 `run()` non scriveva nulla su interruzione, quindi non c'era nulla da cui ripartire in modo assistito. |
 | **O6** | ✅ **Implementato (F29a, 3 Agosto 2026)**: xxHash3 come terzo algoritmo di integrità | Per rilevare corruzione (non manomissione) è ~5-10x più veloce di BLAKE3. Aggiunta la dipendenza `xxhash-rust`; documentato chiaramente come non-crittografico in help text e report. |
 | **O7** | ✅ **Implementato (F29b, 3 Agosto 2026)**: Exit code dedicato per fallimento di integrità | `EXIT_INTEGRITY_FAILED = 4`, distinto da `1` (trasferimento fallito). `run()` ora restituisce l'exit code direttamente invece di un `bool`. |
 | **O8** | **Endpoint metriche reale (Prometheus/OpenMetrics)** | `--serve-dashboard` è stato rimosso (era una pagina statica mock). Il notify-server axum introdotto in F-notify è il punto naturale su cui montare un endpoint `/metrics` scrapabile — stesso processo, stesso runtime. |
