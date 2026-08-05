@@ -1,0 +1,24 @@
+# Prima copia completa di un dataset grande verso un NAS, prima di passare al mirror
+# incrementale ricorrente (vedi smb-nas-mirror.toml per i run successivi).
+#
+# Deliberatamente NON mirror: la prima copia non deve mai cancellare nulla in destinazione
+# (in genere è vuota o quasi, ma un mirror qui è comunque il posto sbagliato per la sicurezza
+# di questo passaggio una tantum).
+
+source = "<PERCORSO_SORGENTE>"          # es. "D:\\Dataset"
+dest   = "<PERCORSO_NAS>"               # es. "\\\\NAS\\backup\\dataset"
+threads = 32                             # punto di partenza: dopo il primo run, valida con
+                                          # .\scripts\benchmark-threads.ps1 -ConfigPath questo-file.toml
+
+# Conservativi qui: su un trasferimento iniziale di centinaia di GB, un fallimento a metà è
+# più costoso da diagnosticare che su un run incrementale di pochi file.
+retries = 3
+retry_wait_seconds = 15
+
+# --no-prescan NON impostato di proposito (default: false): sulla prima copia serve
+# l'inventario completo per una stima realistica (ETA/totale) sulla progress bar — a
+# differenza dei run incrementali successivi, qui il prescan non è overhead ridondante,
+# è l'unico modo di sapere in anticipo quanto lavoro c'è da fare.
+
+# Pianificazione: nessuna — questo è un run manuale una tantum, non va schedulato.
+#   robocopy_ingest.exe --config first-time-full-copy.toml

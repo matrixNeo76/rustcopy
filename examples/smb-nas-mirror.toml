@@ -1,0 +1,45 @@
+# Mirror incrementale ricorrente verso un NAS via SMB (es. QNAP), pensato per dataset grandi
+# (centinaia di GB, milioni di file) con pochi file cambiati tra un run e l'altro.
+#
+# Sostituire i placeholder <...> con i percorsi reali. Questo file NON va committato con
+# percorsi/credenziali reali di un ambiente specifico — vedi .gitignore.
+
+source = "<PERCORSO_SORGENTE>"          # es. "D:\\Dati"
+dest   = "<PERCORSO_NAS>"               # es. "\\\\NAS\\backup\\dati"
+threads = 16                             # valida con .\scripts\benchmark-threads.ps1 -ConfigPath questo-file.toml
+
+mirror = true                            # allinea anche le cancellazioni lato NAS
+retries = 5                              # SMB/NAS ha più probabilità di intoppi transitori di un disco locale
+retry_wait_seconds = 10
+
+# ── SICUREZZA: --no-prescan NON va combinato con mirror = true ──────────────────────────────
+# Deliberatamente OMESSO qui (default: false, prescan attivo). Due motivi:
+#
+# 1. Il vero collo di bottiglia su NAS con milioni di file è lo scan INTERNO di robocopy
+#    durante /MIR (enumerazione sorgente+destinazione per calcolare il delta) — avviene
+#    comunque, con o senza il prescan di rustcopy. Disattivarlo non lo elimina.
+# 2. check_mirror_safety (il controllo che confronta sorgente/destinazione prima di lasciar
+#    cancellare qualcosa) richiede l'inventario COMPLETO del prescan per funzionare. Con
+#    --no-prescan attivo, ogni singolo run si interromperebbe SEMPRE con errore (exit code 3)
+#    a meno di forzare force_purge = true — cioè cancellazioni automatiche, ogni run, senza
+#    MAI un controllo reale di cosa sta per essere eliminato.
+#
+# In sintesi: qui --no-prescan non farebbe risparmiare il tempo che conta, e costerebbe
+# l'unica rete di sicurezza contro un mirror che cancella per errore.
+
+# force_purge NON impostato qui di proposito (default: false). Se il diff trova file da
+# cancellare lato NAS (rimossi in sorgente dall'ultimo run), l'esecuzione pianificata si
+# interrompe con exit code 3 finché non lo confermi esplicitamente — un run manuale con
+# --force-purge, dopo aver controllato cosa verrebbe eliminato. Se preferisci cancellazioni
+# sempre automatiche senza revisione, decommenta la riga sotto: è una scelta di rischio
+# consapevole, non il default raccomandato su un NAS con milioni di file.
+# force_purge = true
+
+# report_path NON impostato: usa il default. rustcopy non supporta placeholder tipo
+# "{timestamp}" nel percorso del report — un valore fisso qui verrebbe sovrascritto ad ogni
+# run pianificato. Per costruire uno storico da analizzare con scripts/analyze-runs.ps1,
+# archivia una copia del report con un nome univoco (es. Copy-Item con timestamp) nel
+# wrapper/scheduler dopo ogni run, prima che il run successivo lo sovrascriva.
+
+# Pianificazione (dopo aver validato threads/mirror manualmente almeno una volta):
+#   robocopy_ingest.exe --config smb-nas-mirror.toml --install-schedule "hourly@6" --schedule-name rustcopy-nas-mirror

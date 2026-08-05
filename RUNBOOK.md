@@ -254,6 +254,32 @@ cargo test --test cli_smoke -- --ignored install_and_uninstall_service_round_tri
 cargo test --features notify-server --test notify_server_e2e -- --ignored install_and_uninstall_service_round_trip
 ```
 
+### Benchmark e analisi trend su grandi volumi (`scripts/benchmark-threads.ps1`, `scripts/analyze-runs.ps1`)
+
+Per dataset grandi (centinaia di GB, milioni di file, spesso su SMB/NAS) il tuning di `--threads`
+e la comprensione di dove va il tempo di ogni run vanno misurati sull'infrastruttura reale, non
+assunti. Due script riusano la reportistica JSON già esistente (`--report-path`,
+`PhaseTiming`/`TransferReport`) invece di introdurre un nuovo formato di log:
+
+```powershell
+# Confronta /MT diversi sulla STESSA sorgente/destinazione reale (fa un run di warm-up non
+# misurato, poi un run misurato per ciascun valore — il caso che interessa è lo stato
+# "steady-state" di una destinazione già quasi allineata, non la prima copia a freddo).
+.\scripts\benchmark-threads.ps1 -ConfigPath .\examples\smb-nas-mirror.toml -Threads 8,16,32,48
+
+# Analizza lo storico dei report accumulati (es. dalla cartella del benchmark sopra, o da una
+# cartella dove uno scheduler archivia una copia del report dopo ogni run pianificato).
+.\scripts\analyze-runs.ps1 -ReportsDir _ops_reports\benchmark -Recurse
+```
+
+Su un dataset con pochi file cambiati per run (il caso tipico di un mirror incrementale ogni N
+ore), aspettati che `--threads` incida poco sul tempo — lo scan metadata di robocopy stesso
+domina, e nessuno dei due script può cambiare quel costo, solo misurarlo. Vedi
+`examples/*.toml` per configurazioni di partenza commentate (mirror NAS, job multipli, prima
+copia completa) — usano percorsi placeholder apposta: copiali in `esempio.local.toml` (pattern
+già in `.gitignore`, come `scripts/*.local.ps1`) prima di inserire i tuoi percorsi/credenziali
+reali, così restano fuori da git.
+
 ---
 
 ## 💻 2. Comandi Reali Eseguiti e Verificati con Successo

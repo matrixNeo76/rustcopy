@@ -1,0 +1,35 @@
+# Più sorgenti indipendenti verso destinazioni diverse, eseguite in sequenza da un solo comando
+# schedulato (F33, `[[jobs]]`). Nessun mirror qui: sync additivo, nessuna cancellazione — per un
+# mirror con cancellazioni vedi smb-nas-mirror.toml (e le relative avvertenze di sicurezza).
+#
+# NOTA DI SINTASSI: i campi di primo livello (fuori da [[jobs]]) sono i default condivisi — NON
+# vanno dentro una tabella [defaults], perché IngestConfig li legge "flatten" (appiattiti) al
+# livello radice del file. Un blocco [defaults] esplicito verrebbe semplicemente ignorato.
+
+threads = 16                             # default condiviso, sovrascrivibile per singolo job
+retries = 5
+retry_wait_seconds = 10
+log_level = "info"
+
+# --no-prescan qui è sicuro (a differenza di smb-nas-mirror.toml): senza mirror = true non
+# esiste alcun controllo di sicurezza pre-cancellazione da cui dipendere. Evita comunque il
+# doppio scan (rustcopy + robocopy) sullo stesso albero — un risparmio reale anche se non
+# elimina lo scan interno di robocopy stesso.
+no_prescan = true
+
+[[jobs]]
+name = "progetti"
+source = "<PERCORSO_SORGENTE_1>"        # es. "D:\\Progetti"
+dest = "<PERCORSO_NAS_1>"               # es. "\\\\NAS\\backup\\progetti"
+
+[[jobs]]
+name = "archivio"
+source = "<PERCORSO_SORGENTE_2>"        # es. "D:\\Archivio"
+dest = "<PERCORSO_NAS_2>"               # es. "\\\\NAS\\backup\\archivio"
+threads = 8                              # sovrascrive il default solo per questo job
+
+# Ogni job produce il proprio report (namespaced automaticamente sul nome del job se
+# report_path non è impostato: report.json -> report.progetti.json, report.archivio.json).
+#
+# Pianificazione:
+#   robocopy_ingest.exe --config scheduled-incremental.toml --install-schedule "hourly@6" --schedule-name rustcopy-multi-job
