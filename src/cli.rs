@@ -82,7 +82,7 @@ pub struct Args {
     #[arg(
         long,
         value_name = "PATH",
-        required_unless_present_any = ["restore_from", "resume_from", "config"]
+        required_unless_present_any = ["restore_from", "resume_from", "config", "uninstall_schedule"]
     )]
     pub source: Option<PathBuf>,
 
@@ -91,7 +91,7 @@ pub struct Args {
     #[arg(
         long,
         value_name = "PATH",
-        required_unless_present_any = ["restore_from", "resume_from", "config"]
+        required_unless_present_any = ["restore_from", "resume_from", "config", "uninstall_schedule"]
     )]
     pub dest: Option<PathBuf>,
 
@@ -292,6 +292,50 @@ pub struct Args {
     #[arg(long, value_name = "URL")]
     pub webhook_url: Option<String>,
 
+    // ── F39: pre/post job commands ──────────────────────────────────────────
+    /// Shell command to run before the job starts (e.g. stop a database service so its files are
+    /// consistent when backed up). Runs via `cmd /C` on Windows, `sh -c` elsewhere. If it exits
+    /// non-zero (or can't be spawned), the job aborts without copying anything — proceeding after
+    /// a failed pre-command (e.g. a database that didn't actually stop) would silently back up
+    /// inconsistent data.
+    #[arg(long, value_name = "CMD")]
+    pub pre_command: Option<String>,
+
+    /// Shell command to run after the job finishes (e.g. restart the service stopped by
+    /// --pre-command). Runs via `cmd /C` on Windows, `sh -c` elsewhere. Unlike --pre-command, a
+    /// failure here does NOT fail the job — the backup already succeeded by this point — it is
+    /// only logged and recorded in the report's `post_command_error` field.
+    #[arg(long, value_name = "CMD")]
+    pub post_command: Option<String>,
+
+    // ── F36: schtasks.exe-backed scheduling ──────────────────────────────────
+    /// Install this exact invocation (minus the scheduling flags themselves) as a recurring
+    /// Windows Task Scheduler entry via `schtasks.exe`, then exit without running a backup now.
+    /// SPEC is one of: `daily@HH:MM`, `hourly@N`, or `weekly@DAY,...@HH:MM` (DAY is a 3-letter
+    /// weekday code, e.g. `MON`). No internal scheduler process is involved — Windows itself wakes
+    /// this binary up on the given trigger, same as if the operator had run `schtasks.exe`
+    /// directly. Re-running with the same --schedule-name updates the existing task in place.
+    #[arg(
+        long,
+        value_name = "SPEC",
+        conflicts_with_all = ["uninstall_schedule", "restore_from", "resume_from"]
+    )]
+    pub install_schedule: Option<String>,
+
+    /// Name of the Task Scheduler entry to create (with --install-schedule) or delete (with
+    /// --uninstall-schedule). Defaults to `rustcopy` when omitted with --install-schedule.
+    #[arg(long, value_name = "NAME")]
+    pub schedule_name: Option<String>,
+
+    /// Remove a previously installed schedule by name via `schtasks.exe /Delete`, then exit
+    /// without running a backup. Unlike --install-schedule, does not require --source/--dest.
+    #[arg(
+        long,
+        value_name = "NAME",
+        conflicts_with_all = ["install_schedule", "restore_from", "resume_from"]
+    )]
+    pub uninstall_schedule: Option<String>,
+
     // F8.1: Disaster Recovery & Restore Mode ──────────────────────────────
     /// Path to a previous backup report JSON file to initiate reverse restore mode.
     #[arg(long, value_name = "REPORT_PATH", conflicts_with = "resume_from")]
@@ -469,6 +513,12 @@ impl Args {
         if let Some(wh) = &job.webhook_url {
             self.webhook_url = Some(wh.clone());
         }
+        if let Some(pre) = &job.pre_command {
+            self.pre_command = Some(pre.clone());
+        }
+        if let Some(post) = &job.post_command {
+            self.post_command = Some(post.clone());
+        }
     }
     pub fn validate(&self) -> Result<(), IngestError> {
         // Checked before the restore-mode short-circuit below: --decrypt's primary use case is
@@ -486,7 +536,7 @@ impl Args {
         if self.keep_generations.is_some() && self.backup_type.is_none() {
             return Err(IngestError::KeepGenerationsWithoutBackupType);
         }
-        if self.restore_from.is_some() || self.resume_from.is_some() {
+        if self.restore_from.is_some() || self.resume_from.is_some() || self.uninstall_schedule.is_some() {
             return Ok(());
         }
         if !(MIN_THREADS as u16..=MAX_THREADS).contains(&self.threads) {

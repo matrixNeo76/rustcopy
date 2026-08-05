@@ -74,6 +74,11 @@ graph LR
 | `--log-max-backups <N>` | `3` | — | Numero di backup di log ruotati da mantenere. |
 | `--html-report-path <PATH>`| *nessuno* | — | Genera un report visivo autonomo in formato HTML (valori interpolati sempre sottoposti ad escaping). |
 | `--webhook-url <URL>` | *nessuno* | — | Trasmette una notifica HTTP/HTTPS POST JSON a fine job (timeout 10s, errori reali riportati, non più ignorati). |
+| `--pre-command <CMD>` | *nessuno* | — | (Release 6.0.0, F39) Comando eseguito **prima** dell'avvio del job (es. fermare un servizio/database perché i suoi file siano coerenti). Eseguito via `cmd /C` su Windows, `sh -c` altrove. Se esce con codice diverso da zero (o non può essere lanciato), il job si interrompe **senza copiare nulla**. |
+| `--post-command <CMD>` | *nessuno* | — | (Release 6.0.0, F39) Comando eseguito **dopo** la fine del job (es. riavviare il servizio fermato da `--pre-command`). A differenza di `--pre-command`, un suo fallimento **non** fa fallire il job (il backup è già riuscito) — viene solo loggato e registrato nel campo `post_command_error` del report. |
+| `--install-schedule <SPEC>` | *nessuno* | — | (Release 6.0.0, F36) Installa l'invocazione corrente (senza i flag di scheduling) come voce ricorrente di Task Scheduler via `schtasks.exe`, poi esce senza eseguire un backup ora. `SPEC`: `daily@HH:MM`, `hourly@N` o `weekly@LUN,MER,...@HH:MM` (codici giorno a 3 lettere in inglese: `MON`..`SUN`). Nessuno scheduler interno: è Windows stesso a risvegliare il binario. Ri-eseguire con lo stesso `--schedule-name` aggiorna la voce esistente invece di fallire. |
+| `--schedule-name <NAME>` | `rustcopy` | — | (Release 6.0.0, F36) Nome della voce di Task Scheduler creata da `--install-schedule` o rimossa da `--uninstall-schedule`. |
+| `--uninstall-schedule <NAME>` | *nessuno* | — | (Release 6.0.0, F36) Rimuove una voce di Task Scheduler precedentemente installata, poi esce. A differenza di `--install-schedule`, non richiede `--source`/`--dest`. |
 | `--restore-from <PATH>` | *nessuno* | — | Modalità Disaster Recovery: inverte il backup Dest -> Source dal report JSON. `--source`/`--dest` non richiesti in questa modalità (fix F24, verificato con test black-box). Non combinabile con `--resume-from`. |
 | `--resume-from <PATH>` | *nessuno* | — | Continua un run interrotto (`Ctrl+C`) leggendo il checkpoint scritto automaticamente in `<report-path>.checkpoint.json`. `--source`/`--dest` non richiesti. **Non** è un resume a metà file: sfrutta lo skip-automatico di robocopy sui file già corrispondenti a destinazione (F31). Non combinabile con `--restore-from`. |
 | `--vss-snapshot` | `false` | — | Crea una Volume Shadow Copy del volume sorgente prima di scansionare/copiare, per leggere file bloccati da altri processi. **Richiede Amministratore**; fallisce in modo chiaro senza fallback silenzioso al volume live. Solo Windows. La shadow copy è solo crash-consistent (nessun coordinamento con VSS writer applicativi) (F30). |
@@ -226,17 +231,17 @@ di `--webhook-url`; risponde `200` se consegnato su tutti i canali, `401` senza/
 Per dettagli tecnici approfonditi, diagrammi architetturali e roadmap di sviluppo consultare:
 - 📖 **[RUNBOOK.md](file:///c:/Users/auresystem/repos/robocopy-ingest-cli/RUNBOOK.md)** — Manuale operativo, copie multi-sorgente e comandi reali verificati.
 - 📄 **[ARCHITECTURE.md](file:///c:/Users/auresystem/repos/robocopy-ingest-cli/ARCHITECTURE.md)** — Diagrammi di sequenza, gestione memoria anti-OOM e struttura interna dei moduli.
-- 📊 **[ANALYSIS.md](file:///c:/Users/auresystem/repos/robocopy-ingest-cli/ANALYSIS.md)** — Diagnosi delle criticità storiche e validazione dei 236 test.
+- 📊 **[ANALYSIS.md](file:///c:/Users/auresystem/repos/robocopy-ingest-cli/ANALYSIS.md)** — Diagnosi delle criticità storiche e validazione dei 262 test.
 - 🗺️ **[ROADMAP.md](file:///c:/Users/auresystem/repos/robocopy-ingest-cli/ROADMAP.md)** — Diagramma Gantt dello storico delle release e pianificazione futura.
 - 🤖 **[AGENTS.md](file:///c:/Users/auresystem/repos/robocopy-ingest-cli/AGENTS.md)** — Linee guida per sviluppatori e contributori AI.
 
 ---
 
-## 🧪 Esecuzione dei Test (236 di Base, 249 con `notify-server`)
+## 🧪 Esecuzione dei Test (262 di Base, 275 con `notify-server`)
 
 ```bash
-cargo test                              # 236 test (default build, senza axum)
-cargo test --features notify-server     # 249 test (+13 test sul router axum e sui binari reali)
+cargo test                              # 262 test (default build, senza axum)
+cargo test --features notify-server     # 275 test (+13 test sul router axum e sui binari reali)
 ```
 
 Esito atteso: `test result: ok.` su tutti i target, in entrambe le modalità.

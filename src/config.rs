@@ -45,6 +45,11 @@ pub struct JobConfig {
     pub preserve_timestamps: Option<bool>,
     pub preserve_acl: Option<bool>,
     pub webhook_url: Option<String>,
+    /// F39: shell command run before the job starts; aborts the job if it exits non-zero.
+    pub pre_command: Option<String>,
+    /// F39: shell command run after the job finishes; a failure is logged/recorded but does not
+    /// fail the job.
+    pub post_command: Option<String>,
 }
 
 impl JobConfig {
@@ -81,6 +86,8 @@ impl JobConfig {
             preserve_timestamps: self.preserve_timestamps.or(base.preserve_timestamps),
             preserve_acl: self.preserve_acl.or(base.preserve_acl),
             webhook_url: self.webhook_url.clone().or_else(|| base.webhook_url.clone()),
+            pre_command: self.pre_command.clone().or_else(|| base.pre_command.clone()),
+            post_command: self.post_command.clone().or_else(|| base.post_command.clone()),
         }
     }
 }

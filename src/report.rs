@@ -151,6 +151,12 @@ pub struct IngestReport {
     /// Non-fatal problem encountered while delivering the completion webhook, if any.
     #[serde(skip_serializing_if = "Option::is_none", default)]
     pub webhook_error: Option<String>,
+    /// F39: non-fatal problem encountered running `--post-command`, if any. Unlike a
+    /// `--pre-command` failure (which aborts the run before this report even exists),
+    /// `--post-command` runs after the backup already succeeded, so its failure is recorded here
+    /// rather than changing the exit code.
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub post_command_error: Option<String>,
 }
 
 impl IngestReport {
@@ -198,6 +204,7 @@ impl IngestReport {
             encrypted: false,
             decrypted: false,
             webhook_error: None,
+            post_command_error: None,
         }
     }
 

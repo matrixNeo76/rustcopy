@@ -130,6 +130,56 @@ le cartelle dei cicli più vecchi:
   run **resta comunque salvato**: solo l'eliminazione dei cicli vecchi viene annullata, va
   ripetuta con `--force-purge` (o confermata a console) in un run successivo.
 
+### Comandi pre/post job (`--pre-command`/`--post-command`, F35→F39)
+
+Gli "eventi" di Cobian: un comando eseguito prima e uno dopo il job, tipicamente per fermare un
+servizio/database perché i suoi file siano coerenti durante il backup, e riavviarlo dopo:
+
+```powershell
+.\target\release\robocopy_ingest.exe --source "C:\dati-db" --dest "E:\backup\db" `
+  --pre-command "net stop MioServizioDB" `
+  --post-command "net start MioServizioDB"
+```
+
+- `--pre-command` gira **prima di tutto**, incluso lo snapshot VSS. Se esce con codice diverso da
+  zero (o non può essere lanciato), il job si interrompe **senza copiare nulla** — nessuna
+  cartella di destinazione viene nemmeno creata.
+- `--post-command` gira dopo che il backup è già riuscito. A differenza di `--pre-command`, un suo
+  fallimento **non** fa fallire il job: viene solo loggato e registrato nel campo
+  `post_command_error` del report JSON — riavviare il servizio è importante ma non deve
+  retroattivamente far apparire fallito un backup che in realtà è riuscito.
+- Il comando gira via `cmd /C` su Windows (`sh -c` altrove) — è una stringa singola, stessa
+  fiducia di `--webhook-url`: interamente fornita dall'operatore, nessun escaping applicato.
+- Disponibili anche nel TOML (`pre_command`/`post_command` per job).
+
+### Pianificazione via Task Scheduler (`--install-schedule`/`--uninstall-schedule`, F36)
+
+Nessuno scheduler interno: `--install-schedule` installa l'invocazione corrente come voce di
+Task Scheduler via `schtasks.exe` — è Windows stesso a rilanciare `rustcopy` al momento giusto:
+
+```powershell
+# Pianifica un backup incrementale giornaliero alle 02:00. Gli stessi flag dell'invocazione
+# (--source, --dest, --backup-type, ecc.) sono quelli che gireranno ogni volta.
+.\target\release\robocopy_ingest.exe --source "C:\dati" --dest "E:\backup\dati" `
+  --backup-type incremental --install-schedule daily@02:00 --schedule-name rustcopy-dati
+
+# Verifica con lo strumento nativo (nessun --list-schedules in questo primo taglio):
+schtasks /Query /TN rustcopy-dati
+
+# Rimuove la voce pianificata. Non richiede --source/--dest.
+.\target\release\robocopy_ingest.exe --uninstall-schedule rustcopy-dati
+```
+
+- `SPEC` accetta: `daily@HH:MM`, `hourly@N` (ogni N ore), `weekly@LUN,MER,VEN@HH:MM` (codici
+  giorno inglesi a 3 lettere: `MON`, `TUE`, `WED`, `THU`, `FRI`, `SAT`, `SUN`).
+- La voce pianificata rilancia il binario con gli **stessi argomenti** dell'invocazione che ha
+  installato lo schedule (tolti solo i tre flag di scheduling) — se si è usato `--config
+  job.toml`, il file viene riletto ad ogni esecuzione pianificata, non congelato all'installazione.
+- Ri-eseguire `--install-schedule` con lo stesso `--schedule-name` **aggiorna** la voce esistente
+  invece di fallire.
+- `--install-schedule` valida prima l'invocazione (stessi controlli di un run normale: source/dest
+  esistenti, ecc.) — installare uno schedule che fallirebbe sempre non ha senso.
+
 ---
 
 ## 💻 2. Comandi Reali Eseguiti e Verificati con Successo

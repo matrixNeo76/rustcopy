@@ -110,6 +110,23 @@ pub enum IngestError {
     /// F30: --vss-snapshot could not create/parse/delete a Volume Shadow Copy via vssadmin.exe.
     #[error("VSS snapshot error: {0}")]
     Vss(String),
+
+    /// F39: `--pre-command` exited non-zero (or couldn't even be spawned, which surfaces as
+    /// `SpawnFailed` instead). Fails the whole run: a pre-command is typically "stop the
+    /// database before backing it up", and proceeding after that failed would silently back up a
+    /// live, possibly inconsistent, database.
+    #[error("pre-command {command:?} exited with status {code:?}")]
+    PreCommandFailed { command: String, code: Option<i32> },
+
+    /// F36: `--install-schedule`'s value didn't match any of the accepted spec shapes
+    /// (`daily@HH:MM` / `hourly@N` / `weekly@DAY,...@HH:MM`).
+    #[error("invalid --install-schedule spec {0:?}: expected daily@HH:MM, hourly@N, or weekly@DAY,...@HH:MM")]
+    InvalidScheduleSpec(String),
+
+    /// F36: `schtasks.exe` ran but reported failure (bad permissions, invalid task name, etc.), or
+    /// scheduling was attempted on a non-Windows platform where Task Scheduler doesn't exist.
+    #[error("schedule error: {0}")]
+    Schedule(String),
 }
 
 impl IngestError {
@@ -160,7 +177,10 @@ impl IngestError {
             | IngestError::RetentionPurgeAborted { .. }
             | IngestError::Crypto(_)
             | IngestError::EncryptAndDecryptConflict
-            | IngestError::Vss(_) => false,
+            | IngestError::Vss(_)
+            | IngestError::PreCommandFailed { .. }
+            | IngestError::InvalidScheduleSpec(_)
+            | IngestError::Schedule(_) => false,
         }
     }
 }

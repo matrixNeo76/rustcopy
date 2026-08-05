@@ -73,6 +73,18 @@ async fn main() -> ExitCode {
 /// Returns the process exit code: `0` on a fully acceptable run, or one of the `EXIT_*`
 /// constants above otherwise.
 async fn run(mut args: Args) -> Result<u8> {
+    // F36: a pure meta-operation — remove a previously installed Task Scheduler entry and exit,
+    // without touching --restore-from/--resume-from/--config or requiring --source/--dest at all
+    // (clap's required_unless_present_any already exempts it; this early return skips the rest of
+    // this function's args-mutation chain entirely, same idea as the restore/resume branches
+    // below but even earlier since it needs none of their machinery).
+    if let Some(name) = args.uninstall_schedule.clone() {
+        robocopy_ingest::schedule::uninstall(&name)
+            .with_context(|| format!("cannot uninstall the scheduled task {name:?}"))?;
+        println!("removed scheduled task '{name}'");
+        return Ok(0);
+    }
+
     if let Some(restore_report) = args.restore_from.clone() {
         args = robocopy_ingest::restore::build_restore_args(&args, &restore_report, None)?;
     } else if let Some(checkpoint_path) = args.resume_from.clone() {
@@ -91,6 +103,24 @@ async fn run(mut args: Args) -> Result<u8> {
     }
 
     args.validate()?;
+
+    // F36: install the current invocation (minus the scheduling flags themselves) as a recurring
+    // Task Scheduler entry, then exit without running a backup now. Runs after validate() (unlike
+    // --uninstall-schedule above) because installing a schedule is only useful for a genuinely
+    // runnable invocation — if --source/--dest/etc. don't validate, better to fail now than
+    // silently schedule a command that will fail every time it fires.
+    if let Some(spec_raw) = args.install_schedule.clone() {
+        let spec = robocopy_ingest::schedule::parse_schedule_spec(&spec_raw)?;
+        let name = args.schedule_name.clone().unwrap_or_else(|| "rustcopy".to_string());
+        let exe_path = std::env::current_exe().context("cannot determine the current executable path")?;
+        let raw_args: Vec<String> = std::env::args().skip(1).collect();
+        let filtered_args = robocopy_ingest::schedule::strip_schedule_flags(&raw_args);
+        let task_run = robocopy_ingest::schedule::build_task_run_command(&exe_path, &filtered_args);
+        robocopy_ingest::schedule::install(&name, &spec, &task_run)
+            .with_context(|| format!("cannot install the scheduled task {name:?}"))?;
+        println!("installed scheduled task '{name}' ({spec_raw})\n  runs: {task_run}");
+        return Ok(0);
+    }
 
     let log = logging::init(&args.log_path, &args.log_config())
         .context("cannot initialise the log file")?;
@@ -378,6 +408,17 @@ struct RunOutcome {
 async fn execute(args: &Args, child_pid: Arc<AtomicU32>) -> Result<RunOutcome> {
     let start_all = Instant::now();
 
+    // F39: runs before anything else, including the VSS snapshot — a pre-command's job is
+    // typically "stop the database so its files are consistent", which needs to happen before a
+    // snapshot is even taken, not just before the copy. Blocking (waits for the child process),
+    // so it runs in spawn_blocking like every other blocking operation in this file.
+    if let Some(pre_command) = args.pre_command.clone() {
+        tokio::task::spawn_blocking(move || robocopy_ingest::hooks::run_pre_command(&pre_command))
+            .await
+            .context("the pre-command task panicked")?
+            .context("pre-command failed")?;
+    }
+
     // F30: bound to `_vss_guard` (not `_`) so it lives for the rest of this function and its
     // shadow copy is deleted on every exit path, including Ctrl+C cancellation — see `VssGuard`'s
     // doc comment for why a plain `Drop` impl is what makes that work.
@@ -492,6 +533,19 @@ async fn execute(args: &Args, child_pid: Arc<AtomicU32>) -> Result<RunOutcome> {
     );
     report.encrypted = encrypted_count.unwrap_or(0) > 0;
     report.decrypted = decrypted_count.unwrap_or(0) > 0;
+
+    if let Some(post_command) = args.post_command.clone() {
+        let error = tokio::task::spawn_blocking(move || robocopy_ingest::hooks::run_post_command(&post_command))
+            .await
+            .context("the post-command task panicked")?;
+        if let Some(error) = error {
+            tracing::warn!(error = %error, "post-command failed");
+            eprintln!("warning: {error}");
+            report.post_command_error = Some(error);
+        } else {
+            tracing::info!("post-command completed successfully");
+        }
+    }
 
     if let Some(webhook_url) = &args.webhook_url {
         match robocopy_ingest::notify::send_webhook(webhook_url, &report).await {
@@ -697,6 +751,20 @@ async fn execute_generation_backup(
     };
 
     let mut report = IngestReport::with_timing(&gen_args, &scoped_inventory, &copy_outcome, None, None, timing);
+
+    if let Some(post_command) = args.post_command.clone() {
+        let error = tokio::task::spawn_blocking(move || robocopy_ingest::hooks::run_post_command(&post_command))
+            .await
+            .context("the post-command task panicked")?;
+        if let Some(error) = error {
+            tracing::warn!(error = %error, "post-command failed");
+            eprintln!("warning: {error}");
+            report.post_command_error = Some(error);
+        } else {
+            tracing::info!("post-command completed successfully");
+        }
+    }
+
     if let Some(webhook_url) = &args.webhook_url {
         match robocopy_ingest::notify::send_webhook(webhook_url, &report).await {
             Ok(()) => tracing::info!("completion webhook delivered"),

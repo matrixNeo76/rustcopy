@@ -403,6 +403,86 @@ fn restore_from_and_resume_from_together_are_rejected_by_the_real_binary() {
     assert!(!output.status.success());
 }
 
+/// F36 black-box test: an `--install-schedule` value that doesn't match any accepted grammar
+/// (`daily@HH:MM` / `hourly@N` / `weekly@DAY,...@HH:MM`) must be rejected with a clear error,
+/// before ever touching `schtasks.exe` — this must work identically on every platform since the
+/// rejection happens in pure parsing.
+#[test]
+fn install_schedule_with_an_invalid_spec_is_rejected_by_the_real_binary() {
+    let source = fixture_tree(&[("a.csv", 8)]);
+    let dest = tempfile::tempdir().expect("dest");
+
+    let output = run(&[
+        "--source",
+        source.path().to_str().expect("utf8"),
+        "--dest",
+        dest.path().to_str().expect("utf8"),
+        "--install-schedule",
+        "monthly@1",
+    ]);
+
+    assert_eq!(output.status.code(), Some(2), "stderr: {}", stderr_of(&output));
+    assert!(
+        stderr_of(&output).contains("invalid --install-schedule spec"),
+        "stderr: {}",
+        stderr_of(&output)
+    );
+}
+
+/// F36 black-box test: `--install-schedule` and `--uninstall-schedule` together must be rejected
+/// by clap itself — they mean opposite things (create vs. remove a scheduled task).
+#[test]
+fn install_schedule_and_uninstall_schedule_together_are_rejected() {
+    let output = run(&["--install-schedule", "daily@02:00", "--uninstall-schedule", "somejob"]);
+    assert!(!output.status.success());
+}
+
+/// Deletes the named Task Scheduler entry on drop, best-effort — cleans up after the round-trip
+/// test below even if an assertion panics partway through.
+#[cfg(windows)]
+struct ScheduledTaskGuard(String);
+
+#[cfg(windows)]
+impl Drop for ScheduledTaskGuard {
+    fn drop(&mut self) {
+        let _ = std::process::Command::new("schtasks.exe")
+            .args(["/Delete", "/TN", &self.0, "/F"])
+            .output();
+    }
+}
+
+/// F36 black-box test: `--install-schedule` actually creates a real Task Scheduler entry via
+/// `schtasks.exe` (not just parses the flag and does nothing), and `--uninstall-schedule` removes
+/// it again — a real round trip against the real Windows Task Scheduler, not a mock.
+#[cfg(windows)]
+#[test]
+fn install_and_uninstall_schedule_round_trip_via_real_schtasks() {
+    let source = fixture_tree(&[("a.csv", 8)]);
+    let dest = tempfile::tempdir().expect("dest");
+    let task_name = format!("rustcopy-cli-smoke-test-{}", std::process::id());
+    let _guard = ScheduledTaskGuard(task_name.clone());
+
+    let install_output = run(&[
+        "--source",
+        source.path().to_str().expect("utf8"),
+        "--dest",
+        dest.path().to_str().expect("utf8"),
+        "--install-schedule",
+        "daily@03:00",
+        "--schedule-name",
+        &task_name,
+    ]);
+    assert!(install_output.status.success(), "stderr: {}", stderr_of(&install_output));
+    assert!(
+        stdout_of(&install_output).contains(&task_name),
+        "stdout: {}",
+        stdout_of(&install_output)
+    );
+
+    let uninstall_output = run(&["--uninstall-schedule", &task_name]);
+    assert!(uninstall_output.status.success(), "stderr: {}", stderr_of(&uninstall_output));
+}
+
 #[cfg(not(windows))]
 #[test]
 fn on_linux_the_run_scans_logs_and_then_explains_that_robocopy_needs_windows() {
@@ -702,6 +782,107 @@ fn unreachable_webhook_does_not_fail_the_backup() {
         report["webhook_error"].is_string(),
         "webhook_error must be populated when delivery fails; report: {report}"
     );
+}
+
+/// F39 black-box test: a failing `--pre-command` aborts the run before anything is copied — no
+/// destination directory, no report, no robocopy invocation at all.
+#[test]
+fn pre_command_failure_aborts_the_run_before_any_copy() {
+    let source = fixture_tree(&[("a.csv", 8)]);
+    let workdir = tempfile::tempdir().expect("workdir");
+    let dest = workdir.path().join("dest");
+
+    let output = run(&[
+        "--source",
+        source.path().to_str().expect("utf8"),
+        "--dest",
+        dest.to_str().expect("utf8"),
+        "--log-path",
+        workdir.path().join("ingest.log").to_str().expect("utf8"),
+        "--report-path",
+        workdir.path().join("report.json").to_str().expect("utf8"),
+        "--pre-command",
+        "exit 7",
+    ]);
+
+    assert_eq!(output.status.code(), Some(2), "stderr: {}", stderr_of(&output));
+    assert!(stderr_of(&output).contains("pre-command"), "stderr: {}", stderr_of(&output));
+    assert!(!dest.exists(), "nothing should have been copied or even a destination dir created");
+}
+
+/// F39 black-box test: `--post-command` failing must NOT fail an otherwise-successful backup —
+/// the backup already succeeded by the time the post-command runs — but the failure must be
+/// recorded in the report for the operator to notice.
+#[cfg(windows)]
+#[test]
+fn post_command_failure_does_not_fail_the_run_but_is_recorded_in_the_report() {
+    let source = fixture_tree(&[("a.csv", 8)]);
+    let workdir = tempfile::tempdir().expect("workdir");
+    let dest = workdir.path().join("dest");
+    let report_path = workdir.path().join("report.json");
+
+    let output = run(&[
+        "--source",
+        source.path().to_str().expect("utf8"),
+        "--dest",
+        dest.to_str().expect("utf8"),
+        "--log-path",
+        workdir.path().join("ingest.log").to_str().expect("utf8"),
+        "--report-path",
+        report_path.to_str().expect("utf8"),
+        "--post-command",
+        "exit 9",
+    ]);
+
+    assert!(
+        output.status.success(),
+        "a failed post-command must not fail the run; stderr: {}",
+        stderr_of(&output)
+    );
+    assert!(dest.join("a.csv").is_file(), "the file must still have been copied");
+
+    let report: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(&report_path).expect("read")).expect("json");
+    let error = report["post_command_error"].as_str().expect("post_command_error must be recorded");
+    assert!(error.contains('9'), "error: {error}");
+}
+
+/// F39 black-box test: successful `--pre-command`/`--post-command` both actually run around the
+/// backup (not just get parsed and ignored) and leave the report's error fields empty.
+#[cfg(windows)]
+#[test]
+fn pre_and_post_commands_run_successfully_around_the_backup() {
+    let source = fixture_tree(&[("a.csv", 8)]);
+    let workdir = tempfile::tempdir().expect("workdir");
+    let dest = workdir.path().join("dest");
+    let report_path = workdir.path().join("report.json");
+    let pre_marker = workdir.path().join("pre-ran.txt");
+    let post_marker = workdir.path().join("post-ran.txt");
+
+    let output = run(&[
+        "--source",
+        source.path().to_str().expect("utf8"),
+        "--dest",
+        dest.to_str().expect("utf8"),
+        "--log-path",
+        workdir.path().join("ingest.log").to_str().expect("utf8"),
+        "--report-path",
+        report_path.to_str().expect("utf8"),
+        "--pre-command",
+        // No spaces in a tempdir path, so no quoting needed — quoting a path already containing
+        // a `/C`-nested command string trips over cmd.exe's own quirky quote-stripping rules.
+        &format!("echo hi > {}", pre_marker.display()),
+        "--post-command",
+        &format!("echo hi > {}", post_marker.display()),
+    ]);
+
+    assert!(output.status.success(), "stderr: {}", stderr_of(&output));
+    assert!(pre_marker.is_file(), "the pre-command must actually have run");
+    assert!(post_marker.is_file(), "the post-command must actually have run");
+
+    let report: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(&report_path).expect("read")).expect("json");
+    assert!(report.get("post_command_error").is_none(), "report: {report}");
 }
 
 #[cfg(windows)]
