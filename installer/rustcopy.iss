@@ -16,7 +16,7 @@
 ; project: version drift has bitten this repo before).
 
 #define MyAppName "rustcopy (robocopy-ingest-cli)"
-#define MyAppVersion "5.4.2"
+#define MyAppVersion "6.0.0"
 #define MyAppPublisher "matrixNeo76"
 #define MyAppURL "https://github.com/matrixNeo76/rustcopy"
 #define MyAppExeName "robocopy_ingest.exe"
