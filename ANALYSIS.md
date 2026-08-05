@@ -119,6 +119,11 @@ Se l'applicazione Rust intercetta `Ctrl+C` e si arresta senza terminare il proce
 > priorità) resta aperto: D1/D3/D4 (F24/F25a/F25b), D2/D5/D6/D7 (F26a-d) e D8/D9 (F29c/F27) sono
 > tutti risolti e verificati. Delle opportunità di miglioramento (§3.2), O1-O7 sono ora tutte
 > implementate; O8+ (metriche, checkpoint→UI, ecc.) restano nella 6.0.0/6.1.0 di `ROADMAP.md`.
+>
+> **Aggiornamento (5 Agosto 2026)**: un undicesimo difetto (**D11**, prescan che ignorava
+> `exclude_dirs`/`exclude_files`) è stato scoperto e risolto in una sessione successiva a questo
+> giro di audit — non fa parte dei 10 originali sopra, ma porta il totale storico dei difetti
+> documentati in questo file a 11 (D1-D11), di cui solo D10 resta aperto.
 
 ## 🛑 3.1 Difetti aperti confermati
 

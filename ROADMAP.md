@@ -16,7 +16,7 @@
 > posta una forma JSON fissa, senza header configurabili né templating: non raggiunge Telegram —
 > manca `chat_id` — né sostituisce SMTP reale, protocollo diverso da HTTP), quindi sono rimandati
 > per assenza di bisogno concreto, non perché già risolti.
-> | ✅ **Solo D10 aperto** (strumentazione grafo, bassa priorità) su 10 difetti totali dell'audit post-5.1.0; O1-O7 delle opportunità di miglioramento tutte implementate — vedi `ANALYSIS.md` Parte 3
+> | ✅ **Solo D10 aperto** (strumentazione grafo, bassa priorità) su 11 difetti totali documentati (D1-D11: i 10 dell'audit post-5.1.0 + D11, prescan/exclude_dirs, scoperto il 5 Agosto 2026); O1-O7 delle opportunità di miglioramento tutte implementate — vedi `ANALYSIS.md` Parte 3
 > | 🎯 **Analisi di parità** vs TeraCopy / Cobian / ntfy nella sezione dedicata: le milestone 6.0.0, 6.1.0 (chiusa), 7.0.0 (rimandata) e 8.0.0 ne derivano.
 >
 > **Nota sulla numerazione**: i numeri di versione seguono le milestone funzionali, **non** una
