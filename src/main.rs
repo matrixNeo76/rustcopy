@@ -47,6 +47,9 @@ const EXIT_MIRROR_ABORTED: u8 = 3;
 /// can't tell apart from "some files couldn't be copied at all" — a materially different failure
 /// mode (data landed but doesn't match, vs. data never landed).
 const EXIT_INTEGRITY_FAILED: u8 = 4;
+/// F35: exit code when `--keep-generations` was aborted because it would have deleted old
+/// generation folders and neither `--force-purge` nor an interactive confirmation was given.
+const EXIT_RETENTION_PURGE_ABORTED: u8 = 5;
 
 #[tokio::main]
 async fn main() -> ExitCode {
@@ -55,15 +58,13 @@ async fn main() -> ExitCode {
     match run(args).await {
         Ok(code) => ExitCode::from(code),
         Err(error) => {
-            if matches!(
-                error.downcast_ref::<IngestError>(),
-                Some(IngestError::MirrorPurgeAborted { .. })
-            ) {
-                eprintln!("error: {error:#}");
-                ExitCode::from(EXIT_MIRROR_ABORTED)
-            } else {
-                eprintln!("error: {error:#}");
-                ExitCode::from(EXIT_UNRECOVERABLE)
+            eprintln!("error: {error:#}");
+            match error.downcast_ref::<IngestError>() {
+                Some(IngestError::MirrorPurgeAborted { .. }) => ExitCode::from(EXIT_MIRROR_ABORTED),
+                Some(IngestError::RetentionPurgeAborted { .. }) => {
+                    ExitCode::from(EXIT_RETENTION_PURGE_ABORTED)
+                }
+                _ => ExitCode::from(EXIT_UNRECOVERABLE),
             }
         }
     }
@@ -543,15 +544,19 @@ async fn execute(args: &Args, child_pid: Arc<AtomicU32>) -> Result<RunOutcome> {
     })
 }
 
-/// F34: run one backup generation (full or incremental) instead of the plain sync above.
+/// F34: run one backup generation (full, incremental, or differential) instead of the plain sync
+/// above.
 ///
 /// This deliberately does **not** reuse `transfer()` (robocopy): robocopy walks the source tree
 /// itself, filtered only by `--pattern`/`--exclude-*`/age — it has no way to be told "copy
 /// exactly these N specific relative paths and nothing else". Its own file-selection arguments
 /// match filenames uniformly at every directory level, not a manifest of exact relative paths.
 /// So a full generation can copy the whole (already-computed) `inventory` via the same
-/// per-file naive copy engine used for `--compare-baseline`, and an incremental generation can
-/// copy just the changed subset the same way — see `engine::naive::copy_selected`.
+/// per-file naive copy engine used for `--compare-baseline`, and an incremental/differential
+/// generation can copy just the changed subset the same way — see `engine::naive::copy_selected`.
+/// Incremental diffs against the immediately preceding generation (`GenerationManifest::latest`);
+/// differential always diffs against the last `Full` generation
+/// (`GenerationManifest::latest_full`), so its size doesn't reset with every run in between.
 ///
 /// Known scope limit of this first cut (F34): no baseline comparison, no `--verify-integrity`,
 /// no encrypt/decrypt, no VSS remap of the *destination* side. These aren't fundamentally
@@ -583,6 +588,18 @@ async fn execute_generation_backup(
             let reference = manifest.latest().ok_or_else(|| {
                 anyhow::anyhow!(
                     "--backup-type incremental found no prior generation in {}; run --backup-type full first",
+                    dest_root.display()
+                )
+            })?;
+            generations::changed_since(&inventory.files, &reference.files)
+                .into_iter()
+                .cloned()
+                .collect()
+        }
+        BackupType::Differential => {
+            let reference = manifest.latest_full().ok_or_else(|| {
+                anyhow::anyhow!(
+                    "--backup-type differential found no prior full generation in {}; run --backup-type full first",
                     dest_root.display()
                 )
             })?;
@@ -651,6 +668,10 @@ async fn execute_generation_backup(
             .await
             .context("the generation manifest save task panicked")?
             .context("cannot save the generation manifest")?;
+
+        if let Some(keep_cycles) = args.keep_generations {
+            prune_old_generations(args, &dest_root, keep_cycles).await?;
+        }
     }
 
     let timing = robocopy_ingest::report::PhaseTiming {
@@ -697,6 +718,79 @@ async fn execute_generation_backup(
         summary: report.human_summary(),
         report_path: args.report_path.clone(),
     })
+}
+
+/// F35: delete old backup generations beyond the `keep_cycles` most recent ones. A "cycle" is one
+/// `full` generation plus every `incremental`/`differential` generation that follows it — see
+/// `GenerationManifest::cycles`'s doc comment for why rotation happens at that granularity rather
+/// than per raw generation (deleting a `full` still depended on by a kept `incremental`/
+/// `differential` would orphan it).
+///
+/// Reuses `--force-purge`/the interactive-confirmation gate from `check_mirror_safety`: both are
+/// "about to delete data at --dest, get explicit go-ahead first" situations, so the same flag and
+/// the same non-interactive-defaults-to-abort behaviour apply here.
+///
+/// Runs inside `tokio::task::spawn_blocking` for the actual filesystem deletions, same discipline
+/// as every other blocking filesystem operation in this file.
+async fn prune_old_generations(args: &Args, dest_root: &Path, keep_cycles: usize) -> Result<()> {
+    use robocopy_ingest::generations::GenerationManifest;
+
+    let manifest = {
+        let dest_root = dest_root.to_path_buf();
+        tokio::task::spawn_blocking(move || GenerationManifest::load_or_default(&dest_root))
+            .await
+            .context("the generation manifest load task panicked")?
+            .context("cannot load the generation manifest for retention")?
+    };
+
+    let mut prune_ids = manifest.generations_to_prune(keep_cycles);
+    if prune_ids.is_empty() {
+        return Ok(());
+    }
+    prune_ids.sort();
+
+    if !args.force_purge {
+        let mut confirmed = false;
+        if std::io::stdin().is_terminal() && std::io::stdout().is_terminal() {
+            eprintln!(
+                "\n--keep-generations {keep_cycles} would delete {} old generation folder(s) from {}: {}.",
+                prune_ids.len(),
+                dest_root.display(),
+                prune_ids.join(", ")
+            );
+            eprint!("Proceed with the purge? [y/N] ");
+            use std::io::Write;
+            std::io::stderr().flush().ok();
+            let mut answer = String::new();
+            std::io::stdin().read_line(&mut answer).ok();
+            confirmed = answer.trim().eq_ignore_ascii_case("y");
+        }
+        if !confirmed {
+            return Err(IngestError::RetentionPurgeAborted {
+                count: prune_ids.len(),
+            }
+            .into());
+        }
+    }
+
+    let dest_root_owned = dest_root.to_path_buf();
+    tokio::task::spawn_blocking(move || -> Result<(), IngestError> {
+        let ids: HashSet<String> = prune_ids.into_iter().collect();
+        for id in &ids {
+            let folder = dest_root_owned.join(id);
+            if folder.exists() {
+                std::fs::remove_dir_all(&folder).map_err(|error| IngestError::io(&folder, error))?;
+            }
+        }
+        let mut manifest = GenerationManifest::load_or_default(&dest_root_owned)?;
+        manifest.retain_generations(&ids);
+        manifest.save(&dest_root_owned)
+    })
+    .await
+    .context("the retention prune task panicked")?
+    .context("cannot prune old generations")?;
+
+    Ok(())
 }
 
 /// Build the source inventory off the async runtime: walking a 50 GB tree is blocking work.

@@ -23,6 +23,11 @@ pub enum IngestError {
     #[error("--backup-type and --mirror cannot both be given: --backup-type's destination holds a manifest and multiple generation subfolders, not a single mirrored tree")]
     BackupTypeAndMirrorConflict,
 
+    /// F35: `--keep-generations` only means something once `--backup-type` is producing
+    /// generations to rotate in the first place.
+    #[error("--keep-generations requires --backup-type: there is nothing to rotate without a generation history")]
+    KeepGenerationsWithoutBackupType,
+
     #[error("source directory does not exist: {0}")]
     SourceMissing(PathBuf),
 
@@ -85,6 +90,16 @@ pub enum IngestError {
     )]
     MirrorPurgeAborted { count: usize },
 
+    /// F35: retention rotation was about to delete old generation folders and no confirmation
+    /// was given. Reuses the same `--force-purge`/interactive-confirmation gate as
+    /// `MirrorPurgeAborted` — both are "about to delete data at --dest, get explicit go-ahead"
+    /// situations.
+    #[error(
+        "--keep-generations would delete {count} old generation(s) from the destination; \
+         re-run with --force-purge to proceed, confirm interactively, or drop --keep-generations"
+    )]
+    RetentionPurgeAborted { count: usize },
+
     #[error("encryption error: {0}")]
     Crypto(String),
 
@@ -133,6 +148,7 @@ impl IngestError {
             | IngestError::InvalidThreads(_)
             | IngestError::SourceOrDestMissingFromConfig
             | IngestError::BackupTypeAndMirrorConflict
+            | IngestError::KeepGenerationsWithoutBackupType
             | IngestError::SourceMissing(_)
             | IngestError::SourceNotADirectory(_)
             | IngestError::DestNotADirectory(_)
@@ -141,6 +157,7 @@ impl IngestError {
             | IngestError::EmptyPattern
             | IngestError::InvalidPattern { .. }
             | IngestError::MirrorPurgeAborted { .. }
+            | IngestError::RetentionPurgeAborted { .. }
             | IngestError::Crypto(_)
             | IngestError::EncryptAndDecryptConflict
             | IngestError::Vss(_) => false,

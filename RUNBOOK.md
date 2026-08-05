@@ -68,7 +68,7 @@ threads = 32   # sovrascrive il default solo per questo job
 - Path Windows nel TOML: usare `/` (accettato senza problemi da Windows) oppure raddoppiare i
   backslash (`\\\\`) — un singolo `\` in una stringa TOML è un carattere di escape.
 
-## 📌 1bis. Backup a Generazioni (Full/Incrementale, dalla Release 6.0.0)
+## 📌 1bis. Backup a Generazioni (Full/Incrementale/Differenziale, dalla Release 6.0.0)
 
 A differenza delle Modalità A/B/C sopra — che sincronizzano sempre lo **stesso** stato in
 destinazione — `--backup-type` mantiene una **cronologia** di backup distinti, ciascuno nella
@@ -78,23 +78,57 @@ propria sotto-cartella:
 # 1. Primo backup: sempre full — non c'è ancora nulla da cui calcolare un delta.
 .\target\release\robocopy_ingest.exe --source "C:\dati" --dest "E:\backup\dati" --backup-type full
 
-# 2. Backup successivi: incrementale, copia solo i file nuovi/cambiati dall'ultima generazione.
+# 2a. Incrementale: copia solo i file nuovi/cambiati dall'ULTIMA generazione (di qualsiasi tipo) —
+#     ogni run incrementale si incatena al precedente, quindi ciascuno resta piccolo ma per
+#     ricostruire lo stato servono il full più TUTTI gli incrementali intermedi in ordine.
 .\target\release\robocopy_ingest.exe --source "C:\dati" --dest "E:\backup\dati" --backup-type incremental
+
+# 2b. Differenziale (alternativa a 2a, non cumulabile nello stesso schema senza pianificarlo):
+#     copia i file nuovi/cambiati dall'ULTIMO FULL, non dall'ultimo differenziale — ogni
+#     differenziale cresce nel tempo, ma per ricostruire lo stato basta il full più l'ULTIMO
+#     differenziale (nessuna catena da riapplicare in ordine).
+.\target\release\robocopy_ingest.exe --source "C:\dati" --dest "E:\backup\dati" --backup-type differential
 ```
 
 - Ogni run crea `E:\backup\dati\<timestamp>_<tipo>\` con **solo** i file effettivamente copiati in
-  quel run (per `full`, tutti; per `incremental`, solo il delta).
+  quel run (per `full`, tutti; per `incremental`/`differential`, solo il delta rispetto al
+  rispettivo riferimento).
 - `E:\backup\dati\.rustcopy_generations.json` registra ogni generazione con l'inventario
-  **completo** della sorgente al momento del run (non solo il delta), cosicché il prossimo
-  incrementale confronti sempre contro lo stato pieno più recente, non contro un delta parziale.
-- `--backup-type incremental` senza una generazione precedente in destinazione fallisce con un
-  errore chiaro (serve prima un `--backup-type full`).
+  **completo** della sorgente al momento del run (non solo il delta), cosicché il prossimo run
+  confronti sempre contro uno stato pieno, non contro un delta parziale.
+- `--backup-type incremental` senza **nessuna** generazione precedente in destinazione fallisce con
+  errore chiaro (serve prima un `--backup-type full`). `--backup-type differential` senza un
+  **full** precedente fallisce allo stesso modo — un incrementale intermedio non basta come
+  riferimento per il differenziale.
 - Incompatibile con `--mirror` (rifiutato da `--backup-type` insieme a `--mirror`): la
   destinazione qui è un archivio di generazioni, non un mirror 1:1 della sorgente.
-- **Limiti dichiarati di questo primo taglio**: non ancora collegati a `--backup-type`:
-  `--compare-baseline`, `--verify-integrity`, `--encrypt-aes256`/`--decrypt`, `--vss-snapshot`
-  (lato destinazione). Il tipo `differential` (delta contro l'ultimo full, non contro l'ultima
-  generazione qualsiasi) non è ancora implementato.
+- **Limiti dichiarati**: non ancora collegati a `--backup-type`: `--compare-baseline`,
+  `--verify-integrity`, `--encrypt-aes256`/`--decrypt`, `--vss-snapshot` (lato destinazione).
+
+### Ritenzione e rotazione delle generazioni (`--keep-generations`, F35)
+
+Senza `--keep-generations`, ogni generazione resta indefinitamente sul disco. Per limitare lo
+spazio occupato, `--keep-generations <N>` mantiene solo gli ultimi N **cicli** (un `full` più
+tutti gli `incremental`/`differential` successivi fino al prossimo `full`) ed elimina interamente
+le cartelle dei cicli più vecchi:
+
+```powershell
+# Dopo ogni run, mantiene solo gli ultimi 3 cicli completi (full + relativi
+# incrementali/differenziali), eliminando le cartelle e le voci di manifest dei cicli più vecchi.
+# --force-purge evita la richiesta di conferma interattiva (necessaria per script/scheduler).
+.\target\release\robocopy_ingest.exe --source "C:\dati" --dest "E:\backup\dati" `
+  --backup-type incremental --keep-generations 3 --force-purge
+```
+
+- La rotazione è **per ciclo, non per singola generazione**: eliminare un `full` ancora
+  referenziato da un `incremental`/`differential` rimasto orfanerebbe quella catena, quindi un
+  intero ciclo viene tenuto o eliminato insieme.
+- Richiede `--backup-type` (senza generazioni non c'è nulla da ruotare) — `--keep-generations`
+  da solo viene rifiutato.
+- Senza `--force-purge` e senza conferma interattiva a console, la rotazione si interrompe con
+  **exit code 5** (distinto dal `3` di `--mirror`) — ma il backup appena eseguito in quello stesso
+  run **resta comunque salvato**: solo l'eliminazione dei cicli vecchi viene annullata, va
+  ripetuta con `--force-purge` (o confermata a console) in un run successivo.
 
 ---
 
@@ -183,5 +217,5 @@ tramite questo stesso comando, senza `--source`/`--dest`.
 | 📘 **[README.md](file:///c:/Users/auresystem/repos/robocopy-ingest-cli/README.md)** | Guida generale, tabella flag CLI e panoramica di alto livello. |
 | 📖 **[RUNBOOK.md](file:///c:/Users/auresystem/repos/robocopy-ingest-cli/RUNBOOK.md)** | **[QUESTO DOCUMENTO]** Guida operativa, backup multi-sorgente e comandi reali testati. |
 | 📄 **[ARCHITECTURE.md](file:///c:/Users/auresystem/repos/robocopy-ingest-cli/ARCHITECTURE.md)** | Architettura interna v5.4.2, diagrammi di flusso e mappa dei moduli Rust. |
-| 📊 **[ANALYSIS.md](file:///c:/Users/auresystem/repos/robocopy-ingest-cli/ANALYSIS.md)** | Diagnosi di robustezza, tuning 3x performance e 223 test di validazione (236 con `notify-server`). |
+| 📊 **[ANALYSIS.md](file:///c:/Users/auresystem/repos/robocopy-ingest-cli/ANALYSIS.md)** | Diagnosi di robustezza, tuning 3x performance e 236 test di validazione (249 con `notify-server`). |
 | 🗺️ **[ROADMAP.md](file:///c:/Users/auresystem/repos/robocopy-ingest-cli/ROADMAP.md)** | Diagramma Gantt delle release (v1.0 → v8.0) e pianificazione futura. |

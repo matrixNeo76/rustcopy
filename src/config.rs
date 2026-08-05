@@ -29,8 +29,11 @@ pub struct JobConfig {
     pub report_path: Option<PathBuf>,
     pub log_path: Option<PathBuf>,
     pub dry_run: Option<bool>,
-    /// F34: `full`/`incremental`. `None` keeps the pre-F34 plain-sync behaviour.
+    /// F34: `full`/`incremental`/`differential`. `None` keeps the pre-F34 plain-sync behaviour.
     pub backup_type: Option<BackupType>,
+    /// F35: number of most recent backup-generation cycles to keep; older cycles are deleted.
+    /// Only meaningful together with `backup_type`.
+    pub keep_generations: Option<usize>,
     pub mirror: Option<bool>,
     pub exclude_files: Option<Vec<String>>,
     pub exclude_dirs: Option<Vec<String>>,
@@ -66,6 +69,7 @@ impl JobConfig {
             log_path: self.log_path.clone().or_else(|| base.log_path.clone()),
             dry_run: self.dry_run.or(base.dry_run),
             backup_type: self.backup_type.or(base.backup_type),
+            keep_generations: self.keep_generations.or(base.keep_generations),
             mirror: self.mirror.or(base.mirror),
             exclude_files: self.exclude_files.clone().or_else(|| base.exclude_files.clone()),
             exclude_dirs: self.exclude_dirs.clone().or_else(|| base.exclude_dirs.clone()),

@@ -189,6 +189,8 @@ pub struct Args {
     /// `<dest>/.rustcopy_generations.json` for future runs to diff against. `full` copies
     /// everything; `incremental` copies only files new or changed since the immediately
     /// preceding generation (of either type) and requires at least one prior generation to
+    /// exist; `differential` copies only files new or changed since the last `full` generation
+    /// (not the last generation of any type) and requires at least one prior full generation to
     /// exist. Omitted (the default) keeps the pre-F34 behaviour: a plain sync directly into
     /// --dest, no generation folder, no manifest. Not compatible with --mirror (mirror deletes
     /// destination-only files, which makes no sense once --dest holds a manifest and multiple
@@ -196,13 +198,25 @@ pub struct Args {
     #[arg(long, value_enum, value_name = "TYPE")]
     pub backup_type: Option<crate::generations::BackupType>,
 
+    /// F35: retention/rotation for backup generations. Keeps the N most recent *cycles* — a
+    /// cycle is one `full` generation plus every `incremental`/`differential` generation that
+    /// follows it, up to the next `full` — and deletes the entire folder (and manifest entry) of
+    /// every generation in an older cycle. Rotating by cycle rather than by raw generation count
+    /// avoids ever deleting a `full` that a still-kept `incremental`/`differential` depends on
+    /// for restoration. Requires `--backup-type` (there is nothing to rotate without a generation
+    /// history) and, like `--mirror`'s purge, requires `--force-purge` or an interactive
+    /// confirmation before actually deleting anything.
+    #[arg(long, value_name = "N")]
+    pub keep_generations: Option<usize>,
+
     // ── F4.3: Mirror mode ───────────────────────────────────────────────────
     /// Mirror source to destination: delete files in the destination that are not in the source.
     /// Maps to robocopy /MIR.  CAUTION: files present only in dest will be DELETED.
     #[arg(long, default_value_t = false)]
     pub mirror: bool,
 
-    /// Force purge during mirror mode without safety confirmation threshold check.
+    /// Force purge without safety confirmation: skips the interactive prompt for --mirror's
+    /// destination-file purge and, separately, for --keep-generations' old-generation purge.
     #[arg(long, default_value_t = false)]
     pub force_purge: bool,
 
@@ -419,6 +433,9 @@ impl Args {
         if let Some(bt) = job.backup_type {
             self.backup_type = Some(bt);
         }
+        if let Some(keep) = job.keep_generations {
+            self.keep_generations = Some(keep);
+        }
         if let Some(mir) = job.mirror {
             self.mirror = mir;
         }
@@ -464,6 +481,10 @@ impl Args {
         // subfolders, not a single mirrored tree).
         if self.backup_type.is_some() && self.mirror {
             return Err(IngestError::BackupTypeAndMirrorConflict);
+        }
+        // F35: nothing to rotate without a generation history in the first place.
+        if self.keep_generations.is_some() && self.backup_type.is_none() {
+            return Err(IngestError::KeepGenerationsWithoutBackupType);
         }
         if self.restore_from.is_some() || self.resume_from.is_some() {
             return Ok(());
@@ -717,6 +738,18 @@ mod tests {
         assert!(matches!(
             args.validate(),
             Err(IngestError::BackupTypeAndMirrorConflict)
+        ));
+    }
+
+    /// F35: `--keep-generations` without `--backup-type` has nothing to rotate.
+    #[test]
+    fn keep_generations_without_backup_type_is_rejected() {
+        let mut args = Args::try_parse_from(["robocopy_ingest", "--source", ".", "--dest", "./out"])
+            .expect("parse");
+        args.keep_generations = Some(3);
+        assert!(matches!(
+            args.validate(),
+            Err(IngestError::KeepGenerationsWithoutBackupType)
         ));
     }
 

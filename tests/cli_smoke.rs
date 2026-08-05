@@ -1295,6 +1295,265 @@ fn incremental_backup_without_a_prior_generation_fails_clearly() {
     assert!(stderr_of(&output).contains("no prior generation"), "stderr: {}", stderr_of(&output));
 }
 
+/// F34 black-box test: `--backup-type differential` always diffs against the last `full`
+/// generation, not the immediately preceding one — unlike `incremental`. Runs full, then two
+/// differentials each changing a different file; the second differential must still include the
+/// file changed by the first differential, because both compare against the same full baseline.
+#[cfg(windows)]
+#[test]
+fn differential_backup_always_diffs_against_the_last_full_generation() {
+    let source = fixture_tree(&[("a.csv", 8), ("b.csv", 8)]);
+    let workdir = tempfile::tempdir().expect("workdir");
+    let dest = workdir.path().join("dest");
+
+    let full_output = run(&[
+        "--source",
+        source.path().to_str().expect("utf8"),
+        "--dest",
+        dest.to_str().expect("utf8"),
+        "--log-path",
+        workdir.path().join("ingest.log").to_str().expect("utf8"),
+        "--report-path",
+        workdir.path().join("report1.json").to_str().expect("utf8"),
+        "--backup-type",
+        "full",
+    ]);
+    assert!(full_output.status.success(), "stderr: {}", stderr_of(&full_output));
+
+    // A real filesystem mtime tick matters here: changed_since compares whole seconds.
+    std::thread::sleep(std::time::Duration::from_millis(1100));
+    std::fs::write(source.path().join("a.csv"), b"changed by diff 1").expect("modify a.csv");
+
+    let diff1_output = run(&[
+        "--source",
+        source.path().to_str().expect("utf8"),
+        "--dest",
+        dest.to_str().expect("utf8"),
+        "--log-path",
+        workdir.path().join("ingest.log").to_str().expect("utf8"),
+        "--report-path",
+        workdir.path().join("report2.json").to_str().expect("utf8"),
+        "--backup-type",
+        "differential",
+    ]);
+    assert!(diff1_output.status.success(), "stderr: {}", stderr_of(&diff1_output));
+    assert!(
+        stdout_of(&diff1_output).contains("(1 of 2 file(s) to copy)"),
+        "first differential must copy only a.csv; stdout: {}",
+        stdout_of(&diff1_output)
+    );
+
+    std::thread::sleep(std::time::Duration::from_millis(1100));
+    std::fs::write(source.path().join("b.csv"), b"changed by diff 2").expect("modify b.csv");
+
+    let diff2_output = run(&[
+        "--source",
+        source.path().to_str().expect("utf8"),
+        "--dest",
+        dest.to_str().expect("utf8"),
+        "--log-path",
+        workdir.path().join("ingest.log").to_str().expect("utf8"),
+        "--report-path",
+        workdir.path().join("report3.json").to_str().expect("utf8"),
+        "--backup-type",
+        "differential",
+    ]);
+    assert!(diff2_output.status.success(), "stderr: {}", stderr_of(&diff2_output));
+    let stdout = stdout_of(&diff2_output);
+    assert!(
+        stdout.contains("(2 of 2 file(s) to copy)"),
+        "second differential must still include a.csv (changed since the full, not since diff 1); stdout: {stdout}"
+    );
+
+    let manifest_path = dest.join(".rustcopy_generations.json");
+    let manifest: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(&manifest_path).expect("read")).expect("json");
+    let generations = manifest["generations"].as_array().unwrap();
+    assert_eq!(generations.len(), 3, "full + two differentials must all be recorded");
+    assert_eq!(generations[1]["backup_type"], "differential");
+    assert_eq!(generations[1]["files_copied"], 1);
+    assert_eq!(generations[2]["backup_type"], "differential");
+    assert_eq!(generations[2]["files_copied"], 2);
+
+    let diff2_folder = generations[2]["id"].as_str().expect("id");
+    let diff2_dir = dest.join(diff2_folder);
+    assert!(diff2_dir.join("a.csv").is_file(), "a.csv must be in the second differential too");
+    assert!(diff2_dir.join("b.csv").is_file(), "b.csv must be in the second differential");
+}
+
+/// F34 black-box test: `--backup-type differential` with no prior `full` generation at the
+/// destination must fail clearly, even if an `incremental` generation already exists there.
+#[cfg(windows)]
+#[test]
+fn differential_backup_without_a_prior_full_generation_fails_clearly() {
+    let source = fixture_tree(&[("a.csv", 8)]);
+    let workdir = tempfile::tempdir().expect("workdir");
+
+    let output = run(&[
+        "--source",
+        source.path().to_str().expect("utf8"),
+        "--dest",
+        workdir.path().join("dest").to_str().expect("utf8"),
+        "--log-path",
+        workdir.path().join("ingest.log").to_str().expect("utf8"),
+        "--report-path",
+        workdir.path().join("report.json").to_str().expect("utf8"),
+        "--backup-type",
+        "differential",
+    ]);
+
+    assert!(!output.status.success());
+    assert!(stderr_of(&output).contains("no prior full generation"), "stderr: {}", stderr_of(&output));
+}
+
+/// Runs one `--backup-type` backup against a shared source/dest/log, writing its report to
+/// `<workdir>/<report_name>`. Shared helper for the F35 retention tests below.
+#[cfg(windows)]
+fn run_generation_backup(
+    source: &Path,
+    dest: &Path,
+    workdir: &Path,
+    backup_type: &str,
+    report_name: &str,
+    extra: &[&str],
+) -> std::process::Output {
+    let report = workdir.join(report_name);
+    let log = workdir.join("ingest.log");
+    let mut cmd_args = vec![
+        "--source",
+        source.to_str().expect("utf8"),
+        "--dest",
+        dest.to_str().expect("utf8"),
+        "--log-path",
+        log.to_str().expect("utf8"),
+        "--report-path",
+        report.to_str().expect("utf8"),
+        "--backup-type",
+        backup_type,
+    ];
+    cmd_args.extend_from_slice(extra);
+    run(&cmd_args)
+}
+
+/// F35 black-box test: `--keep-generations N` keeps only the N most recent *cycles* (a full plus
+/// the incremental/differential generations that follow it) and deletes the older cycles' folders
+/// from disk as well as their entries in the manifest — not just individual old generations,
+/// which could otherwise strand an incremental/differential without the full it depends on.
+#[cfg(windows)]
+#[test]
+fn retention_prunes_older_cycles_but_keeps_the_most_recent_ones() {
+    let source = fixture_tree(&[("a.csv", 8)]);
+    let workdir = tempfile::tempdir().expect("workdir");
+    let dest = workdir.path().join("dest");
+
+    assert!(run_generation_backup(source.path(), &dest, workdir.path(), "full", "r1.json", &[])
+        .status
+        .success());
+    assert!(
+        run_generation_backup(source.path(), &dest, workdir.path(), "incremental", "r2.json", &[])
+            .status
+            .success()
+    );
+    assert!(run_generation_backup(source.path(), &dest, workdir.path(), "full", "r3.json", &[])
+        .status
+        .success());
+    let last = run_generation_backup(
+        source.path(),
+        &dest,
+        workdir.path(),
+        "incremental",
+        "r4.json",
+        &["--keep-generations", "1", "--force-purge"],
+    );
+    assert!(last.status.success(), "stderr: {}", stderr_of(&last));
+
+    let manifest_path = dest.join(".rustcopy_generations.json");
+    let manifest: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(&manifest_path).expect("read")).expect("json");
+    let generations = manifest["generations"].as_array().unwrap();
+    let ids: Vec<&str> = generations.iter().map(|g| g["id"].as_str().unwrap()).collect();
+    assert_eq!(ids.len(), 2, "only the most recent cycle should remain in the manifest: {ids:?}");
+    assert!(ids[0].ends_with("_full"), "ids: {ids:?}");
+    assert!(ids[1].ends_with("_incremental"), "ids: {ids:?}");
+
+    // The older cycle's folders must actually be gone from disk, not just the manifest.
+    let entries: Vec<String> = std::fs::read_dir(&dest)
+        .expect("read dest")
+        .filter_map(|e| e.ok())
+        .filter(|e| e.path().is_dir())
+        .map(|e| e.file_name().to_string_lossy().into_owned())
+        .collect();
+    assert_eq!(entries.len(), 2, "only 2 generation folders should remain on disk: {entries:?}");
+}
+
+/// F35 black-box test: without `--force-purge` and with no interactive terminal to confirm, the
+/// retention purge must abort with a dedicated exit code and delete nothing — including not
+/// deleting the folders of the generation that was just successfully copied and recorded in this
+/// same run (only the *pruning* step is aborted, not the backup itself).
+#[cfg(windows)]
+#[test]
+fn retention_purge_is_aborted_without_force_purge_and_nothing_is_deleted() {
+    let source = fixture_tree(&[("a.csv", 8)]);
+    let workdir = tempfile::tempdir().expect("workdir");
+    let dest = workdir.path().join("dest");
+
+    assert!(run_generation_backup(source.path(), &dest, workdir.path(), "full", "r1.json", &[])
+        .status
+        .success());
+    assert!(
+        run_generation_backup(source.path(), &dest, workdir.path(), "incremental", "r2.json", &[])
+            .status
+            .success()
+    );
+    assert!(run_generation_backup(source.path(), &dest, workdir.path(), "full", "r3.json", &[])
+        .status
+        .success());
+
+    let output = run_generation_backup(
+        source.path(),
+        &dest,
+        workdir.path(),
+        "incremental",
+        "r4.json",
+        &["--keep-generations", "1"],
+    );
+    assert_eq!(output.status.code(), Some(5), "stderr: {}", stderr_of(&output));
+    assert!(
+        stderr_of(&output).contains("--keep-generations would delete"),
+        "stderr: {}",
+        stderr_of(&output)
+    );
+
+    let manifest_path = dest.join(".rustcopy_generations.json");
+    let manifest: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(&manifest_path).expect("read")).expect("json");
+    assert_eq!(
+        manifest["generations"].as_array().unwrap().len(),
+        4,
+        "the 4th generation's copy+manifest save already succeeded before pruning was aborted"
+    );
+}
+
+/// F35 black-box test: `--keep-generations` without `--backup-type` has nothing to rotate and
+/// must be rejected by the real binary, not just at the `Args::validate()` unit-test level.
+#[test]
+fn keep_generations_without_backup_type_is_rejected_by_the_real_binary() {
+    let source = fixture_tree(&[("a.csv", 8)]);
+    let dest = tempfile::tempdir().expect("dest");
+
+    let output = run(&[
+        "--source",
+        source.path().to_str().expect("utf8"),
+        "--dest",
+        dest.path().to_str().expect("utf8"),
+        "--keep-generations",
+        "2",
+    ]);
+
+    assert_eq!(output.status.code(), Some(2));
+    assert!(stderr_of(&output).contains("--keep-generations requires --backup-type"));
+}
+
 /// F34 black-box test: `--backup-type` and `--mirror` together must be rejected by the real
 /// binary, not just at the `Args::validate()` unit-test level.
 #[test]

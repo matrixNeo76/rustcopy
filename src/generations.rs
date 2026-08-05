@@ -33,6 +33,12 @@ pub enum BackupType {
     /// preceding* generation (full or incremental) into a new generation folder. Requires at
     /// least one prior generation to exist.
     Incremental,
+    /// Copies every file that is new or changed (by size+mtime) since the *last Full* generation
+    /// — always diffs against the same reference point regardless of how many differentials have
+    /// run since, unlike `Incremental` which chains off the immediately preceding generation.
+    /// Requires at least one prior `Full` generation to exist (an intervening `Incremental` does
+    /// not count as the reference).
+    Differential,
 }
 
 impl BackupType {
@@ -40,6 +46,7 @@ impl BackupType {
         match self {
             BackupType::Full => "full",
             BackupType::Incremental => "incremental",
+            BackupType::Differential => "differential",
         }
     }
 }
@@ -109,8 +116,63 @@ impl GenerationManifest {
         self.generations.last()
     }
 
+    /// The most recently recorded `Full` generation — what a differential backup diffs against,
+    /// regardless of how many `Incremental`/`Differential` generations ran since.
+    pub fn latest_full(&self) -> Option<&Generation> {
+        self.generations
+            .iter()
+            .rev()
+            .find(|generation| generation.backup_type == BackupType::Full)
+    }
+
     pub fn push(&mut self, generation: Generation) {
         self.generations.push(generation);
+    }
+
+    /// Groups the recorded generations into "cycles": a cycle starts at a `Full` generation and
+    /// includes every `Incremental`/`Differential` generation that follows it, up to (but not
+    /// including) the next `Full`. This is the unit F35 retention rotates by — rotating by raw
+    /// generation instead risks deleting a `Full` that a later `Incremental`/`Differential` still
+    /// depends on for restoration, orphaning the chain. Generations are expected to always start
+    /// with a `Full` in practice (`Incremental`/`Differential` both refuse to run without a prior
+    /// reference generation), but this doesn't assume that invariant: any generations preceding
+    /// the first `Full` (if that ever happened) still form a leading pseudo-cycle rather than
+    /// being silently dropped.
+    pub fn cycles(&self) -> Vec<&[Generation]> {
+        let mut result = Vec::new();
+        let mut start = 0;
+        for (i, generation) in self.generations.iter().enumerate() {
+            if generation.backup_type == BackupType::Full && i != start {
+                result.push(&self.generations[start..i]);
+                start = i;
+            }
+        }
+        if start < self.generations.len() {
+            result.push(&self.generations[start..]);
+        }
+        result
+    }
+
+    /// The ids of every generation belonging to a cycle older than the `keep_cycles` most recent
+    /// ones — what F35 retention should delete. Empty when there are `keep_cycles` cycles or
+    /// fewer (nothing to prune yet).
+    pub fn generations_to_prune(&self, keep_cycles: usize) -> Vec<String> {
+        let cycles = self.cycles();
+        if cycles.len() <= keep_cycles {
+            return Vec::new();
+        }
+        let prune_count = cycles.len() - keep_cycles;
+        cycles[..prune_count]
+            .iter()
+            .flat_map(|cycle| cycle.iter().map(|generation| generation.id.clone()))
+            .collect()
+    }
+
+    /// Removes every generation whose id is in `ids`, in place — the manifest-side half of
+    /// pruning (the caller is responsible for also deleting the corresponding `<dest>/<id>/`
+    /// folders on disk).
+    pub fn retain_generations(&mut self, ids: &std::collections::HashSet<String>) {
+        self.generations.retain(|generation| !ids.contains(&generation.id));
     }
 }
 
@@ -233,5 +295,118 @@ mod tests {
     fn generation_ids_for_different_types_are_distinguishable() {
         assert!(new_generation_id(BackupType::Full).ends_with("_full"));
         assert!(new_generation_id(BackupType::Incremental).ends_with("_incremental"));
+        assert!(new_generation_id(BackupType::Differential).ends_with("_differential"));
+    }
+
+    fn generation(id: &str, backup_type: BackupType) -> Generation {
+        Generation {
+            id: id.to_string(),
+            backup_type,
+            created_at: "2026-08-05T00:00:00Z".to_string(),
+            files_copied: 0,
+            files: vec![generation_file("a.csv", 10, 100)],
+        }
+    }
+
+    #[test]
+    fn latest_full_skips_incremental_and_differential_generations() {
+        let mut manifest = GenerationManifest::default();
+        manifest.push(generation("1_full", BackupType::Full));
+        manifest.push(generation("2_incremental", BackupType::Incremental));
+        manifest.push(generation("3_differential", BackupType::Differential));
+        manifest.push(generation("4_incremental", BackupType::Incremental));
+
+        let latest_full = manifest.latest_full().expect("a full generation exists");
+        assert_eq!(latest_full.id, "1_full");
+        // `latest()` still returns the truly most recent generation regardless of type.
+        assert_eq!(manifest.latest().unwrap().id, "4_incremental");
+    }
+
+    #[test]
+    fn latest_full_picks_the_most_recent_full_when_several_exist() {
+        let mut manifest = GenerationManifest::default();
+        manifest.push(generation("1_full", BackupType::Full));
+        manifest.push(generation("2_differential", BackupType::Differential));
+        manifest.push(generation("3_full", BackupType::Full));
+        manifest.push(generation("4_differential", BackupType::Differential));
+
+        assert_eq!(manifest.latest_full().unwrap().id, "3_full");
+    }
+
+    #[test]
+    fn latest_full_is_none_when_only_non_full_generations_exist() {
+        let mut manifest = GenerationManifest::default();
+        manifest.push(generation("1_incremental", BackupType::Incremental));
+        assert!(manifest.latest_full().is_none());
+    }
+
+    fn manifest_with(ids_and_types: &[(&str, BackupType)]) -> GenerationManifest {
+        let mut manifest = GenerationManifest::default();
+        for (id, backup_type) in ids_and_types {
+            manifest.push(generation(id, *backup_type));
+        }
+        manifest
+    }
+
+    #[test]
+    fn cycles_groups_full_plus_its_following_incremental_and_differential() {
+        use BackupType::*;
+        let manifest = manifest_with(&[
+            ("1_full", Full),
+            ("2_incremental", Incremental),
+            ("3_differential", Differential),
+            ("4_full", Full),
+            ("5_incremental", Incremental),
+        ]);
+
+        let cycles = manifest.cycles();
+        assert_eq!(cycles.len(), 2);
+        let first_ids: Vec<_> = cycles[0].iter().map(|g| g.id.as_str()).collect();
+        assert_eq!(first_ids, vec!["1_full", "2_incremental", "3_differential"]);
+        let second_ids: Vec<_> = cycles[1].iter().map(|g| g.id.as_str()).collect();
+        assert_eq!(second_ids, vec!["4_full", "5_incremental"]);
+    }
+
+    #[test]
+    fn generations_to_prune_is_empty_when_cycle_count_is_within_the_keep_limit() {
+        use BackupType::*;
+        let manifest = manifest_with(&[("1_full", Full), ("2_incremental", Incremental)]);
+        assert!(manifest.generations_to_prune(1).is_empty());
+        assert!(manifest.generations_to_prune(5).is_empty());
+    }
+
+    #[test]
+    fn generations_to_prune_returns_every_generation_in_older_cycles_only() {
+        use BackupType::*;
+        let manifest = manifest_with(&[
+            ("1_full", Full),
+            ("2_incremental", Incremental),
+            ("3_full", Full),
+            ("4_differential", Differential),
+            ("5_full", Full),
+        ]);
+
+        // Keep the 2 most recent cycles (3_full+4_differential, and 5_full): only the first
+        // cycle (1_full+2_incremental) is old enough to prune.
+        let mut to_prune = manifest.generations_to_prune(2);
+        to_prune.sort();
+        assert_eq!(to_prune, vec!["1_full".to_string(), "2_incremental".to_string()]);
+    }
+
+    #[test]
+    fn retain_generations_removes_only_the_pruned_ids() {
+        use BackupType::*;
+        let mut manifest = manifest_with(&[
+            ("1_full", Full),
+            ("2_incremental", Incremental),
+            ("3_full", Full),
+        ]);
+
+        let ids: std::collections::HashSet<String> =
+            ["1_full".to_string(), "2_incremental".to_string()].into_iter().collect();
+        manifest.retain_generations(&ids);
+
+        let remaining: Vec<_> = manifest.generations.iter().map(|g| g.id.as_str()).collect();
+        assert_eq!(remaining, vec!["3_full"]);
     }
 }
