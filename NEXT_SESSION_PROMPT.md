@@ -9,41 +9,49 @@ F30 (VSS), F31 (checkpoint/resume), F33 (profili job multipli `[[jobs]]`), F34
 reale via SCM, infrastruttura minima e volutamente inattiva) e F39 (comandi pre/post job,
 `--pre-command`/`--post-command`).
 
-Suite di test: **265** (`cargo test`), **278** con `cargo test --features notify-server`.
+**Milestone 6.1.0 (Notifiche avanzate)**: F41 (notify-server come servizio Windows persistente
+separato, `"RustcopyNotifyServer"`) è chiuso (5 Agosto 2026). Restano aperti: F42 (coda persistente
++ retry di consegna), F43 (`TelegramSink`), F44 (`EmailSink`/SMTP), F45 (priorità/tag nel payload).
 
-## Decisione presa il 5 Agosto 2026: F32/F38/F40 rimandati al backlog
+Suite di test: **265** (`cargo test`), **280** con `cargo test --features notify-server` (più 2 test
+`#[ignore]` — round-trip reale dei servizi Windows, richiedono elevazione, si eseguono a mano con
+`cargo test -- --ignored` o con `scripts/verify-services.ps1`, non contano nel totale "passed").
 
-L'utente ha espresso perplessità sulla loro utilità attuale ed è stato deciso di **rimandarli**
-esplicitamente (vedi `ROADMAP.md`, sezione `## 🗄️ Backlog non vincolato a una milestone`), non
-implementarli "a vuoto":
-- F32 (metriche Prometheus) ha senso solo con qualcosa di continuativo da monitorare — con solo
-  Task Scheduler (F36, nessun processo persistente) e un servizio Windows ancora inattivo (F37),
-  manca un target concreto.
-- F38 (compressione zip/7z) aggiunge complessità reale (interazione con `--verify-integrity` e
-  cifratura) per un beneficio non ovvio senza un caso d'uso specifico.
-- F40 (cloud/FTP/SFTP reale) è scritto in modo troppo generico per essere implementabile senza
-  sapere quale provider/protocollo serve davvero.
+## Decisioni prese il 5 Agosto 2026 (non riproporle come aperte)
 
-**Prossimo passo da proporre all'utente**: procedere con **F41** (notify-server persistente,
-milestone 6.1.0, per cui F37 ha già posto le basi infrastrutturali — un servizio Windows reale ma
-ancora inattivo) oppure l'inizio della milestone **7.0.0** ("Motore Controllabile"). Non dare per
-scontato quale dei due: chiedi conferma prima di iniziare, come fatto per le decisioni
-architetturali precedenti.
+- **F32/F38/F40 rimandati al backlog** (vedi `ROADMAP.md`, sezione
+  `## 🗄️ Backlog non vincolato a una milestone`) — non erano bloccanti e mancava un caso d'uso
+  concreto (F32: nessun processo continuativo da monitorare finché F41 non ha dato lavoro reale al
+  servizio; F38: complessità reale per beneficio non ovvio; F40: troppo generico senza un
+  provider/protocollo specifico).
+- **Milestone 7.0.0 (Motore controllabile) rimandata al backlog** (F46-F51) — cambia la natura del
+  prodotto da CLI a strumento interattivo, senza un bisogno concreto oggi. Non riproporla come
+  scelta aperta finché l'utente non segnala un bisogno reale di interattività.
+- **F41 completato**: `notify-server.exe` ha una propria identità di servizio Windows
+  (`"RustcopyNotifyServer"`), separata da quella idle di `robocopy_ingest` (F37,
+  `"RustcopyIngestService"`) — decisione presa esplicitamente per non far dipendere il binario
+  `robocopy_ingest` di default da axum (vedi `AGENTS.md` regola 8/14).
+
+**Prossimo passo da proporre all'utente**: nessuna decisione predefinita. Le opzioni naturali sono
+continuare la milestone 6.1.0 (F42/F43/F44/F45, tutti isolati tra loro) oppure altro su richiesta
+dell'utente — chiedi conferma prima di iniziare, come fatto per le decisioni precedenti.
 
 ## Convenzioni stabilite nelle sessioni precedenti (da rispettare)
 
 - **Test**: per ogni fix, unit test + almeno un test black-box che esegua il **binario compilato
-  reale** (`tests/cli_smoke.rs`), mai solo la funzione interna in isolamento. Qualsiasi verifica
-  manuale contro file veri va fatta solo dentro `tempfile::tempdir()` isolate, mai contro cartelle
-  reali.
+  reale** (`tests/cli_smoke.rs` per `robocopy_ingest`, `tests/notify_server_e2e.rs` per
+  `notify-server`), mai solo la funzione interna in isolamento. Qualsiasi verifica manuale contro
+  file veri va fatta solo dentro `tempfile::tempdir()` isolate, mai contro cartelle reali.
 - **Eccezione dichiarata**: quando un test toccherebbe stato di sistema reale al di fuori del
-  sandbox tempdir (es. F30/VSS: creare/cancellare una vera shadow copy; F37/servizio Windows:
-  `CreateService`/`StartService`/`DeleteService` richiedono elevazione reale), non automatizzarlo —
-  copri solo la logica pura isolabile e dichiara esplicitamente il limite nei commenti/doc invece
-  di fingere copertura completa. F36 (Task Scheduler) è l'eccezione all'eccezione: la creazione di
-  un'attività Task Scheduler *per utente corrente* non richiede elevazione, quindi è coperta da un
-  vero test black-box con round-trip install→uninstall contro `schtasks.exe` reale (con cleanup
-  `Drop`-based best-effort).
+  sandbox tempdir (es. F30/VSS: creare/cancellare una vera shadow copy; F37/F41 servizi Windows:
+  `CreateService`/`StartService`/`DeleteService` richiedono elevazione reale), non automatizzarlo
+  nella suite normale — copri la logica pura isolabile con unit test, e per un round-trip reale
+  aggiungi un test `#[ignore]` eseguibile a mano da un prompt elevato (`cargo test -- --ignored`),
+  come fatto per F37/F41 (`install_and_uninstall_service_round_trip` in entrambi i file di test) e
+  documentato in `scripts/verify-services.ps1`/`RUNBOOK.md`. F36 (Task Scheduler) resta l'eccezione
+  all'eccezione: la creazione di un'attività Task Scheduler *per utente corrente* non richiede
+  elevazione, quindi è coperta da un vero test black-box **non** `#[ignore]`, con round-trip
+  install→uninstall contro `schtasks.exe` reale (cleanup `Drop`-based best-effort).
 - **Deviazioni dal testo della roadmap**: quando l'implementazione letterale della roadmap è più
   rischiosa/complessa di un'alternativa equivalente, fermati e proponi la deviazione con
   `AskUserQuestion` prima di implementare — non deciderla silenziosamente. Esempi già avvenuti così
@@ -51,7 +59,9 @@ architetturali precedenti.
   (rotazione per ciclo vs. per singola generazione — per non orfanare una catena
   incrementale/differenziale), F36 (scheduler leggero via `schtasks.exe` vs. scheduler interno al
   servizio — decisione che ha esplicitamente disaccoppiato F36 da F37), F37 (scope minimo:
-  infrastruttura SCM idle, nessun `--service-name`, comportamento reale rimandato a F41).
+  infrastruttura SCM idle, nessun `--service-name`), F41 (notify-server con identità di servizio
+  propria invece di far ospitare axum al servizio idle di `robocopy_ingest`, per non violare la
+  regola "notify-server resta feature-gated").
 - **Commit/push**: mai senza richiesta esplicita dell'utente in quel turno. Un "ok procedi" su un
   piano non autorizza automaticamente anche il commit.
 - **Documentazione da aggiornare ad ogni fix chiuso, nello stesso giro**: `ANALYSIS.md`/
@@ -62,15 +72,17 @@ architetturali precedenti.
   conteggio test), e **questo file**. Sono in italiano (README/ARCHITECTURE/ANALYSIS/ROADMAP/
   RUNBOOK/NEXT_SESSION_PROMPT), tranne CLAUDE.md e AGENTS.md che sono in inglese; codice/commenti/
   commit in inglese.
-  - **Lezione dalla review del 5 Agosto 2026**: aggiornare i conteggi test e le tabelle moduli in
-    **tutti** i file alla fine di ogni feature chiusa, non solo in alcuni — un giro di
-    implementazione (F39+F36) aveva aggiornato AGENTS.md/ARCHITECTURE.md/README.md ma lasciato
-    stale una riga in RUNBOOK.md (cross-reference ad ANALYSIS.md), e questo file
-    (NEXT_SESSION_PROMPT.md) non era mai stato toccato nei 3 commit successivi al suo ultimo
-    aggiornamento. Prima di chiudere un giro, fai un `grep` dei vecchi conteggi test su tutti i
-    file `.md` per assicurarti di aver aggiornato ogni occorrenza.
+  - **Lezione dalla review del 5 Agosto 2026, confermata due volte**: aggiornare i conteggi test e
+    le tabelle moduli in **tutti** i file alla fine di ogni feature chiusa, non solo in alcuni. È
+    già successo due volte nella stessa giornata che questo file specifico (NEXT_SESSION_PROMPT.md)
+    restasse stale dopo un giro di lavoro (una volta per i conteggi test, una volta per il
+    contenuto narrativo — descriveva F41 come "da proporre" quando era già stato implementato).
+    Prima di chiudere un giro: (1) fai un `grep` dei vecchi conteggi test su tutti i file `.md`,
+    (2) rileggi la sezione "prossimo passo"/"decisione in sospeso" di questo file e verifica che
+    non stia ancora presentando come aperta una decisione già presa in questo stesso giro.
 - **Ricompilare dopo modifiche**: se l'utente chiede di usare un binario aggiornato,
-  `cargo build --release` non è automatico — va lanciato esplicitamente.
+  `cargo build --release` (aggiungere `--features notify-server` se serve anche quel binario) non
+  è automatico — va lanciato esplicitamente.
 - **Config TOML**: quasi tutti i flag CLI recenti sono ormai presenti anche in `JobConfig`/
   `IngestConfig` (`src/config.rs`) — mantenere questa parità quando si aggiungono nuovi flag
   rilevanti per un job pianificato. Eccezioni consapevoli e già accettate: `--decrypt`,
@@ -104,17 +116,25 @@ architetturali precedenti.
 - `src/schedule.rs` (F36): il comando pianificato (`/TR`) va costruito dall'argv **reale**
   dell'invocazione (`strip_schedule_flags`), mai da una ricostruzione sintetica di `Args` — stessa
   lezione di F25b applicata in un contesto diverso.
-- `src/service.rs` (F37): l'identità di servizio (`SERVICE_NAME`) è fissa e condivisa tra
-  `install()`, `uninstall()` e la registrazione del control handler in `run_service_dispatcher()` —
-  deve restare **esattamente** la stessa stringa nei tre punti, altrimenti SCM non riesce a
-  instradare i controlli al servizio. `main()` deve continuare a controllare
-  `service::is_service_launch()` **prima** di costruire il runtime tokio, non dopo.
+- `src/service.rs` (F37/F41): è ormai **generico**, parametrizzato per nome/display-name
+  (`install_named`/`uninstall_named`/`start_dispatcher`/`register_and_wait_for_stop`) — non
+  reintrodurre costanti hardcoded al posto dei parametri. Per ciascuna identità di servizio, il
+  nome passato a `install_named`/`uninstall_named` e quello usato nella registrazione del control
+  handler (dentro il `service_main` bound via `define_windows_service!`) devono restare
+  **esattamente** la stessa stringa, altrimenti SCM non riesce a instradare i controlli al
+  servizio. `robocopy_ingest` e `notify-server` hanno **due identità separate**
+  (`"RustcopyIngestService"` / `"RustcopyNotifyServer"`) — non farne una sola. Entrambi i `main()`
+  devono continuare a controllare `service::is_service_launch()` **prima** di costruire il runtime
+  tokio, non dopo (vedi `AGENTS.md` regola 13).
+- `notify_server::serve_until_shutdown` (percorso foreground normale) non va toccata per aggiungere
+  il segnale SCM — quello è `serve_until_shutdown_or` (F41), una funzione separata apposta per non
+  rischiare la funzione già testata.
 
 ## Raccomandazioni strategiche (da review architetturale agosto 2026)
 
-- **Consolidamento documentazione ad ogni giro**: la review del 5 Agosto 2026 ha trovato
-  disallineamenti reali (conteggi test stale in un file su cinque, questo file mai aggiornato per
-  3 commit) nonostante la disciplina generale sia buona — vedi la lezione sopra su come evitarlo.
+- **Consolidamento documentazione ad ogni giro**: vedi la lezione sopra, confermata due volte nella
+  stessa giornata — non è un rischio teorico, è già successo.
 - **Version bump fatto**: `Cargo.toml` è a `6.0.0` (bump deciso il 5 Agosto 2026, a chiusura
-  effettiva della milestone). Il prossimo bump segue la stessa logica: incrementale durante il
-  lavoro, salto di milestone alla sua chiusura.
+  effettiva della milestone 6.0.0). Il prossimo bump segue la stessa logica: incrementale durante
+  il lavoro, salto di milestone alla sua chiusura — non è stato rifatto per F41 (milestone 6.1.0
+  ancora aperta con F42-F45).
