@@ -62,6 +62,11 @@ function Invoke-Ingest {
         "--dest", $Dest,
         "--verify-integrity",
         "--hash-algo", "blake3",
+        # F28: skip re-hashing files whose source size+mtime already match the last clean pass
+        # (cached per-destination in <dest>\.ingest_cache). This is a recurring backup script -
+        # without this, every run re-hashes the ENTIRE tree with BLAKE3 on both destinations,
+        # even files that haven't changed since yesterday.
+        "--fast-verify",
         "--report-path", $reportPath,
         "--log-path", $logPath,
         "--html-report-path", $htmlPath
@@ -91,6 +96,9 @@ function Invoke-Ingest {
         1 { Write-Host "[$Label] Completed with problems (see report/log)." -ForegroundColor Yellow }
         2 { Write-Host "[$Label] Unrecoverable error (bad args, missing source, etc.)." -ForegroundColor Red }
         3 { Write-Host "[$Label] Mirror-purge aborted (only relevant if --mirror was used)." -ForegroundColor Red }
+        4 { Write-Host "[$Label] Transfer succeeded but --verify-integrity found a mismatch (data landed but doesn't match the source) - check the report's integrity_check section." -ForegroundColor Red }
+        5 { Write-Host "[$Label] Retention purge aborted (only relevant if --keep-generations was used)." -ForegroundColor Red }
+        default { Write-Host "[$Label] Unrecognised exit code $exitCode - check the CLAUDE.md exit-code list for what's new." -ForegroundColor Red }
     }
 
     if (Test-Path $htmlPath) {
