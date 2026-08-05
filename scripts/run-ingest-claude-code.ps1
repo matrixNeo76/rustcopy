@@ -2,7 +2,8 @@
 .SYNOPSIS
     Runs robocopy_ingest.exe twice: first to back up C:\Users\auresystem\claude-code to
     \\FILESERV01\dati01\provarust2, then (only if the first leg didn't hit an unrecoverable
-    error) to a second destination, the QNAP NAS at \\192.168.1.187\datas01.
+    error) to a second destination, the QNAP NAS at \\192.168.1.187\datas01. Use -NasOnly to
+    skip the first leg entirely and only run the NAS one.
 
 .DESCRIPTION
     Report and log files are written under this repo's own _ops_reports folder, OUTSIDE the
@@ -21,12 +22,20 @@
     .\scripts\run-ingest-claude-code.ps1
     .\scripts\run-ingest-claude-code.ps1 -DryRun
     .\scripts\run-ingest-claude-code.ps1 -SkipSecondDestination
+    .\scripts\run-ingest-claude-code.ps1 -NasOnly
 #>
 
 param(
     [switch]$DryRun,
-    [switch]$SkipSecondDestination
+    [switch]$SkipSecondDestination,
+    # Skip leg 1 (FILESERV01) entirely and only run leg 2 (the QNAP NAS).
+    [switch]$NasOnly
 )
+
+if ($SkipSecondDestination -and $NasOnly) {
+    Write-Host "-SkipSecondDestination and -NasOnly together would run neither destination." -ForegroundColor Red
+    exit 1
+}
 
 $ErrorActionPreference = "Stop"
 
@@ -108,19 +117,25 @@ function Invoke-Ingest {
 }
 
 # --- Leg 1: existing FILESERV01 destination ---------------------------------------------------
-Invoke-Ingest -Label "dest1-fileserv01" -Source $Source -Dest $Dest1
-$exitCode1 = $script:LastIngestExitCode
-
-if ($SkipSecondDestination) {
-    Write-Host ""
-    Write-Host "Skipping the second destination (-SkipSecondDestination)." -ForegroundColor Yellow
-    exit $exitCode1
+if ($NasOnly) {
+    Write-Host "Skipping the first destination ($Dest1) - -NasOnly." -ForegroundColor Yellow
+    $exitCode1 = 0
 }
+else {
+    Invoke-Ingest -Label "dest1-fileserv01" -Source $Source -Dest $Dest1
+    $exitCode1 = $script:LastIngestExitCode
 
-if ($exitCode1 -ge 2) {
-    Write-Host ""
-    Write-Host "Leg 1 hit an unrecoverable error (exit $exitCode1) - not attempting the second destination." -ForegroundColor Red
-    exit $exitCode1
+    if ($SkipSecondDestination) {
+        Write-Host ""
+        Write-Host "Skipping the second destination (-SkipSecondDestination)." -ForegroundColor Yellow
+        exit $exitCode1
+    }
+
+    if ($exitCode1 -ge 2) {
+        Write-Host ""
+        Write-Host "Leg 1 hit an unrecoverable error (exit $exitCode1) - not attempting the second destination." -ForegroundColor Red
+        exit $exitCode1
+    }
 }
 
 # --- Leg 2: QNAP NAS at 192.168.1.187\datas01 -------------------------------------------------
@@ -158,7 +173,7 @@ finally {
 
 Write-Host ""
 Write-Host "=== Summary ===" -ForegroundColor Cyan
-Write-Host "Leg 1 ($Dest1): exit $exitCode1"
+Write-Host "Leg 1 ($Dest1): $(if ($NasOnly) { 'skipped (-NasOnly)' } else { "exit $exitCode1" })"
 Write-Host "Leg 2 ($Dest2): exit $exitCode2"
 
 exit ([Math]::Max($exitCode1, $exitCode2))
