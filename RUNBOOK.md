@@ -1,7 +1,7 @@
 # 📖 OPERATIONAL RUNBOOK: robocopy-ingest-cli (rustcopy)
 
 > **Manuale Operativo di Ingestion Massiva, Backup Incrementali Multi-Sorgente e Casi d'Uso REALI Verificati**  
-> *Data: 4 Agosto 2026 | Versione: 5.4.2-Runbook | Stato: Documentazione Verificata su Share SMB Remota*
+> *Data: 5 Agosto 2026 | Versione: 6.0.0-Runbook | Stato: Documentazione Verificata su Share SMB Remota*
 
 ---
 
@@ -290,6 +290,6 @@ tramite questo stesso comando, senza `--source`/`--dest`.
 |---|---|
 | 📘 **[README.md](file:///c:/Users/auresystem/repos/robocopy-ingest-cli/README.md)** | Guida generale, tabella flag CLI e panoramica di alto livello. |
 | 📖 **[RUNBOOK.md](file:///c:/Users/auresystem/repos/robocopy-ingest-cli/RUNBOOK.md)** | **[QUESTO DOCUMENTO]** Guida operativa, backup multi-sorgente e comandi reali testati. |
-| 📄 **[ARCHITECTURE.md](file:///c:/Users/auresystem/repos/robocopy-ingest-cli/ARCHITECTURE.md)** | Architettura interna v5.4.2, diagrammi di flusso e mappa dei moduli Rust. |
-| 📊 **[ANALYSIS.md](file:///c:/Users/auresystem/repos/robocopy-ingest-cli/ANALYSIS.md)** | Diagnosi di robustezza, tuning 3x performance e 236 test di validazione (249 con `notify-server`). |
+| 📄 **[ARCHITECTURE.md](file:///c:/Users/auresystem/repos/robocopy-ingest-cli/ARCHITECTURE.md)** | Architettura interna v6.0.0, diagrammi di flusso e mappa dei moduli Rust. |
+| 📊 **[ANALYSIS.md](file:///c:/Users/auresystem/repos/robocopy-ingest-cli/ANALYSIS.md)** | Diagnosi di robustezza, tuning 3x performance e 265 test di validazione (278 con `notify-server`). |
 | 🗺️ **[ROADMAP.md](file:///c:/Users/auresystem/repos/robocopy-ingest-cli/ROADMAP.md)** | Diagramma Gantt delle release (v1.0 → v8.0) e pianificazione futura. |

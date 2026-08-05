@@ -1,4 +1,4 @@
-# Architettura di Sistema — robocopy-ingest-cli (v5.4.2)
+# Architettura di Sistema — robocopy-ingest-cli (v6.0.0)
 
 Questo documento descrive in dettaglio l'**architettura interna, la pipeline di esecuzione, i pattern di progettazione ed i meccanismi di sicurezza e performance** implementati nel crate `robocopy_ingest`.
 
@@ -43,13 +43,15 @@ graph TD
 
     subgraph Backup Enterprise ["Release 6.0.0"]
         Main -->|--vss-snapshot| VSS["src/vss.rs - Volume Shadow Copy (vssadmin)"]
-        Main -->|--backup-type| Generations["src/generations.rs - Generazioni Full/Incrementale"]
+        Main -->|--backup-type| Generations["src/generations.rs - Generazioni Full/Incrementale/Differenziale + Retention per cicli (F35)"]
         Generations -->|copia selettiva| NaiveEngine["src/engine/naive.rs - copy_selected"]
+        Main -->|"--pre-command / --post-command"| Hooks["src/hooks.rs - Comandi pre/post job (F39)"]
+        Main -->|"--install-schedule / --uninstall-schedule"| Schedule["src/schedule.rs - Task Scheduler via schtasks.exe (F36)"]
+        Main -->|"--install-service / --uninstall-service"| ServiceMod["src/service.rs - Windows Service SCM, idle (F37)"]
     end
 
     subgraph Stubs ["Scaffolding (non implementato)"]
         T["src/cloud.rs - Cloud Sync"]
-        U["src/service.rs - Windows Service"]
     end
 
     A2["src/cache.rs - State Cache (.ingest_cache)"]
@@ -78,11 +80,13 @@ graph TD
 | `src/notify_server.rs` + `src/bin/notify_server.rs` | Server HTTP di ricezione notifiche. | Router axum (`GET /health`, `POST /notify`), autenticazione a token via header, bind loopback forzato senza token, `DefaultBodyLimit`, graceful shutdown. Feature-gated (`notify-server`): axum non entra nelle dipendenze del binario di backup. |
 | `src/restore.rs` | Disaster Recovery e Ripristino guidato. | `build_restore_args` clona gli `Args` **realmente parsati per questa invocazione** (non li ricostruisce da zero) e sovrascrive solo i campi che devono provenire dal report. |
 | `src/checkpoint.rs` | Checkpoint di esecuzione e ripresa. | Scritto su `Ctrl+C` da `run()`. `--resume-from` ricostruisce l'invocazione interrotta con la stessa disciplina di `build_restore_args` (clone degli Args reali, non `try_parse_from`). Sfrutta lo skip automatico di robocopy per i file già a destinazione (niente `/Z`). |
-| `src/generations.rs` | Backup a generazioni Full/Incrementale. | Ogni run scrive in `<dest>/<timestamp>_<tipo>/` e registra l'inventario completo della sorgente in `<dest>/.rustcopy_generations.json` (`GenerationManifest`). `changed_since` differen size+mtime per le copie incrementali. |
+| `src/generations.rs` | Backup a generazioni Full/Incrementale/Differenziale + retention. | Ogni run scrive in `<dest>/<timestamp>_<tipo>/` e registra l'inventario completo della sorgente in `<dest>/.rustcopy_generations.json` (`GenerationManifest`). `changed_since` diffa size+mtime; `incremental` confronta contro `latest()`, `differential` contro `latest_full()`. `cycles()`/`generations_to_prune()`/`retain_generations()` (F35) implementano `--keep-generations`: rotazione per **ciclo** (un `full` + i suoi `incremental`/`differential` successivi), mai per singola generazione, per non orfanare una catena. |
+| `src/hooks.rs` | Comandi pre/post job (F39). | `run_pre_command`/`run_post_command` via `cmd /C` (Windows) / `sh -c` (altrove). Un `--pre-command` fallito abortisce il job **prima** di copiare qualunque cosa; un `--post-command` fallito viene solo loggato/registrato in `IngestReport.post_command_error`, senza far fallire un backup già riuscito. |
+| `src/schedule.rs` | Scheduler leggero via Task Scheduler (F36). | Shella a `schtasks.exe` invece di un processo scheduler interno — stesso pattern di `vss.rs`/`vssadmin.exe`. `parse_schedule_spec` accetta `daily@HH:MM`/`hourly@N`/`weekly@DAY,...@HH:MM`. Il comando pianificato (`/TR`) è costruito dall'argv **reale** dell'invocazione (`strip_schedule_flags` toglie solo i flag di scheduling), non da una ricostruzione sintetica di `Args`. |
 | `src/vss.rs` | Snapshot Volume Shadow Copy. | Shell-out a `vssadmin create/delete shadow`. `VssGuard` (RAII `Drop` sincrono) garantisce la pulizia anche su `Ctrl+C`. Il device path della shadow copy viene usato come `effective_source` senza mutare `Args`. Richiede Amministratore. |
 | `src/cache.rs` | Cache di stato incrementale per `--fast-verify`. | `IngestCache` keyed su size+mtime **sorgente**, persistita in `<dest>/.ingest_cache`. Un file che fallisce la verifica non viene mai messo in cache. `--enable-dedup` (deduplica a livello di trasferimento) **non è implementato**. |
 | `src/cloud.rs` | **[NON IMPLEMENTATO]** Sincronizzazione Cloud diretta. | `sync_to_cloud` è un mock che ritorna sempre `Ok(100)`; `--cloud-sync-target` non ha effetto. |
-| `src/service.rs` | **[NON IMPLEMENTATO]** Registrazione servizio Windows. | `register_windows_service` è un mock; `--install-service` non ha effetto. |
+| `src/service.rs` | Integrazione reale al Service Control Manager di Windows (F37). | `windows-service` crate (dipendenza `[target.'cfg(windows)'.dependencies]`). `--install-service`/`--uninstall-service` registrano/rimuovono un vero servizio Windows; identità di servizio fissa (nessun `--service-name`, per semplicità di v1). Una volta avviato il servizio è **inattivo** (risponde solo a Stop/Interrogate) — nessuna logica di backup gira al suo interno, in attesa di F41. `main()` non è più `#[tokio::main]`: controlla l'argv grezzo per il marker interno `--run-as-service` prima di costruire il runtime tokio, perché `service_dispatcher::start` blocca il thread OS chiamante. |
 | `src/crypto.rs` | Cifratura/decifratura Zero-Trust. | **AES-256-GCM a blocchi da 1 MiB**, nonce fresco per blocco, header `RCE1` + record length-prefixed, file temporaneo sibling + rename atomico. `--decrypt <KEY>` è il simmetrico di `--encrypt-aes256`. |
 | `src/exit_code.rs` | Decodifica bitmask exit code robocopy. | Interpreta i codici di uscita di robocopy; `EXIT_INTEGRITY_FAILED = 4` distingue fallimento di integrità da fallimento di trasferimento. |
 | `src/errors.rs` | Enum `IngestError` con classificazione retry. | Errori tipizzati con `is_retryable()` per il backoff automatico. |
@@ -103,6 +107,10 @@ sequenceDiagram
     participant Verify as Integrity Check (Rayon)
     participant Output as Logger & Webhook & HTML
 
+    opt --pre-command
+        CLI->>CLI: Esegue il comando pre-job (F39) — un fallimento abortisce qui, prima di tutto
+    end
+
     opt --vss-snapshot (Amministratore)
         CLI->>VSS: Crea shadow copy del volume sorgente (vssadmin)
         VSS-->>CLI: Restituisce device path (VssGuard tiene la shadow copy)
@@ -115,9 +123,12 @@ sequenceDiagram
         CLI->>CLI: check_mirror_safety() — abort se file estranei senza --force-purge
     end
 
-    alt --backup-type full|incremental
+    alt --backup-type full|incremental|differential
         CLI->>Engine: execute_generation_backup (usa naive::copy_selected per copie selettive)
         Engine-->>CLI: Scrive generazione in <dest>/<timestamp>_<tipo>/ + aggiorna manifest
+        opt --keep-generations
+            CLI->>CLI: Rotazione per cicli (F35) — elimina i cicli più vecchi previa conferma/--force-purge
+        end
     else Sync diretto (default)
         CLI->>Engine: Costruisce argomenti (/MT, /COPYALL, /DCOPY:DAT) ed esegue robocopy.exe
         loop Output Streaming
@@ -135,9 +146,14 @@ sequenceDiagram
         CLI->>CLI: Cifratura/decifratura streaming AES-256-GCM a blocchi da 1 MiB
     end
 
+    opt --post-command
+        CLI->>CLI: Esegue il comando post-job (F39) — un fallimento qui NON fa fallire il backup, solo loggato/registrato nel report
+    end
+
     CLI->>Output: Genera JSON report, HTML Dashboard, scrive Log e invia Webhook HTTP
 
     Note over CLI: Su Ctrl+C: scrive checkpoint (.ingest_checkpoint.json),<br/>termina solo il child PID, VssGuard pulisce la shadow copy
+    Note over CLI: --install-schedule/--uninstall-schedule (F36) e --install-service/--uninstall-service (F37)<br/>sono operazioni meta intercettate prima di questa pipeline: registrano/rimuovono<br/>rispettivamente una voce di Task Scheduler o il servizio Windows, senza eseguire un backup ora.
 ```
 
 ---
