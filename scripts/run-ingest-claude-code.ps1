@@ -23,13 +23,18 @@
     .\scripts\run-ingest-claude-code.ps1 -DryRun
     .\scripts\run-ingest-claude-code.ps1 -SkipSecondDestination
     .\scripts\run-ingest-claude-code.ps1 -NasOnly
+    .\scripts\run-ingest-claude-code.ps1 -NasOnly -DryRun -Dest2Subfolder "backup01"
 #>
 
 param(
     [switch]$DryRun,
     [switch]$SkipSecondDestination,
     # Skip leg 1 (FILESERV01) entirely and only run leg 2 (the QNAP NAS).
-    [switch]$NasOnly
+    [switch]$NasOnly,
+    # Copy into a subfolder of the NAS share instead of its root (e.g. "backup01" for
+    # \\192.168.1.187\datas01\backup01). The SMB credential mapping still targets the share
+    # root - only the actual copy destination changes.
+    [string]$Dest2Subfolder
 )
 
 if ($SkipSecondDestination -and $NasOnly) {
@@ -43,7 +48,10 @@ $RepoRoot    = Split-Path -Parent $PSScriptRoot
 $Exe         = Join-Path $RepoRoot "target\release\robocopy_ingest.exe"
 $Source      = "C:\Users\auresystem\claude-code"
 $Dest1       = "\\FILESERV01\dati01\provarust2"
-$Dest2       = "\\192.168.1.187\datas01"
+$Dest2Root   = "\\192.168.1.187\datas01"
+# New-SmbMapping below always authenticates against the share root ($Dest2Root); only the
+# actual copy destination changes when -Dest2Subfolder is given.
+$Dest2       = if ($Dest2Subfolder) { Join-Path $Dest2Root $Dest2Subfolder } else { $Dest2Root }
 $ReportsDir  = Join-Path $RepoRoot "_ops_reports"
 $Timestamp   = Get-Date -Format "yyyyMMdd_HHmmss"
 
@@ -151,21 +159,24 @@ if (-not (Test-Path $credsFile)) {
 $mappingEstablished = $false
 try {
     Write-Host ""
-    Write-Host "Authenticating to $Dest2 as $Nas2User ..." -ForegroundColor Cyan
-    New-SmbMapping -RemotePath $Dest2 -UserName $Nas2User -Password $Nas2Password -Persistent $false -ErrorAction Stop | Out-Null
+    Write-Host "Authenticating to $Dest2Root as $Nas2User ..." -ForegroundColor Cyan
+    New-SmbMapping -RemotePath $Dest2Root -UserName $Nas2User -Password $Nas2Password -Persistent $false -ErrorAction Stop | Out-Null
     $mappingEstablished = $true
+
+    # No need to pre-create $Dest2 (subfolder or not): robocopy_ingest's own execute() already
+    # creates the destination directory if missing (outside --dry-run) before transferring.
 
     Invoke-Ingest -Label "dest2-qnap-datas01" -Source $Source -Dest $Dest2
     $exitCode2 = $script:LastIngestExitCode
 }
 catch {
     Write-Host ""
-    Write-Host "Could not reach/authenticate to $Dest2 : $_" -ForegroundColor Red
+    Write-Host "Could not reach/authenticate to $Dest2Root : $_" -ForegroundColor Red
     $exitCode2 = 2
 }
 finally {
     if ($mappingEstablished) {
-        Remove-SmbMapping -RemotePath $Dest2 -Force -ErrorAction SilentlyContinue | Out-Null
+        Remove-SmbMapping -RemotePath $Dest2Root -Force -ErrorAction SilentlyContinue | Out-Null
     }
     # Credentials only need to live for the duration of this script.
     Remove-Variable -Name Nas2User, Nas2Password -ErrorAction SilentlyContinue
