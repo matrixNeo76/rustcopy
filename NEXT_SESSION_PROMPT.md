@@ -42,6 +42,16 @@ Suite di test: **269** (`cargo test`), **284** con `cargo test --features notify
   dry-run reale in background sul profilo completo — se non ancora riportato all'utente, farlo alla
   prossima occasione. **Gap parallelo noto e non corretto**: `--min-age-days`/`--max-age-days` hanno
   la stessa lacuna strutturale in `scan.rs`, lasciata come follow-up.
+- **D11 verificato e chiuso (5 Agosto 2026)**: dry-run reale sul profilo completo confermato —
+  prescan di 1.340.613 file/252GB in 30s con le 3 esclusioni rispettate a monte, exit code 0.
+  Commit `8d0c65d` pushato.
+- **Skill `rustcopy-flow` creata (5 Agosto 2026)**: compound+molecole (adattata da
+  `structured-memory-flow` di `craft-skills-flow`, senza dipendenze MCP — solo Bash/PowerShell sul
+  binario) per permettere a Claude Code/OpenCode/altre CLI di guidare `robocopy_ingest.exe`:
+  backup rapido/mirror, generazioni+retention, restore, schedule/servizio. Vive in
+  `.agents/skills/rustcopy-flow/` (repo) + copia sincronizzata in `~/.claude/skills/rustcopy-flow/`
+  (globale) — se si aggiornano le molecole, ricordarsi di risincronizzare manualmente la copia
+  globale (`cp -r`), non c'è un link simbolico. Vedi `AGENTS.md` sezione 5 per il riferimento.
 
 **Prossimo passo da proporre all'utente**: nessuna decisione predefinita. Le opzioni naturali sono
 continuare la milestone 6.1.0 (F42/F43/F44/F45, tutti isolati tra loro) oppure altro su richiesta

@@ -112,3 +112,9 @@ All AI agents and contributors working on this repository MUST utilize the insta
 ### Graphify (Code Graph & AST):
 - Use `graphify extract src/ --no-viz --no-cluster` to update the AST graph when refactoring modules.
 - Use `graphify query "<question>" --graph src/graphify-out/graph.json` to inspect cross-module dependencies and call graphs.
+
+**Note**: `rtk` is installed on this machine (`rtk --version` / `rtk gain` work) but has **no hook installed** (`rtk gain` prints `[warn] No hook installed`) — commands are not auto-rewritten through it, only manual `rtk <cmd>` invocations count. Run `rtk init` (project-local) or `rtk init -g` (global) to enable automatic rewriting if the token savings should apply to every command, not just explicitly-typed `rtk` ones.
+
+### Agent Skills (`.agents/skills/`)
+- `rustcopy-flow/` — compound skill (2-level: orchestrator + molecules) that lets any coding CLI (Claude Code, OpenCode, etc.) drive `robocopy_ingest.exe` end-to-end: quick copy/mirror, generation backups + retention, restore, and Task Scheduler/service automation. Zero MCP dependency — pure Bash/PowerShell against the compiled binary, so it works outside this repo too (mirrored to `~/.claude/skills/rustcopy-flow/` for global use). See `rustcopy-flow/SKILL.md` for the scenario routing table and `rustcopy-flow/molecules/` for the per-phase steps.
+- Other skills (`clean-architecture`, `clean-code`, `code-review-excellence`, `rust-async-patterns`, `rust-mcp-server-generator`, `windows-server-backup`) are general-purpose, not rustcopy-specific.
