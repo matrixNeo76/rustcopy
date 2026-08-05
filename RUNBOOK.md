@@ -194,13 +194,39 @@ sc start RustcopyIngestService
 .\target\release\robocopy_ingest.exe --uninstall-service
 ```
 
-- **Perimetro di questo primo taglio (F37)**: il servizio, una volta avviato, resta **inattivo** —
-  risponde solo a Stop/Interrogate, nessuna logica di backup gira al suo interno. È pura
-  infrastruttura SCM, in attesa che una milestone futura (F41, notify-server persistente) gli dia
-  un compito reale. Non è un sostituto di `--install-schedule` (F36): i backup pianificati passano
-  comunque da Task Scheduler, non da questo servizio.
+- **Perimetro di questo primo taglio (F37)**: il servizio di `robocopy_ingest`, una volta avviato,
+  resta **inattivo** — risponde solo a Stop/Interrogate, nessuna logica di backup gira al suo
+  interno. È pura infrastruttura SCM. Non è un sostituto di `--install-schedule` (F36): i backup
+  pianificati passano comunque da Task Scheduler, non da questo servizio.
 - Parte con avvio `OnDemand` (non automatico) — cambiabile in `Automatic` via `services.msc` o
-  `sc config RustcopyIngestService start= auto` una volta che il servizio avrà un compito reale.
+  `sc config RustcopyIngestService start= auto`.
+- **Richiede Amministratore** per entrambi i comandi; senza elevazione fallisce con un errore
+  chiaro (mai un fallback silenzioso).
+
+### Notify-server come servizio persistente (`--install-service`/`--uninstall-service`, F41)
+
+A differenza del servizio di `robocopy_ingest` sopra (che resta inattivo), il binario
+`notify-server` ha una **propria** identità di servizio Windows che esegue davvero il server:
+
+```powershell
+# Da un prompt con privilegi di Amministratore. --bind/--config dati qui sopravvivono
+# nell'esecuzione del servizio (stesso principio di --install-schedule, F36).
+.\target\release\notify-server.exe --install-service --bind 127.0.0.1:3000
+
+# Verifica/avvio con gli strumenti nativi di Windows:
+sc query RustcopyNotifyServer
+sc start RustcopyNotifyServer
+
+# Rimozione:
+.\target\release\notify-server.exe --uninstall-service
+```
+
+- Servizio **separato** da quello di `robocopy_ingest` (`RustcopyIngestService`) — due identità
+  SCM indipendenti, ciascuna installabile/rimovibile/avviabile a sé.
+- Lo stop da `services.msc`/`sc stop` innesca lo stesso shutdown graceful già usato per
+  Ctrl+C/SIGTERM in primo piano: le richieste in corso vengono drenate prima della chiusura.
+- Parte con avvio `OnDemand` — cambiabile in `Automatic` via `services.msc` o
+  `sc config RustcopyNotifyServer start= auto` una volta verificato che funzioni come atteso.
 - **Richiede Amministratore** per entrambi i comandi; senza elevazione fallisce con un errore
   chiaro (mai un fallback silenzioso).
 
@@ -291,5 +317,5 @@ tramite questo stesso comando, senza `--source`/`--dest`.
 | 📘 **[README.md](file:///c:/Users/auresystem/repos/robocopy-ingest-cli/README.md)** | Guida generale, tabella flag CLI e panoramica di alto livello. |
 | 📖 **[RUNBOOK.md](file:///c:/Users/auresystem/repos/robocopy-ingest-cli/RUNBOOK.md)** | **[QUESTO DOCUMENTO]** Guida operativa, backup multi-sorgente e comandi reali testati. |
 | 📄 **[ARCHITECTURE.md](file:///c:/Users/auresystem/repos/robocopy-ingest-cli/ARCHITECTURE.md)** | Architettura interna v6.0.0, diagrammi di flusso e mappa dei moduli Rust. |
-| 📊 **[ANALYSIS.md](file:///c:/Users/auresystem/repos/robocopy-ingest-cli/ANALYSIS.md)** | Diagnosi di robustezza, tuning 3x performance e 265 test di validazione (278 con `notify-server`). |
+| 📊 **[ANALYSIS.md](file:///c:/Users/auresystem/repos/robocopy-ingest-cli/ANALYSIS.md)** | Diagnosi di robustezza, tuning 3x performance e 265 test di validazione (280 con `notify-server`). |
 | 🗺️ **[ROADMAP.md](file:///c:/Users/auresystem/repos/robocopy-ingest-cli/ROADMAP.md)** | Diagramma Gantt delle release (v1.0 → v8.0) e pianificazione futura. |

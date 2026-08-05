@@ -159,3 +159,46 @@ fn notify_server_requires_the_configured_token() {
     let webhook_error = report["webhook_error"].as_str().expect("webhook_error present");
     assert!(webhook_error.contains("401"), "got: {webhook_error}");
 }
+
+/// F41 black-box test: `--install-service` and `--uninstall-service` on the `notify-server`
+/// binary must be rejected together by clap — they mean opposite things, same as the equivalent
+/// flags on `robocopy_ingest` (F37).
+#[test]
+fn install_service_and_uninstall_service_together_are_rejected() {
+    let output = Command::new(NOTIFY_SERVER_BIN)
+        .args(["--install-service", "--uninstall-service"])
+        .output()
+        .expect("run notify-server");
+    assert!(!output.status.success());
+}
+
+/// F41 black-box test: without Administrator elevation (the case in this test environment),
+/// `--install-service`/`--uninstall-service` must fail cleanly with a service-related error
+/// instead of panicking, hanging, or silently succeeding. A genuine `CreateService`/
+/// `DeleteService` round trip against the real SCM needs real elevation and real machine state,
+/// same declared limitation as `robocopy_ingest`'s own `--install-service` (F37) and
+/// `--vss-snapshot` (F30) — not covered by an automated test here.
+#[test]
+fn install_and_uninstall_service_fail_cleanly_without_elevation() {
+    let install = Command::new(NOTIFY_SERVER_BIN)
+        .arg("--install-service")
+        .output()
+        .expect("run notify-server");
+    assert!(!install.status.success());
+    assert!(
+        String::from_utf8_lossy(&install.stderr).contains("service"),
+        "stderr: {}",
+        String::from_utf8_lossy(&install.stderr)
+    );
+
+    let uninstall = Command::new(NOTIFY_SERVER_BIN)
+        .arg("--uninstall-service")
+        .output()
+        .expect("run notify-server");
+    assert!(!uninstall.status.success());
+    assert!(
+        String::from_utf8_lossy(&uninstall.stderr).contains("service"),
+        "stderr: {}",
+        String::from_utf8_lossy(&uninstall.stderr)
+    );
+}

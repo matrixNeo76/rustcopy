@@ -125,6 +125,28 @@ pub async fn serve_until_shutdown(
         .await
 }
 
+/// Same as [`serve_until_shutdown`], but also shuts down gracefully when `extra_signal` resolves —
+/// used by `src/bin/notify_server.rs`'s F41 Windows-service path, where SCM's `Stop` request has
+/// to trigger the same graceful drain as Ctrl+C/SIGTERM do for the normal foreground run. Kept as
+/// a separate function (not a parameter added to `serve_until_shutdown`) so the existing, already
+/// covered Ctrl+C/SIGTERM-only path is untouched — a `Future` that never resolves (e.g.
+/// `std::future::pending()`) is a valid `extra_signal` for callers that don't have anything extra
+/// to wait on.
+pub async fn serve_until_shutdown_or(
+    listener: tokio::net::TcpListener,
+    router: Router,
+    extra_signal: impl std::future::Future<Output = ()> + Send + 'static,
+) -> std::io::Result<()> {
+    axum::serve(listener, router)
+        .with_graceful_shutdown(async {
+            tokio::select! {
+                _ = shutdown_signal() => {}
+                _ = extra_signal => {}
+            }
+        })
+        .await
+}
+
 async fn shutdown_signal() {
     let ctrl_c = async {
         tokio::signal::ctrl_c()

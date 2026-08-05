@@ -238,11 +238,11 @@ Per dettagli tecnici approfonditi, diagrammi architetturali e roadmap di svilupp
 
 ---
 
-## 🧪 Esecuzione dei Test (265 di Base, 278 con `notify-server`)
+## 🧪 Esecuzione dei Test (265 di Base, 280 con `notify-server`)
 
 ```bash
 cargo test                              # 265 test (default build, senza axum)
-cargo test --features notify-server     # 278 test (+13 test sul router axum e sui binari reali)
+cargo test --features notify-server     # 280 test (+15 test sul router axum e sui binari reali)
 ```
 
 Esito atteso: `test result: ok.` su tutti i target, in entrambe le modalità.
