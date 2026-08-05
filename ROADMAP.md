@@ -8,11 +8,16 @@
 > e mancava un caso d'uso concreto per giustificarli ora (F40 in particolare è troppo generico
 > senza un target reale: quale provider/protocollo). Anche la milestone **7.0.0** (motore
 > controllabile) è stata rimandata al backlog (F46-F51) — cambia la natura del prodotto da CLI a
-> strumento interattivo, senza un bisogno concreto oggi. **F41** (notify-server come servizio
-> persistente, milestone 6.1.0) è stato completato il 5 Agosto 2026: `notify-server.exe` ha una
-> propria identità di servizio Windows, separata da quella idle di `robocopy_ingest` (F37).
+> strumento interattivo, senza un bisogno concreto oggi. **Milestone 6.1.0 (Notifiche avanzate)
+> chiusa** (5 Agosto 2026) con **F41** (notify-server come servizio Windows persistente, identità
+> separata da `robocopy_ingest`/F37): F42 (coda persistente/retry), F43 (Telegram), F44 (email),
+> F45 (priorità/tag) rimandati al backlog lo stesso giorno — un'analisi iniziale che li dava per
+> "già coperti da `GenericWebhookSink`" si è rivelata tecnicamente imprecisa (`GenericWebhookSink`
+> posta una forma JSON fissa, senza header configurabili né templating: non raggiunge Telegram —
+> manca `chat_id` — né sostituisce SMTP reale, protocollo diverso da HTTP), quindi sono rimandati
+> per assenza di bisogno concreto, non perché già risolti.
 > | ✅ **Solo D10 aperto** (strumentazione grafo, bassa priorità) su 10 difetti totali dell'audit post-5.1.0; O1-O7 delle opportunità di miglioramento tutte implementate — vedi `ANALYSIS.md` Parte 3
-> | 🎯 **Analisi di parità** vs TeraCopy / Cobian / ntfy nella sezione dedicata: le milestone 6.0.0, 6.1.0, 7.0.0 (rimandata) e 8.0.0 ne derivano.
+> | 🎯 **Analisi di parità** vs TeraCopy / Cobian / ntfy nella sezione dedicata: le milestone 6.0.0, 6.1.0 (chiusa), 7.0.0 (rimandata) e 8.0.0 ne derivano.
 >
 > **Nota sulla numerazione**: i numeri di versione seguono le milestone funzionali, **non** una
 > sequenza rigida. La 5.4.0 (notify-server) è stata rilasciata prima della 5.2.0/5.3.0 (correttezza
@@ -57,11 +62,9 @@ gantt
     F37 Servizio Windows reale (infrastruttura minima) :done, f37, 2026-08-05, 1d
     F39 Comandi pre/post job                          :done, f39, 2026-08-05, 1d
 
-    section 6.1.0 Notifiche avanzate
-    F41 Notify-server come servizio                   :f41, 2026-10-14, 2d
-    F42 Coda persistente e retry consegna             :f42, 2026-10-16, 4d
-    F43-F45 Telegram, email, priorita                 :f43, 2026-10-20, 4d
-    F32 Endpoint metriche Prometheus                  :f32, 2026-10-24, 3d
+    section 6.1.0 Notifiche avanzate - CHIUSA 2026-08-05
+    F41 Notify-server come servizio                   :done, f41, 2026-08-05, 1d
+    F42-F45 Rimandati al backlog il 2026-08-05        :f42, 2026-08-05, 1d
 
     section 7.0.0 Motore controllabile - RIMANDATA (backlog)
     F46-F51 Rimandati al backlog il 2026-08-05        :f46, 2026-08-05, 1d
@@ -212,10 +215,10 @@ ma senza effetto).
 
 ## 🗄️ Backlog non vincolato a una milestone
 
-> Spostati fuori da 6.0.0 il 5 Agosto 2026 per chiudere la milestone: nessuno dei tre era
-> bloccante per il resto del lavoro enterprise, e a nessuno corrisponde oggi un caso d'uso concreto
-> da parte dell'utente. Restano idee valide, da riprendere quando emerge un bisogno reale — non
-> vanno implementati "a vuoto" solo perché elencati qui.
+> Task rimandati per chiudere una milestone senza esserne bloccanti (F32/F38/F40 da 6.0.0 il 5
+> Agosto 2026; F42-F45 da 6.1.0 lo stesso giorno; F46-F51/milestone 7.0.0 intera). A nessuno
+> corrisponde oggi un caso d'uso concreto da parte dell'utente. Restano idee valide, da riprendere
+> quando emerge un bisogno reale — non vanno implementati "a vuoto" solo perché elencati qui.
 
 | ID | Task | Origine | Perché rimandato | Condizione per riprenderlo |
 |---|---|---|---|---|
@@ -223,18 +226,23 @@ ma senza effetto).
 | **F38** | Compressione degli archivi (zip/7z) | Parità Cobian | Aggiunge complessità reale (interazione con `--verify-integrity` e con la cifratura, F25) per un beneficio non ovvio senza un caso d'uso specifico. | Quando un utente ha un bisogno concreto di ridurre lo spazio occupato dalle generazioni di backup. |
 | **F40** | Cloud/FTP/SFTP reale | Parità Cobian | Scritto in modo troppo generico ("cloud/FTP/SFTP") per essere implementabile senza sapere quale provider/protocollo serve davvero. | Quando emerge un target concreto (es. un bucket S3 specifico, un server SFTP aziendale) — a quel punto va riscritto come task mirato, non come mock generico. Alternativa più economica da valutare per primo: documentare `rclone` come backend esterno invece di reimplementarlo. |
 | **F46-F51** | Intera **Milestone 7.0.0 — Motore controllabile** (vedi sezione dedicata più sotto) | Parità TeraCopy | Cambia la natura del prodotto (da CLI a strumento interattivo). F47/F48 sono esplicitamente "da prototipare prima di impegnarsi" nella loro stessa descrizione — `robocopy.exe` è un processo esterno non pilotabile a runtime, quindi pausa/ripresa/skip per-file richiederebbero probabilmente un motore di copia nativo alternativo, non solo lavoro di interfaccia. F51 (shell extension COM) è il task più costoso dell'intera roadmap. Nessun segnale di un bisogno concreto oggi (uso attuale: backup schedulati/batch, non un tool interattivo drag-and-drop). Discusso e rimandato con l'utente il 5 Agosto 2026. | Quando emerge un bisogno concreto di interattività (GUI, pausa/ripresa manuale) — a quel punto va prototipato prima F47 (il nodo architetturale: motore di copia pilotabile) prima di impegnarsi sul resto della milestone. |
+| **F42** | Coda persistente + retry di consegna | Parità ntfy | Nessun bisogno concreto segnalato oggi. **Nota**: a differenza di F43/F44 sotto, qui l'argomento "il prossimo run pianificato ne genera un'altra" regge solo per le notifiche di *successo* — per un **fallimento**, se la notifica si perde per un blip di rete l'operatore non lo scopre finché non controlla a mano `webhook_error` nel report JSON, esattamente il caso che una notifica proattiva dovrebbe evitare. Rimandato per assenza di richiesta concreta, non perché il gap sia trascurabile. | Quando un fallimento di consegna passato inosservato causa un problema reale, o quando l'utente lo richiede esplicitamente. |
+| **F43** | `TelegramSink` | Debito 5.4.0 | **Analisi iniziale errata da correggere**: si era ipotizzato che `GenericWebhookSink` (`src/notify_sink.rs`) coprisse già questo caso puntando l'URL all'API Bot di Telegram — falso. `GenericWebhookSink::deliver` fa POST del solo `WebhookPayload` con forma JSON fissa (`schema_version`, `text`, `report_summary`, ...): non contiene `chat_id`, campo **obbligatorio** per `sendMessage`, e non c'è modo di iniettarlo via config oggi. Un tentativo così fallirebbe con 400 Bad Request. Per supportare davvero Telegram servirebbe generalizzare `GenericWebhookSink` (header configurabili + corpo templatizzabile) oppure scrivere il sink dedicato come originariamente previsto — in entrambi i casi lavoro reale, non "già fatto". | Quando emerge un bisogno concreto di notifiche Telegram, valutando in quel momento se conviene generalizzare `GenericWebhookSink` o scrivere `TelegramSink` dedicato. |
+| **F44** | `EmailSink` (SMTP) | Parità Cobian | **Analisi iniziale errata da correggere**: stesso equivoco di F43, ma più netto — la ROADMAP descrive esplicitamente **SMTP reale** (crate `lettre`), un protocollo diverso da HTTP. Un webhook non può sostituire SMTP per definizione, indipendentemente dal formato JSON. Se l'obiettivo fosse invece un'API REST di terze parti (SendGrid/Mailgun), servirebbe comunque un corpo diverso (`personalizations`/`content`) e un header `Authorization: Bearer <key>` che `GenericWebhookSink` non supporta oggi. | Quando emerge un bisogno concreto di notifiche email — a quel punto va chiarito con l'utente se serve SMTP reale (ambienti enterprise con relay interno) o un'API REST di terze parti, perché cambia l'implementazione. |
+| **F45** | Priorità e tag nel payload | Parità ntfy | Basso valore/basso impatto: un tool di backup invia notifiche su eventi discreti (successo/fallimento/integrità), non un volume tale da richiedere filtraggio per priorità. Se servisse, è un campo aggiunto a `WebhookPayload`, non un'intera feature. | Quando un canale specifico (es. ntfy) beneficerebbe concretamente di priorità/tag differenziati. |
 
 ---
 
-## 📨 Milestone 6.1.0 — Notifiche avanzate
+## 📨 Milestone 6.1.0 — Notifiche avanzate `[x] Chiusa` (5 Agosto 2026)
+
+> F42-F45 spostati nel backlog lo stesso giorno (vedi sezione backlog sopra) — nessun bisogno
+> concreto oggi, e un'analisi iniziale che li dava per "già coperti da `GenericWebhookSink`" si è
+> rivelata tecnicamente imprecisa (vedi motivazioni per singolo task nel backlog): la milestone
+> resta chiusa con il solo F41, non perché F42-F45 siano risolti.
 
 | ID | Task | Priorità | Origine | Descrizione |
 |---|---|---|---|---|
 | **F41** | Notify-server come servizio persistente | `[x] Completato` | Parità ntfy | **Decisione architetturale presa via `AskUserQuestion` (5 Agosto 2026)**: `notify-server.exe` ottiene una propria identità di servizio Windows (`"RustcopyNotifyServer"`), separata da quella idle di `robocopy_ingest` (F37, `"RustcopyIngestService"`) — non fa ospitare axum al servizio idle esistente, il che avrebbe reso `--install-service` di `robocopy_ingest` condizionalmente dipendente da axum, violando la regola "notify-server resta feature-gated" (`AGENTS.md` regola 8). `src/service.rs` è stato generalizzato (F41): `install_named`/`uninstall_named`/`start_dispatcher`/`register_and_wait_for_stop`/`ServiceStatusHandle` sono ora funzioni riutilizzabili parametrizzate per nome/display-name, usate sia dal servizio idle di `robocopy_ingest` (F37, comportamento invariato — `install()`/`uninstall()`/`run_service_dispatcher()` restano wrapper a zero argomenti sopra le nuove funzioni) sia da `notify-server` — nessuna duplicazione della logica `CreateService`/`DeleteService`/control-handler. `--install-service`/`--uninstall-service` (nuovi flag su `notify-server`, che prima aveva solo `--bind`/`--config`) catturano l'argv reale dell'invocazione (stesso principio di `schedule::strip_schedule_flags`, F36) come argomenti di lancio del servizio, cosicché `--bind`/`--config` dati insieme a `--install-service` sopravvivano nell'esecuzione pianificata. Il corpo del servizio ricostruisce `Args` dall'argv reale (non dal parametro `arguments` del callback SCM) via `Args::parse_from`, poi esegue axum dentro un `tokio::runtime::Runtime` costruito sul thread semplice del dispatcher SCM. Lo `Stop` di SCM (segnale sincrono via `mpsc::Receiver`) viene collegato allo shutdown graceful di axum (che prima capiva solo Ctrl+C/SIGTERM) tramite un ponte `spawn_blocking` → `tokio::sync::oneshot` — nuova funzione `notify_server::serve_until_shutdown_or` (la `serve_until_shutdown` originale resta invariata per il percorso foreground normale). **Limite di test dichiarato, stesso pattern di F37/F30**: il vero round trip `CreateService`/`DeleteService` richiede elevazione reale, non automatizzato — coperti conflitto clap e fallimento pulito senza elevazione con test black-box sul binario `notify-server` compilato. |
-| **F42** | Coda persistente + retry di consegna | 🟠 P1 | Parità ntfy | Oggi una notifica verso un canale irraggiungibile è **persa**: `dispatch_to_all` prova una volta sola. Il caso "il canale era giù per 30 secondi" oggi non è recuperabile. |
-| **F43** | `TelegramSink` | 🟡 P2 | Debito 5.4.0 | Era opzionale nel piano originale e non è stato implementato. |
-| **F44** | `EmailSink` (SMTP) | 🟠 P1 | Parità Cobian | Canale di notifica classico degli ambienti enterprise, oggi assente. Implementazione come nuovo `NotificationSink` in `src/notify_sink.rs` — il trait esiste già, non serve toccare l'architettura. Candidato: crate `lettre` (client SMTP di riferimento in Rust), con **STARTTLS/SMTPS obbligatorio** e credenziali lette da env/keyring, **mai dal TOML di configurazione** (stessa regola di `crypto::resolve_key`). Da prevedere: destinatari multipli, oggetto configurabile con l'esito, e corpo derivato da `report_summary`. |
-| **F45** | Priorità e tag nel payload | 🟢 P3 | Parità ntfy | Oggi l'unico header inviato a ntfy è `Title`. |
 
 ---
 
@@ -375,7 +383,7 @@ insidie note — rimane nel repo come riferimento storico).
 ## 📌 Debito tecnico noto (non ancora pianificato)
 
 - `src/cache.rs`, `src/cloud.rs`, `src/service.rs` restano scaffolding non collegati; i relativi flag (`--enable-dedup`, `--cloud-sync-target`, `--install-service`) sono marcati `[NOT IMPLEMENTED]` in `--help`. `cache.rs` verrebbe finalmente utilizzato da F28.
-- Il notify-server implementa solo `LogSink`/`NtfySink`/`GenericWebhookSink` e prova ogni sink **una volta sola**: una notifica verso un canale momentaneamente irraggiungibile è persa. Pianificato in 6.1.0 (F42 coda persistente, F43 Telegram, F44 email).
+- Il notify-server implementa solo `LogSink`/`NtfySink`/`GenericWebhookSink` e prova ogni sink **una volta sola**: una notifica verso un canale momentaneamente irraggiungibile è persa. `GenericWebhookSink` posta solo la forma JSON fissa di `WebhookPayload`, senza header configurabili né templating — non raggiunge Telegram (manca `chat_id`, obbligatorio) né sostituisce un invio SMTP reale. Rimandato al backlog (F42 coda persistente, F43 Telegram, F44 email) il 5 Agosto 2026, non pianificato in una milestone specifica.
 - `integrity::verify` richiede ancora l'intera lista file in RAM (`Vec<ScannedFile>`); `--no-prescan` evita solo la sua costruzione, disabilitando la verifica di integrità in quel modo, ma non introduce hashing in streaming.
 - `Args::merge_config` applica il pattern del TOML solo quando la CLI è ancora sul default `"*"`; non distingue un `--pattern "*"` esplicito da nessun flag passato (richiederebbe `ArgMatches::value_source`), e la stessa limitazione vale per gli altri campi booleani.
 - Il grafo `graphify-out/` copre ora tutti i 26 file (685 nodi / 1374 archi / 24 community, rigenerato dopo l'aggiunta del notify-server), ma i nodi metodo non sono qualificati con il tipo proprietario (`.encrypt()` invece di `CryptoManager::encrypt`): la query di reachability da `main`/`lib` resta inaffidabile e **non va usata come gate anti-dead-code**. Il codice morto reale (D8) è stato individuato per grep.
