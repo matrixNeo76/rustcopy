@@ -41,7 +41,13 @@ impl CopyEngine for NaiveCopyEngine {
         request: &CopyRequest,
         sink: &dyn ProgressSink,
     ) -> Result<CopyOutcome, IngestError> {
-        let inventory = scan::scan(&request.source, &request.pattern, !request.exclude_junctions)?;
+        let inventory = scan::scan(
+            &request.source,
+            &request.pattern,
+            !request.exclude_junctions,
+            &request.exclude_dirs,
+            &request.exclude_files,
+        )?;
         tracing::info!(
             files = inventory.file_count(),
             bytes = inventory.total_bytes,

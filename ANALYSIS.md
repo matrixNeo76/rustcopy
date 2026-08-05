@@ -530,6 +530,51 @@ anti-dead-code**: il codice morto reale (D8) è stato trovato per grep, non con 
 
 ---
 
+### D11 — Il prescan interno ignorava `--exclude-dirs`/`--exclude-files` ✅ RISOLTO (5 Agosto 2026)
+
+**Stato: chiuso e verificato.**
+
+**Gravità: MEDIA-ALTA.** `scan::scan`/`scan::inventory` (usati dal prescan iniziale, dal motore
+`naive` per `--backup-type`, e dalla scansione di riconciliazione post-`CopyFailed`) camminavano
+l'intero albero sorgente ignorando del tutto `exclude_dirs`/`exclude_files`: quei due flag
+arrivavano **solo** a `engine/robocopy.rs::build_args` (`/XD`/`/XF` per il vero trasferimento
+robocopy), mai al prescan interno di rustcopy. Conseguenze reali osservate: (1) tempo di scansione
+sprecato su cartelle enormi ed esplicitamente escluse (es. `AppData`, `.ollama`, `OneDrive` su un
+profilo utente da ~995GB); (2) `--verify-integrity` poteva riportare falsi `missing_in_dest` per
+file che l'utente aveva deliberatamente escluso dal trasferimento ma che il prescan si aspettava
+comunque di trovare in destinazione, perché il suo inventario di riferimento non li aveva mai
+esclusi. Scoperto durante un test di backup dell'intero profilo utente, quando è emerso che il
+dry-run continuava a leggere le cartelle escluse invece di saltarle a monte.
+
+Bug collaterale scoperto durante la correzione: `check_mirror_safety` (scansione della
+destinazione per `--mirror`) aveva lo stesso problema — dato che `/MIR` con `/XD`/`/XF` lascia
+intatti file/cartelle esclusi su **entrambi** i lati (sorgente e purge di destinazione), anche la
+scansione di sicurezza doveva rispettare le stesse esclusioni per non confrontare alberi
+disallineati.
+
+#### ✅ Fix reale e verifica (5 Agosto 2026)
+
+`scan::scan`/`scan::inventory` ora accettano `exclude_dirs: &[String], exclude_files: &[String]` e
+usano `WalkDir::filter_entry()` per potare interi sottoalberi (non un filtro post-hoc dopo aver già
+camminato l'albero): una cartella che matcha un pattern di `exclude_dirs` non viene mai discesa.
+Aggiunto `scan::build_exclude_matchers`/`is_excluded` (stesso `globset::GlobMatcher`
+case-insensitive già usato per `--pattern`). Tutti i chiamanti in `main.rs`
+(`inventory_source`, `check_mirror_safety`, la scansione di riconciliazione post-`CopyFailed`) e
+`engine/naive.rs::NaiveCopyEngine::copy` ora passano `args.exclude_dirs`/`args.exclude_files`.
+
+**Verificato**: 4 nuovi unit test in `scan.rs` (`exclude_dirs_prunes_the_subtree_entirely`,
+`exclude_dirs_matches_at_any_depth`, `exclude_files_removes_matching_names_regardless_of_directory`,
+`inventory_also_respects_exclude_dirs`); 2 test black-box in `tests/cli_smoke.rs` che sfruttavano
+deliberatamente il vecchio bug come tecnica di test sono stati riscritti per usare
+`--max-age-days` + un nuovo helper `backdate_file()` invece di `--exclude-files`, preservando
+l'intento originale del test senza dipendere dal comportamento ora corretto.
+
+**Gap parallelo noto, non corretto in questo fix**: `--min-age-days`/`--max-age-days` hanno la
+stessa lacuna strutturale (mai passati a `scan.rs`, applicati solo a valle) — non richiesto
+dall'utente in questa sessione, lasciato come follow-up futuro.
+
+---
+
 ## 💡 3.2 Opportunità di miglioramento (non difetti)
 
 Proposte ordinate per rapporto valore/rischio, motivate da problemi osservati sul campo:

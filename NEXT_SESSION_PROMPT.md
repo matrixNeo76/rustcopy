@@ -13,7 +13,7 @@ reale via SCM, infrastruttura minima e volutamente inattiva) e F39 (comandi pre/
 separato, `"RustcopyNotifyServer"`) è chiuso (5 Agosto 2026). Restano aperti: F42 (coda persistente
 + retry di consegna), F43 (`TelegramSink`), F44 (`EmailSink`/SMTP), F45 (priorità/tag nel payload).
 
-Suite di test: **265** (`cargo test`), **280** con `cargo test --features notify-server` (più 2 test
+Suite di test: **269** (`cargo test`), **284** con `cargo test --features notify-server` (più 2 test
 `#[ignore]` — round-trip reale dei servizi Windows, richiedono elevazione, si eseguono a mano con
 `cargo test -- --ignored` o con `scripts/verify-services.ps1`, non contano nel totale "passed").
 
@@ -31,6 +31,17 @@ Suite di test: **265** (`cargo test`), **280** con `cargo test --features notify
   (`"RustcopyNotifyServer"`), separata da quella idle di `robocopy_ingest` (F37,
   `"RustcopyIngestService"`) — decisione presa esplicitamente per non far dipendere il binario
   `robocopy_ingest` di default da axum (vedi `AGENTS.md` regola 8/14).
+- **D11 corretto (5 Agosto 2026)**: `scan::scan`/`scan::inventory` (prescan interno) ignoravano
+  `exclude_dirs`/`exclude_files` — arrivavano solo a `engine/robocopy.rs` per `/XD`/`/XF` del vero
+  trasferimento, mai al prescan. Scoperto dall'utente durante un test di backup dell'intero profilo
+  (`C:\Users\auresystem`, ~995GB) con `exclude_dirs = ["AppData", ".ollama", "OneDrive"]`: il
+  dry-run continuava a leggere le cartelle escluse. Fix via `WalkDir::filter_entry()` in tutti i
+  call site (`main.rs::inventory_source`/`check_mirror_safety`/riconciliazione post-`CopyFailed`,
+  `engine/naive.rs`). Dettagli in `ANALYSIS.md` D11 e `CLAUDE.md`. **Non ancora fatto**: commit/push
+  di questo fix (richiede conferma esplicita in un turno futuro) e verifica del risultato del
+  dry-run reale in background sul profilo completo — se non ancora riportato all'utente, farlo alla
+  prossima occasione. **Gap parallelo noto e non corretto**: `--min-age-days`/`--max-age-days` hanno
+  la stessa lacuna strutturale in `scan.rs`, lasciata come follow-up.
 
 **Prossimo passo da proporre all'utente**: nessuna decisione predefinita. Le opzioni naturali sono
 continuare la milestone 6.1.0 (F42/F43/F44/F45, tutti isolati tra loro) oppure altro su richiesta

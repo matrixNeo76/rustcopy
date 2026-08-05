@@ -80,7 +80,7 @@ fn baseline_copy_then_integrity_check_passes_and_report_is_written() {
         ],
     );
 
-    let inventory = scan::scan(args.source(), &args.pattern, true).expect("scan");
+    let inventory = scan::scan(args.source(), &args.pattern, true, &[], &[]).expect("scan");
     assert_eq!(inventory.file_count(), 2, "only CSV files are ingested");
     assert_eq!(inventory.total_bytes, 350_000);
 
@@ -118,7 +118,7 @@ fn integrity_failure_is_reported_end_to_end() {
     let dest = tempfile::tempdir().expect("dest");
     let args = args_for(source.path(), dest.path(), &["--verify-integrity"]);
 
-    let inventory = scan::scan(args.source(), &args.pattern, true).expect("scan");
+    let inventory = scan::scan(args.source(), &args.pattern, true, &[], &[]).expect("scan");
     let outcome = NaiveCopyEngine::new()
         .copy(
             &args.copy_request(args.dest().to_path_buf()),
@@ -165,7 +165,7 @@ fn mocked_robocopy_run_retries_then_produces_a_full_report() {
         ],
     );
 
-    let inventory = scan::scan(args.source(), &args.pattern, true).expect("scan");
+    let inventory = scan::scan(args.source(), &args.pattern, true, &[], &[]).expect("scan");
 
     // First attempt: exit code 9 (copied something, but some files failed) -> retried.
     // Second attempt: exit code 1 (files copied) -> success.
@@ -252,7 +252,7 @@ fn robocopy_and_baseline_metrics_are_compared_in_the_report() {
     let baseline_dest = tempfile::tempdir().expect("baseline dest");
     let args = args_for(source.path(), dest.path(), &["--compare-baseline"]);
 
-    let inventory = scan::scan(args.source(), &args.pattern, true).expect("scan");
+    let inventory = scan::scan(args.source(), &args.pattern, true, &[], &[]).expect("scan");
 
     let engine = RobocopyEngine::with_runner(ScriptedRunner::new(vec![(
         robocopy_output(&[("a.csv", 1_000_000)]),

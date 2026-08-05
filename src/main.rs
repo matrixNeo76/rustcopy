@@ -910,18 +910,24 @@ async fn inventory_source(args: &Args, effective_source: &Path) -> Result<ScanSu
     // F26d: follow junctions/symlinked directories exactly when robocopy itself will (i.e.
     // whenever /XJ is not passed), so the prescan and the actual transfer walk the same tree.
     let follow_links = !args.exclude_junctions;
+    let exclude_dirs = args.exclude_dirs.clone();
+    let exclude_files = args.exclude_files.clone();
 
     let inventory = if no_prescan {
-        tokio::task::spawn_blocking(move || scan::inventory(&source, &pattern, follow_links))
-            .await
-            .context("the source scan task panicked")?
-            .context("cannot scan the source directory")?
-            .into_scan_summary()
+        tokio::task::spawn_blocking(move || {
+            scan::inventory(&source, &pattern, follow_links, &exclude_dirs, &exclude_files)
+        })
+        .await
+        .context("the source scan task panicked")?
+        .context("cannot scan the source directory")?
+        .into_scan_summary()
     } else {
-        tokio::task::spawn_blocking(move || scan::scan(&source, &pattern, follow_links))
-            .await
-            .context("the source scan task panicked")?
-            .context("cannot scan the source directory")?
+        tokio::task::spawn_blocking(move || {
+            scan::scan(&source, &pattern, follow_links, &exclude_dirs, &exclude_files)
+        })
+        .await
+        .context("the source scan task panicked")?
+        .context("cannot scan the source directory")?
     };
 
     tracing::info!(
@@ -981,11 +987,19 @@ async fn check_mirror_safety(args: &Args, inventory: &ScanSummary) -> Result<()>
 
     let dest = args.dest().to_path_buf();
     // F26d: follow junctions in the destination scan exactly when the source scan did, so the
-    // mirror-purge diff isn't computed against a differently-shaped tree.
+    // mirror-purge diff isn't computed against a differently-shaped tree. Same reasoning for
+    // exclude_dirs/exclude_files: robocopy's /XD /XF leave matching destination-side entries
+    // alone during /MIR (neither copied nor purged), so this diff must exclude them too, or it
+    // would flag as "extraneous" (and prompt to delete) destination content robocopy itself
+    // would never touch.
     let follow_links = !args.exclude_junctions;
-    let dest_all = tokio::task::spawn_blocking(move || scan::scan(&dest, "*", follow_links))
-        .await
-        .context("the mirror safety scan task panicked")?
+    let exclude_dirs = args.exclude_dirs.clone();
+    let exclude_files = args.exclude_files.clone();
+    let dest_all = tokio::task::spawn_blocking(move || {
+        scan::scan(&dest, "*", follow_links, &exclude_dirs, &exclude_files)
+    })
+    .await
+    .context("the mirror safety scan task panicked")?
         .context("cannot scan the destination for the mirror safety check")?;
     let extraneous: Vec<&Path> = dest_all
         .files
@@ -1163,11 +1177,14 @@ async fn transfer(
             // in that case.
             let dest_for_count = args.dest().to_path_buf();
             let follow_links = !args.exclude_junctions;
-            let observed =
-                tokio::task::spawn_blocking(move || scan::inventory(&dest_for_count, "*", follow_links))
-                    .await
-                    .ok()
-                    .and_then(Result::ok);
+            let exclude_dirs = args.exclude_dirs.clone();
+            let exclude_files = args.exclude_files.clone();
+            let observed = tokio::task::spawn_blocking(move || {
+                scan::inventory(&dest_for_count, "*", follow_links, &exclude_dirs, &exclude_files)
+            })
+            .await
+            .ok()
+            .and_then(Result::ok);
 
             let mut outcome = CopyOutcome::new(robocopy_ingest::engine::robocopy::ENGINE_NAME);
             outcome.exit_code = Some(code);

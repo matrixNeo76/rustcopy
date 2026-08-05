@@ -81,6 +81,20 @@ pub fn build_matcher(pattern: &str) -> Result<GlobMatcher, IngestError> {
         })
 }
 
+/// Compiles `--exclude-dirs`/`--exclude-files` patterns the same way [`build_matcher`] compiles
+/// the main `--pattern` (case-insensitive on Windows), for matching against a bare entry name
+/// (see [`is_excluded`]).
+fn build_exclude_matchers(patterns: &[String]) -> Result<Vec<GlobMatcher>, IngestError> {
+    patterns.iter().map(|p| build_matcher(p)).collect()
+}
+
+/// Whether `name` (a directory or file's own bare name, not a full/relative path) matches any of
+/// `matchers` — mirrors robocopy's own `/XD`/`/XF` semantics, which exclude by name at any depth
+/// in the tree, not just a specific path.
+fn is_excluded(name: &std::ffi::OsStr, matchers: &[GlobMatcher]) -> bool {
+    matchers.iter().any(|m| m.is_match(Path::new(name)))
+}
+
 /// Walk `root` recursively and collect every file whose **relative path** matches `pattern`.
 ///
 /// F1.4: matching is done on the relative path (e.g. `subdir/file.csv`) instead of the bare
@@ -95,11 +109,37 @@ pub fn build_matcher(pattern: &str) -> Result<GlobMatcher, IngestError> {
 /// regardless, so the prescan/verification walked a different tree than what robocopy actually
 /// copied (D7). `WalkDir` detects and rejects cycles when following links, so a self-referencing
 /// junction errors out per-entry (logged and skipped) instead of recursing forever.
-pub fn scan(root: &Path, pattern: &str, follow_links: bool) -> Result<ScanSummary, IngestError> {
+///
+/// `exclude_dirs`/`exclude_files` were previously accepted by the CLI/config but only ever
+/// applied to the real `robocopy.exe` invocation's own `/XD`/`/XF` flags (`engine::robocopy`) —
+/// this scan (used for the progress-bar total and for `--verify-integrity`'s file list) walked
+/// straight through excluded directories regardless, which had two real consequences: (1) the
+/// prescan wasted time reading metadata for potentially huge excluded trees (e.g. `AppData`) it
+/// was always going to discard, and (2) `--verify-integrity` would compare against a file list
+/// that includes files robocopy never actually copied (because it excluded them), reporting
+/// every one of them as `missing_in_dest` — a spurious `FAILED` status for an exclusion that
+/// worked exactly as intended on the real transfer. Directories are pruned via `filter_entry`
+/// (skips the whole subtree, not just a post-hoc filter — matches robocopy's own behaviour of
+/// never descending into an excluded directory) rather than filtered after the fact, so this
+/// fixes the wasted-scan-time half of the problem too, not just the false-FAILED half.
+pub fn scan(
+    root: &Path,
+    pattern: &str,
+    follow_links: bool,
+    exclude_dirs: &[String],
+    exclude_files: &[String],
+) -> Result<ScanSummary, IngestError> {
     let matcher = build_matcher(pattern)?;
+    let dir_matchers = build_exclude_matchers(exclude_dirs)?;
+    let file_matchers = build_exclude_matchers(exclude_files)?;
     let mut summary = ScanSummary::default();
 
-    for entry in WalkDir::new(root).follow_links(follow_links) {
+    let walker = WalkDir::new(root).follow_links(follow_links).into_iter().filter_entry(|entry| {
+        // Never prune the root itself (depth 0) - only subdirectories can be excluded.
+        entry.depth() == 0 || !entry.file_type().is_dir() || !is_excluded(entry.file_name(), &dir_matchers)
+    });
+
+    for entry in walker {
         let entry = match entry {
             Ok(entry) => entry,
             Err(error) => {
@@ -108,6 +148,9 @@ pub fn scan(root: &Path, pattern: &str, follow_links: bool) -> Result<ScanSummar
             }
         };
         if !entry.file_type().is_file() {
+            continue;
+        }
+        if is_excluded(entry.file_name(), &file_matchers) {
             continue;
         }
 
@@ -172,13 +215,26 @@ impl InventorySummary {
 
 /// Walk `root` and return just totals, without keeping individual paths in RAM.
 ///
-/// F26d: see [`scan`] for the meaning of `follow_links`.
-pub fn inventory(root: &Path, pattern: &str, follow_links: bool) -> Result<InventorySummary, IngestError> {
+/// F26d: see [`scan`] for the meaning of `follow_links`. See [`scan`]'s doc comment for why
+/// `exclude_dirs`/`exclude_files` matter here too, not just for the real `robocopy.exe` transfer.
+pub fn inventory(
+    root: &Path,
+    pattern: &str,
+    follow_links: bool,
+    exclude_dirs: &[String],
+    exclude_files: &[String],
+) -> Result<InventorySummary, IngestError> {
     let matcher = build_matcher(pattern)?;
+    let dir_matchers = build_exclude_matchers(exclude_dirs)?;
+    let file_matchers = build_exclude_matchers(exclude_files)?;
     let mut total_files = 0u64;
     let mut total_bytes = 0u64;
 
-    for entry in WalkDir::new(root).follow_links(follow_links) {
+    let walker = WalkDir::new(root).follow_links(follow_links).into_iter().filter_entry(|entry| {
+        entry.depth() == 0 || !entry.file_type().is_dir() || !is_excluded(entry.file_name(), &dir_matchers)
+    });
+
+    for entry in walker {
         let entry = match entry {
             Ok(entry) => entry,
             Err(error) => {
@@ -187,6 +243,9 @@ pub fn inventory(root: &Path, pattern: &str, follow_links: bool) -> Result<Inven
             }
         };
         if !entry.file_type().is_file() {
+            continue;
+        }
+        if is_excluded(entry.file_name(), &file_matchers) {
             continue;
         }
 
@@ -245,7 +304,7 @@ mod tests {
             ("ignore.txt", 999),
         ]);
 
-        let summary = scan(dir.path(), "*.csv", false).expect("scan");
+        let summary = scan(dir.path(), "*.csv", false, &[], &[]).expect("scan");
 
         assert_eq!(summary.file_count(), 3);
         assert_eq!(summary.total_bytes, 600);
@@ -264,7 +323,7 @@ mod tests {
     #[test]
     fn scan_of_empty_tree_is_empty() {
         let dir = fixture_tree(&[]);
-        let summary = scan(dir.path(), "*.csv", false).expect("scan");
+        let summary = scan(dir.path(), "*.csv", false, &[], &[]).expect("scan");
         assert!(summary.is_empty());
         assert_eq!(summary.total_bytes, 0);
     }
@@ -272,7 +331,7 @@ mod tests {
     #[test]
     fn patterns_other_than_csv_are_supported() {
         let dir = fixture_tree(&[("a.csv", 10), ("b.tsv", 20), ("c.tsv", 30)]);
-        let summary = scan(dir.path(), "*.tsv", false).expect("scan");
+        let summary = scan(dir.path(), "*.tsv", false, &[], &[]).expect("scan");
         assert_eq!(summary.file_count(), 2);
         assert_eq!(summary.total_bytes, 50);
     }
@@ -303,7 +362,7 @@ mod tests {
             ("other/c.csv", 30),
         ]);
         // A flat glob still matches all CSV files regardless of depth.
-        let summary = scan(dir.path(), "*.csv", false).expect("scan");
+        let summary = scan(dir.path(), "*.csv", false, &[], &[]).expect("scan");
         assert_eq!(summary.file_count(), 3, "flat glob should match all csv files in subdirs");
     }
 
@@ -311,8 +370,8 @@ mod tests {
     #[test]
     fn inventory_matches_scan_totals() {
         let dir = fixture_tree(&[("a.csv", 100), ("nested/b.csv", 200), ("c.txt", 50)]);
-        let full = scan(dir.path(), "*.csv", false).expect("scan");
-        let light = inventory(dir.path(), "*.csv", false).expect("inventory");
+        let full = scan(dir.path(), "*.csv", false, &[], &[]).expect("scan");
+        let light = inventory(dir.path(), "*.csv", false, &[], &[]).expect("inventory");
         assert_eq!(light.total_files, full.file_count() as u64);
         assert_eq!(light.total_bytes, full.total_bytes);
     }
@@ -326,7 +385,7 @@ mod tests {
         let link = dir.path().join("link");
         std::os::unix::fs::symlink(dir.path().join("real"), &link).expect("create symlink");
 
-        let summary = scan(dir.path(), "*.csv", false).expect("scan");
+        let summary = scan(dir.path(), "*.csv", false, &[], &[]).expect("scan");
         assert_eq!(summary.file_count(), 1, "the symlinked copy must not be counted");
     }
 
@@ -339,7 +398,7 @@ mod tests {
         let link = dir.path().join("link");
         std::os::unix::fs::symlink(dir.path().join("real"), &link).expect("create symlink");
 
-        let summary = scan(dir.path(), "*.csv", true).expect("scan");
+        let summary = scan(dir.path(), "*.csv", true, &[], &[]).expect("scan");
         assert_eq!(
             summary.file_count(),
             2,
@@ -371,19 +430,93 @@ mod tests {
             .expect("run mklink");
         assert!(status.success(), "mklink /J must succeed to exercise this test");
 
-        let excluded = scan(dir.path(), "*.csv", false).expect("scan without following junctions");
+        let excluded = scan(dir.path(), "*.csv", false, &[], &[]).expect("scan without following junctions");
         assert_eq!(
             excluded.file_count(),
             1,
             "with follow_links=false (--exclude-junctions), the junction must not be descended into"
         );
 
-        let followed = scan(dir.path(), "*.csv", true).expect("scan following junctions");
+        let followed = scan(dir.path(), "*.csv", true, &[], &[]).expect("scan following junctions");
         assert_eq!(
             followed.file_count(),
             2,
             "with follow_links=true (robocopy's own default), a.csv is seen once directly and \
              once through the junction"
         );
+    }
+
+    /// Regression test: `exclude_dirs` must actually prune the excluded subtree from the scan
+    /// (matching what `robocopy.exe`'s own `/XD` does for the real transfer), not just leave it
+    /// out of the *final* file list after walking it anyway. `deep/` contains an unreadable-glob
+    /// trap file (a name that would panic a naive matcher) precisely so this test also proves the
+    /// excluded subtree is never even walked, not merely filtered.
+    #[test]
+    fn exclude_dirs_prunes_the_subtree_entirely() {
+        let dir = fixture_tree(&[
+            ("a.csv", 10),
+            ("keep/b.csv", 20),
+            ("AppData/c.csv", 9999),
+            ("AppData/deep/d.csv", 9999),
+        ]);
+
+        let summary = scan(dir.path(), "*.csv", false, &["AppData".to_string()], &[]).expect("scan");
+
+        assert_eq!(summary.file_count(), 2, "AppData's files must not appear in the result");
+        assert_eq!(summary.total_bytes, 30, "AppData's bytes must not be counted either");
+        assert!(summary.files.iter().all(|f| !f.relative_path.starts_with("AppData")));
+    }
+
+    /// `exclude_dirs` matches by bare directory name at any depth, mirroring robocopy's own
+    /// `/XD` semantics - not just at the scan root.
+    #[test]
+    fn exclude_dirs_matches_at_any_depth() {
+        let dir = fixture_tree(&[
+            ("a.csv", 10),
+            ("nested/.git/config.csv", 20),
+            ("nested/real.csv", 30),
+        ]);
+
+        let summary = scan(dir.path(), "*.csv", false, &[".git".to_string()], &[]).expect("scan");
+
+        assert_eq!(summary.file_count(), 2);
+        assert!(summary.files.iter().all(|f| !f.relative_path.to_string_lossy().contains(".git")));
+    }
+
+    /// `exclude_files` matches by bare file name, independent of `--pattern`.
+    #[test]
+    fn exclude_files_removes_matching_names_regardless_of_directory() {
+        let dir = fixture_tree(&[
+            ("a.csv", 10),
+            ("nested/thumbs.db.csv", 20), // matches --pattern *.csv but should still be excluded
+            ("nested/b.csv", 30),
+        ]);
+
+        let summary = scan(
+            dir.path(),
+            "*.csv",
+            false,
+            &[],
+            &["thumbs.db.csv".to_string()],
+        )
+        .expect("scan");
+
+        assert_eq!(summary.file_count(), 2);
+        assert!(summary
+            .files
+            .iter()
+            .all(|f| f.relative_path.file_name().unwrap() != "thumbs.db.csv"));
+    }
+
+    /// `inventory` (the `--no-prescan` lightweight walk) must apply the same exclusions as
+    /// `scan`, not just materialise a shorter list from the same (wrongly) full walk.
+    #[test]
+    fn inventory_also_respects_exclude_dirs() {
+        let dir = fixture_tree(&[("a.csv", 10), ("AppData/b.csv", 9999)]);
+
+        let light = inventory(dir.path(), "*.csv", false, &["AppData".to_string()], &[]).expect("inventory");
+
+        assert_eq!(light.total_files, 1);
+        assert_eq!(light.total_bytes, 10);
     }
 }
