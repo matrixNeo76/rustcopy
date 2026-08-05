@@ -82,7 +82,14 @@ pub struct Args {
     #[arg(
         long,
         value_name = "PATH",
-        required_unless_present_any = ["restore_from", "resume_from", "config", "uninstall_schedule"]
+        required_unless_present_any = [
+            "restore_from",
+            "resume_from",
+            "config",
+            "uninstall_schedule",
+            "install_service",
+            "uninstall_service"
+        ]
     )]
     pub source: Option<PathBuf>,
 
@@ -91,7 +98,14 @@ pub struct Args {
     #[arg(
         long,
         value_name = "PATH",
-        required_unless_present_any = ["restore_from", "resume_from", "config", "uninstall_schedule"]
+        required_unless_present_any = [
+            "restore_from",
+            "resume_from",
+            "config",
+            "uninstall_schedule",
+            "install_service",
+            "uninstall_service"
+        ]
     )]
     pub dest: Option<PathBuf>,
 
@@ -386,11 +400,19 @@ pub struct Args {
     #[arg(long, value_name = "URI")]
     pub cloud_sync_target: Option<String>,
 
-    // ── F19.1: Windows Service Registration ──────────────────────────────────
-    /// [NOT IMPLEMENTED] Reserved for Windows Service registration; accepted for forward
-    /// compatibility but currently has no effect (no service is registered).
-    #[arg(long, default_value_t = false)]
+    // ── F19.1/F37: Windows Service Registration ──────────────────────────────
+    /// Registers this binary as a Windows service (via the Service Control Manager) and exits
+    /// without running a backup now. The service starts `OnDemand` (not automatic) and, once
+    /// running, is idle — it only responds to Stop/Interrogate control requests; F41 is expected
+    /// to give it real work to do. Requires Administrator. Does NOT require --source/--dest: this
+    /// registers the binary itself, not any particular backup invocation.
+    #[arg(long, default_value_t = false, conflicts_with = "uninstall_service")]
     pub install_service: bool,
+
+    /// Removes a previously installed Windows service and exits. Requires Administrator. Does NOT
+    /// require --source/--dest.
+    #[arg(long, default_value_t = false, conflicts_with = "install_service")]
+    pub uninstall_service: bool,
 }
 
 impl Args {
@@ -536,7 +558,12 @@ impl Args {
         if self.keep_generations.is_some() && self.backup_type.is_none() {
             return Err(IngestError::KeepGenerationsWithoutBackupType);
         }
-        if self.restore_from.is_some() || self.resume_from.is_some() || self.uninstall_schedule.is_some() {
+        if self.restore_from.is_some()
+            || self.resume_from.is_some()
+            || self.uninstall_schedule.is_some()
+            || self.install_service
+            || self.uninstall_service
+        {
             return Ok(());
         }
         if !(MIN_THREADS as u16..=MAX_THREADS).contains(&self.threads) {

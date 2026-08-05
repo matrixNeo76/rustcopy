@@ -34,6 +34,9 @@ axum = { version = "0.8", optional = true }
 [features]
 notify-server = ["dep:axum"]
 
+[target.'cfg(windows)'.dependencies]
+windows-service = "0.8"
+
 [[bin]]
 name = "robocopy_ingest"
 path = "src/main.rs"

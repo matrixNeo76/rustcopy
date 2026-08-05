@@ -180,6 +180,30 @@ schtasks /Query /TN rustcopy-dati
 - `--install-schedule` valida prima l'invocazione (stessi controlli di un run normale: source/dest
   esistenti, ecc.) — installare uno schedule che fallirebbe sempre non ha senso.
 
+### Servizio Windows (`--install-service`/`--uninstall-service`, F37)
+
+```powershell
+# Da un prompt con privilegi di Amministratore:
+.\target\release\robocopy_ingest.exe --install-service
+
+# Verifica/avvio con gli strumenti nativi di Windows:
+sc query RustcopyIngestService
+sc start RustcopyIngestService
+
+# Rimozione:
+.\target\release\robocopy_ingest.exe --uninstall-service
+```
+
+- **Perimetro di questo primo taglio (F37)**: il servizio, una volta avviato, resta **inattivo** —
+  risponde solo a Stop/Interrogate, nessuna logica di backup gira al suo interno. È pura
+  infrastruttura SCM, in attesa che una milestone futura (F41, notify-server persistente) gli dia
+  un compito reale. Non è un sostituto di `--install-schedule` (F36): i backup pianificati passano
+  comunque da Task Scheduler, non da questo servizio.
+- Parte con avvio `OnDemand` (non automatico) — cambiabile in `Automatic` via `services.msc` o
+  `sc config RustcopyIngestService start= auto` una volta che il servizio avrà un compito reale.
+- **Richiede Amministratore** per entrambi i comandi; senza elevazione fallisce con un errore
+  chiaro (mai un fallback silenzioso).
+
 ---
 
 ## 💻 2. Comandi Reali Eseguiti e Verificati con Successo

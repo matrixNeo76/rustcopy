@@ -51,8 +51,28 @@ const EXIT_INTEGRITY_FAILED: u8 = 4;
 /// generation folders and neither `--force-purge` nor an interactive confirmation was given.
 const EXIT_RETENTION_PURGE_ABORTED: u8 = 5;
 
-#[tokio::main]
-async fn main() -> ExitCode {
+/// F37: a plain (non-`#[tokio::main]`) entry point on purpose. `windows_service::service_dispatcher`
+/// hands control to SCM's dispatch loop by blocking the calling OS thread until the service stops
+/// — it must run on a plain thread, not a tokio runtime worker, and ideally before any tokio
+/// runtime exists at all. So this checks for the internal service-launch marker directly against
+/// raw argv, entirely before clap parsing or building a `Runtime`, and only builds the tokio
+/// runtime for the normal (non-service) path.
+fn main() -> ExitCode {
+    if robocopy_ingest::service::is_service_launch() {
+        return match robocopy_ingest::service::run_service_dispatcher() {
+            Ok(()) => ExitCode::SUCCESS,
+            Err(error) => {
+                eprintln!("error: {error:#}");
+                ExitCode::from(EXIT_UNRECOVERABLE)
+            }
+        };
+    }
+
+    let runtime = tokio::runtime::Runtime::new().expect("failed to build the tokio async runtime");
+    runtime.block_on(async_main())
+}
+
+async fn async_main() -> ExitCode {
     let args = Args::parse();
 
     match run(args).await {
@@ -82,6 +102,22 @@ async fn run(mut args: Args) -> Result<u8> {
         robocopy_ingest::schedule::uninstall(&name)
             .with_context(|| format!("cannot uninstall the scheduled task {name:?}"))?;
         println!("removed scheduled task '{name}'");
+        return Ok(0);
+    }
+
+    // F37: same pure-meta-operation idea as --uninstall-schedule above — registers/removes the
+    // Windows service and exits, no --source/--dest needed (this registers the binary itself, not
+    // any particular backup invocation).
+    if args.install_service {
+        robocopy_ingest::service::install().context("cannot install the Windows service")?;
+        println!(
+            "Windows service installed (start type: OnDemand). Start it with:\n  sc start RustcopyIngestService\nor via services.msc."
+        );
+        return Ok(0);
+    }
+    if args.uninstall_service {
+        robocopy_ingest::service::uninstall().context("cannot uninstall the Windows service")?;
+        println!("Windows service removed.");
         return Ok(0);
     }
 

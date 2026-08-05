@@ -437,6 +437,39 @@ fn install_schedule_and_uninstall_schedule_together_are_rejected() {
     assert!(!output.status.success());
 }
 
+/// F37 black-box test: `--install-service` and `--uninstall-service` together must be rejected by
+/// clap — they mean opposite things (register vs. remove the Windows service).
+#[test]
+fn install_service_and_uninstall_service_together_are_rejected() {
+    let output = run(&["--install-service", "--uninstall-service"]);
+    assert!(!output.status.success());
+}
+
+/// F37 black-box test: `--install-service`/`--uninstall-service` don't require --source/--dest —
+/// confirms the clap `required_unless_present_any` exemption and `validate()`'s early return
+/// actually work, without needing the real Administrator elevation a genuine
+/// `CreateService`/`DeleteService` round trip would require (see `service.rs`'s doc comment for
+/// why that round trip isn't covered by an automated test here).
+#[test]
+fn install_service_does_not_require_source_or_dest() {
+    let output = run(&["--install-service"]);
+    assert!(
+        !stderr_of(&output).contains("--source and --dest must be set"),
+        "stderr: {}",
+        stderr_of(&output)
+    );
+}
+
+#[test]
+fn uninstall_service_does_not_require_source_or_dest() {
+    let output = run(&["--uninstall-service"]);
+    assert!(
+        !stderr_of(&output).contains("--source and --dest must be set"),
+        "stderr: {}",
+        stderr_of(&output)
+    );
+}
+
 /// Deletes the named Task Scheduler entry on drop, best-effort — cleans up after the round-trip
 /// test below even if an assertion panics partway through.
 #[cfg(windows)]

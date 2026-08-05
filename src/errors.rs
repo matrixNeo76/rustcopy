@@ -127,6 +127,12 @@ pub enum IngestError {
     /// scheduling was attempted on a non-Windows platform where Task Scheduler doesn't exist.
     #[error("schedule error: {0}")]
     Schedule(String),
+
+    /// F37: `--install-service`/`--uninstall-service` failed talking to the Windows Service
+    /// Control Manager (commonly: not running as Administrator), or was attempted on a
+    /// non-Windows platform where SCM doesn't exist.
+    #[error("service error: {0}")]
+    Service(String),
 }
 
 impl IngestError {
@@ -180,7 +186,8 @@ impl IngestError {
             | IngestError::Vss(_)
             | IngestError::PreCommandFailed { .. }
             | IngestError::InvalidScheduleSpec(_)
-            | IngestError::Schedule(_) => false,
+            | IngestError::Schedule(_)
+            | IngestError::Service(_) => false,
         }
     }
 }
