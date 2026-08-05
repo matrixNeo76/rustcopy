@@ -177,7 +177,8 @@ fn install_service_and_uninstall_service_together_are_rejected() {
 /// instead of panicking, hanging, or silently succeeding. A genuine `CreateService`/
 /// `DeleteService` round trip against the real SCM needs real elevation and real machine state,
 /// same declared limitation as `robocopy_ingest`'s own `--install-service` (F37) and
-/// `--vss-snapshot` (F30) — not covered by an automated test here.
+/// `--vss-snapshot` (F30) — see `install_and_uninstall_service_round_trip` below for the
+/// `#[ignore]`d elevated version of this test.
 #[test]
 fn install_and_uninstall_service_fail_cleanly_without_elevation() {
     let install = Command::new(NOTIFY_SERVER_BIN)
@@ -200,5 +201,67 @@ fn install_and_uninstall_service_fail_cleanly_without_elevation() {
         String::from_utf8_lossy(&uninstall.stderr).contains("service"),
         "stderr: {}",
         String::from_utf8_lossy(&uninstall.stderr)
+    );
+}
+
+/// Deletes the named Windows service on drop, best-effort.
+struct WindowsServiceGuard(&'static str);
+
+impl Drop for WindowsServiceGuard {
+    fn drop(&mut self) {
+        let _ = Command::new("sc.exe").args(["delete", self.0]).output();
+    }
+}
+
+/// F41 elevated round-trip test: `--install-service` actually registers `RustcopyNotifyServer`
+/// with the real Service Control Manager, and `--uninstall-service` actually removes it — a real
+/// round trip, not a mock, for notify-server's own (separate from `robocopy_ingest`'s) service
+/// identity. **Requires Administrator elevation** and mutates real machine state, so it's marked
+/// `#[ignore]` and never runs as part of the normal suite. Run it manually from an elevated
+/// prompt with:
+///   cargo test --features notify-server --test notify_server_e2e -- --ignored install_and_uninstall_service_round_trip
+#[test]
+#[ignore = "requires Administrator elevation; run manually with `cargo test -- --ignored`"]
+fn install_and_uninstall_service_round_trip() {
+    const SERVICE_NAME: &str = "RustcopyNotifyServer";
+    let _guard = WindowsServiceGuard(SERVICE_NAME);
+
+    let install = Command::new(NOTIFY_SERVER_BIN)
+        .arg("--install-service")
+        .output()
+        .expect("run notify-server");
+    assert!(
+        install.status.success(),
+        "install must succeed when run elevated; stderr: {}",
+        String::from_utf8_lossy(&install.stderr)
+    );
+
+    let query = Command::new("sc.exe")
+        .args(["query", SERVICE_NAME])
+        .output()
+        .expect("run sc.exe query");
+    assert!(
+        query.status.success(),
+        "sc query must find the freshly installed service; stderr: {}",
+        String::from_utf8_lossy(&query.stderr)
+    );
+
+    let uninstall = Command::new(NOTIFY_SERVER_BIN)
+        .arg("--uninstall-service")
+        .output()
+        .expect("run notify-server");
+    assert!(
+        uninstall.status.success(),
+        "uninstall must succeed when run elevated; stderr: {}",
+        String::from_utf8_lossy(&uninstall.stderr)
+    );
+
+    let query_after = Command::new("sc.exe")
+        .args(["query", SERVICE_NAME])
+        .output()
+        .expect("run sc.exe query");
+    assert!(
+        !query_after.status.success(),
+        "sc query must no longer find the service after uninstall"
     );
 }

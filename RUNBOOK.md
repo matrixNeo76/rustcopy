@@ -230,6 +230,30 @@ sc start RustcopyNotifyServer
 - **Richiede Amministratore** per entrambi i comandi; senza elevazione fallisce con un errore
   chiaro (mai un fallback silenzioso).
 
+### Verifica manuale elevata dei servizi (`scripts/verify-services.ps1`)
+
+`CreateService`/`StartService`/`StopService`/`DeleteService` richiedono Amministratore, quindi il
+round-trip reale non può far parte della suite `cargo test` normale (limite dichiarato, stesso
+pattern di `--vss-snapshot`/F30). Per verificarlo comunque in modo ripetibile invece di ridigitare
+i comandi a mano:
+
+```powershell
+# Da un prompt PowerShell con privilegi di Amministratore, dopo:
+#   cargo build --release --features notify-server
+.\scripts\verify-services.ps1
+```
+
+Installa, avvia, ferma e disinstalla **entrambi** i servizi (`RustcopyIngestService` e
+`RustcopyNotifyServer`), verificando lo stato reale via `sc query` ad ogni passaggio, con cleanup
+automatico anche in caso di fallimento a metà. Esiste anche una versione automatizzata ma
+**disattivata di default** dello stesso controllo (`#[ignore]`) in `tests/cli_smoke.rs` e
+`tests/notify_server_e2e.rs`, eseguibile esplicitamente da un prompt elevato con:
+
+```powershell
+cargo test --test cli_smoke -- --ignored install_and_uninstall_service_round_trip
+cargo test --features notify-server --test notify_server_e2e -- --ignored install_and_uninstall_service_round_trip
+```
+
 ---
 
 ## 💻 2. Comandi Reali Eseguiti e Verificati con Successo

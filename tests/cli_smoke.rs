@@ -470,6 +470,67 @@ fn uninstall_service_does_not_require_source_or_dest() {
     );
 }
 
+/// Deletes the named Windows service on drop, best-effort — cleans up after the elevated
+/// round-trip test below even if an assertion panics partway through.
+#[cfg(windows)]
+struct WindowsServiceGuard(&'static str);
+
+#[cfg(windows)]
+impl Drop for WindowsServiceGuard {
+    fn drop(&mut self) {
+        let _ = std::process::Command::new("sc.exe").args(["delete", self.0]).output();
+    }
+}
+
+/// F37 elevated round-trip test: `--install-service` actually registers `RustcopyIngestService`
+/// with the real Service Control Manager, and `--uninstall-service` actually removes it — a real
+/// round trip, not a mock. **Requires Administrator elevation** (`CreateService`/`DeleteService`
+/// need it) and mutates real machine state (the Windows service database), so it is marked
+/// `#[ignore]` and never runs as part of the normal `cargo test` suite — this is exactly the
+/// limitation declared in `service.rs`'s doc comment and `ROADMAP.md`'s F37 row. Run it manually
+/// from an elevated prompt with:
+///   cargo test --test cli_smoke -- --ignored install_and_uninstall_service_round_trip
+#[cfg(windows)]
+#[test]
+#[ignore = "requires Administrator elevation; run manually with `cargo test -- --ignored`"]
+fn install_and_uninstall_service_round_trip() {
+    const SERVICE_NAME: &str = "RustcopyIngestService";
+    let _guard = WindowsServiceGuard(SERVICE_NAME);
+
+    let install_output = run(&["--install-service"]);
+    assert!(
+        install_output.status.success(),
+        "install must succeed when run elevated; stderr: {}",
+        stderr_of(&install_output)
+    );
+
+    let query = std::process::Command::new("sc.exe")
+        .args(["query", SERVICE_NAME])
+        .output()
+        .expect("run sc.exe query");
+    assert!(
+        query.status.success(),
+        "sc query must find the freshly installed service; stderr: {}",
+        String::from_utf8_lossy(&query.stderr)
+    );
+
+    let uninstall_output = run(&["--uninstall-service"]);
+    assert!(
+        uninstall_output.status.success(),
+        "uninstall must succeed when run elevated; stderr: {}",
+        stderr_of(&uninstall_output)
+    );
+
+    let query_after = std::process::Command::new("sc.exe")
+        .args(["query", SERVICE_NAME])
+        .output()
+        .expect("run sc.exe query");
+    assert!(
+        !query_after.status.success(),
+        "sc query must no longer find the service after uninstall"
+    );
+}
+
 /// Deletes the named Task Scheduler entry on drop, best-effort — cleans up after the round-trip
 /// test below even if an assertion panics partway through.
 #[cfg(windows)]
