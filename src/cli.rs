@@ -598,7 +598,9 @@ impl Args {
             return Err(IngestError::EmptyPattern);
         }
         // F3.4: prevent copying a directory into itself.
-        let source_canonical = source.canonicalize().unwrap_or_else(|_| source.to_path_buf());
+        let source_canonical = source
+            .canonicalize()
+            .unwrap_or_else(|_| source.to_path_buf());
         let dest_canonical = dest.canonicalize().unwrap_or_else(|_| dest.to_path_buf());
         if source_canonical == dest_canonical {
             return Err(IngestError::SourceEqualsDestination(source_canonical));
@@ -622,7 +624,11 @@ impl Args {
     /// `--log-max-bytes`/`--log-max-backups`. `--quiet` and `--log-level` are mutually exclusive
     /// (enforced by clap), so exactly one of them decides the effective level.
     pub fn log_config(&self) -> logging::LogConfig {
-        let level = if self.quiet { "warn" } else { self.log_level.as_str() };
+        let level = if self.quiet {
+            "warn"
+        } else {
+            self.log_level.as_str()
+        };
         logging::LogConfig {
             filter: format!("robocopy_ingest={level},warn"),
             max_bytes: self.log_max_bytes,
@@ -720,7 +726,10 @@ mod tests {
         assert_eq!(args.log_level, LogLevel::Debug);
         assert!(!args.quiet);
         assert_eq!(args.log_max_bytes, crate::logging::DEFAULT_MAX_LOG_BYTES);
-        assert_eq!(args.log_max_backups, crate::logging::DEFAULT_MAX_LOG_BACKUPS);
+        assert_eq!(
+            args.log_max_backups,
+            crate::logging::DEFAULT_MAX_LOG_BACKUPS
+        );
         assert!(!args.vss_snapshot);
         assert_eq!(
             args.report_path,
@@ -776,7 +785,7 @@ mod tests {
         .expect("parse");
 
         let job = crate::config::JobConfig {
-            threads: Some(64), // unconditionally wins, like merge_config always did
+            threads: Some(64),            // unconditionally wins, like merge_config always did
             verify_integrity: Some(true), // must win: never set on the CLI
             pattern: Some("*.csv".to_string()), // must win: pattern still holds clap's default
             ..crate::config::JobConfig::default()
@@ -817,8 +826,9 @@ mod tests {
     #[test]
     fn backup_type_and_mirror_together_are_rejected() {
         use crate::generations::BackupType;
-        let mut args = Args::try_parse_from(["robocopy_ingest", "--source", ".", "--dest", "./out"])
-            .expect("parse");
+        let mut args =
+            Args::try_parse_from(["robocopy_ingest", "--source", ".", "--dest", "./out"])
+                .expect("parse");
         args.backup_type = Some(BackupType::Full);
         args.mirror = true;
         assert!(matches!(
@@ -830,8 +840,9 @@ mod tests {
     /// F35: `--keep-generations` without `--backup-type` has nothing to rotate.
     #[test]
     fn keep_generations_without_backup_type_is_rejected() {
-        let mut args = Args::try_parse_from(["robocopy_ingest", "--source", ".", "--dest", "./out"])
-            .expect("parse");
+        let mut args =
+            Args::try_parse_from(["robocopy_ingest", "--source", ".", "--dest", "./out"])
+                .expect("parse");
         args.keep_generations = Some(3);
         assert!(matches!(
             args.validate(),
@@ -1026,14 +1037,8 @@ mod tests {
     fn source_equals_dest_is_rejected() {
         let dir = tempfile::tempdir().expect("tempdir");
         let path = dir.path().to_str().expect("utf8");
-        let args = Args::try_parse_from([
-            "robocopy_ingest",
-            "--source",
-            path,
-            "--dest",
-            path,
-        ])
-        .expect("parse");
+        let args = Args::try_parse_from(["robocopy_ingest", "--source", path, "--dest", path])
+            .expect("parse");
         assert!(matches!(
             args.validate(),
             Err(IngestError::SourceEqualsDestination(_))
@@ -1094,14 +1099,8 @@ mod tests {
         let dest = dir.path().join("subdir");
         std::fs::create_dir_all(&dest).expect("create dest");
         let dst = dest.to_str().expect("utf8 dst");
-        let args = Args::try_parse_from([
-            "robocopy_ingest",
-            "--source",
-            src,
-            "--dest",
-            dst,
-        ])
-        .expect("parse");
+        let args = Args::try_parse_from(["robocopy_ingest", "--source", src, "--dest", dst])
+            .expect("parse");
         assert!(matches!(
             args.validate(),
             Err(IngestError::DestInsideSource { .. })

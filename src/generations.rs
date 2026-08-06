@@ -108,9 +108,13 @@ impl GenerationManifest {
         if !path.exists() {
             return Ok(Self::default());
         }
-        let content = std::fs::read_to_string(&path).map_err(|error| IngestError::io(&path, error))?;
+        let content =
+            std::fs::read_to_string(&path).map_err(|error| IngestError::io(&path, error))?;
         serde_json::from_str(&content).map_err(|error| {
-            IngestError::io(&path, std::io::Error::new(std::io::ErrorKind::InvalidData, error))
+            IngestError::io(
+                &path,
+                std::io::Error::new(std::io::ErrorKind::InvalidData, error),
+            )
         })
     }
 
@@ -127,7 +131,10 @@ impl GenerationManifest {
     pub fn save(&self, dest_root: &Path, job_name: Option<&str>) -> Result<(), IngestError> {
         let path = Self::path_for(dest_root, job_name);
         let json = serde_json::to_string_pretty(self).map_err(|error| {
-            IngestError::io(&path, std::io::Error::new(std::io::ErrorKind::InvalidData, error))
+            IngestError::io(
+                &path,
+                std::io::Error::new(std::io::ErrorKind::InvalidData, error),
+            )
         })?;
         crate::atomic_write(&path, json.as_bytes()).map_err(|error| IngestError::io(&path, error))
     }
@@ -194,7 +201,8 @@ impl GenerationManifest {
     /// pruning (the caller is responsible for also deleting the corresponding `<dest>/<id>/`
     /// folders on disk).
     pub fn retain_generations(&mut self, ids: &std::collections::HashSet<String>) {
-        self.generations.retain(|generation| !ids.contains(&generation.id));
+        self.generations
+            .retain(|generation| !ids.contains(&generation.id));
     }
 }
 
@@ -211,7 +219,10 @@ pub fn new_generation_id(backup_type: BackupType) -> String {
 
 /// Files in `current` that are new or changed (by size or mtime) relative to `reference` — what
 /// an incremental generation actually needs to copy. Order follows `current`.
-pub fn changed_since<'a>(current: &'a [ScannedFile], reference: &[GenerationFile]) -> Vec<&'a ScannedFile> {
+pub fn changed_since<'a>(
+    current: &'a [ScannedFile],
+    reference: &[GenerationFile],
+) -> Vec<&'a ScannedFile> {
     let reference_by_path: HashMap<&Path, &GenerationFile> = reference
         .iter()
         .map(|file| (file.relative_path.as_path(), file))
@@ -219,13 +230,15 @@ pub fn changed_since<'a>(current: &'a [ScannedFile], reference: &[GenerationFile
 
     current
         .iter()
-        .filter(|file| match reference_by_path.get(file.relative_path.as_path()) {
-            None => true,
-            Some(prior) => {
-                prior.size_bytes != file.size_bytes
-                    || prior.modified_timestamp != file.modified_timestamp
-            }
-        })
+        .filter(
+            |file| match reference_by_path.get(file.relative_path.as_path()) {
+                None => true,
+                Some(prior) => {
+                    prior.size_bytes != file.size_bytes
+                        || prior.modified_timestamp != file.modified_timestamp
+                }
+            },
+        )
         .collect()
 }
 
@@ -340,7 +353,10 @@ mod tests {
     #[test]
     fn changed_since_flags_modified_files_by_size_or_mtime() {
         let current = vec![scanned("a.csv", 99, 100), scanned("b.csv", 20, 999)];
-        let reference = vec![generation_file("a.csv", 10, 100), generation_file("b.csv", 20, 200)];
+        let reference = vec![
+            generation_file("a.csv", 10, 100),
+            generation_file("b.csv", 20, 200),
+        ];
 
         let changed = changed_since(&current, &reference);
         let paths: Vec<_> = changed.iter().map(|f| f.relative_path.clone()).collect();
@@ -392,7 +408,9 @@ mod tests {
             files_copied: 1,
             files: vec![generation_file("photo1.jpg", 10, 100)],
         });
-        photos.save(dir.path(), Some("photos")).expect("save photos manifest");
+        photos
+            .save(dir.path(), Some("photos"))
+            .expect("save photos manifest");
 
         let mut documents = GenerationManifest::default();
         documents.push(Generation {
@@ -402,18 +420,22 @@ mod tests {
             files_copied: 1,
             files: vec![generation_file("doc1.pdf", 20, 200)],
         });
-        documents.save(dir.path(), Some("documents")).expect("save documents manifest");
+        documents
+            .save(dir.path(), Some("documents"))
+            .expect("save documents manifest");
 
         // D12: each job's manifest round-trips independently...
-        let loaded_photos = GenerationManifest::load_or_default(dir.path(), Some("photos")).expect("load photos");
-        let loaded_documents =
-            GenerationManifest::load_or_default(dir.path(), Some("documents")).expect("load documents");
+        let loaded_photos =
+            GenerationManifest::load_or_default(dir.path(), Some("photos")).expect("load photos");
+        let loaded_documents = GenerationManifest::load_or_default(dir.path(), Some("documents"))
+            .expect("load documents");
         assert_eq!(loaded_photos, photos);
         assert_eq!(loaded_documents, documents);
         assert_ne!(loaded_photos, loaded_documents);
 
         // ...and neither wrote to (or is visible through) the unnamespaced default path.
-        let default_manifest = GenerationManifest::load_or_default(dir.path(), None).expect("load default");
+        let default_manifest =
+            GenerationManifest::load_or_default(dir.path(), None).expect("load default");
         assert!(default_manifest.generations.is_empty());
     }
 
@@ -516,7 +538,10 @@ mod tests {
         // cycle (1_full+2_incremental) is old enough to prune.
         let mut to_prune = manifest.generations_to_prune(2);
         to_prune.sort();
-        assert_eq!(to_prune, vec!["1_full".to_string(), "2_incremental".to_string()]);
+        assert_eq!(
+            to_prune,
+            vec!["1_full".to_string(), "2_incremental".to_string()]
+        );
     }
 
     #[test]
@@ -529,7 +554,9 @@ mod tests {
         ]);
 
         let ids: std::collections::HashSet<String> =
-            ["1_full".to_string(), "2_incremental".to_string()].into_iter().collect();
+            ["1_full".to_string(), "2_incremental".to_string()]
+                .into_iter()
+                .collect();
         manifest.retain_generations(&ids);
 
         let remaining: Vec<_> = manifest.generations.iter().map(|g| g.id.as_str()).collect();

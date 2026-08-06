@@ -221,7 +221,10 @@ impl NotifyServerConfig {
         }
         if let Some(webhook) = &self.generic_webhook {
             if webhook.enabled {
-                sinks.push(Box::new(GenericWebhookSink::new(webhook.url.clone(), timeout)));
+                sinks.push(Box::new(GenericWebhookSink::new(
+                    webhook.url.clone(),
+                    timeout,
+                )));
             }
         }
         sinks
@@ -317,8 +320,14 @@ mod tests {
     #[tokio::test]
     async fn log_sink_never_fails() {
         let sink = LogSink;
-        assert!(sink.deliver(&sample_payload(BackupStatus::Success)).await.is_ok());
-        assert!(sink.deliver(&sample_payload(BackupStatus::Failed)).await.is_ok());
+        assert!(sink
+            .deliver(&sample_payload(BackupStatus::Success))
+            .await
+            .is_ok());
+        assert!(sink
+            .deliver(&sample_payload(BackupStatus::Failed))
+            .await
+            .is_ok());
     }
 
     #[tokio::test]
@@ -352,7 +361,11 @@ mod tests {
         assert_eq!(failures.len(), 1, "exactly one sink must have failed");
         assert_eq!(failures[0].sink, "failing");
         assert_eq!(failing.calls(), 1, "the failing sink must still be called");
-        assert_eq!(ok_sink.calls(), 1, "a later sink must run despite an earlier failure");
+        assert_eq!(
+            ok_sink.calls(),
+            1,
+            "a later sink must run despite an earlier failure"
+        );
     }
 
     #[test]
@@ -378,7 +391,11 @@ mod tests {
         };
         let sinks = config.build_sinks(Duration::from_secs(5));
         let names: Vec<_> = sinks.iter().map(|s| s.name()).collect();
-        assert_eq!(names, vec!["log", "ntfy"], "disabled channels must not be built");
+        assert_eq!(
+            names,
+            vec!["log", "ntfy"],
+            "disabled channels must not be built"
+        );
     }
 
     #[test]

@@ -3,8 +3,13 @@ name = "robocopy_ingest"
 version = "6.0.0"
 edition = "2021"
 rust-version = "1.74"
-description = "CLI Rust per l'ingestion di grandi volumi CSV via Robocopy, con benchmark contro copia naive"
+description = "Windows-native enterprise backup CLI wrapping robocopy.exe: integrity verification, AES-256-GCM encryption, VSS snapshots, full/incremental/differential generations, scheduling, and Windows Service integration"
 license = "MIT"
+repository = "https://github.com/matrixNeo76/rustcopy"
+homepage = "https://github.com/matrixNeo76/rustcopy"
+readme = "README.md"
+keywords = ["robocopy", "backup", "windows", "cli", "disaster-recovery"]
+categories = ["command-line-utilities", "filesystem"]
 
 [dependencies]
 anyhow = "1"

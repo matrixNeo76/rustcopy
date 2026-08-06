@@ -134,9 +134,17 @@ fn quiet_suppresses_per_file_debug_lines_in_the_real_log() {
         "--log-path",
         log_default.to_str().expect("utf8"),
         "--report-path",
-        workdir.path().join("default-report.json").to_str().expect("utf8"),
+        workdir
+            .path()
+            .join("default-report.json")
+            .to_str()
+            .expect("utf8"),
     ]);
-    assert!(output_default.status.success(), "stderr: {}", stderr_of(&output_default));
+    assert!(
+        output_default.status.success(),
+        "stderr: {}",
+        stderr_of(&output_default)
+    );
     let default_log = std::fs::read_to_string(&log_default).expect("read default log");
     assert!(
         default_log.contains("DEBUG"),
@@ -152,10 +160,18 @@ fn quiet_suppresses_per_file_debug_lines_in_the_real_log() {
         "--log-path",
         log_quiet.to_str().expect("utf8"),
         "--report-path",
-        workdir.path().join("quiet-report.json").to_str().expect("utf8"),
+        workdir
+            .path()
+            .join("quiet-report.json")
+            .to_str()
+            .expect("utf8"),
         "--quiet",
     ]);
-    assert!(output_quiet.status.success(), "stderr: {}", stderr_of(&output_quiet));
+    assert!(
+        output_quiet.status.success(),
+        "stderr: {}",
+        stderr_of(&output_quiet)
+    );
     let quiet_log = std::fs::read_to_string(&log_quiet).expect("read quiet log");
     assert!(
         !quiet_log.contains("DEBUG"),
@@ -193,7 +209,11 @@ fn oversized_log_is_rotated_by_a_real_run() {
     let mut rotated_path = log_path.clone().into_os_string();
     rotated_path.push(".1");
     let rotated = std::fs::read_to_string(&rotated_path).expect("rotated backup must exist");
-    assert_eq!(rotated, "x".repeat(1000), "old content must be preserved in the rotated file");
+    assert_eq!(
+        rotated,
+        "x".repeat(1000),
+        "old content must be preserved in the rotated file"
+    );
 
     let fresh = std::fs::read_to_string(&log_path).expect("fresh log must exist");
     assert!(
@@ -219,7 +239,12 @@ fn fast_verify_skips_unchanged_files_on_a_second_run() {
             "--dest".into(),
             dest.to_str().expect("utf8").to_string(),
             "--log-path".into(),
-            workdir.path().join("ingest.log").to_str().expect("utf8").to_string(),
+            workdir
+                .path()
+                .join("ingest.log")
+                .to_str()
+                .expect("utf8")
+                .to_string(),
             "--report-path".into(),
             report.to_str().expect("utf8").to_string(),
             "--verify-integrity".into(),
@@ -271,7 +296,12 @@ fn fast_verify_recatches_only_the_file_whose_source_changed() {
             "--dest".into(),
             dest.to_str().expect("utf8").to_string(),
             "--log-path".into(),
-            workdir.path().join("ingest.log").to_str().expect("utf8").to_string(),
+            workdir
+                .path()
+                .join("ingest.log")
+                .to_str()
+                .expect("utf8")
+                .to_string(),
             "--report-path".into(),
             report.to_str().expect("utf8").to_string(),
             "--verify-integrity".into(),
@@ -285,7 +315,11 @@ fn fast_verify_recatches_only_the_file_whose_source_changed() {
     assert!(run(&argv1).status.success());
 
     // Change only a.csv's content at the source (which also bumps its mtime).
-    std::fs::write(source.path().join("a.csv"), b"changed,content,here\n1,2,3\n").expect("modify a.csv");
+    std::fs::write(
+        source.path().join("a.csv"),
+        b"changed,content,here\n1,2,3\n",
+    )
+    .expect("modify a.csv");
 
     let report2 = workdir.path().join("report2.json");
     let owned2 = base_args(&report2);
@@ -330,7 +364,12 @@ fn fast_verify_never_caches_a_failed_file_so_it_keeps_being_reported() {
             "--dest".into(),
             dest.to_str().expect("utf8").to_string(),
             "--log-path".into(),
-            workdir.path().join("ingest.log").to_str().expect("utf8").to_string(),
+            workdir
+                .path()
+                .join("ingest.log")
+                .to_str()
+                .expect("utf8")
+                .to_string(),
             "--report-path".into(),
             report.to_str().expect("utf8").to_string(),
             "--verify-integrity".into(),
@@ -344,10 +383,20 @@ fn fast_verify_never_caches_a_failed_file_so_it_keeps_being_reported() {
     let owned1 = base_args(&report1);
     let argv1: Vec<&str> = owned1.iter().map(String::as_str).collect();
     let output1 = run(&argv1);
-    assert_eq!(output1.status.code(), Some(4), "stale.log is excluded from the copy, so verification must fail");
+    assert_eq!(
+        output1.status.code(),
+        Some(4),
+        "stale.log is excluded from the copy, so verification must fail"
+    );
     let json1: serde_json::Value =
         serde_json::from_str(&std::fs::read_to_string(&report1).expect("read")).expect("json");
-    assert_eq!(json1["integrity_check"]["missing_in_dest"].as_array().expect("array").len(), 1);
+    assert_eq!(
+        json1["integrity_check"]["missing_in_dest"]
+            .as_array()
+            .expect("array")
+            .len(),
+        1
+    );
 
     let report2 = workdir.path().join("report2.json");
     let owned2 = base_args(&report2);
@@ -364,7 +413,13 @@ fn fast_verify_never_caches_a_failed_file_so_it_keeps_being_reported() {
         json2["integrity_check"]["skipped_unchanged"], 1,
         "only a.csv (which passed) should be trusted from the cache; stale.log must have been re-checked: {json2}"
     );
-    assert_eq!(json2["integrity_check"]["missing_in_dest"].as_array().expect("array").len(), 1);
+    assert_eq!(
+        json2["integrity_check"]["missing_in_dest"]
+            .as_array()
+            .expect("array")
+            .len(),
+        1
+    );
 }
 
 /// F31 black-box test (closes O5): a hand-written checkpoint — the exact shape `run()`'s Ctrl+C
@@ -454,7 +509,12 @@ fn install_schedule_with_an_invalid_spec_is_rejected_by_the_real_binary() {
         "monthly@1",
     ]);
 
-    assert_eq!(output.status.code(), Some(2), "stderr: {}", stderr_of(&output));
+    assert_eq!(
+        output.status.code(),
+        Some(2),
+        "stderr: {}",
+        stderr_of(&output)
+    );
     assert!(
         stderr_of(&output).contains("invalid --install-schedule spec"),
         "stderr: {}",
@@ -466,7 +526,12 @@ fn install_schedule_with_an_invalid_spec_is_rejected_by_the_real_binary() {
 /// by clap itself — they mean opposite things (create vs. remove a scheduled task).
 #[test]
 fn install_schedule_and_uninstall_schedule_together_are_rejected() {
-    let output = run(&["--install-schedule", "daily@02:00", "--uninstall-schedule", "somejob"]);
+    let output = run(&[
+        "--install-schedule",
+        "daily@02:00",
+        "--uninstall-schedule",
+        "somejob",
+    ]);
     assert!(!output.status.success());
 }
 
@@ -511,7 +576,9 @@ struct WindowsServiceGuard(&'static str);
 #[cfg(windows)]
 impl Drop for WindowsServiceGuard {
     fn drop(&mut self) {
-        let _ = std::process::Command::new("sc.exe").args(["delete", self.0]).output();
+        let _ = std::process::Command::new("sc.exe")
+            .args(["delete", self.0])
+            .output();
     }
 }
 
@@ -599,7 +666,11 @@ fn install_and_uninstall_schedule_round_trip_via_real_schtasks() {
         "--schedule-name",
         &task_name,
     ]);
-    assert!(install_output.status.success(), "stderr: {}", stderr_of(&install_output));
+    assert!(
+        install_output.status.success(),
+        "stderr: {}",
+        stderr_of(&install_output)
+    );
     assert!(
         stdout_of(&install_output).contains(&task_name),
         "stdout: {}",
@@ -607,7 +678,11 @@ fn install_and_uninstall_schedule_round_trip_via_real_schtasks() {
     );
 
     let uninstall_output = run(&["--uninstall-schedule", &task_name]);
-    assert!(uninstall_output.status.success(), "stderr: {}", stderr_of(&uninstall_output));
+    assert!(
+        uninstall_output.status.success(),
+        "stderr: {}",
+        stderr_of(&uninstall_output)
+    );
 }
 
 #[cfg(not(windows))]
@@ -816,7 +891,10 @@ fn encrypt_aes256_actually_encrypts_destination_files() {
     manager
         .decrypt_stream(std::io::Cursor::new(&encrypted), &mut decrypted)
         .expect("decrypt with the right key");
-    assert_eq!(decrypted, plaintext, "must decrypt back to the original bytes");
+    assert_eq!(
+        decrypted, plaintext,
+        "must decrypt back to the original bytes"
+    );
 }
 
 #[cfg(windows)]
@@ -835,6 +913,7 @@ fn permanently_uncopyable_file_does_not_undercount_the_rest_of_the_transfer() {
     let _locked_handle = std::fs::OpenOptions::new()
         .write(true)
         .create(true)
+        .truncate(true)
         .share_mode(0)
         .open(dest.join("b.csv"))
         .expect("lock b.csv exclusively");
@@ -858,7 +937,11 @@ fn permanently_uncopyable_file_does_not_undercount_the_rest_of_the_transfer() {
     // F29b: exit 1 means the transfer itself failed (robocopy couldn't copy everything), distinct
     // from exit 4 (EXIT_INTEGRITY_FAILED, see ignore_transient_missing_turns_an_excluded_log_into_a_pass
     // below) which means the transfer succeeded but --verify-integrity found a problem afterwards.
-    assert_eq!(output.status.code(), Some(1), "some items could not be copied");
+    assert_eq!(
+        output.status.code(),
+        Some(1),
+        "some items could not be copied"
+    );
     assert!(report_path.is_file());
     let report: serde_json::Value =
         serde_json::from_str(&std::fs::read_to_string(&report_path).expect("read")).expect("json");
@@ -868,7 +951,9 @@ fn permanently_uncopyable_file_does_not_undercount_the_rest_of_the_transfer() {
     // correctly-copied bytes. Before the fix, this failure path reported whatever the *last*
     // retry attempt's reset progress sink happened to hold (near-zero for a run this short),
     // not a real reflection of what's actually sitting on disk.
-    let bytes_copied = report["robocopy_transfer"]["bytes_copied"].as_u64().expect("bytes_copied");
+    let bytes_copied = report["robocopy_transfer"]["bytes_copied"]
+        .as_u64()
+        .expect("bytes_copied");
     assert_eq!(
         bytes_copied, 40,
         "a.csv (10B) + c.csv (30B) must be counted from a real destination scan, not the last retry's leftover sink state; report: {report}"
@@ -932,9 +1017,21 @@ fn pre_command_failure_aborts_the_run_before_any_copy() {
         "exit 7",
     ]);
 
-    assert_eq!(output.status.code(), Some(2), "stderr: {}", stderr_of(&output));
-    assert!(stderr_of(&output).contains("pre-command"), "stderr: {}", stderr_of(&output));
-    assert!(!dest.exists(), "nothing should have been copied or even a destination dir created");
+    assert_eq!(
+        output.status.code(),
+        Some(2),
+        "stderr: {}",
+        stderr_of(&output)
+    );
+    assert!(
+        stderr_of(&output).contains("pre-command"),
+        "stderr: {}",
+        stderr_of(&output)
+    );
+    assert!(
+        !dest.exists(),
+        "nothing should have been copied or even a destination dir created"
+    );
 }
 
 /// F39 black-box test: `--post-command` failing must NOT fail an otherwise-successful backup —
@@ -966,11 +1063,16 @@ fn post_command_failure_does_not_fail_the_run_but_is_recorded_in_the_report() {
         "a failed post-command must not fail the run; stderr: {}",
         stderr_of(&output)
     );
-    assert!(dest.join("a.csv").is_file(), "the file must still have been copied");
+    assert!(
+        dest.join("a.csv").is_file(),
+        "the file must still have been copied"
+    );
 
     let report: serde_json::Value =
         serde_json::from_str(&std::fs::read_to_string(&report_path).expect("read")).expect("json");
-    let error = report["post_command_error"].as_str().expect("post_command_error must be recorded");
+    let error = report["post_command_error"]
+        .as_str()
+        .expect("post_command_error must be recorded");
     assert!(error.contains('9'), "error: {error}");
 }
 
@@ -1004,12 +1106,21 @@ fn pre_and_post_commands_run_successfully_around_the_backup() {
     ]);
 
     assert!(output.status.success(), "stderr: {}", stderr_of(&output));
-    assert!(pre_marker.is_file(), "the pre-command must actually have run");
-    assert!(post_marker.is_file(), "the post-command must actually have run");
+    assert!(
+        pre_marker.is_file(),
+        "the pre-command must actually have run"
+    );
+    assert!(
+        post_marker.is_file(),
+        "the post-command must actually have run"
+    );
 
     let report: serde_json::Value =
         serde_json::from_str(&std::fs::read_to_string(&report_path).expect("read")).expect("json");
-    assert!(report.get("post_command_error").is_none(), "report: {report}");
+    assert!(
+        report.get("post_command_error").is_none(),
+        "report: {report}"
+    );
 }
 
 #[cfg(windows)]
@@ -1027,7 +1138,8 @@ fn restore_from_runs_end_to_end_without_source_or_dest() {
 
     // 1. Seed the "original" data and back it up to "backup" (a normal, forward run).
     std::fs::create_dir_all(&original).expect("create original");
-    std::fs::write(original.join("important.csv"), b"irreplaceable,data\n1,2\n").expect("seed file");
+    std::fs::write(original.join("important.csv"), b"irreplaceable,data\n1,2\n")
+        .expect("seed file");
 
     let backup_output = run(&[
         "--source",
@@ -1062,7 +1174,11 @@ fn restore_from_runs_end_to_end_without_source_or_dest() {
         "--log-path",
         sandbox.path().join("restore.log").to_str().expect("utf8"),
         "--report-path",
-        sandbox.path().join("restore_report.json").to_str().expect("utf8"),
+        sandbox
+            .path()
+            .join("restore_report.json")
+            .to_str()
+            .expect("utf8"),
     ]);
     assert!(
         restore_output.status.success(),
@@ -1133,7 +1249,11 @@ fn encrypted_backup_restores_and_decrypts_end_to_end() {
         "--log-path",
         sandbox.path().join("restore.log").to_str().expect("utf8"),
         "--report-path",
-        sandbox.path().join("restore_report.json").to_str().expect("utf8"),
+        sandbox
+            .path()
+            .join("restore_report.json")
+            .to_str()
+            .expect("utf8"),
     ]);
     assert!(
         restore_output.status.success(),
@@ -1167,7 +1287,11 @@ fn encrypt_and_decrypt_together_are_rejected() {
         "key-b",
     ]);
 
-    assert_eq!(output.status.code(), Some(2), "must be an unrecoverable usage error");
+    assert_eq!(
+        output.status.code(),
+        Some(2),
+        "must be an unrecoverable usage error"
+    );
     assert!(
         stderr_of(&output).contains("cannot both be given"),
         "got: {}",
@@ -1299,7 +1423,10 @@ fn exclude_junctions_flag_actually_changes_what_the_binary_copies() {
         ])
         .status()
         .expect("run mklink");
-    assert!(status.success(), "mklink /J must succeed to exercise this test");
+    assert!(
+        status.success(),
+        "mklink /J must succeed to exercise this test"
+    );
 
     let workdir = tempfile::tempdir().expect("workdir");
 
@@ -1328,7 +1455,8 @@ fn exclude_junctions_flag_actually_changes_what_the_binary_copies() {
         "without --exclude-junctions, robocopy must follow the junction like it does by default"
     );
     let report_default: serde_json::Value =
-        serde_json::from_str(&std::fs::read_to_string(&report_default).expect("read")).expect("json");
+        serde_json::from_str(&std::fs::read_to_string(&report_default).expect("read"))
+            .expect("json");
     assert_eq!(
         report_default["total_files"], 2,
         "the prescan must agree with what robocopy actually copies"
@@ -1349,7 +1477,11 @@ fn exclude_junctions_flag_actually_changes_what_the_binary_copies() {
         report_excl.to_str().expect("utf8"),
         "--exclude-junctions",
     ]);
-    assert!(output_excl.status.success(), "stderr: {}", stderr_of(&output_excl));
+    assert!(
+        output_excl.status.success(),
+        "stderr: {}",
+        stderr_of(&output_excl)
+    );
     assert!(dest_excl.join("real").join("a.csv").is_file());
     assert!(
         !dest_excl.join("link").exists(),
@@ -1373,8 +1505,11 @@ fn restore_from_accepts_a_legacy_report_with_pre_rename_mismatch_shape() {
     let report_path = sandbox.path().join("legacy_report.json");
 
     std::fs::create_dir_all(&backup_dest).expect("create backup dest");
-    std::fs::write(backup_dest.join("important.csv"), b"irreplaceable,data\n1,2\n")
-        .expect("seed backup file");
+    std::fs::write(
+        backup_dest.join("important.csv"),
+        b"irreplaceable,data\n1,2\n",
+    )
+    .expect("seed backup file");
 
     let legacy_json = format!(
         r#"{{
@@ -1426,14 +1561,19 @@ fn restore_from_accepts_a_legacy_report_with_pre_rename_mismatch_shape() {
         "--log-path",
         sandbox.path().join("restore.log").to_str().expect("utf8"),
         "--report-path",
-        sandbox.path().join("restore_report.json").to_str().expect("utf8"),
+        sandbox
+            .path()
+            .join("restore_report.json")
+            .to_str()
+            .expect("utf8"),
     ]);
     assert!(
         restore_output.status.success(),
         "a pre-rename Mismatch shape must not break --restore-from; stderr: {}",
         stderr_of(&restore_output)
     );
-    let restored = std::fs::read_to_string(original.join("important.csv")).expect("file must be restored");
+    let restored =
+        std::fs::read_to_string(original.join("important.csv")).expect("file must be restored");
     assert_eq!(restored, "irreplaceable,data\n1,2\n");
 }
 
@@ -1500,11 +1640,17 @@ dest = "{dest_beta}"
         serde_json::from_str(&std::fs::read_to_string(&report_beta).expect("read")).expect("json");
     // Each job's report must point at that job's own destination, not the other job's.
     assert!(
-        alpha["dest"].as_str().unwrap_or_default().contains("out_alpha"),
+        alpha["dest"]
+            .as_str()
+            .unwrap_or_default()
+            .contains("out_alpha"),
         "alpha report: {alpha}"
     );
     assert!(
-        beta["dest"].as_str().unwrap_or_default().contains("out_beta"),
+        beta["dest"]
+            .as_str()
+            .unwrap_or_default()
+            .contains("out_beta"),
         "beta report: {beta}"
     );
 }
@@ -1562,17 +1708,25 @@ backup_type = "full"
     let manifest_alpha = shared_dest.join(".rustcopy_generations.alpha.json");
     let manifest_beta = shared_dest.join(".rustcopy_generations.beta.json");
     let manifest_default = shared_dest.join(".rustcopy_generations.json");
-    assert!(manifest_alpha.is_file(), "alpha must get its own namespaced manifest");
-    assert!(manifest_beta.is_file(), "beta must get its own namespaced manifest");
+    assert!(
+        manifest_alpha.is_file(),
+        "alpha must get its own namespaced manifest"
+    );
+    assert!(
+        manifest_beta.is_file(),
+        "beta must get its own namespaced manifest"
+    );
     assert!(
         !manifest_default.is_file(),
         "the unnamespaced manifest filename must not be written by a multi-job run"
     );
 
     let alpha: serde_json::Value =
-        serde_json::from_str(&std::fs::read_to_string(&manifest_alpha).expect("read")).expect("json");
+        serde_json::from_str(&std::fs::read_to_string(&manifest_alpha).expect("read"))
+            .expect("json");
     let beta: serde_json::Value =
-        serde_json::from_str(&std::fs::read_to_string(&manifest_beta).expect("read")).expect("json");
+        serde_json::from_str(&std::fs::read_to_string(&manifest_beta).expect("read"))
+            .expect("json");
 
     let alpha_files = alpha["generations"][0]["files"]
         .as_array()
@@ -1581,23 +1735,26 @@ backup_type = "full"
         .as_array()
         .expect("beta generation files");
     assert!(
-        alpha_files
-            .iter()
-            .any(|f| f["relative_path"].as_str().unwrap_or_default().contains("alpha.csv")),
+        alpha_files.iter().any(|f| f["relative_path"]
+            .as_str()
+            .unwrap_or_default()
+            .contains("alpha.csv")),
         "alpha manifest: {alpha}"
     );
     assert!(
-        beta_files
-            .iter()
-            .any(|f| f["relative_path"].as_str().unwrap_or_default().contains("beta.csv")),
+        beta_files.iter().any(|f| f["relative_path"]
+            .as_str()
+            .unwrap_or_default()
+            .contains("beta.csv")),
         "beta manifest: {beta}"
     );
     // The bug this guards against: before the fix, beta's manifest (being the same shared file)
     // would have included alpha's inventory too.
     assert!(
-        !beta_files
-            .iter()
-            .any(|f| f["relative_path"].as_str().unwrap_or_default().contains("alpha.csv")),
+        !beta_files.iter().any(|f| f["relative_path"]
+            .as_str()
+            .unwrap_or_default()
+            .contains("alpha.csv")),
         "beta manifest must not contain alpha's files: {beta}"
     );
 }
@@ -1733,13 +1890,24 @@ fn incremental_backup_copies_only_changed_files_since_the_last_generation() {
         "--backup-type",
         "full",
     ]);
-    assert!(full_output.status.success(), "stderr: {}", stderr_of(&full_output));
+    assert!(
+        full_output.status.success(),
+        "stderr: {}",
+        stderr_of(&full_output)
+    );
 
     let manifest_path = dest.join(".rustcopy_generations.json");
-    assert!(manifest_path.is_file(), "manifest must exist after the full backup");
+    assert!(
+        manifest_path.is_file(),
+        "manifest must exist after the full backup"
+    );
     let manifest_after_full: serde_json::Value =
-        serde_json::from_str(&std::fs::read_to_string(&manifest_path).expect("read")).expect("json");
-    assert_eq!(manifest_after_full["generations"].as_array().unwrap().len(), 1);
+        serde_json::from_str(&std::fs::read_to_string(&manifest_path).expect("read"))
+            .expect("json");
+    assert_eq!(
+        manifest_after_full["generations"].as_array().unwrap().len(),
+        1
+    );
 
     // A real filesystem mtime tick matters here: changed_since compares whole seconds.
     std::thread::sleep(std::time::Duration::from_millis(1100));
@@ -1758,7 +1926,11 @@ fn incremental_backup_copies_only_changed_files_since_the_last_generation() {
         "--backup-type",
         "incremental",
     ]);
-    assert!(inc_output.status.success(), "stderr: {}", stderr_of(&inc_output));
+    assert!(
+        inc_output.status.success(),
+        "stderr: {}",
+        stderr_of(&inc_output)
+    );
     let stdout = stdout_of(&inc_output);
     assert!(
         stdout.contains("(2 of 3 file(s) to copy)"),
@@ -1766,7 +1938,8 @@ fn incremental_backup_copies_only_changed_files_since_the_last_generation() {
     );
 
     let manifest_after_inc: serde_json::Value =
-        serde_json::from_str(&std::fs::read_to_string(&manifest_path).expect("read")).expect("json");
+        serde_json::from_str(&std::fs::read_to_string(&manifest_path).expect("read"))
+            .expect("json");
     let generations = manifest_after_inc["generations"].as_array().unwrap();
     assert_eq!(generations.len(), 2, "both generations must be recorded");
     assert_eq!(generations[1]["backup_type"], "incremental");
@@ -1774,8 +1947,14 @@ fn incremental_backup_copies_only_changed_files_since_the_last_generation() {
 
     let incremental_folder = generations[1]["id"].as_str().expect("id");
     let incremental_dir = dest.join(incremental_folder);
-    assert!(incremental_dir.join("a.csv").is_file(), "changed file must be copied");
-    assert!(incremental_dir.join("c.csv").is_file(), "new file must be copied");
+    assert!(
+        incremental_dir.join("a.csv").is_file(),
+        "changed file must be copied"
+    );
+    assert!(
+        incremental_dir.join("c.csv").is_file(),
+        "new file must be copied"
+    );
     assert!(
         !incremental_dir.join("b.csv").exists(),
         "unchanged file must NOT be copied into the incremental generation"
@@ -1804,7 +1983,11 @@ fn incremental_backup_without_a_prior_generation_fails_clearly() {
     ]);
 
     assert!(!output.status.success());
-    assert!(stderr_of(&output).contains("no prior generation"), "stderr: {}", stderr_of(&output));
+    assert!(
+        stderr_of(&output).contains("no prior generation"),
+        "stderr: {}",
+        stderr_of(&output)
+    );
 }
 
 /// F34 black-box test: `--backup-type differential` always diffs against the last `full`
@@ -1830,7 +2013,11 @@ fn differential_backup_always_diffs_against_the_last_full_generation() {
         "--backup-type",
         "full",
     ]);
-    assert!(full_output.status.success(), "stderr: {}", stderr_of(&full_output));
+    assert!(
+        full_output.status.success(),
+        "stderr: {}",
+        stderr_of(&full_output)
+    );
 
     // A real filesystem mtime tick matters here: changed_since compares whole seconds.
     std::thread::sleep(std::time::Duration::from_millis(1100));
@@ -1848,7 +2035,11 @@ fn differential_backup_always_diffs_against_the_last_full_generation() {
         "--backup-type",
         "differential",
     ]);
-    assert!(diff1_output.status.success(), "stderr: {}", stderr_of(&diff1_output));
+    assert!(
+        diff1_output.status.success(),
+        "stderr: {}",
+        stderr_of(&diff1_output)
+    );
     assert!(
         stdout_of(&diff1_output).contains("(1 of 2 file(s) to copy)"),
         "first differential must copy only a.csv; stdout: {}",
@@ -1870,7 +2061,11 @@ fn differential_backup_always_diffs_against_the_last_full_generation() {
         "--backup-type",
         "differential",
     ]);
-    assert!(diff2_output.status.success(), "stderr: {}", stderr_of(&diff2_output));
+    assert!(
+        diff2_output.status.success(),
+        "stderr: {}",
+        stderr_of(&diff2_output)
+    );
     let stdout = stdout_of(&diff2_output);
     assert!(
         stdout.contains("(2 of 2 file(s) to copy)"),
@@ -1879,9 +2074,14 @@ fn differential_backup_always_diffs_against_the_last_full_generation() {
 
     let manifest_path = dest.join(".rustcopy_generations.json");
     let manifest: serde_json::Value =
-        serde_json::from_str(&std::fs::read_to_string(&manifest_path).expect("read")).expect("json");
+        serde_json::from_str(&std::fs::read_to_string(&manifest_path).expect("read"))
+            .expect("json");
     let generations = manifest["generations"].as_array().unwrap();
-    assert_eq!(generations.len(), 3, "full + two differentials must all be recorded");
+    assert_eq!(
+        generations.len(),
+        3,
+        "full + two differentials must all be recorded"
+    );
     assert_eq!(generations[1]["backup_type"], "differential");
     assert_eq!(generations[1]["files_copied"], 1);
     assert_eq!(generations[2]["backup_type"], "differential");
@@ -1889,8 +2089,14 @@ fn differential_backup_always_diffs_against_the_last_full_generation() {
 
     let diff2_folder = generations[2]["id"].as_str().expect("id");
     let diff2_dir = dest.join(diff2_folder);
-    assert!(diff2_dir.join("a.csv").is_file(), "a.csv must be in the second differential too");
-    assert!(diff2_dir.join("b.csv").is_file(), "b.csv must be in the second differential");
+    assert!(
+        diff2_dir.join("a.csv").is_file(),
+        "a.csv must be in the second differential too"
+    );
+    assert!(
+        diff2_dir.join("b.csv").is_file(),
+        "b.csv must be in the second differential"
+    );
 }
 
 /// F34 black-box test: `--backup-type differential` with no prior `full` generation at the
@@ -1915,7 +2121,11 @@ fn differential_backup_without_a_prior_full_generation_fails_clearly() {
     ]);
 
     assert!(!output.status.success());
-    assert!(stderr_of(&output).contains("no prior full generation"), "stderr: {}", stderr_of(&output));
+    assert!(
+        stderr_of(&output).contains("no prior full generation"),
+        "stderr: {}",
+        stderr_of(&output)
+    );
 }
 
 /// D15 black-box regression test (hypothesis #7 from `NEXT_SESSION_PROMPT.md` — exit-code
@@ -1946,7 +2156,14 @@ fn a_failed_generation_backup_reports_exit_code_1_not_2_and_still_writes_a_repor
     let workdir = tempfile::tempdir().expect("workdir");
     let dest = workdir.path().join("dest");
 
-    let output = run_generation_backup(source.path(), &dest, workdir.path(), "full", "report.json", &[]);
+    let output = run_generation_backup(
+        source.path(),
+        &dest,
+        workdir.path(),
+        "full",
+        "report.json",
+        &[],
+    );
     drop(_locked_handle);
 
     assert!(!output.status.success());
@@ -1996,14 +2213,27 @@ fn a_successful_backup_leaves_no_atomic_write_temp_files_behind() {
     let workdir = tempfile::tempdir().expect("workdir");
     let dest = workdir.path().join("dest");
 
-    let output = run_generation_backup(source.path(), &dest, workdir.path(), "full", "report.json", &[]);
+    let output = run_generation_backup(
+        source.path(),
+        &dest,
+        workdir.path(),
+        "full",
+        "report.json",
+        &[],
+    );
     assert!(output.status.success(), "stderr: {}", stderr_of(&output));
 
     let manifest_tmp = dest.join(".rustcopy_generations.json.rustcopy-tmp");
-    assert!(!manifest_tmp.exists(), "no stray manifest temp file must remain after a successful run");
+    assert!(
+        !manifest_tmp.exists(),
+        "no stray manifest temp file must remain after a successful run"
+    );
 
     let manifest = dest.join(".rustcopy_generations.json");
-    assert!(manifest.is_file(), "the real manifest must exist after a successful run");
+    assert!(
+        manifest.is_file(),
+        "the real manifest must exist after a successful run"
+    );
 }
 
 /// Runs one `--backup-type` backup against a shared source/dest/log, writing its report to
@@ -2046,17 +2276,26 @@ fn retention_prunes_older_cycles_but_keeps_the_most_recent_ones() {
     let workdir = tempfile::tempdir().expect("workdir");
     let dest = workdir.path().join("dest");
 
-    assert!(run_generation_backup(source.path(), &dest, workdir.path(), "full", "r1.json", &[])
-        .status
-        .success());
     assert!(
-        run_generation_backup(source.path(), &dest, workdir.path(), "incremental", "r2.json", &[])
+        run_generation_backup(source.path(), &dest, workdir.path(), "full", "r1.json", &[])
             .status
             .success()
     );
-    assert!(run_generation_backup(source.path(), &dest, workdir.path(), "full", "r3.json", &[])
-        .status
-        .success());
+    assert!(run_generation_backup(
+        source.path(),
+        &dest,
+        workdir.path(),
+        "incremental",
+        "r2.json",
+        &[]
+    )
+    .status
+    .success());
+    assert!(
+        run_generation_backup(source.path(), &dest, workdir.path(), "full", "r3.json", &[])
+            .status
+            .success()
+    );
     let last = run_generation_backup(
         source.path(),
         &dest,
@@ -2069,10 +2308,18 @@ fn retention_prunes_older_cycles_but_keeps_the_most_recent_ones() {
 
     let manifest_path = dest.join(".rustcopy_generations.json");
     let manifest: serde_json::Value =
-        serde_json::from_str(&std::fs::read_to_string(&manifest_path).expect("read")).expect("json");
+        serde_json::from_str(&std::fs::read_to_string(&manifest_path).expect("read"))
+            .expect("json");
     let generations = manifest["generations"].as_array().unwrap();
-    let ids: Vec<&str> = generations.iter().map(|g| g["id"].as_str().unwrap()).collect();
-    assert_eq!(ids.len(), 2, "only the most recent cycle should remain in the manifest: {ids:?}");
+    let ids: Vec<&str> = generations
+        .iter()
+        .map(|g| g["id"].as_str().unwrap())
+        .collect();
+    assert_eq!(
+        ids.len(),
+        2,
+        "only the most recent cycle should remain in the manifest: {ids:?}"
+    );
     assert!(ids[0].ends_with("_full"), "ids: {ids:?}");
     assert!(ids[1].ends_with("_incremental"), "ids: {ids:?}");
 
@@ -2083,7 +2330,11 @@ fn retention_prunes_older_cycles_but_keeps_the_most_recent_ones() {
         .filter(|e| e.path().is_dir())
         .map(|e| e.file_name().to_string_lossy().into_owned())
         .collect();
-    assert_eq!(entries.len(), 2, "only 2 generation folders should remain on disk: {entries:?}");
+    assert_eq!(
+        entries.len(),
+        2,
+        "only 2 generation folders should remain on disk: {entries:?}"
+    );
 }
 
 /// F35 black-box test: without `--force-purge` and with no interactive terminal to confirm, the
@@ -2097,17 +2348,26 @@ fn retention_purge_is_aborted_without_force_purge_and_nothing_is_deleted() {
     let workdir = tempfile::tempdir().expect("workdir");
     let dest = workdir.path().join("dest");
 
-    assert!(run_generation_backup(source.path(), &dest, workdir.path(), "full", "r1.json", &[])
-        .status
-        .success());
     assert!(
-        run_generation_backup(source.path(), &dest, workdir.path(), "incremental", "r2.json", &[])
+        run_generation_backup(source.path(), &dest, workdir.path(), "full", "r1.json", &[])
             .status
             .success()
     );
-    assert!(run_generation_backup(source.path(), &dest, workdir.path(), "full", "r3.json", &[])
-        .status
-        .success());
+    assert!(run_generation_backup(
+        source.path(),
+        &dest,
+        workdir.path(),
+        "incremental",
+        "r2.json",
+        &[]
+    )
+    .status
+    .success());
+    assert!(
+        run_generation_backup(source.path(), &dest, workdir.path(), "full", "r3.json", &[])
+            .status
+            .success()
+    );
 
     let output = run_generation_backup(
         source.path(),
@@ -2117,7 +2377,12 @@ fn retention_purge_is_aborted_without_force_purge_and_nothing_is_deleted() {
         "r4.json",
         &["--keep-generations", "1"],
     );
-    assert_eq!(output.status.code(), Some(5), "stderr: {}", stderr_of(&output));
+    assert_eq!(
+        output.status.code(),
+        Some(5),
+        "stderr: {}",
+        stderr_of(&output)
+    );
     assert!(
         stderr_of(&output).contains("--keep-generations would delete"),
         "stderr: {}",
@@ -2126,7 +2391,8 @@ fn retention_purge_is_aborted_without_force_purge_and_nothing_is_deleted() {
 
     let manifest_path = dest.join(".rustcopy_generations.json");
     let manifest: serde_json::Value =
-        serde_json::from_str(&std::fs::read_to_string(&manifest_path).expect("read")).expect("json");
+        serde_json::from_str(&std::fs::read_to_string(&manifest_path).expect("read"))
+            .expect("json");
     assert_eq!(
         manifest["generations"].as_array().unwrap().len(),
         4,

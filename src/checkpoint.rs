@@ -92,9 +92,8 @@ pub fn checkpoint_path_for(report_path: &Path) -> PathBuf {
 pub fn build_resume_args(original: &Args, checkpoint_path: &Path) -> Result<Args, IngestError> {
     let content = std::fs::read_to_string(checkpoint_path)
         .map_err(|error| IngestError::io(checkpoint_path, error))?;
-    let checkpoint: Checkpoint = serde_json::from_str(&content).map_err(|error| {
-        IngestError::io(checkpoint_path, std::io::Error::other(error))
-    })?;
+    let checkpoint: Checkpoint = serde_json::from_str(&content)
+        .map_err(|error| IngestError::io(checkpoint_path, std::io::Error::other(error)))?;
 
     let mut args = original.clone();
     args.source = Some(PathBuf::from(checkpoint.source));

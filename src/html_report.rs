@@ -32,7 +32,11 @@ fn escape_html(input: &str) -> String {
 
 /// Generate a standalone HTML report page from an [`IngestReport`].
 pub fn generate_html_report(report: &IngestReport, output_path: &Path) -> Result<()> {
-    let status_color = if report.integrity_check.as_ref().map(|c| c.passed()).unwrap_or(true)
+    let status_color = if report
+        .integrity_check
+        .as_ref()
+        .map(|c| c.passed())
+        .unwrap_or(true)
         && report.robocopy_transfer.exit_code.unwrap_or(0) < 8
     {
         "#2e7d32" // green
@@ -40,7 +44,11 @@ pub fn generate_html_report(report: &IngestReport, output_path: &Path) -> Result
         "#c62828" // red
     };
 
-    let status_label = if report.integrity_check.as_ref().map(|c| c.passed()).unwrap_or(true)
+    let status_label = if report
+        .integrity_check
+        .as_ref()
+        .map(|c| c.passed())
+        .unwrap_or(true)
         && report.robocopy_transfer.exit_code.unwrap_or(0) < 8
     {
         "SUCCESSFUL / PASSED"
@@ -149,9 +157,11 @@ pub fn generate_html_report(report: &IngestReport, output_path: &Path) -> Result
     );
 
     if let Some(parent) = output_path.parent() {
-        fs::create_dir_all(parent).with_context(|| format!("cannot create parent dir for {}", output_path.display()))?;
+        fs::create_dir_all(parent)
+            .with_context(|| format!("cannot create parent dir for {}", output_path.display()))?;
     }
-    fs::write(output_path, html).with_context(|| format!("cannot write HTML report to {}", output_path.display()))?;
+    fs::write(output_path, html)
+        .with_context(|| format!("cannot write HTML report to {}", output_path.display()))?;
     Ok(())
 }
 

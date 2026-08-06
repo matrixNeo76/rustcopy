@@ -42,8 +42,12 @@ pub fn build_restore_args(
     report_path: &Path,
     target_override: Option<PathBuf>,
 ) -> Result<Args> {
-    let content = std::fs::read_to_string(report_path)
-        .with_context(|| format!("cannot read backup report JSON from {}", report_path.display()))?;
+    let content = std::fs::read_to_string(report_path).with_context(|| {
+        format!(
+            "cannot read backup report JSON from {}",
+            report_path.display()
+        )
+    })?;
     let report: IngestReport = serde_json::from_str(&content)
         .with_context(|| format!("invalid report format in {}", report_path.display()))?;
 

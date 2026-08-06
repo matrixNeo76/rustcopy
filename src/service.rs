@@ -70,8 +70,8 @@ mod windows_impl {
     use std::time::Duration;
 
     use windows_service::service::{
-        ServiceAccess, ServiceControl, ServiceControlAccept, ServiceErrorControl, ServiceExitCode, ServiceInfo,
-        ServiceStartType, ServiceState, ServiceStatus, ServiceType,
+        ServiceAccess, ServiceControl, ServiceControlAccept, ServiceErrorControl, ServiceExitCode,
+        ServiceInfo, ServiceStartType, ServiceState, ServiceStatus, ServiceType,
     };
     use windows_service::service_control_handler::{self, ServiceControlHandlerResult};
     use windows_service::service_dispatcher;
@@ -151,11 +151,17 @@ mod windows_impl {
         display_name: &str,
         extra_launch_arguments: Vec<OsString>,
     ) -> Result<(), IngestError> {
-        let exe_path = std::env::current_exe()
-            .map_err(|error| IngestError::Service(format!("cannot determine the current executable path: {error}")))?;
+        let exe_path = std::env::current_exe().map_err(|error| {
+            IngestError::Service(format!(
+                "cannot determine the current executable path: {error}"
+            ))
+        })?;
 
-        let manager = ServiceManager::local_computer(None::<&str>, ServiceManagerAccess::CREATE_SERVICE)
-            .map_err(|error| to_ingest_error("cannot connect to the Service Control Manager", error))?;
+        let manager =
+            ServiceManager::local_computer(None::<&str>, ServiceManagerAccess::CREATE_SERVICE)
+                .map_err(|error| {
+                    to_ingest_error("cannot connect to the Service Control Manager", error)
+                })?;
 
         let mut launch_arguments = vec![OsString::from(super::RUN_AS_SERVICE_ARG)];
         launch_arguments.extend(extra_launch_arguments);
@@ -184,10 +190,14 @@ mod windows_impl {
     /// something this function works around; document it to the operator instead.
     pub fn uninstall_named(service_key: &str) -> Result<(), IngestError> {
         let manager = ServiceManager::local_computer(None::<&str>, ServiceManagerAccess::CONNECT)
-            .map_err(|error| to_ingest_error("cannot connect to the Service Control Manager", error))?;
+            .map_err(|error| {
+            to_ingest_error("cannot connect to the Service Control Manager", error)
+        })?;
         let service = manager
             .open_service(service_key, ServiceAccess::DELETE)
-            .map_err(|error| to_ingest_error("cannot open the Windows service (is it installed?)", error))?;
+            .map_err(|error| {
+                to_ingest_error("cannot open the Windows service (is it installed?)", error)
+            })?;
         service
             .delete()
             .map_err(|error| to_ingest_error("cannot delete the Windows service", error))?;
@@ -253,8 +263,10 @@ mod windows_impl {
             }
         };
 
-        let status_handle = service_control_handler::register(service_key, event_handler)
-            .map_err(|error| to_ingest_error("cannot register the service control handler", error))?;
+        let status_handle =
+            service_control_handler::register(service_key, event_handler).map_err(|error| {
+                to_ingest_error("cannot register the service control handler", error)
+            })?;
 
         status_handle
             .set_service_status(ServiceStatus {
@@ -274,8 +286,8 @@ mod windows_impl {
 
 #[cfg(windows)]
 pub use windows_impl::{
-    install, install_named, register_and_wait_for_stop, run_service_dispatcher, start_dispatcher, uninstall,
-    uninstall_named, ServiceStatusHandle,
+    install, install_named, register_and_wait_for_stop, run_service_dispatcher, start_dispatcher,
+    uninstall, uninstall_named, ServiceStatusHandle,
 };
 
 #[cfg(not(windows))]
@@ -302,7 +314,11 @@ mod not_windows {
         Err(unavailable("service mode"))
     }
 
-    pub fn install_named(_service_key: &str, _display_name: &str, _extra_launch_arguments: Vec<OsString>) -> Result<(), IngestError> {
+    pub fn install_named(
+        _service_key: &str,
+        _display_name: &str,
+        _extra_launch_arguments: Vec<OsString>,
+    ) -> Result<(), IngestError> {
         Err(unavailable("--install-service"))
     }
 
@@ -332,8 +348,8 @@ mod not_windows {
 
 #[cfg(not(windows))]
 pub use not_windows::{
-    install, install_named, register_and_wait_for_stop, run_service_dispatcher, start_dispatcher, uninstall,
-    uninstall_named, ServiceStatusHandle,
+    install, install_named, register_and_wait_for_stop, run_service_dispatcher, start_dispatcher,
+    uninstall, uninstall_named, ServiceStatusHandle,
 };
 
 #[cfg(test)]

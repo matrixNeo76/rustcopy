@@ -134,10 +134,15 @@ pub fn scan(
     let file_matchers = build_exclude_matchers(exclude_files)?;
     let mut summary = ScanSummary::default();
 
-    let walker = WalkDir::new(root).follow_links(follow_links).into_iter().filter_entry(|entry| {
-        // Never prune the root itself (depth 0) - only subdirectories can be excluded.
-        entry.depth() == 0 || !entry.file_type().is_dir() || !is_excluded(entry.file_name(), &dir_matchers)
-    });
+    let walker = WalkDir::new(root)
+        .follow_links(follow_links)
+        .into_iter()
+        .filter_entry(|entry| {
+            // Never prune the root itself (depth 0) - only subdirectories can be excluded.
+            entry.depth() == 0
+                || !entry.file_type().is_dir()
+                || !is_excluded(entry.file_name(), &dir_matchers)
+        });
 
     for entry in walker {
         let entry = match entry {
@@ -230,9 +235,14 @@ pub fn inventory(
     let mut total_files = 0u64;
     let mut total_bytes = 0u64;
 
-    let walker = WalkDir::new(root).follow_links(follow_links).into_iter().filter_entry(|entry| {
-        entry.depth() == 0 || !entry.file_type().is_dir() || !is_excluded(entry.file_name(), &dir_matchers)
-    });
+    let walker = WalkDir::new(root)
+        .follow_links(follow_links)
+        .into_iter()
+        .filter_entry(|entry| {
+            entry.depth() == 0
+                || !entry.file_type().is_dir()
+                || !is_excluded(entry.file_name(), &dir_matchers)
+        });
 
     for entry in walker {
         let entry = match entry {
@@ -356,14 +366,14 @@ mod tests {
     /// F1.4: glob against the relative path, not just the file name.
     #[test]
     fn glob_matches_against_relative_path_not_just_filename() {
-        let dir = fixture_tree(&[
-            ("a.csv", 10),
-            ("nested/b.csv", 20),
-            ("other/c.csv", 30),
-        ]);
+        let dir = fixture_tree(&[("a.csv", 10), ("nested/b.csv", 20), ("other/c.csv", 30)]);
         // A flat glob still matches all CSV files regardless of depth.
         let summary = scan(dir.path(), "*.csv", false, &[], &[]).expect("scan");
-        assert_eq!(summary.file_count(), 3, "flat glob should match all csv files in subdirs");
+        assert_eq!(
+            summary.file_count(),
+            3,
+            "flat glob should match all csv files in subdirs"
+        );
     }
 
     /// F2.2: lightweight inventory returns the same totals without file list.
@@ -386,7 +396,11 @@ mod tests {
         std::os::unix::fs::symlink(dir.path().join("real"), &link).expect("create symlink");
 
         let summary = scan(dir.path(), "*.csv", false, &[], &[]).expect("scan");
-        assert_eq!(summary.file_count(), 1, "the symlinked copy must not be counted");
+        assert_eq!(
+            summary.file_count(),
+            1,
+            "the symlinked copy must not be counted"
+        );
     }
 
     /// F26d: with `follow_links: true` (robocopy's own default, no `/XJ`), the walk follows a
@@ -428,9 +442,13 @@ mod tests {
             ])
             .status()
             .expect("run mklink");
-        assert!(status.success(), "mklink /J must succeed to exercise this test");
+        assert!(
+            status.success(),
+            "mklink /J must succeed to exercise this test"
+        );
 
-        let excluded = scan(dir.path(), "*.csv", false, &[], &[]).expect("scan without following junctions");
+        let excluded =
+            scan(dir.path(), "*.csv", false, &[], &[]).expect("scan without following junctions");
         assert_eq!(
             excluded.file_count(),
             1,
@@ -460,11 +478,22 @@ mod tests {
             ("AppData/deep/d.csv", 9999),
         ]);
 
-        let summary = scan(dir.path(), "*.csv", false, &["AppData".to_string()], &[]).expect("scan");
+        let summary =
+            scan(dir.path(), "*.csv", false, &["AppData".to_string()], &[]).expect("scan");
 
-        assert_eq!(summary.file_count(), 2, "AppData's files must not appear in the result");
-        assert_eq!(summary.total_bytes, 30, "AppData's bytes must not be counted either");
-        assert!(summary.files.iter().all(|f| !f.relative_path.starts_with("AppData")));
+        assert_eq!(
+            summary.file_count(),
+            2,
+            "AppData's files must not appear in the result"
+        );
+        assert_eq!(
+            summary.total_bytes, 30,
+            "AppData's bytes must not be counted either"
+        );
+        assert!(summary
+            .files
+            .iter()
+            .all(|f| !f.relative_path.starts_with("AppData")));
     }
 
     /// `exclude_dirs` matches by bare directory name at any depth, mirroring robocopy's own
@@ -480,7 +509,10 @@ mod tests {
         let summary = scan(dir.path(), "*.csv", false, &[".git".to_string()], &[]).expect("scan");
 
         assert_eq!(summary.file_count(), 2);
-        assert!(summary.files.iter().all(|f| !f.relative_path.to_string_lossy().contains(".git")));
+        assert!(summary
+            .files
+            .iter()
+            .all(|f| !f.relative_path.to_string_lossy().contains(".git")));
     }
 
     /// `exclude_files` matches by bare file name, independent of `--pattern`.
@@ -514,7 +546,8 @@ mod tests {
     fn inventory_also_respects_exclude_dirs() {
         let dir = fixture_tree(&[("a.csv", 10), ("AppData/b.csv", 9999)]);
 
-        let light = inventory(dir.path(), "*.csv", false, &["AppData".to_string()], &[]).expect("inventory");
+        let light = inventory(dir.path(), "*.csv", false, &["AppData".to_string()], &[])
+            .expect("inventory");
 
         assert_eq!(light.total_files, 1);
         assert_eq!(light.total_bytes, 10);

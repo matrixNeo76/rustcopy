@@ -47,7 +47,10 @@ pub fn parse_schedule_spec(spec: &str) -> Result<ScheduleSpec, IngestError> {
         }
         "weekly" => {
             let (days_raw, time_raw) = rest.split_once('@').ok_or_else(invalid)?;
-            let days: Vec<String> = days_raw.split(',').map(|d| d.trim().to_uppercase()).collect();
+            let days: Vec<String> = days_raw
+                .split(',')
+                .map(|d| d.trim().to_uppercase())
+                .collect();
             if days.is_empty() || days.iter().any(|d| !WEEKDAY_CODES.contains(&d.as_str())) {
                 return Err(invalid());
             }
@@ -86,7 +89,12 @@ pub fn build_create_args(name: &str, spec: &ScheduleSpec, task_run: &str) -> Vec
     ];
     match spec {
         ScheduleSpec::Daily { time } => {
-            args.extend(["/SC".to_string(), "DAILY".to_string(), "/ST".to_string(), time.clone()]);
+            args.extend([
+                "/SC".to_string(),
+                "DAILY".to_string(),
+                "/ST".to_string(),
+                time.clone(),
+            ]);
         }
         ScheduleSpec::Hourly { every_n_hours } => {
             args.extend([
@@ -113,12 +121,21 @@ pub fn build_create_args(name: &str, spec: &ScheduleSpec, task_run: &str) -> Vec
 /// The `schtasks.exe /Delete ...` arguments for removing `name`. `/F` suppresses the interactive
 /// confirmation prompt schtasks would otherwise show.
 pub fn build_delete_args(name: &str) -> Vec<String> {
-    vec!["/Delete".to_string(), "/TN".to_string(), name.to_string(), "/F".to_string()]
+    vec![
+        "/Delete".to_string(),
+        "/TN".to_string(),
+        name.to_string(),
+        "/F".to_string(),
+    ]
 }
 
 /// The CLI flags that only make sense at install/uninstall time — never part of the recurring
 /// invocation Task Scheduler should actually run.
-const SCHEDULE_ONLY_FLAGS: [&str; 3] = ["--install-schedule", "--schedule-name", "--uninstall-schedule"];
+const SCHEDULE_ONLY_FLAGS: [&str; 3] = [
+    "--install-schedule",
+    "--schedule-name",
+    "--uninstall-schedule",
+];
 
 /// Strips `--install-schedule`/`--schedule-name`/`--uninstall-schedule` (and their values) out of
 /// a raw argv, in either `--flag value` or `--flag=value` form — what's left is exactly the
@@ -282,7 +299,11 @@ mod tests {
         let spec = ScheduleSpec::Daily {
             time: "02:00".to_string(),
         };
-        let args = build_create_args("rustcopy-photos", &spec, "C:\\rustcopy.exe --config job.toml");
+        let args = build_create_args(
+            "rustcopy-photos",
+            &spec,
+            "C:\\rustcopy.exe --config job.toml",
+        );
         assert_eq!(
             args,
             vec![
@@ -313,13 +334,22 @@ mod tests {
 
     #[test]
     fn build_delete_args_targets_the_named_task() {
-        assert_eq!(build_delete_args("rustcopy-photos"), vec!["/Delete", "/TN", "rustcopy-photos", "/F"]);
+        assert_eq!(
+            build_delete_args("rustcopy-photos"),
+            vec!["/Delete", "/TN", "rustcopy-photos", "/F"]
+        );
     }
 
     #[test]
     fn strip_schedule_flags_removes_flag_and_value_pairs() {
         let args: Vec<String> = [
-            "--source", "C:\\a", "--dest", "C:\\b", "--install-schedule", "daily@02:00", "--schedule-name",
+            "--source",
+            "C:\\a",
+            "--dest",
+            "C:\\b",
+            "--install-schedule",
+            "daily@02:00",
+            "--schedule-name",
             "myjob",
         ]
         .iter()
@@ -346,7 +376,10 @@ mod tests {
         let exe = Path::new("C:\\Program Files\\rustcopy.exe");
         let args = vec!["--source".to_string(), "C:\\my data".to_string()];
         let command = build_task_run_command(exe, &args);
-        assert_eq!(command, "\"C:\\Program Files\\rustcopy.exe\" --source \"C:\\my data\"");
+        assert_eq!(
+            command,
+            "\"C:\\Program Files\\rustcopy.exe\" --source \"C:\\my data\""
+        );
     }
 
     #[test]

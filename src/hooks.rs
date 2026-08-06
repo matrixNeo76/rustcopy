@@ -55,7 +55,9 @@ pub fn run_post_command(command: &str) -> Option<String> {
                 .map(|c| c.to_string())
                 .unwrap_or_else(|| "unknown (terminated by signal)".to_string())
         )),
-        Err(error) => Some(format!("post-command {command:?} could not be spawned: {error}")),
+        Err(error) => Some(format!(
+            "post-command {command:?} could not be spawned: {error}"
+        )),
     }
 }
 

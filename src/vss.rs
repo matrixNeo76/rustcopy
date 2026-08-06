@@ -40,7 +40,10 @@ pub fn parse_create_shadow_output(stdout: &str) -> Option<ShadowCopy> {
         .lines()
         .find_map(|line| line.trim().strip_prefix("Shadow Copy Volume Name:"))
         .map(|s| s.trim().trim_end_matches('\\').to_string())?;
-    Some(ShadowCopy { shadow_id, device_path })
+    Some(ShadowCopy {
+        shadow_id,
+        device_path,
+    })
 }
 
 /// Extract the drive volume (e.g. `C:`) that `path` lives on.

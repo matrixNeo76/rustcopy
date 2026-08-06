@@ -70,14 +70,23 @@ impl JobConfig {
             verify_integrity: self.verify_integrity.or(base.verify_integrity),
             hash_algo: self.hash_algo.or(base.hash_algo),
             compare_baseline: self.compare_baseline.or(base.compare_baseline),
-            report_path: self.report_path.clone().or_else(|| base.report_path.clone()),
+            report_path: self
+                .report_path
+                .clone()
+                .or_else(|| base.report_path.clone()),
             log_path: self.log_path.clone().or_else(|| base.log_path.clone()),
             dry_run: self.dry_run.or(base.dry_run),
             backup_type: self.backup_type.or(base.backup_type),
             keep_generations: self.keep_generations.or(base.keep_generations),
             mirror: self.mirror.or(base.mirror),
-            exclude_files: self.exclude_files.clone().or_else(|| base.exclude_files.clone()),
-            exclude_dirs: self.exclude_dirs.clone().or_else(|| base.exclude_dirs.clone()),
+            exclude_files: self
+                .exclude_files
+                .clone()
+                .or_else(|| base.exclude_files.clone()),
+            exclude_dirs: self
+                .exclude_dirs
+                .clone()
+                .or_else(|| base.exclude_dirs.clone()),
             min_age_days: self.min_age_days.or(base.min_age_days),
             max_age_days: self.max_age_days.or(base.max_age_days),
             bandwidth_limit_mbps: self.bandwidth_limit_mbps.or(base.bandwidth_limit_mbps),
@@ -85,9 +94,18 @@ impl JobConfig {
             long_paths: self.long_paths.or(base.long_paths),
             preserve_timestamps: self.preserve_timestamps.or(base.preserve_timestamps),
             preserve_acl: self.preserve_acl.or(base.preserve_acl),
-            webhook_url: self.webhook_url.clone().or_else(|| base.webhook_url.clone()),
-            pre_command: self.pre_command.clone().or_else(|| base.pre_command.clone()),
-            post_command: self.post_command.clone().or_else(|| base.post_command.clone()),
+            webhook_url: self
+                .webhook_url
+                .clone()
+                .or_else(|| base.webhook_url.clone()),
+            pre_command: self
+                .pre_command
+                .clone()
+                .or_else(|| base.pre_command.clone()),
+            post_command: self
+                .post_command
+                .clone()
+                .or_else(|| base.post_command.clone()),
         }
     }
 }
@@ -111,7 +129,10 @@ impl IngestConfig {
     pub fn load_from(path: &Path) -> Result<Self, IngestError> {
         let content = fs::read_to_string(path).map_err(|err| IngestError::io(path, err))?;
         toml::from_str(&content).map_err(|err| {
-            IngestError::io(path, std::io::Error::new(std::io::ErrorKind::InvalidData, err))
+            IngestError::io(
+                path,
+                std::io::Error::new(std::io::ErrorKind::InvalidData, err),
+            )
         })
     }
 }
@@ -192,8 +213,16 @@ mod tests {
 
         let resolved = job.merged_over(&defaults);
         assert_eq!(resolved.threads, Some(32), "job's own value wins");
-        assert_eq!(resolved.verify_integrity, Some(true), "falls back to the shared default");
-        assert_eq!(resolved.pattern.as_deref(), Some("*.csv"), "falls back to the shared default");
+        assert_eq!(
+            resolved.verify_integrity,
+            Some(true),
+            "falls back to the shared default"
+        );
+        assert_eq!(
+            resolved.pattern.as_deref(),
+            Some("*.csv"),
+            "falls back to the shared default"
+        );
         assert_eq!(resolved.source, Some(PathBuf::from("D:/photos")));
     }
 }

@@ -17,7 +17,7 @@ use axum::response::{IntoResponse, Response};
 use axum::routing::{get, post};
 use axum::Router;
 
-use crate::notify::{NOTIFY_SCHEMA_VERSION, WebhookPayload};
+use crate::notify::{WebhookPayload, NOTIFY_SCHEMA_VERSION};
 use crate::notify_sink::NotificationSink;
 
 /// Body size cap for `POST /notify`. A real payload is a few hundred bytes to a few KB; this is

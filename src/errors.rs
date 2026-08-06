@@ -14,7 +14,9 @@ pub enum IngestError {
     /// documented "clap enforces this before validate() runs" invariant no longer holds
     /// unconditionally for that path — a config file (or `[[jobs]]` defaults) that itself omits
     /// `source`/`dest` must be caught here with a clear error instead of panicking.
-    #[error("--source and --dest must be set on the command line or in the config file (via --config)")]
+    #[error(
+        "--source and --dest must be set on the command line or in the config file (via --config)"
+    )]
     SourceOrDestMissingFromConfig,
 
     /// F34: `--mirror` purges destination-only files to match the source tree 1:1; that's
@@ -42,7 +44,9 @@ pub enum IngestError {
     SourceEqualsDestination(PathBuf),
 
     /// F3.4: destination is inside the source tree (would cause infinite recursion).
-    #[error("destination {dest} is inside source {src}: copying a directory into itself is not allowed")]
+    #[error(
+        "destination {dest} is inside source {src}: copying a directory into itself is not allowed"
+    )]
     DestInsideSource { src: PathBuf, dest: PathBuf },
 
     #[error("--pattern must not be empty")]
@@ -158,8 +162,7 @@ impl IngestError {
             // SpawnFailed is transient unless the binary is missing or access is denied.
             IngestError::SpawnFailed { source, .. } => {
                 let kind = source.kind();
-                kind != std::io::ErrorKind::NotFound
-                    && kind != std::io::ErrorKind::PermissionDenied
+                kind != std::io::ErrorKind::NotFound && kind != std::io::ErrorKind::PermissionDenied
             }
             // F1.3: delegate to the robocopy bitmask to determine retry-ability.
             // Code 8 (retry limit exceeded per file) is transient; code 16 (fatal config

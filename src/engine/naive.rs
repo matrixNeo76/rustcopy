@@ -56,7 +56,14 @@ impl CopyEngine for NaiveCopyEngine {
         );
 
         let files: Vec<&ScannedFile> = inventory.files.iter().collect();
-        copy_files(&request.source, &request.dest, &files, request.dry_run, sink, "baseline")
+        copy_files(
+            &request.source,
+            &request.dest,
+            &files,
+            request.dry_run,
+            sink,
+            "baseline",
+        )
     }
 }
 

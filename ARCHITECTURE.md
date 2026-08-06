@@ -173,3 +173,28 @@ Per garantire la stabilità su dataset da **milioni di file**:
 ## 5. Matrice di Cross-Platform & Mock Testability
 
 Nonostante `robocopy.exe` sia un binario esclusivamente Windows, l'intera suite di **284 test** (`cargo test` di base) viene eseguita ed è al 100% passante sia su Windows che su Linux / macOS grazie al trait `CommandRunner` ed al mock `ScriptedRunner` che simula perfettamente gli exit code ed i flussi stdout di Robocopy. Su Windows, i test aggiuntivi eseguono `robocopy.exe` realmente (dry-run, cifratura AES-256-GCM end-to-end, blocco del mirror-purge, webhook irraggiungibile, **ripristino completo end-to-end da perdita simulata di file — F24**, **backup cifrato → perdita → `--restore-from --decrypt` end-to-end — F25b**, **backup generazionale full → incrementale → differenziale — F34**, **ritenzione/rotazione delle generazioni per cicli — F35**, **comandi pre/post job — F39**, **installazione/rimozione reale di una voce Task Scheduler via `schtasks.exe` — F36**, **checkpoint e resume — F31**, **due job dello stesso batch `[[jobs]]` che condividono la stessa `dest` ottengono manifest generazioni e cache indipendenti — D12**, **le righe di log di ogni job in un batch `[[jobs]]`, incluse quelle emesse dentro `spawn_blocking` come l'invocazione di robocopy, sono taggate con il nome del job che le ha prodotte — D13**, **nessun file temporaneo residuo dopo la scrittura atomica del manifest generazioni/cache fast-verify — D14**, **un fallimento di copia in `--backup-type` restituisce l'exit code 1 (non 2) e scrive comunque un report — D15**). `--install-service`/`--uninstall-service` su entrambi i binari (`robocopy_ingest`, F37, e `notify-server`, F41) sono coperti solo da unit/black-box test che verificano il fallimento pulito senza elevazione e i conflitti clap — il vero round trip contro il Service Control Manager richiederebbe elevazione ad Amministratore reale e non è automatizzato, stesso limite dichiarato di `--vss-snapshot` (F30). Con `cargo test --features notify-server` (**299 test** totali) si aggiungono i test unitari sul router axum (su socket TCP reale) e test end-to-end che eseguono i binari `notify-server` e `robocopy_ingest` realmente compilati l'uno contro l'altro, incluso l'avvio del notify-server come proprio servizio Windows separato (F41).
+
+---
+
+## 6. Pattern Architetturali Trasversali
+
+Due pattern introdotti dall'audit del 6 Agosto 2026 (D13/D14), non legati a una singola feature ma a
+regole seguite ovunque nel codice:
+
+- **Propagazione dello span `tracing` attraverso `spawn_blocking` (D13)**: `tokio::task::spawn_blocking`
+  esegue la sua chiusura su un thread del pool bloccante di Tokio, che **non** eredita automaticamente
+  lo span `tracing` attivo sul task chiamante — un problema concreto in un batch `[[jobs]]` (F33),
+  dove ogni job viene eseguito dentro `tracing::info_span!("job", job = %job_name)` ma le operazioni
+  bloccanti (il trasferimento robocopy/naive, VSS, hook, integrity check, ecc.) girano su thread
+  separati. `main.rs::spawn_blocking_with_span` cattura `tracing::Span::current()` prima dello switch
+  di thread e lo ri-entra dentro la chiusura (`span.in_scope(f)`) — usato in **tutti** i punti di
+  `main.rs` che chiamano `spawn_blocking`, non solo in alcuni, altrimenti si perde la correlazione
+  job↔log proprio sulle righe più utili (l'invocazione di robocopy).
+- **Scrittura atomica dei file di stato (D14)**: `robocopy_ingest::atomic_write` (`lib.rs`) scrive su
+  un file temporaneo sibling (`<path>.rustcopy-tmp`) e rinomina atomicamente sopra l'originale solo a
+  scrittura completata — stesso pattern già usato da `crypto.rs::encrypt_file`/`decrypt_file` (D3/D4),
+  generalizzato per byte generici. Usato da `generations::GenerationManifest::save` e
+  `cache::IngestCache::save_to`, entrambi file che possono arrivare a centinaia di MB su alberi da
+  milioni di file (misurato empiricamente: ~174 MB/generazione sul profilo reale da 1,34M file) e la
+  cui corruzione a metà scrittura è, per il manifest, fatale per ogni run futuro contro quella
+  destinazione.

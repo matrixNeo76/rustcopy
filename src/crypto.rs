@@ -240,8 +240,7 @@ pub fn resolve_key(value: &str) -> Result<String, IngestError> {
         std::env::var(name)
             .map_err(|_| IngestError::Crypto(format!("environment variable {name} is not set")))
     } else if let Some(path) = value.strip_prefix("file:") {
-        let content = std::fs::read_to_string(path)
-            .map_err(|e| IngestError::io(path, e))?;
+        let content = std::fs::read_to_string(path).map_err(|e| IngestError::io(path, e))?;
         Ok(content.lines().next().unwrap_or("").trim().to_string())
     } else {
         tracing::warn!(
@@ -277,7 +276,9 @@ mod tests {
         manager
             .encrypt_stream(Cursor::new(original), &mut ciphertext)
             .expect("encrypt");
-        assert!(!ciphertext.windows(original.len()).any(|w| w == &original[..]));
+        assert!(!ciphertext
+            .windows(original.len())
+            .any(|w| w == &original[..]));
         assert_eq!(round_trip(&manager, original), original);
     }
 
@@ -291,8 +292,12 @@ mod tests {
         let manager = CryptoManager::new("k").expect("key");
         let mut a = Vec::new();
         let mut b = Vec::new();
-        manager.encrypt_stream(Cursor::new(b"same plaintext"), &mut a).expect("encrypt a");
-        manager.encrypt_stream(Cursor::new(b"same plaintext"), &mut b).expect("encrypt b");
+        manager
+            .encrypt_stream(Cursor::new(b"same plaintext"), &mut a)
+            .expect("encrypt a");
+        manager
+            .encrypt_stream(Cursor::new(b"same plaintext"), &mut b)
+            .expect("encrypt b");
         assert_ne!(a, b, "nonce must differ between calls");
     }
 
@@ -301,7 +306,8 @@ mod tests {
         let a = CryptoManager::new("key-a").expect("key a");
         let b = CryptoManager::new("key-b").expect("key b");
         let mut ciphertext = Vec::new();
-        a.encrypt_stream(Cursor::new(b"secret payload"), &mut ciphertext).expect("encrypt");
+        a.encrypt_stream(Cursor::new(b"secret payload"), &mut ciphertext)
+            .expect("encrypt");
         let mut out = Vec::new();
         assert!(b.decrypt_stream(Cursor::new(ciphertext), &mut out).is_err());
     }
@@ -310,7 +316,9 @@ mod tests {
     fn truncated_ciphertext_is_rejected() {
         let manager = CryptoManager::new("k").expect("key");
         let mut out = Vec::new();
-        assert!(manager.decrypt_stream(Cursor::new([0u8; 4]), &mut out).is_err());
+        assert!(manager
+            .decrypt_stream(Cursor::new([0u8; 4]), &mut out)
+            .is_err());
     }
 
     #[test]
@@ -409,7 +417,9 @@ mod tests {
         std::fs::write(&path, b"just a normal file, never encrypted").expect("seed file");
 
         let manager = CryptoManager::new("k").expect("key");
-        let err = manager.decrypt_file(&path).expect_err("must reject a non-encrypted file");
+        let err = manager
+            .decrypt_file(&path)
+            .expect_err("must reject a non-encrypted file");
         assert!(format!("{err}").contains("not an encrypted file"));
         // The original file must be untouched (no partial/temp corruption left behind).
         assert_eq!(

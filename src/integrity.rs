@@ -288,7 +288,10 @@ pub fn verify(
         skipped_unchanged: 0,
     };
 
-    let total_err_count = results.iter().filter(|r| !matches!(r, FileVerificationOutcome::Passed { .. })).count();
+    let total_err_count = results
+        .iter()
+        .filter(|r| !matches!(r, FileVerificationOutcome::Passed { .. }))
+        .count();
     check.total_errors = total_err_count;
     if total_err_count > MAX_REPORTED_ERRORS {
         check.truncated = true;
@@ -433,7 +436,13 @@ mod tests {
         copy_tree(source.path(), dest.path());
 
         let inventory = scan::scan(source.path(), "*.csv", false, &[], &[]).expect("scan");
-        let check = verify(source.path(), dest.path(), &inventory.files, HashAlgorithm::Sha256, &NoopProgress);
+        let check = verify(
+            source.path(),
+            dest.path(),
+            &inventory.files,
+            HashAlgorithm::Sha256,
+            &NoopProgress,
+        );
 
         assert!(check.passed());
         assert_eq!(check.files_checked, 2);
@@ -450,7 +459,13 @@ mod tests {
         std::fs::write(dest.path().join("b.csv"), vec![0u8; 1024]).expect("corrupt");
 
         let inventory = scan::scan(source.path(), "*.csv", false, &[], &[]).expect("scan");
-        let check = verify(source.path(), dest.path(), &inventory.files, HashAlgorithm::Sha256, &NoopProgress);
+        let check = verify(
+            source.path(),
+            dest.path(),
+            &inventory.files,
+            HashAlgorithm::Sha256,
+            &NoopProgress,
+        );
 
         assert!(!check.passed());
         assert_eq!(check.status, IntegrityStatus::Failed);
@@ -470,7 +485,13 @@ mod tests {
         write_fixture_file(&dest.path().join("a.csv"), 1024);
 
         let inventory = scan::scan(source.path(), "*.csv", false, &[], &[]).expect("scan");
-        let check = verify(source.path(), dest.path(), &inventory.files, HashAlgorithm::Sha256, &NoopProgress);
+        let check = verify(
+            source.path(),
+            dest.path(),
+            &inventory.files,
+            HashAlgorithm::Sha256,
+            &NoopProgress,
+        );
 
         assert!(!check.passed());
         assert_eq!(check.mismatches.len(), 1);
@@ -484,7 +505,13 @@ mod tests {
         std::fs::remove_file(dest.path().join("nested/b.csv")).expect("remove");
 
         let inventory = scan::scan(source.path(), "*.csv", false, &[], &[]).expect("scan");
-        let check = verify(source.path(), dest.path(), &inventory.files, HashAlgorithm::Sha256, &NoopProgress);
+        let check = verify(
+            source.path(),
+            dest.path(),
+            &inventory.files,
+            HashAlgorithm::Sha256,
+            &NoopProgress,
+        );
 
         assert!(!check.passed());
         assert_eq!(check.missing_in_dest, vec!["nested/b.csv".to_string()]);
@@ -494,7 +521,13 @@ mod tests {
     #[test]
     fn empty_inventory_passes() {
         let dir = fixture_tree(&[]);
-        let check = verify(dir.path(), dir.path(), &[], HashAlgorithm::Sha256, &NoopProgress);
+        let check = verify(
+            dir.path(),
+            dir.path(),
+            &[],
+            HashAlgorithm::Sha256,
+            &NoopProgress,
+        );
         assert!(check.passed());
         assert_eq!(check.files_checked, 0);
     }
@@ -506,7 +539,13 @@ mod tests {
         copy_tree(source.path(), dest.path());
 
         let inventory = scan::scan(source.path(), "*.csv", false, &[], &[]).expect("scan");
-        let check = verify(source.path(), dest.path(), &inventory.files, HashAlgorithm::Blake3, &NoopProgress);
+        let check = verify(
+            source.path(),
+            dest.path(),
+            &inventory.files,
+            HashAlgorithm::Blake3,
+            &NoopProgress,
+        );
         assert!(check.passed());
         assert_eq!(check.files_checked, 1);
     }
@@ -519,7 +558,13 @@ mod tests {
         copy_tree(source.path(), dest.path());
 
         let inventory = scan::scan(source.path(), "*.csv", false, &[], &[]).expect("scan");
-        let check = verify(source.path(), dest.path(), &inventory.files, HashAlgorithm::Xxh3, &NoopProgress);
+        let check = verify(
+            source.path(),
+            dest.path(),
+            &inventory.files,
+            HashAlgorithm::Xxh3,
+            &NoopProgress,
+        );
         assert!(check.passed());
         assert_eq!(check.files_checked, 1);
     }
@@ -537,7 +582,13 @@ mod tests {
         std::fs::write(&dest_file, bytes).expect("corrupt");
 
         let inventory = scan::scan(source.path(), "*.csv", false, &[], &[]).expect("scan");
-        let check = verify(source.path(), dest.path(), &inventory.files, HashAlgorithm::Xxh3, &NoopProgress);
+        let check = verify(
+            source.path(),
+            dest.path(),
+            &inventory.files,
+            HashAlgorithm::Xxh3,
+            &NoopProgress,
+        );
         assert!(!check.passed());
         assert_eq!(check.mismatches.len(), 1);
         assert_eq!(check.mismatches[0].algorithm, "xxh3");
@@ -548,7 +599,9 @@ mod tests {
         let dir = fixture_tree(&[("a.csv", 100)]);
         let digest = xxh3_file(&dir.path().join("a.csv")).expect("hash");
         assert_eq!(digest.len(), 16);
-        assert!(digest.chars().all(|c| c.is_ascii_hexdigit() && !c.is_ascii_uppercase()));
+        assert!(digest
+            .chars()
+            .all(|c| c.is_ascii_hexdigit() && !c.is_ascii_uppercase()));
     }
 
     #[test]

@@ -175,7 +175,14 @@ impl IngestReport {
         baseline: Option<&CopyOutcome>,
         integrity: Option<IntegrityCheck>,
     ) -> Self {
-        Self::with_timing(args, inventory, robocopy, baseline, integrity, PhaseTiming::default())
+        Self::with_timing(
+            args,
+            inventory,
+            robocopy,
+            baseline,
+            integrity,
+            PhaseTiming::default(),
+        )
     }
 
     pub fn with_timing(

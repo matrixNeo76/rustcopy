@@ -86,7 +86,11 @@ pub struct WebhookPayload {
 
 impl WebhookPayload {
     pub fn from_report(report: &IngestReport) -> Self {
-        let integrity_passed = report.integrity_check.as_ref().map(|c| c.passed()).unwrap_or(true);
+        let integrity_passed = report
+            .integrity_check
+            .as_ref()
+            .map(|c| c.passed())
+            .unwrap_or(true);
         let status = if integrity_passed && report.robocopy_transfer.exit_code.unwrap_or(0) < 8 {
             BackupStatus::Success
         } else {

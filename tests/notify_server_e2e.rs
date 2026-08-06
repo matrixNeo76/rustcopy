@@ -152,11 +152,16 @@ fn notify_server_requires_the_configured_token() {
         .output()
         .expect("run robocopy_ingest");
 
-    assert!(output.status.success(), "the backup itself must still succeed");
+    assert!(
+        output.status.success(),
+        "the backup itself must still succeed"
+    );
     let report: serde_json::Value =
         serde_json::from_str(&std::fs::read_to_string(&report_path).expect("read report"))
             .expect("valid json");
-    let webhook_error = report["webhook_error"].as_str().expect("webhook_error present");
+    let webhook_error = report["webhook_error"]
+        .as_str()
+        .expect("webhook_error present");
     assert!(webhook_error.contains("401"), "got: {webhook_error}");
 }
 

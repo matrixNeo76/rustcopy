@@ -1,5 +1,10 @@
 # 📬 Piano di Implementazione — Notify Server (axum)
 
+> **Archiviato (6 Agosto 2026)**: questo piano è stato eseguito il 31 Luglio 2026 (Release 5.4.0,
+> commit `035cf62`). Non è più documentazione attiva — per lo stato attuale del notify-server vedi
+> `ARCHITECTURE.md` e `ROADMAP.md`. Conservato qui solo come riferimento storico delle decisioni di
+> design prese in fase di pianificazione.
+
 > **Documento di pianificazione operativa.** Scritto per essere eseguito in una sessione separata,
 > senza il contesto della conversazione in cui è stato prodotto. Contiene le decisioni di design già
 > prese (con le motivazioni), le fasi ordinate, i criteri di completamento e le insidie note.

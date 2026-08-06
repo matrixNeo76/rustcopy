@@ -23,7 +23,9 @@ use std::time::Duration;
 use anyhow::{Context, Result};
 use clap::Parser;
 
-use robocopy_ingest::notify_server::{build_router, check_bind_security, serve_until_shutdown_or, AppState};
+use robocopy_ingest::notify_server::{
+    build_router, check_bind_security, serve_until_shutdown_or, AppState,
+};
 use robocopy_ingest::notify_sink::NotifyServerConfig;
 
 /// Environment variable holding the bearer token required on `/notify` (unset = no auth, only
@@ -78,12 +80,14 @@ fn main() -> Result<()> {
         return install_service();
     }
     if args.uninstall_service {
-        robocopy_ingest::service::uninstall_named(SERVICE_NAME).context("cannot uninstall the Windows service")?;
+        robocopy_ingest::service::uninstall_named(SERVICE_NAME)
+            .context("cannot uninstall the Windows service")?;
         println!("Windows service '{SERVICE_NAME}' removed.");
         return Ok(());
     }
 
-    let runtime = tokio::runtime::Runtime::new().context("failed to build the tokio async runtime")?;
+    let runtime =
+        tokio::runtime::Runtime::new().context("failed to build the tokio async runtime")?;
     // No extra shutdown source beyond Ctrl+C/SIGTERM in the normal foreground run — `pending()`
     // is a future that never resolves, so `serve_until_shutdown_or` behaves exactly like the
     // pre-F41 `serve_until_shutdown` here.
@@ -113,7 +117,10 @@ fn install_service() -> Result<()> {
 /// Ctrl+C/SIGTERM handling inside `serve_until_shutdown_or`). Used by both the normal foreground
 /// run (`extra_shutdown` = a future that never resolves) and the F41 service body (`extra_shutdown`
 /// = a bridge from SCM's `Stop` control event).
-async fn run_server(args: Args, extra_shutdown: impl std::future::Future<Output = ()> + Send + 'static) -> Result<()> {
+async fn run_server(
+    args: Args,
+    extra_shutdown: impl std::future::Future<Output = ()> + Send + 'static,
+) -> Result<()> {
     let config = match &args.config {
         Some(path) => NotifyServerConfig::load_from(path)
             .with_context(|| format!("cannot load config file from {}", path.display()))?,
@@ -189,10 +196,12 @@ fn run_notify_service_inner() -> Result<()> {
         .collect();
     let args = Args::parse_from(std::iter::once("notify-server".to_string()).chain(raw_args));
 
-    let (status_handle, stop_rx) = robocopy_ingest::service::register_and_wait_for_stop(SERVICE_NAME)?;
+    let (status_handle, stop_rx) =
+        robocopy_ingest::service::register_and_wait_for_stop(SERVICE_NAME)?;
 
     let (async_stop_tx, async_stop_rx) = tokio::sync::oneshot::channel::<()>();
-    let runtime = tokio::runtime::Runtime::new().context("failed to build the tokio async runtime")?;
+    let runtime =
+        tokio::runtime::Runtime::new().context("failed to build the tokio async runtime")?;
     runtime.spawn_blocking(move || {
         let _ = stop_rx.recv();
         let _ = async_stop_tx.send(());
@@ -213,5 +222,7 @@ fn run_as_service() -> Result<()> {
 
 #[cfg(not(windows))]
 fn run_as_service() -> Result<()> {
-    anyhow::bail!("service mode requires the Windows Service Control Manager, unavailable on this platform")
+    anyhow::bail!(
+        "service mode requires the Windows Service Control Manager, unavailable on this platform"
+    )
 }

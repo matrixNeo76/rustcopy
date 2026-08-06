@@ -346,7 +346,7 @@ con coda persistente, esecuzione come servizio — è pianificato in **6.1.0**.
 
 ## 📬 Milestone 5.4.0 — Notify Server (axum)
 
-Implementata seguendo `PIANO_NOTIFY_SERVER.md` (piano dettagliato con le decisioni di design e le
+Implementata seguendo `docs/archive/PIANO_NOTIFY_SERVER.md` (piano dettagliato con le decisioni di design e le
 insidie note — rimane nel repo come riferimento storico).
 
 | Task | Stato | Descrizione |
@@ -382,7 +382,7 @@ insidie note — rimane nel repo come riferimento storico).
 
 ## 📌 Debito tecnico noto (non ancora pianificato)
 
-- `src/cache.rs`, `src/cloud.rs`, `src/service.rs` restano scaffolding non collegati; i relativi flag (`--enable-dedup`, `--cloud-sync-target`, `--install-service`) sono marcati `[NOT IMPLEMENTED]` in `--help`. `cache.rs` verrebbe finalmente utilizzato da F28.
+- `src/cloud.rs` resta l'unico modulo ancora scaffolding non collegato; i relativi flag (`--enable-dedup`, `--cloud-sync-target`) sono marcati `[NOT IMPLEMENTED]` in `--help`. **Nota di correzione (6 Agosto 2026)**: questa voce citava in precedenza anche `src/cache.rs` e `src/service.rs` come scaffolding non collegato — non lo sono più: `cache.rs` è usato da `--fast-verify` da F28 (3 Agosto 2026), e `service.rs` è integrazione reale con il Windows Service Control Manager da F37 (vedi la nota poche righe sopra e la nota tecnica in `CLAUDE.md`); `--install-service` non è più `[NOT IMPLEMENTED]`.
 - Il notify-server implementa solo `LogSink`/`NtfySink`/`GenericWebhookSink` e prova ogni sink **una volta sola**: una notifica verso un canale momentaneamente irraggiungibile è persa. `GenericWebhookSink` posta solo la forma JSON fissa di `WebhookPayload`, senza header configurabili né templating — non raggiunge Telegram (manca `chat_id`, obbligatorio) né sostituisce un invio SMTP reale. Rimandato al backlog (F42 coda persistente, F43 Telegram, F44 email) il 5 Agosto 2026, non pianificato in una milestone specifica.
 - `integrity::verify` richiede ancora l'intera lista file in RAM (`Vec<ScannedFile>`); `--no-prescan` evita solo la sua costruzione, disabilitando la verifica di integrità in quel modo, ma non introduce hashing in streaming.
 - `Args::merge_config` applica il pattern del TOML solo quando la CLI è ancora sul default `"*"`; non distingue un `--pattern "*"` esplicito da nessun flag passato (richiederebbe `ArgMatches::value_source`), e la stessa limitazione vale per gli altri campi booleani.

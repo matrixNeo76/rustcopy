@@ -432,13 +432,11 @@ impl CommandRunner for ProcessRunner {
             std::thread::spawn(move || {
                 use std::io::BufRead;
                 let reader = std::io::BufReader::new(stderr);
-                for line in reader.split(b'\n') {
-                    if let Ok(bytes) = line {
-                        let text = crate::oem_codec::decode_robocopy_output(&bytes);
-                        let text = text.trim_end_matches(['\r', '\n']);
-                        if !text.is_empty() {
-                            tracing::warn!(stream = "stderr", "{text}");
-                        }
+                for bytes in reader.split(b'\n').flatten() {
+                    let text = crate::oem_codec::decode_robocopy_output(&bytes);
+                    let text = text.trim_end_matches(['\r', '\n']);
+                    if !text.is_empty() {
+                        tracing::warn!(stream = "stderr", "{text}");
                     }
                 }
             })
@@ -776,8 +774,16 @@ mod tests {
     fn normalize_path_arg_strips_various_separators() {
         assert_eq!(normalize_path_arg("C:\\foo\\", false), "C:\\foo");
         assert_eq!(normalize_path_arg("/mnt/data/", false), "/mnt/data");
-        assert_eq!(normalize_path_arg("C:\\foo", false), "C:\\foo", "no trailing sep: unchanged");
-        assert_eq!(normalize_path_arg("C:\\\\", false), "C:", "multiple seps stripped");
+        assert_eq!(
+            normalize_path_arg("C:\\foo", false),
+            "C:\\foo",
+            "no trailing sep: unchanged"
+        );
+        assert_eq!(
+            normalize_path_arg("C:\\\\", false),
+            "C:",
+            "multiple seps stripped"
+        );
     }
 
     /// F4.1: exclusion patterns produce /XF and /XD flags.
@@ -789,7 +795,11 @@ mod tests {
         let args = build_args(&req);
 
         // /XF *.tmp /XF thumbs.db
-        let xf_positions: Vec<_> = args.iter().enumerate().filter(|(_, a)| a == &"/XF").collect();
+        let xf_positions: Vec<_> = args
+            .iter()
+            .enumerate()
+            .filter(|(_, a)| a == &"/XF")
+            .collect();
         assert_eq!(xf_positions.len(), 2, "two /XF flags");
         assert_eq!(args[xf_positions[0].0 + 1], "*.tmp");
         assert_eq!(args[xf_positions[1].0 + 1], "thumbs.db");

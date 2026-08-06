@@ -132,7 +132,10 @@ mod tests {
         let path = dir.path().join("manifest.json");
         atomic_write(&path, b"hello").expect("write succeeds");
         let tmp_path = dir.path().join("manifest.json.rustcopy-tmp");
-        assert!(!tmp_path.exists(), "temp file must be renamed away, not left behind");
+        assert!(
+            !tmp_path.exists(),
+            "temp file must be renamed away, not left behind"
+        );
     }
 
     #[test]

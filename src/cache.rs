@@ -117,7 +117,10 @@ mod tests {
         cache.save_to(&path).expect("save");
 
         let tmp_path = dir.path().join(".ingest_cache.rustcopy-tmp");
-        assert!(!tmp_path.exists(), "temp file must be renamed away, not left behind");
+        assert!(
+            !tmp_path.exists(),
+            "temp file must be renamed away, not left behind"
+        );
     }
 
     #[test]
@@ -129,7 +132,10 @@ mod tests {
     #[test]
     fn default_cache_path_lives_next_to_the_destination() {
         let dest = Path::new("D:/warehouse");
-        assert_eq!(default_cache_path(dest, None), PathBuf::from("D:/warehouse/.ingest_cache"));
+        assert_eq!(
+            default_cache_path(dest, None),
+            PathBuf::from("D:/warehouse/.ingest_cache")
+        );
     }
 
     #[test]

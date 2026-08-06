@@ -76,7 +76,11 @@ impl io::Write for ChannelWriter {
     fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
         // Use try_send so logging never blocks the caller or causes OOM on 1TB+ transfers.
         // A full channel means lines are dropped; track how many so the report can surface it.
-        if self.sender.try_send(LogMessage::Line(buf.to_vec())).is_err() {
+        if self
+            .sender
+            .try_send(LogMessage::Line(buf.to_vec()))
+            .is_err()
+        {
             self.dropped.fetch_add(1, Ordering::Relaxed);
         }
         Ok(buf.len())
@@ -227,8 +231,8 @@ fn build(
         let _ = file.flush().await;
     });
 
-    let filter = EnvFilter::try_from_default_env()
-        .unwrap_or_else(|_| EnvFilter::new(config.filter.clone()));
+    let filter =
+        EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new(config.filter.clone()));
     let subscriber = tracing_subscriber::fmt()
         .with_env_filter(filter)
         .with_writer(ChannelWriter {
@@ -388,12 +392,23 @@ mod tests {
         handle.flush().await;
         handle.shutdown().await;
 
-        let rotated = std::fs::read_to_string(backup_path(&path, 1)).expect("rotated backup exists");
-        assert_eq!(rotated, "x".repeat(100), "the old oversized content must be preserved, not lost");
+        let rotated =
+            std::fs::read_to_string(backup_path(&path, 1)).expect("rotated backup exists");
+        assert_eq!(
+            rotated,
+            "x".repeat(100),
+            "the old oversized content must be preserved, not lost"
+        );
 
         let fresh = std::fs::read_to_string(&path).expect("fresh log exists");
-        assert!(!fresh.contains(&"x".repeat(100)), "old content must not linger in the fresh file");
-        assert!(fresh.contains("fresh run"), "the new run must log into a fresh file");
+        assert!(
+            !fresh.contains(&"x".repeat(100)),
+            "old content must not linger in the fresh file"
+        );
+        assert!(
+            fresh.contains("fresh run"),
+            "the new run must log into a fresh file"
+        );
     }
 
     /// F27: rotation keeps only `max_backups` files, oldest dropped, not accumulated forever.
@@ -423,7 +438,10 @@ mod tests {
         // 4 iterations rotate generation-0..generation-3 in turn; with max_backups=2 only the two
         // most recent (2 and 3) survive — 0 and 1 must have been dropped as the oldest.
         let newest_backup = std::fs::read_to_string(backup_path(&path, 1)).expect("read slot 1");
-        assert!(newest_backup.contains("generation-3"), "got: {newest_backup}");
+        assert!(
+            newest_backup.contains("generation-3"),
+            "got: {newest_backup}"
+        );
         let older_backup = std::fs::read_to_string(backup_path(&path, 2)).expect("read slot 2");
         assert!(older_backup.contains("generation-2"), "got: {older_backup}");
     }
@@ -434,6 +452,9 @@ mod tests {
         let path = dir.path().join("ingest.log");
         std::fs::write(&path, "x".repeat(1000)).expect("seed");
         rotate_if_needed(&path, 0, 3);
-        assert!(!backup_path(&path, 1).exists(), "max_bytes=0 must disable rotation");
+        assert!(
+            !backup_path(&path, 1).exists(),
+            "max_bytes=0 must disable rotation"
+        );
     }
 }

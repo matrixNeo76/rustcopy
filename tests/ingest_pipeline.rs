@@ -86,7 +86,10 @@ fn baseline_copy_then_integrity_check_passes_and_report_is_written() {
 
     let progress = ThroughputProgress::hidden(inventory.total_bytes);
     let outcome = NaiveCopyEngine::new()
-        .copy(&args.copy_request(args.dest().to_path_buf()), progress.as_ref())
+        .copy(
+            &args.copy_request(args.dest().to_path_buf()),
+            progress.as_ref(),
+        )
         .expect("baseline copy");
     assert_eq!(outcome.files_copied, 2);
     assert_eq!(outcome.bytes_copied, 350_000);

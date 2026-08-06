@@ -24,7 +24,7 @@ use robocopy_ingest::integrity::{self, IntegrityCheck};
 use robocopy_ingest::logging;
 use robocopy_ingest::progress::{ProgressSink, ThroughputProgress};
 use robocopy_ingest::report::{format_bytes, IngestReport};
-use robocopy_ingest::scan::{self, ScannedFile, ScanSummary};
+use robocopy_ingest::scan::{self, ScanSummary, ScannedFile};
 
 /// How often the destination directory is sampled to estimate live throughput.
 ///
@@ -126,7 +126,12 @@ async fn run(mut args: Args) -> Result<u8> {
         args = robocopy_ingest::restore::build_restore_args(&args, &restore_report, None)?;
     } else if let Some(checkpoint_path) = args.resume_from.clone() {
         args = robocopy_ingest::checkpoint::build_resume_args(&args, &checkpoint_path)
-            .with_context(|| format!("cannot resume from checkpoint {}", checkpoint_path.display()))?;
+            .with_context(|| {
+                format!(
+                    "cannot resume from checkpoint {}",
+                    checkpoint_path.display()
+                )
+            })?;
     } else if let Some(config_path) = &args.config {
         let config = robocopy_ingest::config::IngestConfig::load_from(config_path)
             .with_context(|| format!("cannot load config file from {}", config_path.display()))?;
@@ -148,8 +153,12 @@ async fn run(mut args: Args) -> Result<u8> {
     // silently schedule a command that will fail every time it fires.
     if let Some(spec_raw) = args.install_schedule.clone() {
         let spec = robocopy_ingest::schedule::parse_schedule_spec(&spec_raw)?;
-        let name = args.schedule_name.clone().unwrap_or_else(|| "rustcopy".to_string());
-        let exe_path = std::env::current_exe().context("cannot determine the current executable path")?;
+        let name = args
+            .schedule_name
+            .clone()
+            .unwrap_or_else(|| "rustcopy".to_string());
+        let exe_path =
+            std::env::current_exe().context("cannot determine the current executable path")?;
         let raw_args: Vec<String> = std::env::args().skip(1).collect();
         let filtered_args = robocopy_ingest::schedule::strip_schedule_flags(&raw_args);
         let task_run = robocopy_ingest::schedule::build_task_run_command(&exe_path, &filtered_args);
@@ -199,14 +208,25 @@ async fn run_jobs(base_args: Args, config: robocopy_ingest::config::IngestConfig
     let log = logging::init(&log_args.log_path, &log_args.log_config())
         .context("cannot initialise the log file")?;
 
-    println!("running {} job(s) from {}", jobs.len(), log_args.config.as_deref().unwrap_or(Path::new("<config>")).display());
+    println!(
+        "running {} job(s) from {}",
+        jobs.len(),
+        log_args
+            .config
+            .as_deref()
+            .unwrap_or(Path::new("<config>"))
+            .display()
+    );
 
     let child_pid = Arc::new(AtomicU32::new(0));
     let mut worst_exit_code: u8 = 0;
 
     for (idx, job) in jobs.iter().enumerate() {
         let resolved = job.merged_over(&config.defaults);
-        let job_name = resolved.name.clone().unwrap_or_else(|| format!("job{}", idx + 1));
+        let job_name = resolved
+            .name
+            .clone()
+            .unwrap_or_else(|| format!("job{}", idx + 1));
 
         let mut job_args = base_args.clone();
         job_args.apply_job_config(&resolved);
@@ -224,7 +244,8 @@ async fn run_jobs(base_args: Args, config: robocopy_ingest::config::IngestConfig
         // to a report_path as long as the file has one at all) and send every job's report to the
         // exact same path.
         if job.report_path.is_none() {
-            job_args.report_path = robocopy_ingest::namespaced_path(&job_args.report_path, &job_name);
+            job_args.report_path =
+                robocopy_ingest::namespaced_path(&job_args.report_path, &job_name);
         }
         // Cache (`.ingest_cache`) and the generations manifest (`.rustcopy_generations.json`) have
         // no user-facing config field to namespace explicitly, unlike report_path above — always
@@ -279,7 +300,11 @@ enum JobRunResult {
 /// and its summary output. Shared by the single-job path in `run` and F33's multi-job path in
 /// `run_jobs`, both of which own the `LogHandle`'s init/flush/shutdown lifecycle themselves since
 /// a batch of jobs shares one log file across multiple calls to this function.
-async fn run_one(args: &Args, log: &logging::LogHandle, child_pid: Arc<AtomicU32>) -> Result<JobRunResult> {
+async fn run_one(
+    args: &Args,
+    log: &logging::LogHandle,
+    child_pid: Arc<AtomicU32>,
+) -> Result<JobRunResult> {
     tracing::info!(
         source = %args.source().display(),
         dest = %args.dest().display(),
@@ -346,7 +371,10 @@ fn kill_active_child(child_pid: &Arc<AtomicU32>) {
     if pid == 0 {
         return;
     }
-    tracing::warn!(pid, "sending kill signal to the tracked robocopy.exe child process");
+    tracing::warn!(
+        pid,
+        "sending kill signal to the tracked robocopy.exe child process"
+    );
     let _ = std::process::Command::new("taskkill")
         .args(["/F", "/PID", &pid.to_string()])
         .stdout(std::process::Stdio::null())
@@ -449,7 +477,9 @@ async fn create_vss_snapshot(args: &Args) -> Result<Option<VssGuard>> {
 #[cfg(not(windows))]
 async fn create_vss_snapshot(args: &Args) -> Result<Option<VssGuard>> {
     if args.vss_snapshot {
-        tracing::warn!("--vss-snapshot has no effect outside Windows; continuing without a snapshot");
+        tracing::warn!(
+            "--vss-snapshot has no effect outside Windows; continuing without a snapshot"
+        );
     }
     Ok(None)
 }
@@ -503,7 +533,15 @@ async fn execute(args: &Args, child_pid: Arc<AtomicU32>) -> Result<RunOutcome> {
     // `validate()` already rejects --backup-type together with --mirror, so nothing past this
     // point ever needs to consider the two together.
     if let Some(backup_type) = args.backup_type {
-        return execute_generation_backup(args, backup_type, &effective_source, &inventory, inventory_seconds, start_all).await;
+        return execute_generation_backup(
+            args,
+            backup_type,
+            &effective_source,
+            &inventory,
+            inventory_seconds,
+            start_all,
+        )
+        .await;
     }
 
     // F21 (fixed): a real mirror-purge safety check, run with the actual source inventory
@@ -533,7 +571,10 @@ async fn execute(args: &Args, child_pid: Arc<AtomicU32>) -> Result<RunOutcome> {
         (None, None)
     };
 
-    let (integrity_check, verification_seconds) = if args.verify_integrity && !args.dry_run && copy_failure.is_none() {
+    let (integrity_check, verification_seconds) = if args.verify_integrity
+        && !args.dry_run
+        && copy_failure.is_none()
+    {
         if inventory.total_files_hint.is_some() {
             tracing::warn!(
                 "skipping integrity verification: --no-prescan did not collect per-file paths"
@@ -563,13 +604,12 @@ async fn execute(args: &Args, child_pid: Arc<AtomicU32>) -> Result<RunOutcome> {
     } else {
         None
     };
-    let decrypted_count = if let (Some(key_spec), None, false) =
-        (&args.decrypt, &copy_failure, args.dry_run)
-    {
-        Some(decrypt_destination(args, &inventory, key_spec).await?)
-    } else {
-        None
-    };
+    let decrypted_count =
+        if let (Some(key_spec), None, false) = (&args.decrypt, &copy_failure, args.dry_run) {
+            Some(decrypt_destination(args, &inventory, key_spec).await?)
+        } else {
+            None
+        };
 
     let timing = robocopy_ingest::report::PhaseTiming {
         inventory_seconds,
@@ -591,9 +631,11 @@ async fn execute(args: &Args, child_pid: Arc<AtomicU32>) -> Result<RunOutcome> {
     report.decrypted = decrypted_count.unwrap_or(0) > 0;
 
     if let Some(post_command) = args.post_command.clone() {
-        let error = spawn_blocking_with_span(move || robocopy_ingest::hooks::run_post_command(&post_command))
-            .await
-            .context("the post-command task panicked")?;
+        let error = spawn_blocking_with_span(move || {
+            robocopy_ingest::hooks::run_post_command(&post_command)
+        })
+        .await
+        .context("the post-command task panicked")?;
         if let Some(error) = error {
             tracing::warn!(error = %error, "post-command failed");
             eprintln!("warning: {error}");
@@ -688,10 +730,12 @@ async fn execute_generation_backup(
     let manifest = {
         let dest_root = dest_root.clone();
         let job_name = job_name.clone();
-        spawn_blocking_with_span(move || GenerationManifest::load_or_default(&dest_root, job_name.as_deref()))
-            .await
-            .context("the generation manifest load task panicked")?
-            .context("cannot load the generation manifest")?
+        spawn_blocking_with_span(move || {
+            GenerationManifest::load_or_default(&dest_root, job_name.as_deref())
+        })
+        .await
+        .context("the generation manifest load task panicked")?
+        .context("cannot load the generation manifest")?
     };
 
     let files_to_copy: Vec<ScannedFile> = match backup_type {
@@ -795,10 +839,12 @@ async fn execute_generation_backup(
         });
         let dest_root_for_save = dest_root.clone();
         let job_name_for_save = job_name.clone();
-        spawn_blocking_with_span(move || manifest.save(&dest_root_for_save, job_name_for_save.as_deref()))
-            .await
-            .context("the generation manifest save task panicked")?
-            .context("cannot save the generation manifest")?;
+        spawn_blocking_with_span(move || {
+            manifest.save(&dest_root_for_save, job_name_for_save.as_deref())
+        })
+        .await
+        .context("the generation manifest save task panicked")?
+        .context("cannot save the generation manifest")?;
 
         if let Some(keep_cycles) = args.keep_generations {
             prune_old_generations(args, &dest_root, keep_cycles).await?;
@@ -827,13 +873,22 @@ async fn execute_generation_backup(
         total_files_hint: None,
     };
 
-    let mut report = IngestReport::with_timing(&gen_args, &scoped_inventory, &copy_outcome, None, None, timing);
+    let mut report = IngestReport::with_timing(
+        &gen_args,
+        &scoped_inventory,
+        &copy_outcome,
+        None,
+        None,
+        timing,
+    );
     report.copy_error = copy_error.as_ref().map(|error| error.to_string());
 
     if let Some(post_command) = args.post_command.clone() {
-        let error = spawn_blocking_with_span(move || robocopy_ingest::hooks::run_post_command(&post_command))
-            .await
-            .context("the post-command task panicked")?;
+        let error = spawn_blocking_with_span(move || {
+            robocopy_ingest::hooks::run_post_command(&post_command)
+        })
+        .await
+        .context("the post-command task panicked")?;
         if let Some(error) = error {
             tracing::warn!(error = %error, "post-command failed");
             eprintln!("warning: {error}");
@@ -860,7 +915,11 @@ async fn execute_generation_backup(
     tracing::info!(path = %args.report_path.display(), "report written");
 
     Ok(RunOutcome {
-        exit_code: if copy_error.is_some() { EXIT_INGESTION_PROBLEM } else { 0 },
+        exit_code: if copy_error.is_some() {
+            EXIT_INGESTION_PROBLEM
+        } else {
+            0
+        },
         summary: report.human_summary(),
         report_path: args.report_path.clone(),
     })
@@ -885,10 +944,12 @@ async fn prune_old_generations(args: &Args, dest_root: &Path, keep_cycles: usize
     let manifest = {
         let dest_root = dest_root.to_path_buf();
         let job_name = job_name.clone();
-        spawn_blocking_with_span(move || GenerationManifest::load_or_default(&dest_root, job_name.as_deref()))
-            .await
-            .context("the generation manifest load task panicked")?
-            .context("cannot load the generation manifest for retention")?
+        spawn_blocking_with_span(move || {
+            GenerationManifest::load_or_default(&dest_root, job_name.as_deref())
+        })
+        .await
+        .context("the generation manifest load task panicked")?
+        .context("cannot load the generation manifest for retention")?
     };
 
     let mut prune_ids = manifest.generations_to_prune(keep_cycles);
@@ -928,10 +989,12 @@ async fn prune_old_generations(args: &Args, dest_root: &Path, keep_cycles: usize
         for id in &ids {
             let folder = dest_root_owned.join(id);
             if folder.exists() {
-                std::fs::remove_dir_all(&folder).map_err(|error| IngestError::io(&folder, error))?;
+                std::fs::remove_dir_all(&folder)
+                    .map_err(|error| IngestError::io(&folder, error))?;
             }
         }
-        let mut manifest = GenerationManifest::load_or_default(&dest_root_owned, job_name_owned.as_deref())?;
+        let mut manifest =
+            GenerationManifest::load_or_default(&dest_root_owned, job_name_owned.as_deref())?;
         manifest.retain_generations(&ids);
         manifest.save(&dest_root_owned, job_name_owned.as_deref())
     })
@@ -960,7 +1023,13 @@ async fn inventory_source(args: &Args, effective_source: &Path) -> Result<ScanSu
 
     let inventory = if no_prescan {
         spawn_blocking_with_span(move || {
-            scan::inventory(&source, &pattern, follow_links, &exclude_dirs, &exclude_files)
+            scan::inventory(
+                &source,
+                &pattern,
+                follow_links,
+                &exclude_dirs,
+                &exclude_files,
+            )
         })
         .await
         .context("the source scan task panicked")?
@@ -968,7 +1037,13 @@ async fn inventory_source(args: &Args, effective_source: &Path) -> Result<ScanSu
         .into_scan_summary()
     } else {
         spawn_blocking_with_span(move || {
-            scan::scan(&source, &pattern, follow_links, &exclude_dirs, &exclude_files)
+            scan::scan(
+                &source,
+                &pattern,
+                follow_links,
+                &exclude_dirs,
+                &exclude_files,
+            )
         })
         .await
         .context("the source scan task panicked")?
@@ -1018,10 +1093,7 @@ async fn check_mirror_safety(args: &Args, inventory: &ScanSummary) -> Result<()>
         // --no-prescan: we don't have the source's per-file list to diff against. Erring toward
         // caution, still require --force-purge explicitly rather than silently allowing purges
         // whose scope we can't compute.
-        return Err(IngestError::MirrorPurgeAborted {
-            count: usize::MAX,
-        }
-        .into());
+        return Err(IngestError::MirrorPurgeAborted { count: usize::MAX }.into());
     }
 
     let source_relative: HashSet<PathBuf> = inventory
@@ -1045,7 +1117,7 @@ async fn check_mirror_safety(args: &Args, inventory: &ScanSummary) -> Result<()>
     })
     .await
     .context("the mirror safety scan task panicked")?
-        .context("cannot scan the destination for the mirror safety check")?;
+    .context("cannot scan the destination for the mirror safety check")?;
     let extraneous: Vec<&Path> = dest_all
         .files
         .iter()
@@ -1100,7 +1172,11 @@ fn normalize_for_compare(path: &Path) -> PathBuf {
 /// F25a fix: streams each file through [`CryptoManager::encrypt_file`] in fixed-size chunks
 /// instead of reading it whole into RAM — the previous `std::fs::read`/`std::fs::write` pair
 /// meant a single large file could OOM the process.
-async fn encrypt_destination(args: &Args, inventory: &ScanSummary, key_spec: &str) -> Result<usize> {
+async fn encrypt_destination(
+    args: &Args,
+    inventory: &ScanSummary,
+    key_spec: &str,
+) -> Result<usize> {
     let key = robocopy_ingest::crypto::resolve_key(key_spec)?;
     let manager = CryptoManager::new(&key)?;
     let dest_root = args.dest().to_path_buf();
@@ -1132,7 +1208,11 @@ async fn encrypt_destination(args: &Args, inventory: &ScanSummary, key_spec: &st
 /// counterpart to [`encrypt_destination`]. Streams each file in fixed-size chunks for the same
 /// anti-OOM reason (F25a). Typically run as part of `--restore-from`, where "the destination" is
 /// the original source path the backup is being restored to.
-async fn decrypt_destination(args: &Args, inventory: &ScanSummary, key_spec: &str) -> Result<usize> {
+async fn decrypt_destination(
+    args: &Args,
+    inventory: &ScanSummary,
+    key_spec: &str,
+) -> Result<usize> {
     let key = robocopy_ingest::crypto::resolve_key(key_spec)?;
     let manager = CryptoManager::new(&key)?;
     let dest_root = args.dest().to_path_buf();
@@ -1225,7 +1305,13 @@ async fn transfer(
             let exclude_dirs = args.exclude_dirs.clone();
             let exclude_files = args.exclude_files.clone();
             let observed = spawn_blocking_with_span(move || {
-                scan::inventory(&dest_for_count, "*", follow_links, &exclude_dirs, &exclude_files)
+                scan::inventory(
+                    &dest_for_count,
+                    "*",
+                    follow_links,
+                    &exclude_dirs,
+                    &exclude_files,
+                )
             })
             .await
             .ok()
@@ -1265,7 +1351,11 @@ async fn transfer(
 }
 
 /// Time the naive baseline copy into a temporary directory next to the destination.
-async fn baseline(args: &Args, effective_source: &Path, inventory: &ScanSummary) -> Result<CopyOutcome> {
+async fn baseline(
+    args: &Args,
+    effective_source: &Path,
+    inventory: &ScanSummary,
+) -> Result<CopyOutcome> {
     let temp = baseline_dir(args.dest())?;
     let dest = temp.path().to_path_buf();
     tracing::info!(path = %dest.display(), "starting naive baseline copy");
@@ -1314,7 +1404,11 @@ fn fast_verify_cache_key(file: &ScannedFile) -> String {
     file.relative_path.to_string_lossy().replace('\\', "/")
 }
 
-async fn verify(args: &Args, effective_source: &Path, inventory: &ScanSummary) -> Result<IntegrityCheck> {
+async fn verify(
+    args: &Args,
+    effective_source: &Path,
+    inventory: &ScanSummary,
+) -> Result<IntegrityCheck> {
     println!("\nVerifying integrity with {:?}...", args.hash_algo);
 
     let all_files = inventory.files.clone();
@@ -1334,7 +1428,11 @@ async fn verify(args: &Args, effective_source: &Path, inventory: &ScanSummary) -
             let changed: Vec<ScannedFile> = candidates
                 .into_iter()
                 .filter(|f| {
-                    !cache.should_skip(&fast_verify_cache_key(f), f.size_bytes, f.modified_timestamp)
+                    !cache.should_skip(
+                        &fast_verify_cache_key(f),
+                        f.size_bytes,
+                        f.modified_timestamp,
+                    )
                 })
                 .collect();
             (changed, cache)
@@ -1452,7 +1550,9 @@ fn spawn_dest_poller(
         loop {
             ticker.tick().await;
             let sampled = dest.clone();
-            match spawn_blocking_with_span(move || scan::directory_size(&sampled, follow_links)).await {
+            match spawn_blocking_with_span(move || scan::directory_size(&sampled, follow_links))
+                .await
+            {
                 Ok(size) => progress.observe_total_bytes(size.saturating_sub(already_present)),
                 Err(_) => break,
             }
