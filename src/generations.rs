@@ -85,14 +85,26 @@ pub struct GenerationManifest {
 }
 
 impl GenerationManifest {
-    pub fn path_for(dest_root: &Path) -> PathBuf {
-        dest_root.join(MANIFEST_FILE_NAME)
+    /// D12: `job_name` namespaces the filename (via [`crate::namespaced_path`]) for one job in a
+    /// F33 `[[jobs]]` batch, so two jobs sharing the same `dest_root` don't merge their generation
+    /// histories into one manifest — `latest()`/`latest_full()` have no source/job identity of
+    /// their own (see the `Generation` doc comment), so a shared manifest would let one job's
+    /// incremental/differential diff against another job's unrelated source tree, and
+    /// `--keep-generations` could prune a still-needed `Full` generation from the wrong job's
+    /// chain. `None` (the single-job path) keeps the plain `.rustcopy_generations.json` filename.
+    pub fn path_for(dest_root: &Path, job_name: Option<&str>) -> PathBuf {
+        let base = dest_root.join(MANIFEST_FILE_NAME);
+        match job_name {
+            Some(name) => crate::namespaced_path(&base, name),
+            None => base,
+        }
     }
 
-    /// Loads the manifest from `<dest_root>/.rustcopy_generations.json`, or an empty manifest if
-    /// it doesn't exist yet (the destination's first-ever generation).
-    pub fn load_or_default(dest_root: &Path) -> Result<Self, IngestError> {
-        let path = Self::path_for(dest_root);
+    /// Loads the manifest from `<dest_root>/.rustcopy_generations.json` (or its namespaced
+    /// variant, see [`Self::path_for`]), or an empty manifest if it doesn't exist yet (the
+    /// destination's first-ever generation).
+    pub fn load_or_default(dest_root: &Path, job_name: Option<&str>) -> Result<Self, IngestError> {
+        let path = Self::path_for(dest_root, job_name);
         if !path.exists() {
             return Ok(Self::default());
         }
@@ -102,8 +114,8 @@ impl GenerationManifest {
         })
     }
 
-    pub fn save(&self, dest_root: &Path) -> Result<(), IngestError> {
-        let path = Self::path_for(dest_root);
+    pub fn save(&self, dest_root: &Path, job_name: Option<&str>) -> Result<(), IngestError> {
+        let path = Self::path_for(dest_root, job_name);
         let json = serde_json::to_string_pretty(self).map_err(|error| {
             IngestError::io(&path, std::io::Error::new(std::io::ErrorKind::InvalidData, error))
         })?;
@@ -277,8 +289,8 @@ mod tests {
         });
 
         let dir = tempfile::tempdir().expect("tempdir");
-        manifest.save(dir.path()).expect("save");
-        let loaded = GenerationManifest::load_or_default(dir.path()).expect("load");
+        manifest.save(dir.path(), None).expect("save");
+        let loaded = GenerationManifest::load_or_default(dir.path(), None).expect("load");
         assert_eq!(loaded, manifest);
         assert_eq!(loaded.latest().unwrap().backup_type, BackupType::Full);
     }
@@ -286,9 +298,46 @@ mod tests {
     #[test]
     fn missing_manifest_loads_as_empty() {
         let dir = tempfile::tempdir().expect("tempdir");
-        let manifest = GenerationManifest::load_or_default(dir.path()).expect("load");
+        let manifest = GenerationManifest::load_or_default(dir.path(), None).expect("load");
         assert!(manifest.generations.is_empty());
         assert!(manifest.latest().is_none());
+    }
+
+    #[test]
+    fn namespaced_manifest_does_not_collide_with_the_default_or_another_job() {
+        let dir = tempfile::tempdir().expect("tempdir");
+
+        let mut photos = GenerationManifest::default();
+        photos.push(Generation {
+            id: "20260804T000000000Z_full".to_string(),
+            backup_type: BackupType::Full,
+            created_at: "2026-08-04T00:00:00Z".to_string(),
+            files_copied: 1,
+            files: vec![generation_file("photo1.jpg", 10, 100)],
+        });
+        photos.save(dir.path(), Some("photos")).expect("save photos manifest");
+
+        let mut documents = GenerationManifest::default();
+        documents.push(Generation {
+            id: "20260804T000001000Z_full".to_string(),
+            backup_type: BackupType::Full,
+            created_at: "2026-08-04T00:00:01Z".to_string(),
+            files_copied: 1,
+            files: vec![generation_file("doc1.pdf", 20, 200)],
+        });
+        documents.save(dir.path(), Some("documents")).expect("save documents manifest");
+
+        // D12: each job's manifest round-trips independently...
+        let loaded_photos = GenerationManifest::load_or_default(dir.path(), Some("photos")).expect("load photos");
+        let loaded_documents =
+            GenerationManifest::load_or_default(dir.path(), Some("documents")).expect("load documents");
+        assert_eq!(loaded_photos, photos);
+        assert_eq!(loaded_documents, documents);
+        assert_ne!(loaded_photos, loaded_documents);
+
+        // ...and neither wrote to (or is visible through) the unnamespaced default path.
+        let default_manifest = GenerationManifest::load_or_default(dir.path(), None).expect("load default");
+        assert!(default_manifest.generations.is_empty());
     }
 
     #[test]

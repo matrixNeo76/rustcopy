@@ -1509,6 +1509,99 @@ dest = "{dest_beta}"
     );
 }
 
+/// D12 black-box regression test: two jobs in the same `[[jobs]]` batch sharing the same `dest`
+/// with `--backup-type` used to merge their generation histories into one
+/// `.rustcopy_generations.json`, since it was derived purely from `dest` with no job identity —
+/// a second job's `latest()` would then diff against the *first* job's unrelated source tree.
+/// Each job's manifest (and fast-verify cache, same underlying fix) must now be namespaced by job
+/// name and stay fully independent even though both jobs write into the exact same directory.
+#[cfg(windows)]
+#[test]
+fn two_jobs_sharing_a_dest_with_backup_type_get_independent_generation_manifests() {
+    let source_alpha = fixture_tree(&[("alpha.csv", 8)]);
+    let source_beta = fixture_tree(&[("beta.csv", 8)]);
+    let workdir = tempfile::tempdir().expect("workdir");
+    let to_toml_path = |p: &Path| p.to_str().expect("utf8").replace('\\', "/");
+
+    let config_path = workdir.path().join("jobs.toml");
+    let report_path = workdir.path().join("report.json");
+    let log_path = workdir.path().join("ingest.log");
+    let shared_dest = workdir.path().join("shared_dest");
+
+    std::fs::write(
+        &config_path,
+        format!(
+            r#"
+report_path = "{report}"
+log_path = "{log}"
+
+[[jobs]]
+name = "alpha"
+source = "{source_alpha}"
+dest = "{dest}"
+backup_type = "full"
+
+[[jobs]]
+name = "beta"
+source = "{source_beta}"
+dest = "{dest}"
+backup_type = "full"
+"#,
+            report = to_toml_path(&report_path),
+            log = to_toml_path(&log_path),
+            source_alpha = to_toml_path(source_alpha.path()),
+            source_beta = to_toml_path(source_beta.path()),
+            dest = to_toml_path(&shared_dest),
+        ),
+    )
+    .expect("write config");
+
+    let output = run(&["--config", config_path.to_str().expect("utf8")]);
+    assert!(output.status.success(), "stderr: {}", stderr_of(&output));
+
+    let manifest_alpha = shared_dest.join(".rustcopy_generations.alpha.json");
+    let manifest_beta = shared_dest.join(".rustcopy_generations.beta.json");
+    let manifest_default = shared_dest.join(".rustcopy_generations.json");
+    assert!(manifest_alpha.is_file(), "alpha must get its own namespaced manifest");
+    assert!(manifest_beta.is_file(), "beta must get its own namespaced manifest");
+    assert!(
+        !manifest_default.is_file(),
+        "the unnamespaced manifest filename must not be written by a multi-job run"
+    );
+
+    let alpha: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(&manifest_alpha).expect("read")).expect("json");
+    let beta: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(&manifest_beta).expect("read")).expect("json");
+
+    let alpha_files = alpha["generations"][0]["files"]
+        .as_array()
+        .expect("alpha generation files");
+    let beta_files = beta["generations"][0]["files"]
+        .as_array()
+        .expect("beta generation files");
+    assert!(
+        alpha_files
+            .iter()
+            .any(|f| f["relative_path"].as_str().unwrap_or_default().contains("alpha.csv")),
+        "alpha manifest: {alpha}"
+    );
+    assert!(
+        beta_files
+            .iter()
+            .any(|f| f["relative_path"].as_str().unwrap_or_default().contains("beta.csv")),
+        "beta manifest: {beta}"
+    );
+    // The bug this guards against: before the fix, beta's manifest (being the same shared file)
+    // would have included alpha's inventory too.
+    assert!(
+        !beta_files
+            .iter()
+            .any(|f| f["relative_path"].as_str().unwrap_or_default().contains("alpha.csv")),
+        "beta manifest must not contain alpha's files: {beta}"
+    );
+}
+
 /// F34 black-box test: `--backup-type full` then `--backup-type incremental` against the same
 /// destination actually produce two generation subfolders, a manifest recording both, and the
 /// incremental run copies only the file that changed (and the new one) — not the unchanged file.

@@ -223,8 +223,13 @@ async fn run_jobs(base_args: Args, config: robocopy_ingest::config::IngestConfig
         // to a report_path as long as the file has one at all) and send every job's report to the
         // exact same path.
         if job.report_path.is_none() {
-            job_args.report_path = namespaced_path(&job_args.report_path, &job_name);
+            job_args.report_path = robocopy_ingest::namespaced_path(&job_args.report_path, &job_name);
         }
+        // Cache (`.ingest_cache`) and the generations manifest (`.rustcopy_generations.json`) have
+        // no user-facing config field to namespace explicitly, unlike report_path above — always
+        // namespace them with the job name in a multi-job run, otherwise jobs sharing a `dest`
+        // would silently read/write each other's fast-verify cache and generation history (D12).
+        job_args.job_name = Some(job_name.clone());
         if let Err(error) = job_args.validate() {
             eprintln!("error: job '{job_name}' failed validation: {error} — skipping");
             worst_exit_code = worst_exit_code.max(EXIT_UNRECOVERABLE);
@@ -250,21 +255,6 @@ async fn run_jobs(base_args: Args, config: robocopy_ingest::config::IngestConfig
         eprintln!("warning: {dropped} log line(s) were dropped (logger under load)");
     }
     Ok(worst_exit_code)
-}
-
-/// Inserts `.{name}` before the file extension (or at the end, if there is none), used to give
-/// each job in a batch its own default report path instead of every job silently overwriting the
-/// same file. E.g. `report.json` + `photos` -> `report.photos.json`.
-fn namespaced_path(path: &Path, name: &str) -> PathBuf {
-    let stem = path
-        .file_stem()
-        .map(|s| s.to_string_lossy().into_owned())
-        .unwrap_or_default();
-    let file_name = match path.extension() {
-        Some(ext) => format!("{stem}.{name}.{}", ext.to_string_lossy()),
-        None => format!("{stem}.{name}"),
-    };
-    path.with_file_name(file_name)
 }
 
 /// Outcome of a single job run: either it completed (with the exit code the caller should surface)
@@ -664,9 +654,11 @@ async fn execute_generation_backup(
     use robocopy_ingest::generations::{self, BackupType, GenerationManifest};
 
     let dest_root = args.dest().to_path_buf();
+    let job_name = args.job_name.clone();
     let manifest = {
         let dest_root = dest_root.clone();
-        tokio::task::spawn_blocking(move || GenerationManifest::load_or_default(&dest_root))
+        let job_name = job_name.clone();
+        tokio::task::spawn_blocking(move || GenerationManifest::load_or_default(&dest_root, job_name.as_deref()))
             .await
             .context("the generation manifest load task panicked")?
             .context("cannot load the generation manifest")?
@@ -754,7 +746,8 @@ async fn execute_generation_backup(
             files: generations::to_generation_files(&inventory.files),
         });
         let dest_root_for_save = dest_root.clone();
-        tokio::task::spawn_blocking(move || manifest.save(&dest_root_for_save))
+        let job_name_for_save = job_name.clone();
+        tokio::task::spawn_blocking(move || manifest.save(&dest_root_for_save, job_name_for_save.as_deref()))
             .await
             .context("the generation manifest save task panicked")?
             .context("cannot save the generation manifest")?;
@@ -839,9 +832,11 @@ async fn execute_generation_backup(
 async fn prune_old_generations(args: &Args, dest_root: &Path, keep_cycles: usize) -> Result<()> {
     use robocopy_ingest::generations::GenerationManifest;
 
+    let job_name = args.job_name.clone();
     let manifest = {
         let dest_root = dest_root.to_path_buf();
-        tokio::task::spawn_blocking(move || GenerationManifest::load_or_default(&dest_root))
+        let job_name = job_name.clone();
+        tokio::task::spawn_blocking(move || GenerationManifest::load_or_default(&dest_root, job_name.as_deref()))
             .await
             .context("the generation manifest load task panicked")?
             .context("cannot load the generation manifest for retention")?
@@ -878,6 +873,7 @@ async fn prune_old_generations(args: &Args, dest_root: &Path, keep_cycles: usize
     }
 
     let dest_root_owned = dest_root.to_path_buf();
+    let job_name_owned = job_name.clone();
     tokio::task::spawn_blocking(move || -> Result<(), IngestError> {
         let ids: HashSet<String> = prune_ids.into_iter().collect();
         for id in &ids {
@@ -886,9 +882,9 @@ async fn prune_old_generations(args: &Args, dest_root: &Path, keep_cycles: usize
                 std::fs::remove_dir_all(&folder).map_err(|error| IngestError::io(&folder, error))?;
             }
         }
-        let mut manifest = GenerationManifest::load_or_default(&dest_root_owned)?;
+        let mut manifest = GenerationManifest::load_or_default(&dest_root_owned, job_name_owned.as_deref())?;
         manifest.retain_generations(&ids);
-        manifest.save(&dest_root_owned)
+        manifest.save(&dest_root_owned, job_name_owned.as_deref())
     })
     .await
     .context("the retention prune task panicked")?
@@ -1273,7 +1269,7 @@ async fn verify(args: &Args, effective_source: &Path, inventory: &ScanSummary) -
     println!("\nVerifying integrity with {:?}...", args.hash_algo);
 
     let all_files = inventory.files.clone();
-    let cache_path = cache::default_cache_path(args.dest());
+    let cache_path = cache::default_cache_path(args.dest(), args.job_name.as_deref());
     let fast_verify = args.fast_verify;
 
     // F28 (closes D2's --fast-verify half): trust a file as unchanged (and skip re-hashing it)

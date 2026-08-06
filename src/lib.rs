@@ -41,3 +41,53 @@ pub mod schedule;
 pub mod service;
 pub mod testkit;
 pub mod vss;
+
+use std::path::{Path, PathBuf};
+
+/// Inserts `.{name}` before a path's extension (or at the end, if there is none). Shared by every
+/// place that needs to give one job in a `[[jobs]]` batch (F33) its own file next to a `dest` it
+/// shares with other jobs — the report path (`main.rs::run_jobs`), the fast-verify cache
+/// (`cache::default_cache_path`), and the backup-generations manifest
+/// (`generations::GenerationManifest::path_for`). E.g. `report.json` + `photos` ->
+/// `report.photos.json`; `.ingest_cache` + `photos` -> `.ingest_cache.photos` (a leading-dot file
+/// with no other dots has no extension, so the name is appended rather than inserted).
+pub fn namespaced_path(path: &Path, name: &str) -> PathBuf {
+    let stem = path
+        .file_stem()
+        .map(|s| s.to_string_lossy().into_owned())
+        .unwrap_or_default();
+    let file_name = match path.extension() {
+        Some(ext) => format!("{stem}.{name}.{}", ext.to_string_lossy()),
+        None => format!("{stem}.{name}"),
+    };
+    path.with_file_name(file_name)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn namespaced_path_inserts_before_extension() {
+        assert_eq!(
+            namespaced_path(Path::new("report.json"), "photos"),
+            PathBuf::from("report.photos.json")
+        );
+    }
+
+    #[test]
+    fn namespaced_path_appends_when_no_extension() {
+        assert_eq!(
+            namespaced_path(Path::new(".ingest_cache"), "photos"),
+            PathBuf::from(".ingest_cache.photos")
+        );
+    }
+
+    #[test]
+    fn namespaced_path_handles_dotted_hidden_files() {
+        assert_eq!(
+            namespaced_path(Path::new(".rustcopy_generations.json"), "photos"),
+            PathBuf::from(".rustcopy_generations.photos.json")
+        );
+    }
+}

@@ -1,14 +1,35 @@
 # Prompt per la prossima sessione — robocopy-ingest-cli (rustcopy)
 
-## Stato del progetto (5 Agosto 2026)
+## Stato del progetto (6 Agosto 2026)
 
-`Cargo.toml` = **6.0.0**, ultimo commit pushato su `main` (pulito, nessuna modifica in sospeso).
-Milestone 5.2.0/5.3.0/6.0.0 chiuse. Milestone 6.1.0: solo F41 chiuso, F42-F45 in backlog (nessuna
-decisione da riproporre — vedi `ROADMAP.md`). Difetti storici documentati: D1-D11, di cui solo
-D10 (strumentazione del grafo Graphify, bassa priorità) resta aperto — vedi `ANALYSIS.md` Parte 3.
+`Cargo.toml` = **6.0.0** (non ancora bumpato per D12, valutare se necessario). Milestone
+5.2.0/5.3.0/6.0.0 chiuse. Milestone 6.1.0: solo F41 chiuso, F42-F45 in backlog (nessuna decisione
+da riproporre — vedi `ROADMAP.md`). Difetti storici documentati: D1-D12, di cui solo D10
+(strumentazione del grafo Graphify, bassa priorità) resta aperto — vedi `ANALYSIS.md` Parte 3.
 
-Suite di test: **269** (`cargo test`), **284** con `cargo test --features notify-server` (più 2
+Suite di test: **276** (`cargo test`), **291** con `cargo test --features notify-server` (più 2
 test `#[ignore]` — round-trip reale dei servizi Windows, richiedono elevazione).
+
+### Ultima modifica (6 Agosto 2026): D12 risolto
+
+Audit di bug hunting mirato su questa sessione. Verificate empiricamente 3 delle 10 aree
+ipotizzate nel prompt precedente:
+- **Area 1 (unwrap/expect su input esterno)**: falso allarme, nessun panic raggiungibile da input
+  non fidato nel codice di produzione.
+- **Area 9 (nomi file riservati Windows)**: già gestito correttamente (retry esaurito → scansione
+  reale della destinazione per il conteggio, nessun crash).
+- **Area 6 (job multipli + file condivisi)**: bug reale confermato e risolto — vedi `ANALYSIS.md`
+  D12. `cache::default_cache_path`/`GenerationManifest::path_for` erano derivati solo da `dest`,
+  senza identità di job: due job dello stesso batch `[[jobs]]` con la stessa `dest` e
+  `--backup-type` mescolavano le proprie cronologie di generazioni, con rischio concreto che
+  `--keep-generations` cancellasse il `Full` di un job scambiandolo per "vecchio" rispetto ai
+  cicli dell'altro. Fix: `job_name: Option<&str>` opzionale su entrambe le funzioni, namespacizzato
+  via la nuova `robocopy_ingest::namespaced_path` (spostata da `main.rs` a `lib.rs`), valorizzato
+  incondizionatamente da `run_jobs` per ogni job. Vedi `CLAUDE.md` per la nota tecnica completa.
+
+Le aree 2, 3, 4, 5, 7, 8, 10 del prompt precedente **non sono ancora state verificate** — restano
+valide ipotesi di lavoro per la prossima sessione (numerazione invariata, vedi sotto: 1/6/9 marcate
+✅ chiuse).
 
 ---
 
@@ -26,12 +47,11 @@ convenzione sotto), non solo letto/dedotto.
 Queste sono ipotesi di lavoro basate sulla lettura del codice fatta finora, **da verificare
 empiricamente prima di agire** — nessuna è confermata come bug reale:
 
-1. **Panic/unwrap in percorsi raggiungibili da input esterno**: `grep -rn "\.unwrap()\|\.expect(" src/` 
-   escludendo i test, e per ognuno chiedersi "può essere raggiunto da un path/config/robocopy
-   output non fidato, o solo da invarianti già garantite da clap/validate()?". I candidati più
-   sospetti sono i moduli che parsano output esterno (`engine/robocopy.rs` — parser dello stdout
-   di robocopy, `oem_codec.rs`, `schedule.rs` — parsing di `schtasks` SPEC, `vss.rs` — parsing di
-   `vssadmin`).
+1. ✅ **CHIUSA (6 Agosto 2026, falso allarme)** — ~~Panic/unwrap in percorsi raggiungibili da input
+   esterno~~: verificato ogni `.unwrap()`/`.expect()` nel codice di produzione (fuori dai moduli
+   test) in tutto `src/`. Restano solo invarianti già garantite da clap (`cli.rs:429,436`) e panic
+   legittimi di avvio (init runtime tokio in `main.rs`, signal handler in `notify_server.rs`).
+   Nessun panic raggiungibile da path/config/output di robocopy non fidato.
 2. **Memoria su alberi da milioni di file**: `ScannedFile`/`ScanSummary` (`scan.rs`) tengono
    l'intero inventario in RAM come `Vec`; `GenerationManifest.files` (`generations.rs`) fa lo
    stesso per OGNI generazione salvata nel manifest JSON. Sul profilo utente reale testato in
@@ -52,10 +72,12 @@ empiricamente prima di agire** — nessuna è confermata come bug reale:
    economico di rilevare almeno i casi più comuni di corruzione (es. campionamento periodico anche
    sui file "trusted" dalla cache) senza reintrodurre il costo pieno che `--fast-verify` voleva
    evitare.
-6. **Concorrenza fra job multipli (`run_jobs`, F33) e file condivisi**: se due job nello stesso
-   batch scrivono report/log/cache nella stessa destinazione senza `report_path` distinto,
-   `namespaced_path` dovrebbe prevenire collisioni — verificare che copra anche `.ingest_cache` e
-   `.rustcopy_generations.json`, non solo il report JSON.
+6. ✅ **CHIUSA (D12, 6 Agosto 2026)** — ~~Concorrenza fra job multipli (`run_jobs`, F33) e file
+   condivisi~~: confermato bug reale. `.ingest_cache`/`.rustcopy_generations.json` erano derivati
+   solo da `dest`, senza identità di job — a differenza di `report_path`, mai namespacizzati per
+   job. Fix: `job_name: Option<&str>` su `cache::default_cache_path`/
+   `GenerationManifest::path_for`/`load_or_default`/`save`, valorizzato da `run_jobs` per ogni job.
+   Vedi `ANALYSIS.md` D12.
 7. **Gestione errori di rete SMB transitori**: `errors.rs::is_transient()` classifica cosa viene
    ritentato dal retry loop esterno — verificare che copra i codici di errore SMB/di rete più
    comuni osservati nei log reali di questa sessione (timeout, share temporaneamente non
@@ -64,10 +86,14 @@ empiricamente prima di agire** — nessuna è confermata come bug reale:
    `/Z`), un file troncato a metà per un crash mid-write potrebbe essere visto da robocopy come
    "già presente" (size+timestamp) se il crash avviene dopo che l'OS ha già aggiornato i metadati
    ma prima di un flush completo — verificare se è un rischio reale o teorico.
-9. **Robustezza dei path Windows lunghi/con caratteri riservati**: già trovato un caso reale
-   (`NUL`/`nul` come nome file, questa sessione) — cercare se ci sono altri nomi riservati Windows
-   (`CON`, `PRN`, `AUX`, `COM1-9`, `LPT1-9`) o edge case di path (trailing dot/space) non gestiti
-   esplicitamente in `scan.rs`/`engine/robocopy.rs`.
+9. ✅ **CHIUSA (6 Agosto 2026, comportamento già corretto)** — ~~Robustezza dei path Windows
+   lunghi/con caratteri riservati~~: il caso reale `NUL`/`nul` è già gestito bene, non è un bug.
+   robocopy fallisce quel file (atteso, nessun tool può copiare un device name riservato), il
+   retry si esaurisce, e `main.rs` fa una scansione reale della destinazione (`scan::inventory`)
+   per un conteggio byte/file accurato invece di fidarsi ciecamente dell'ultimo tentativo di
+   retry. Non richiede ulteriore lavoro; non verificati altri nomi riservati (`CON`, `PRN`, `AUX`,
+   `COM1-9`, `LPT1-9`) né edge case di path (trailing dot/space) in dettaglio — a basso rischio
+   dato che il fallimento è comunque gestito correttamente a valle.
 10. **Coerenza degli exit code fra le due pipeline** (plain-sync in `execute()` vs
     `execute_generation_backup`): verificare che ogni condizione di errore mappi allo stesso exit
     code indipendentemente dalla pipeline usata, non solo nei casi già testati.
@@ -126,10 +152,9 @@ empiricamente prima di agire** — nessuna è confermata come bug reale:
   `--restore-from`, `--vss-snapshot`, `--resume-from`, `--force-purge`, `--exclude-junctions`,
   `--fast-verify`, `--html-report-path`, `--install-schedule`, `--install-service` (flag di
   sicurezza o CLI-only, volutamente assenti dal TOML).
-- **rtk**: installato ma senza hook attivo fino al 5 Agosto 2026 (ora inizializzato globalmente
-  via `rtk init -g`, hook aggiunto manualmente in `~/.claude/settings.json` — verificare all'avvio
-  di questa sessione che sia effettivamente attivo con `rtk gain`, dato che richiedeva un riavvio
-  di Claude Code per attivarsi).
+- **rtk**: attivo e confermato funzionante dal 6 Agosto 2026 (`rtk gain` mostra comandi tracciati
+  e token risparmiati). Hook globale in `~/.claude/settings.json`, inizializzato via `rtk init -g`.
+  Nessuna azione richiesta a inizio sessione oltre una verifica rapida con `rtk gain`.
 
 ## Cosa NON toccare senza motivo
 
@@ -160,6 +185,11 @@ empiricamente prima di agire** — nessuna è confermata come bug reale:
   il segnale SCM — quello è `serve_until_shutdown_or` (F41), una funzione separata.
 - `scan::scan`/`scan::inventory` (D11) devono continuare a pruning via `WalkDir::filter_entry()` —
   non tornare a un filtro post-hoc dopo aver già camminato l'albero.
+- `robocopy_ingest::namespaced_path` (D12) vive in `lib.rs`, non più duplicata in `main.rs` —
+  riusata da `run_jobs` (report), `cache::default_cache_path` e
+  `generations::GenerationManifest::path_for`. `Args::job_name` è interno (`#[arg(skip)]`, mai un
+  flag CLI reale) e va valorizzato **incondizionatamente** da `run_jobs` per ogni job (a differenza
+  di `report_path`, cache/manifest non hanno un campo di config utente da rispettare prima).
 
 ## Skill disponibile per operare rustcopy
 

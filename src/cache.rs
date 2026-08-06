@@ -62,8 +62,16 @@ impl IngestCache {
 /// F28: the cache lives next to the destination it describes (`<dest>/.ingest_cache`), not the
 /// current working directory — a fixed CWD-relative path would collide between unrelated backup
 /// jobs and wouldn't survive being run from a different directory.
-pub fn default_cache_path(dest: &Path) -> PathBuf {
-    dest.join(".ingest_cache")
+///
+/// D12: `job_name` namespaces the filename (via [`crate::namespaced_path`]) for one job in a F33
+/// `[[jobs]]` batch, so two jobs sharing the same `dest` don't silently read/write each other's
+/// fast-verify cache. `None` (the single-job path) keeps the plain `.ingest_cache` filename.
+pub fn default_cache_path(dest: &Path, job_name: Option<&str>) -> PathBuf {
+    let base = dest.join(".ingest_cache");
+    match job_name {
+        Some(name) => crate::namespaced_path(&base, name),
+        None => base,
+    }
 }
 
 #[cfg(test)]
@@ -101,6 +109,24 @@ mod tests {
     #[test]
     fn default_cache_path_lives_next_to_the_destination() {
         let dest = Path::new("D:/warehouse");
-        assert_eq!(default_cache_path(dest), PathBuf::from("D:/warehouse/.ingest_cache"));
+        assert_eq!(default_cache_path(dest, None), PathBuf::from("D:/warehouse/.ingest_cache"));
+    }
+
+    #[test]
+    fn default_cache_path_namespaces_by_job_name() {
+        let dest = Path::new("D:/warehouse");
+        assert_eq!(
+            default_cache_path(dest, Some("photos")),
+            PathBuf::from("D:/warehouse/.ingest_cache.photos")
+        );
+    }
+
+    #[test]
+    fn default_cache_path_differs_between_two_jobs_sharing_a_dest() {
+        let dest = Path::new("D:/warehouse");
+        assert_ne!(
+            default_cache_path(dest, Some("photos")),
+            default_cache_path(dest, Some("documents"))
+        );
     }
 }

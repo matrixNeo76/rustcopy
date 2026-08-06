@@ -124,6 +124,11 @@ Se l'applicazione Rust intercetta `Ctrl+C` e si arresta senza terminare il proce
 > `exclude_dirs`/`exclude_files`) è stato scoperto e risolto in una sessione successiva a questo
 > giro di audit — non fa parte dei 10 originali sopra, ma porta il totale storico dei difetti
 > documentati in questo file a 11 (D1-D11), di cui solo D10 resta aperto.
+>
+> **Aggiornamento (6 Agosto 2026)**: un dodicesimo difetto (**D12**, manifest delle generazioni e
+> cache fast-verify non isolati per job in un batch `[[jobs]]`) è stato scoperto e risolto durante
+> un audit mirato di bug hunting/robustezza — porta il totale storico a 12 (D1-D12), di cui solo
+> D10 resta aperto.
 
 ## 🛑 3.1 Difetti aperti confermati
 
@@ -577,6 +582,50 @@ l'intento originale del test senza dipendere dal comportamento ora corretto.
 **Gap parallelo noto, non corretto in questo fix**: `--min-age-days`/`--max-age-days` hanno la
 stessa lacuna strutturale (mai passati a `scan.rs`, applicati solo a valle) — non richiesto
 dall'utente in questa sessione, lasciato come follow-up futuro.
+
+---
+
+### D12 — Manifest generazioni e cache fast-verify condivisi fra job diversi ✅ RISOLTO (6 Agosto 2026)
+
+**Stato: chiuso e verificato.**
+
+**Gravità: ALTA.** F33 (`[[jobs]]`) namespacizza il `report_path` per job tramite `namespaced_path`
+(`main.rs::run_jobs`), ma **solo** quello. `cache::default_cache_path(dest)` e il manifest delle
+generazioni `GenerationManifest::path_for(dest_root)` (F34/F35) erano derivati **esclusivamente da
+`dest`**, senza alcuna identità di job — e la struct `Generation` non porta nessun campo che
+identifichi sorgente o job. Conseguenza reale: se due job dello stesso batch `[[jobs]]` con
+`--backup-type` condividono la stessa `dest` (es. stesso NAS, sorgenti diverse), le loro
+generazioni finiscono in un unico `.rustcopy_generations.json` piatto. `GenerationManifest::latest()`
+/`latest_full()` prendono la generazione più recente indipendentemente da chi l'ha prodotta: un
+incrementale del job B diffava contro il full del job A (sorgente completamente diversa),
+producendo backup incrementali/differenziali sostanzialmente pieni e concettualmente sbagliati.
+Più grave ancora: `--keep-generations` ragiona per ciclo su tutta la lista piatta del manifest, e
+poteva **cancellare il `Full` del job A** perché "vecchio" rispetto ai cicli recenti del job B,
+orfanizzando la catena di restore del job A. Lo stesso problema, con impatto minore (cache
+sbagliata, non perdita di generazioni), valeva per `.ingest_cache` di `--fast-verify`. Scoperto
+durante un audit mirato di bug hunting/robustezza (non un incidente reale sul campo), verificando
+empiricamente l'ipotesi "F33 + cache/manifest" prima di intervenire.
+
+#### ✅ Fix reale e verifica (6 Agosto 2026)
+
+Introdotta una funzione condivisa `robocopy_ingest::namespaced_path` (spostata da `main.rs`, dove
+era usata solo per `report_path`, a `lib.rs` così può essere riusata anche dalla libreria).
+`cache::default_cache_path` e `GenerationManifest::path_for`/`load_or_default`/`save` accettano
+ora un `job_name: Option<&str>` opzionale: `None` (percorso a singolo job) mantiene esattamente i
+nomi file di sempre (`.ingest_cache`, `.rustcopy_generations.json`); `Some(name)` (percorso
+multi-job) namespacizza il file (es. `.ingest_cache.photos`,
+`.rustcopy_generations.photos.json`). `Args` ha un nuovo campo interno `job_name: Option<String>`
+(`#[arg(skip)]`, mai un flag CLI reale), valorizzato incondizionatamente da `run_jobs` per ogni
+job — a differenza di `report_path`, cache e manifest non hanno un campo di config utente da
+rispettare, quindi vanno sempre namespacizzati in un run multi-job.
+
+**Verificato**: 3 nuovi unit test per `namespaced_path` in `lib.rs`, 2 nuovi in `cache.rs`
+(namespacing e non-collisione fra due job), 1 nuovo in `generations.rs`
+(`namespaced_manifest_does_not_collide_with_the_default_or_another_job`); 1 nuovo test black-box in
+`tests/cli_smoke.rs` (`two_jobs_sharing_a_dest_with_backup_type_get_independent_generation_manifests`)
+che esegue realmente due job con `--backup-type full` sulla stessa `dest` e verifica che i due
+manifest namespacizzati esistano, siano indipendenti, e che nessuno dei due contenga i file
+dell'altro job.
 
 ---
 

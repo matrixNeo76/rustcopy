@@ -413,6 +413,15 @@ pub struct Args {
     /// require --source/--dest.
     #[arg(long, default_value_t = false, conflicts_with = "install_service")]
     pub uninstall_service: bool,
+
+    // ── F33 internal: multi-job cache/manifest namespacing (D12) ─────────────
+    /// Internal-only, never a real CLI flag (`#[arg(skip)]`, no `--job-name`): set by
+    /// `main.rs::run_jobs` to the current job's name so the fast-verify cache and the
+    /// backup-generations manifest, both of which live purely under `dest` with no user-facing
+    /// path override, don't collide when two jobs in the same `[[jobs]]` batch share a `dest`.
+    /// `None` in the single-job path, which keeps today's unnamespaced filenames unchanged.
+    #[arg(skip)]
+    pub job_name: Option<String>,
 }
 
 impl Args {
