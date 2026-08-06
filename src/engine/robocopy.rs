@@ -5,7 +5,9 @@
 //! any platform. Flag semantics follow the Microsoft Learn robocopy reference:
 //! <https://learn.microsoft.com/windows-server/administration/windows-commands/robocopy>
 
-use std::sync::atomic::{AtomicU32, Ordering};
+use std::sync::atomic::AtomicU32;
+#[cfg(windows)]
+use std::sync::atomic::Ordering;
 use std::sync::Arc;
 use std::time::Instant;
 
@@ -386,7 +388,11 @@ impl<R: CommandRunner> CopyEngine for RobocopyEngine<R> {
 /// Real process runner.
 #[derive(Debug, Default, Clone)]
 pub struct ProcessRunner {
-    /// When set, the child's PID is published here for the run's duration (0 = no child).
+    /// When set, the child's PID is published here for the run's duration (0 = no child). Only
+    /// read on Windows (`impl CommandRunner for ProcessRunner` below is `#[cfg(windows)]`) — the
+    /// non-Windows impl never spawns a real child process at all (`RobocopyUnavailable`), so the
+    /// field would otherwise be dead code on that platform.
+    #[cfg_attr(not(windows), allow(dead_code))]
     pid_slot: Option<Arc<AtomicU32>>,
 }
 

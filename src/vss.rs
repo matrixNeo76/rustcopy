@@ -12,6 +12,7 @@
 //! of application-consistent backup.
 
 use std::path::{Path, PathBuf};
+#[cfg(windows)]
 use std::process::Command;
 
 use crate::errors::IngestError;
