@@ -417,6 +417,9 @@ where
 /// `spawn_blocking` closure, which *would* detach it from the future and defeat this) is cleaned
 /// up on every exit path: normal completion, an early `?` return, or Ctrl+C.
 struct VssGuard {
+    /// Only read on Windows (inside `Drop::drop`'s `#[cfg(windows)]` block below) — the
+    /// non-Windows `create_vss_snapshot` stub never constructs a real shadow copy at all.
+    #[cfg_attr(not(windows), allow(dead_code))]
     shadow_id: String,
     /// The path robocopy/scan should actually read from instead of the live volume.
     remapped_source: PathBuf,

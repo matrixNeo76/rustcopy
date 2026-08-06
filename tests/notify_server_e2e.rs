@@ -177,15 +177,45 @@ fn install_service_and_uninstall_service_together_are_rejected() {
     assert!(!output.status.success());
 }
 
-/// F41 black-box test: without Administrator elevation (the case in this test environment),
-/// `--install-service`/`--uninstall-service` must fail cleanly with a service-related error
-/// instead of panicking, hanging, or silently succeeding. A genuine `CreateService`/
-/// `DeleteService` round trip against the real SCM needs real elevation and real machine state,
-/// same declared limitation as `robocopy_ingest`'s own `--install-service` (F37) and
-/// `--vss-snapshot` (F30) — see `install_and_uninstall_service_round_trip` below for the
-/// `#[ignore]`d elevated version of this test.
+/// `net session` only succeeds when the current process is Administrator-elevated — a well-known,
+/// dependency-free way to detect elevation on Windows without a WinAPI binding just for this.
+/// Needed because GitHub-hosted `windows-latest` runners execute jobs as Administrator by default
+/// (unlike a normal interactive session), which this test's whole premise assumes is *not* the
+/// case.
+fn is_elevated() -> bool {
+    Command::new("net")
+        .args(["session"])
+        .output()
+        .map(|output| output.status.success())
+        .unwrap_or(false)
+}
+
+/// F41 black-box test: without Administrator elevation, `--install-service`/`--uninstall-service`
+/// must fail cleanly with a service-related error instead of panicking, hanging, or silently
+/// succeeding. A genuine `CreateService`/`DeleteService` round trip against the real SCM needs real
+/// elevation and real machine state, same declared limitation as `robocopy_ingest`'s own
+/// `--install-service` (F37) and `--vss-snapshot` (F30) — see `install_and_uninstall_service_round_trip`
+/// below for the `#[ignore]`d elevated version of this test.
+///
+/// Skips its assertions (rather than failing) when the process turns out to already be elevated —
+/// GitHub Actions' `windows-latest` runners run as Administrator, which would make `--install-service`
+/// genuinely succeed and falsify this test's premise, not indicate a regression. Any service that
+/// does get installed in that case is still cleaned up via `WindowsServiceGuard` before returning.
 #[test]
 fn install_and_uninstall_service_fail_cleanly_without_elevation() {
+    if is_elevated() {
+        eprintln!(
+            "skipping: this process is Administrator-elevated (e.g. a GitHub Actions windows-latest \
+             runner), so --install-service would genuinely succeed here — this test only asserts the \
+             non-elevated failure path. See install_and_uninstall_service_round_trip for the elevated case."
+        );
+        let _guard = WindowsServiceGuard("RustcopyNotifyServer");
+        let _ = Command::new(NOTIFY_SERVER_BIN)
+            .arg("--install-service")
+            .output();
+        return;
+    }
+
     let install = Command::new(NOTIFY_SERVER_BIN)
         .arg("--install-service")
         .output()
