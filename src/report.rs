@@ -157,6 +157,14 @@ pub struct IngestReport {
     /// rather than changing the exit code.
     #[serde(skip_serializing_if = "Option::is_none", default)]
     pub post_command_error: Option<String>,
+    /// D15: set when `--backup-type`'s generation copy itself failed (`execute_generation_backup`
+    /// in `main.rs`). Unlike `webhook_error`/`post_command_error` above, this reflects the actual
+    /// transfer failing, not a non-fatal side effect after a successful one — the plain-sync
+    /// pipeline surfaces the equivalent failure via `EXIT_INGESTION_PROBLEM` plus stderr rather
+    /// than a report field, since it doesn't need one (its `TransferReport` already carries partial
+    /// per-file stats even on failure; the generation pipeline's naive copy engine does not).
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub copy_error: Option<String>,
 }
 
 impl IngestReport {
@@ -205,6 +213,7 @@ impl IngestReport {
             decrypted: false,
             webhook_error: None,
             post_command_error: None,
+            copy_error: None,
         }
     }
 

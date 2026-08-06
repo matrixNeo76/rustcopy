@@ -1,115 +1,118 @@
 # Prompt per la prossima sessione — robocopy-ingest-cli (rustcopy)
 
-## Stato del progetto (6 Agosto 2026)
+## Stato del progetto (6 Agosto 2026, dopo il giro di audit D13-D15)
 
-`Cargo.toml` = **6.0.0** (non ancora bumpato per D12, valutare se necessario). Milestone
-5.2.0/5.3.0/6.0.0 chiuse. Milestone 6.1.0: solo F41 chiuso, F42-F45 in backlog (nessuna decisione
-da riproporre — vedi `ROADMAP.md`). Difetti storici documentati: D1-D12, di cui solo D10
-(strumentazione del grafo Graphify, bassa priorità) resta aperto — vedi `ANALYSIS.md` Parte 3.
+`Cargo.toml` = **6.0.0**. Ultimo commit pushato su `main`: `625426f` (fix D12). **Modifiche non
+ancora committate in questa sessione** (fix D13, D14, D15, vedi sotto) — chiedere conferma esplicita
+all'utente prima di commit/push, come da convenzione. Milestone 5.2.0/5.3.0/6.0.0 chiuse. Milestone
+6.1.0: solo F41 chiuso, F42-F45 in backlog (nessuna decisione da riproporre — vedi `ROADMAP.md`).
+Difetti storici documentati: **D1-D15**, di cui solo D10 (strumentazione del grafo Graphify, bassa
+priorità) resta aperto — vedi `ANALYSIS.md` Parte 3.
 
-Suite di test: **276** (`cargo test`), **291** con `cargo test --features notify-server` (più 2
-test `#[ignore]` — round-trip reale dei servizi Windows, richiedono elevazione).
+Suite di test: **284** (`cargo test`), **299** con `cargo test --features notify-server` (più 3
+test `#[ignore]` — 2 round-trip reali dei servizi Windows che richiedono elevazione, più 1 probe di
+misurazione a scala reale, `generations::tests::probe_manifest_size_at_real_world_scale`, ~2 minuti,
+non da eseguire di default). Binari release e installer **non ancora ricompilati** dopo i fix di
+questo giro — farlo solo su richiesta esplicita dell'utente (vedi convenzioni sotto).
 
-### Ultima modifica (6 Agosto 2026): D12 risolto
+**Cronologia audit di bug hunting** (per contesto, non da rileggere per intero — dettagli in
+`ANALYSIS.md`): un giro precedente aveva verificato empiricamente 3 ipotesi — 2 falsi allarmi
+(unwrap/expect su input esterno; nomi file riservati Windows tipo `NUL`, già gestiti correttamente
+a valle) e 1 bug reale confermato e risolto (**D12**: cache/manifest non namespacizzati per job).
+Il giro successivo ha chiuso altre 2 ipotesi ereditate (checkpoint namespacing → falso allarme;
+correlazione log per job → **D13**, bug reale, span `tracing` + `spawn_blocking_with_span`).
 
-Audit di bug hunting mirato su questa sessione. Verificate empiricamente 3 delle 10 aree
-ipotizzate nel prompt precedente:
-- **Area 1 (unwrap/expect su input esterno)**: falso allarme, nessun panic raggiungibile da input
-  non fidato nel codice di produzione.
-- **Area 9 (nomi file riservati Windows)**: già gestito correttamente (retry esaurito → scansione
-  reale della destinazione per il conteggio, nessun crash).
-- **Area 6 (job multipli + file condivisi)**: bug reale confermato e risolto — vedi `ANALYSIS.md`
-  D12. `cache::default_cache_path`/`GenerationManifest::path_for` erano derivati solo da `dest`,
-  senza identità di job: due job dello stesso batch `[[jobs]]` con la stessa `dest` e
-  `--backup-type` mescolavano le proprie cronologie di generazioni, con rischio concreto che
-  `--keep-generations` cancellasse il `Full` di un job scambiandolo per "vecchio" rispetto ai
-  cicli dell'altro. Fix: `job_name: Option<&str>` opzionale su entrambe le funzioni, namespacizzato
-  via la nuova `robocopy_ingest::namespaced_path` (spostata da `main.rs` a `lib.rs`), valorizzato
-  incondizionatamente da `run_jobs` per ogni job. Vedi `CLAUDE.md` per la nota tecnica completa.
+**Questo giro** ha verificato empiricamente **tutte le 7 ipotesi rimaste** (elencate in una
+versione precedente di questo file), usando anche i log operativi reali in `_ops_reports/` (19 file,
+incluso il profilo reale da 1.340.613 file in `full-profile-test.json`) invece di sole ipotesi da
+lettura del codice. Esito:
 
-Le aree 2, 3, 4, 5, 7, 8, 10 del prompt precedente **non sono ancora state verificate** — restano
-valide ipotesi di lavoro per la prossima sessione (numerazione invariata, vedi sotto: 1/6/9 marcate
-✅ chiuse).
+- **Confermate come bug reali e risolte**:
+  - **D14** — `GenerationManifest::save`/`IngestCache::save_to` scrivevano con un `fs::write` non
+    atomico; un manifest a scala reale (1.34M file) serializza a ~174 MB per generazione, ~872 MB
+    con 5 generazioni trattenute — un crash a metà scrittura corrompe il file, e per il manifest
+    questo è **fatale** (rompe ogni backup futuro contro quella destinazione). Fix: nuova
+    `robocopy_ingest::atomic_write` (temp file + rename, stesso pattern di `crypto.rs`), usata da
+    entrambi. Vedi `ANALYSIS.md` D14 e la nota tecnica in `CLAUDE.md`.
+  - **D15** — un fallimento di copia in `execute_generation_backup` (`--backup-type`) mappava a
+    `EXIT_UNRECOVERABLE` (2, lo stesso di un errore di configurazione) invece di
+    `EXIT_INGESTION_PROBLEM` (1, come la pipeline plain-sync per lo stesso genere di fallimento), e
+    non scriveva alcun report. Fix (scope deciso con `AskUserQuestion`, **senza** toccare il motore
+    naive per tracciare conteggi parziali): errore catturato, nuovo campo
+    `IngestReport::copy_error`, report sempre scritto, exit code corretto. Vedi `ANALYSIS.md` D15 e
+    la nota tecnica in `CLAUDE.md`.
+- **Verificate ma senza fix, nessuna evidenza reale a supporto** (dettagli completi in `ANALYSIS.md`,
+  aggiornamento del 6 Agosto 2026 in cima alla Parte 3 — non da riaprire senza nuova evidenza):
+  - Buffer/soglie hardcoded (`BUFFER_BYTES`, chunk crypto, canale logging, `MAX_REPORTED_ERRORS`):
+    nessuna evidenza nei report reali che siano mal dimensionati.
+  - `--threads` su NAS/SMB: i log reali non contengono un confronto A/B pulito (stesso file-set,
+    stessa destinazione, thread diversi, transfer reale non dry-run) — il throughput basso osservato
+    (2.7-8.3 MB/s sia su fileserv01 sia su QNAP) è più coerente con overhead per-file su tanti file
+    piccoli che con un problema di thread-count.
+  - `--fast-verify` + corruzione lato destinazione: trade-off già dichiarato deliberatamente in
+    help text/CLAUDE.md; una mitigazione (campionamento periodico) sarebbe una nuova feature, non
+    un bug fix — da valutare come proposta separata, non come correzione.
+  - `errors.rs::is_transient()`/errori SMB transitori: nessun codice di errore di rete reale mai
+    osservato nei 19 log operativi (solo `ERRORE 5`, già ricondotto al caso noto dei nomi
+    riservati). Trovato un limite teorico (l'exit code 16 "fatal" di robocopy potrebbe derivare da
+    un'irraggiungibilità transitoria della destinazione, non solo da un errore di configurazione
+    permanente) ma non corretto: renderlo retryable rischierebbe di nascondere più a lungo un vero
+    errore di configurazione, senza un solo caso reale osservato a giustificarlo.
+  - `--resume-from` e file troncati: rischio teorico, non riproducibile con il normale
+    comportamento di scrittura sequenziale (un file troncato ha size diversa dalla sorgente, quindi
+    robocopy lo ricopia comunque al prossimo run).
+
+**Non ci sono più ipotesi ereditate da riprendere all'inizio della prossima sessione** — il prossimo
+giro di audit deve partire da una nuova lettura del codice/dei log reali, non da questa lista.
 
 ---
 
-## 🎯 Obiettivo di questa sessione: bug hunting, criticità, performance e robustezza
+## 🎯 Obiettivo per la prossima sessione: bug hunting, criticità, performance e robustezza
 
 **Non proporre nuove feature dalla roadmap (F42-F45, milestone 7.0.0) come primo passo.** La
-priorità di questa sessione è un **audit del codice Rust esistente**: trovare bug reali,
-criticità di robustezza e opportunità di ottimizzazione delle prestazioni nell'applicativo che
-wrappa `robocopy.exe` — non costruire altra tooling per agenti, non altra documentazione fine a
-sé stessa. Ogni fix va verificato con test reali (unit + black-box sul binario compilato, come da
-convenzione sotto), non solo letto/dedotto.
+priorità resta continuare l'**audit del codice Rust esistente**: trovare bug reali, criticità di
+robustezza e opportunità di ottimizzazione delle prestazioni nell'applicativo che wrappa
+`robocopy.exe` — non costruire altra tooling per agenti, non altra documentazione fine a sé stessa.
+Ogni fix va verificato con test reali (unit + black-box sul binario compilato, come da convenzione
+sotto), non solo letto/dedotto.
 
-### Aree da investigare (punto di partenza, non esaustivo)
+### Punti di partenza per la prossima sessione (non esaustivo)
 
-Queste sono ipotesi di lavoro basate sulla lettura del codice fatta finora, **da verificare
-empiricamente prima di agire** — nessuna è confermata come bug reale:
+Non ci sono ipotesi ereditate aperte. Spunti concreti emersi durante questo giro ma **non
+esplorati**, utili come punto di partenza (nessuno è confermato — verificare empiricamente prima di
+agire, stesso discorso di sempre):
 
-1. ✅ **CHIUSA (6 Agosto 2026, falso allarme)** — ~~Panic/unwrap in percorsi raggiungibili da input
-   esterno~~: verificato ogni `.unwrap()`/`.expect()` nel codice di produzione (fuori dai moduli
-   test) in tutto `src/`. Restano solo invarianti già garantite da clap (`cli.rs:429,436`) e panic
-   legittimi di avvio (init runtime tokio in `main.rs`, signal handler in `notify_server.rs`).
-   Nessun panic raggiungibile da path/config/output di robocopy non fidato.
-2. **Memoria su alberi da milioni di file**: `ScannedFile`/`ScanSummary` (`scan.rs`) tengono
-   l'intero inventario in RAM come `Vec`; `GenerationManifest.files` (`generations.rs`) fa lo
-   stesso per OGNI generazione salvata nel manifest JSON. Sul profilo utente reale testato in
-   questa sessione (1.34M file) il JSON del manifest potrebbe diventare grande — verificare la
-   dimensione reale su disco dopo alcune generazioni e se serve un formato più compatto o
-   streaming invece di caricare tutto in memoria ad ogni run.
-3. **Dimensionamento buffer/soglie hardcoded**: `engine/naive.rs::BUFFER_BYTES = 64 * 1024`,
-   `crypto.rs` chunk da 1 MiB, `logging.rs` canale bounded a `10_000`, `integrity.rs`
-   `MAX_REPORTED_ERRORS = 10_000` — sono scelte ragionevoli ma mai bench-marcate sistematicamente;
-   valutare se vale la pena renderle configurabili o se ci sono evidenze (dai report reali in
-   `_ops_reports/`) che vadano ritoccate.
-4. **Default `--threads` = CPU logiche (spesso 48) su SMB/NAS**: il test reale di questa sessione
-   ha mostrato throughput basso su NAS QNAP; capire se è un limite di rete/SMB del NAS o se
-   `/MT:48` è contro-producente su quel tipo di destinazione, usando
-   `scripts/benchmark-threads.ps1` già esistente per dati reali invece di ipotesi.
-5. **Interazione fra `--fast-verify` e corruzione lato destinazione**: limite già documentato nel
-   help text (`cache.rs` si fida di size+mtime della sorgente) — verificare se esiste un modo
-   economico di rilevare almeno i casi più comuni di corruzione (es. campionamento periodico anche
-   sui file "trusted" dalla cache) senza reintrodurre il costo pieno che `--fast-verify` voleva
-   evitare.
-6. ✅ **CHIUSA (D12, 6 Agosto 2026)** — ~~Concorrenza fra job multipli (`run_jobs`, F33) e file
-   condivisi~~: confermato bug reale. `.ingest_cache`/`.rustcopy_generations.json` erano derivati
-   solo da `dest`, senza identità di job — a differenza di `report_path`, mai namespacizzati per
-   job. Fix: `job_name: Option<&str>` su `cache::default_cache_path`/
-   `GenerationManifest::path_for`/`load_or_default`/`save`, valorizzato da `run_jobs` per ogni job.
-   Vedi `ANALYSIS.md` D12.
-7. **Gestione errori di rete SMB transitori**: `errors.rs::is_transient()` classifica cosa viene
-   ritentato dal retry loop esterno — verificare che copra i codici di errore SMB/di rete più
-   comuni osservati nei log reali di questa sessione (timeout, share temporaneamente non
-   raggiudibile), non solo gli errori robocopy standard.
-8. **`--resume-from` e file parzialmente scritti**: dato che non c'è mid-file resume (niente
-   `/Z`), un file troncato a metà per un crash mid-write potrebbe essere visto da robocopy come
-   "già presente" (size+timestamp) se il crash avviene dopo che l'OS ha già aggiornato i metadati
-   ma prima di un flush completo — verificare se è un rischio reale o teorico.
-9. ✅ **CHIUSA (6 Agosto 2026, comportamento già corretto)** — ~~Robustezza dei path Windows
-   lunghi/con caratteri riservati~~: il caso reale `NUL`/`nul` è già gestito bene, non è un bug.
-   robocopy fallisce quel file (atteso, nessun tool può copiare un device name riservato), il
-   retry si esaurisce, e `main.rs` fa una scansione reale della destinazione (`scan::inventory`)
-   per un conteggio byte/file accurato invece di fidarsi ciecamente dell'ultimo tentativo di
-   retry. Non richiede ulteriore lavoro; non verificati altri nomi riservati (`CON`, `PRN`, `AUX`,
-   `COM1-9`, `LPT1-9`) né edge case di path (trailing dot/space) in dettaglio — a basso rischio
-   dato che il fallimento è comunque gestito correttamente a valle.
-10. **Coerenza degli exit code fra le due pipeline** (plain-sync in `execute()` vs
-    `execute_generation_backup`): verificare che ogni condizione di errore mappi allo stesso exit
-    code indipendentemente dalla pipeline usata, non solo nei casi già testati.
+1. **`GenerationManifest`/`ScanSummary` tengono l'intero inventario in RAM come `Vec` e lo
+   serializzano/deserializzano per intero ad ogni run** — D14 ha chiuso il rischio di corruzione
+   sulla scrittura, ma non la domanda architetturale più ampia: a 174-872 MB per file, vale la pena
+   un formato streaming/incrementale (es. NDJSON append-only, o una history compattata che non
+   ripeta l'inventario completo ad ogni generazione) invece di un unico JSON riscritto per intero
+   ad ogni run? Richiede una decisione di design (probabilmente `AskUserQuestion`), non un fix
+   meccanico.
+2. **`engine::naive::copy_files` non traccia progresso parziale su fallimento** (la ragione per cui
+   D15 non ha potuto arricchire il report della pipeline a generazioni con conteggi accurati) — se
+   diventa prioritario avere un report accurato anche sui fallimenti parziali di `--backup-type`,
+   questo è il punto da cui ripartire.
+3. Le 5 aree "verificate senza fix" sopra restano scenari plausibili se emergono nuove evidenze
+   reali (nuovi log in `_ops_reports/`, un incidente riportato dall'utente) — non riaprirle senza
+   quello.
 
 ### Come procedere
 
-1. Scegli 2-3 aree dalla lista sopra (o trovane di nuove leggendo il codice) e **verifica
+1. Scegli 2-3 aree (dai punti sopra o da una nuova lettura del codice/dei log reali) e **verifica
    empiricamente** se sono bug reali o falsi allarmi — non proporre fix per un problema non
-   confermato.
+   confermato. I log operativi reali in `_ops_reports/` (19 file, incluso un profilo da 1.34M file)
+   sono spesso più utili di ipotesi da lettura del codice — usali prima di ipotizzare.
 2. Per ogni bug reale confermato: fix + unit test + test black-box sul binario reale (vedi
-   convenzioni sotto) + documentazione (`ANALYSIS.md` nuovo `D12`, `CLAUDE.md` nota tecnica).
+   convenzioni sotto) + documentazione (`ANALYSIS.md` nuovo `D16`, `CLAUDE.md` nota tecnica).
 3. Per le opportunità di performance: **misura prima di ottimizzare** — usa
    `scripts/benchmark-threads.ps1`/`scripts/analyze-runs.ps1` già esistenti o i report in
    `_ops_reports/` per avere numeri reali, non stime.
-4. Chiedi conferma con `AskUserQuestion` prima di qualunque deviazione architetturale, come da
-   convenzione consolidata in questo progetto (vedi sotto).
+4. Chiedi conferma con `AskUserQuestion` prima di qualunque deviazione architetturale o scelta di
+   scope ambigua, come da convenzione consolidata in questo progetto (vedi sotto).
+5. Se l'utente chiede un binario/installer aggiornato: `cargo build --release --features
+   notify-server` poi `ISCC.exe installer\rustcopy.iss` — non automatico, va fatto solo su
+   richiesta esplicita (vedi convenzioni sotto).
 
 ---
 
@@ -141,12 +144,13 @@ empiricamente prima di agire** — nessuna è confermata come bug reale:
   commit in inglese.
   - **Lezione confermata più volte**: aggiornare i conteggi test/difetti in **tutti** i file alla
     fine di ogni giro, non solo in alcuni — è già successo che numeri storici (conteggio test,
-    conteggio difetti D1-D10 vs D1-D11) restassero disallineati tra `ANALYSIS.md`, `ROADMAP.md` e
-    `CLAUDE.md` dopo un fix. Prima di chiudere un giro: `grep` dei vecchi conteggi su tutti i file
-    `.md`, e rilettura della sezione "prossimo passo" di questo file.
-- **Ricompilare dopo modifiche**: se l'utente chiede di usare un binario aggiornato,
-  `cargo build --release` (aggiungere `--features notify-server` se serve anche quel binario) non
-  è automatico — va lanciato esplicitamente.
+    conteggio difetti) restassero disallineati tra `ANALYSIS.md`, `ROADMAP.md` e `CLAUDE.md` dopo
+    un fix. Prima di chiudere un giro: `grep` dei vecchi conteggi su tutti i file `.md`, e
+    rilettura della sezione "prossimo passo" di questo file.
+- **Ricompilare dopo modifiche**: se l'utente chiede di usare un binario/installer aggiornato,
+  `cargo build --release` (aggiungere `--features notify-server` se serve anche quel binario) e/o
+  `ISCC.exe installer\rustcopy.iss` non sono automatici — vanno lanciati esplicitamente solo su
+  richiesta.
 - **Config TOML**: quasi tutti i flag CLI recenti sono ormai presenti anche in `JobConfig`/
   `IngestConfig` (`src/config.rs`). Eccezioni consapevoli e già accettate: `--decrypt`,
   `--restore-from`, `--vss-snapshot`, `--resume-from`, `--force-purge`, `--exclude-junctions`,
@@ -164,6 +168,11 @@ empiricamente prima di agire** — nessuna è confermata come bug reale:
 - `check_mirror_safety`/`VssGuard`/`prune_old_generations` e ogni operazione bloccante su
   filesystem/processo in `main.rs` devono restare dentro `tokio::task::spawn_blocking` — mai
   chiamate sincrone dentro le `async fn` di orchestrazione.
+- `main.rs::spawn_blocking_with_span` (D13) è il **solo** modo corretto di chiamare
+  `tokio::task::spawn_blocking` in `main.rs` — propaga lo span `tracing` attivo (l'identità del
+  job, in un batch `[[jobs]]`) sul thread bloccante. Un nuovo punto che chiama
+  `tokio::task::spawn_blocking` direttamente invece di `spawn_blocking_with_span` reintroduce il
+  gap di D13 (righe di log non attribuibili al job).
 - `main.rs::run_jobs` (F33) ricostruisce `Args` per ogni job da un **clone dell'invocazione CLI
   originale**, mai da `try_parse_from` né dall'`Args` già mergiato del job precedente.
 - `execute_generation_backup` (F34) non deve essere fatto rientrare in `transfer()`/robocopy per i
@@ -190,6 +199,15 @@ empiricamente prima di agire** — nessuna è confermata come bug reale:
   `generations::GenerationManifest::path_for`. `Args::job_name` è interno (`#[arg(skip)]`, mai un
   flag CLI reale) e va valorizzato **incondizionatamente** da `run_jobs` per ogni job (a differenza
   di `report_path`, cache/manifest non hanno un campo di config utente da rispettare prima).
+- `robocopy_ingest::atomic_write` (D14) è il **solo** modo corretto di scrivere il manifest
+  generazioni o la cache fast-verify su disco — non reintrodurre un `std::fs::write`/`fs::write`
+  diretto per questi due file, che possono arrivare a centinaia di MB (174 MB/generazione a scala
+  reale) e la cui corruzione a metà scrittura è fatale per il manifest.
+- `main.rs::execute_generation_backup` (D15) cattura l'errore di `copy_selected` invece di
+  propagarlo con `?` — non tornare a farlo propagare fatalmente, altrimenti si reintroduce la
+  mappatura a `EXIT_UNRECOVERABLE` (2) invece di `EXIT_INGESTION_PROBLEM` (1) e la perdita del
+  report su fallimento. `IngestReport::copy_error` è popolato **solo** da questa pipeline — non
+  aggiungerlo alla pipeline plain-sync, che non ne ha bisogno.
 
 ## Skill disponibile per operare rustcopy
 

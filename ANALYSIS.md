@@ -129,6 +129,23 @@ Se l'applicazione Rust intercetta `Ctrl+C` e si arresta senza terminare il proce
 > cache fast-verify non isolati per job in un batch `[[jobs]]`) è stato scoperto e risolto durante
 > un audit mirato di bug hunting/robustezza — porta il totale storico a 12 (D1-D12), di cui solo
 > D10 resta aperto.
+>
+> **Aggiornamento (6 Agosto 2026, stesso giro)**: un tredicesimo difetto (**D13**, righe di log non
+> attribuibili al job che le ha prodotte in un batch `[[jobs]]`, incluse quelle emesse dentro
+> `spawn_blocking`) è stato scoperto e risolto nello stesso audit — porta il totale storico a 13
+> (D1-D13), di cui solo D10 resta aperto.
+>
+> **Aggiornamento (6 Agosto 2026, stesso giro, verifica delle 7 ipotesi residue)**: due ulteriori
+> difetti scoperti e risolti verificando empiricamente le ipotesi rimaste in `NEXT_SESSION_PROMPT.md`
+> — **D14** (scrittura non atomica del manifest generazioni/cache fast-verify, rischio di
+> corruzione fatale su un file che può arrivare a ~872 MB) e **D15** (incoerenza di exit code e
+> report mancante fra le due pipeline di backup su un fallimento di copia). Le altre 5 ipotesi
+> (buffer hardcoded, `--threads` su NAS, `--fast-verify` vs corruzione destinazione, errori SMB
+> transitori, `--resume-from` e file troncati) sono state verificate empiricamente contro i log
+> operativi reali in `_ops_reports/` e **non hanno prodotto un fix**: nessuna evidenza reale le
+> supporta come bug concreti, solo rischi teorici o trade-off già dichiarati — vedi
+> `NEXT_SESSION_PROMPT.md` per il dettaglio di ciascuna. Porta il totale storico a 15 (D1-D15), di
+> cui solo D10 resta aperto.
 
 ## 🛑 3.1 Difetti aperti confermati
 
@@ -626,6 +643,128 @@ rispettare, quindi vanno sempre namespacizzati in un run multi-job.
 che esegue realmente due job con `--backup-type full` sulla stessa `dest` e verifica che i due
 manifest namespacizzati esistano, siano indipendenti, e che nessuno dei due contenga i file
 dell'altro job.
+
+### D13 — Righe di log non attribuibili al job in un batch `[[jobs]]` ✅ RISOLTO (6 Agosto 2026)
+
+**Stato: chiuso e verificato.**
+
+**Gravità: MEDIA.** `run_jobs` (F33) condivide deliberatamente un solo file di log fra tutti i job
+del batch (l'installazione del subscriber `tracing` è a livello di processo, non per-invocazione).
+Prima di questo fix, **solo** la riga di confine `"starting job"` (emessa da `run_jobs` stesso)
+portava il campo `job = %job_name`: ogni evento loggato durante l'effettiva esecuzione di un job
+dentro `run_one`/`execute` (avvio ingestion, avvisi, l'invocazione reale di `robocopy.exe` e il
+parsing del suo output riga per riga, l'esito finale) non era in alcun modo distinguibile da quello
+di un altro job. Se due job dello stesso batch fallivano in rapida successione, non c'era modo di
+ricostruire dal solo file di log quale riga appartenesse a quale job, se non per prossimità
+temporale — un problema di osservabilità direttamente analogo a D12 (stessa causa radice: F33 ha
+introdotto l'esecuzione multi-job senza propagare l'identità del job a valle in ogni punto che lo
+richiedeva). Il gap era in realtà doppio: anche avvolgendo `run_one` in uno
+`span` `tracing`, le righe più utili — quelle emesse dentro `tokio::task::spawn_blocking` (in primis
+l'invocazione di robocopy in `transfer()`) — restano non taggate per costruzione, perché uno span
+attivo non attraversa automaticamente il cambio di thread verso il pool bloccante di Tokio.
+Scoperto e verificato empiricamente durante l'audit di questa sessione: prima con un test-sonda
+temporaneo che confermava che il formatter di default di `tracing_subscriber` stampa il contesto
+dello span attivo (`job{job=nome}:`) su ogni riga, poi osservando che le righe emesse dentro
+`spawn_blocking` restavano effettivamente prive del tag anche dopo il primo intervento.
+
+#### ✅ Fix reale e verifica (6 Agosto 2026)
+
+Due parti, decise esplicitamente con `AskUserQuestion` prima di implementare la seconda (il fix
+minimo copriva solo le righe emesse direttamente in `run_one`/`execute`, lasciando scoperte quelle
+dentro `spawn_blocking` — si è scelto di estendere la propagazione anche lì piuttosto che
+documentare il gap come limite noto):
+
+1. `run_jobs` avvolge l'intera esecuzione di `run_one` per ogni job in
+   `tracing::info_span!("job", job = %job_name)` (via `.instrument()`), così ogni evento loggato
+   nel corso normale dell'esecuzione del job eredita il campo `job`.
+2. Nuova funzione `spawn_blocking_with_span` in `main.rs` — drop-in replacement di
+   `tokio::task::spawn_blocking` che cattura `tracing::Span::current()` prima di passare la
+   chiusura al thread bloccante e la ri-entra lì (`span.in_scope(f)`) — usata in **tutti** i punti
+   di `main.rs` che prima chiamavano `tokio::task::spawn_blocking` direttamente (~20 punti:
+   trasferimento robocopy/naive, VSS, hook pre/post, integrity check, generazioni, cache
+   fast-verify, retention, ecc.), così anche le righe emesse su un thread diverso ereditano lo
+   span del job che le ha generate.
+
+**Verificato**: 1 nuovo test black-box in `tests/cli_smoke.rs`
+(`log_lines_are_tagged_with_the_owning_job_name_in_a_multi_job_batch`) che esegue realmente un
+batch di due job e verifica che sia le righe emesse direttamente (`"ingestion starting"`,
+`"ingestion finished"`) sia quella emessa dentro `spawn_blocking` (`"invoking robocopy"`, la più
+rilevante da correlare in caso di errore) portino il tag `job{job=alpha}`/`job{job=beta}` corretto
+nel file di log condiviso.
+
+### D14 — Scrittura non atomica del manifest generazioni e della cache fast-verify ✅ RISOLTO (6 Agosto 2026)
+
+**Stato: chiuso e verificato.**
+
+**Gravità: ALTA.** `GenerationManifest::save` (F34/F35) e `IngestCache::save_to` (F28) scrivevano
+entrambi con un semplice `std::fs::write(path, content)`, senza alcuna atomicità. Verificato con un
+test empirico che costruisce un manifest realistico alla scala del profilo reale documentato in
+`_ops_reports/full-profile-test.json` (1.340.613 file): **una singola generazione serializza a
+~174 MB**, e con 5 generazioni trattenute (una finestra `--keep-generations` plausibile) il file
+arriva a **~872 MB** — e questo con `serde_json::to_string` compatto; il codice reale usa
+`to_string_pretty`, ancora più grande. Un crash, un kill forzato, o una condivisione SMB/NAS che
+cade a metà della scrittura di un file di queste dimensioni lascia un `.rustcopy_generations.json`
+troncato e non deserializzabile. Per il manifest questo è **fatale**: `load_or_default` propaga
+l'errore di parsing con `?`, e `execute_generation_backup` lo fa risalire fino ad abortire l'intero
+job — rompendo permanentemente ogni futuro backup incrementale/differenziale/di retention contro
+quella destinazione finché un operatore non ripara manualmente il file. Per la cache fast-verify
+l'impatto è minore (`load_from` degrada silenziosamente a una cache vuota su un parse fallito) ma
+comunque reale: perdita silenziosa della fiducia fast-verify accumulata. Scoperto durante un audit
+mirato di bug hunting/robustezza (ipotesi #1 di `NEXT_SESSION_PROMPT.md`), verificando empiricamente
+la dimensione reale invece di ipotizzarla.
+
+#### ✅ Fix reale e verifica (6 Agosto 2026)
+
+Nuova funzione condivisa `robocopy_ingest::atomic_write` in `lib.rs`, che generalizza per byte
+generici lo stesso pattern temp-file-poi-rename già usato da `crypto.rs::encrypt_file`/
+`decrypt_file` (D3/D4) — scrive su un file temporaneo sibling (`<path>.rustcopy-tmp`) e rinomina
+atomicamente sopra l'originale solo a scrittura completata. `GenerationManifest::save` e
+`IngestCache::save_to` ora passano entrambi da questa funzione invece di un `fs::write` diretto.
+
+**Verificato**: 4 nuovi unit test per `atomic_write` in `lib.rs` (contenuto corretto, nessun file
+temporaneo residuo, sovrascrittura completa, "un crash a metà scrittura non deve mai rendere
+visibile un file parziale al percorso reale"); 1 nuovo unit test in `cache.rs`
+(`save_to_leaves_no_temp_file_behind`); 1 nuovo test black-box in `tests/cli_smoke.rs`
+(`a_successful_backup_leaves_no_atomic_write_temp_files_behind`) che esegue un vero
+`--backup-type full` e verifica che non resti alcun file `.rustcopy-tmp` residuo.
+
+### D15 — Incoerenza di exit code ed assenza di report fra le due pipeline ✅ RISOLTO (6 Agosto 2026)
+
+**Stato: chiuso e verificato.**
+
+**Gravità: MEDIA.** Verificando l'ipotesi #7 di `NEXT_SESSION_PROMPT.md` (coerenza degli exit code
+fra `execute()` e `execute_generation_backup`), un fallimento di copia in
+`execute_generation_backup` (`--backup-type`) propagava con `?` fino ad `async_main()`, che lo
+mappava a `EXIT_UNRECOVERABLE` (2) — lo stesso codice usato per un `--pattern` invalido o una
+sorgente mancante. La pipeline plain-sync, per lo **stesso genere di fallimento** (la copia stessa
+non completata), restituisce invece `EXIT_INGESTION_PROBLEM` (1), distinzione voluta e documentata
+(F29b) proprio perché uno scheduler debba poter distinguere un errore di configurazione da un
+trasferimento fallito. Più grave: nella pipeline a generazioni **non veniva scritto alcun report
+JSON** in caso di fallimento (l'errore abortiva la funzione prima che il codice arrivasse a
+`report.write_to`), a differenza della pipeline plain-sync che scrive sempre un report,
+indipendentemente dall'esito.
+
+#### ✅ Fix reale e verifica (6 Agosto 2026)
+
+Scope deciso esplicitamente con `AskUserQuestion`: fix mirato solo alla coerenza di exit
+code/report, **senza** modificare il motore naive (`engine::naive::copy_files` abortisce l'intero
+loop al primo file fallito senza restituire alcun `CopyOutcome` parziale — tracciare quanti file
+erano già stati copiati con successo prima del fallimento sarebbe stato un intervento più ampio sul
+motore di copia condiviso anche da `--compare-baseline`, valutato fuori scope per questo fix).
+`execute_generation_backup` ora cattura l'errore di `copy_selected` invece di propagarlo
+fatalmente: logga l'errore, costruisce comunque un `IngestReport` (con un nuovo campo
+`copy_error: Option<String>`, popolato solo su questa pipeline — la plain-sync non ne ha bisogno,
+il suo `TransferReport` porta già statistiche parziali anche su fallimento), lo scrive su disco, e
+restituisce `EXIT_INGESTION_PROBLEM` invece di un errore fatale. La generazione fallita non viene
+mai aggiunta al manifest (guardia `copy_error.is_none()` sul blocco che fa `manifest.push`/`save`),
+coerente con il comportamento preesistente.
+
+**Verificato**: 1 nuovo test black-box in `tests/cli_smoke.rs`
+(`a_failed_generation_backup_reports_exit_code_1_not_2_and_still_writes_a_report`) che blocca un
+file sorgente con `share_mode(0)` (stessa tecnica già usata dal test D2/F29b esistente contro un
+file di destinazione) per forzare un fallimento di copia reale e verifica: exit code 1 (non 2), un
+report scritto con `copy_error` valorizzato, e nessun manifest generazioni creato per la
+generazione fallita.
 
 ---
 

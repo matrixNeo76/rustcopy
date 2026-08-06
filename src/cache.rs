@@ -31,12 +31,17 @@ impl IngestCache {
         Self::default()
     }
 
+    /// D14: writes via `crate::atomic_write` (temp file + rename) rather than a bare `fs::write`,
+    /// so a crash or interrupted write mid-save can never leave a corrupt `.ingest_cache` at
+    /// `path` — a corrupt cache doesn't fail a run outright (`load_from` silently falls back to
+    /// `Self::default()` on a parse error), but it silently discards every previously-verified
+    /// file's fast-verify trust, forcing a full re-verification on the next run for no reason.
     pub fn save_to(&self, path: &Path) -> std::io::Result<()> {
         if let Some(parent) = path.parent() {
             let _ = fs::create_dir_all(parent);
         }
         let content = serde_json::to_string_pretty(self)?;
-        fs::write(path, content)
+        crate::atomic_write(path, content.as_bytes())
     }
 
     pub fn should_skip(&self, relative_path: &str, current_size: u64, current_mtime: u64) -> bool {
@@ -98,6 +103,21 @@ mod tests {
 
         let loaded = IngestCache::load_from(&path);
         assert!(loaded.should_skip("a.csv", 100, 12345));
+    }
+
+    /// D14: `save_to` goes through `crate::atomic_write` (temp file + rename), not a bare
+    /// `fs::write` — confirms the sibling `.rustcopy-tmp` file is actually cleaned up by the real
+    /// `save_to` call, not just by `atomic_write`'s own unit tests in isolation.
+    #[test]
+    fn save_to_leaves_no_temp_file_behind() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let path = dir.path().join(".ingest_cache");
+        let mut cache = IngestCache::default();
+        cache.update("a.csv".to_string(), 100, 12345, None);
+        cache.save_to(&path).expect("save");
+
+        let tmp_path = dir.path().join(".ingest_cache.rustcopy-tmp");
+        assert!(!tmp_path.exists(), "temp file must be renamed away, not left behind");
     }
 
     #[test]

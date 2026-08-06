@@ -114,12 +114,22 @@ impl GenerationManifest {
         })
     }
 
+    /// D14: writes via `crate::atomic_write` (temp file + rename), not a bare `std::fs::write`.
+    /// This manifest scales with the size of the tree being backed up — ~174 MB for one
+    /// generation on the real-world 1.34M-file profile in `_ops_reports/full-profile-test.json`,
+    /// growing linearly with every generation kept before `--keep-generations` rotates it away —
+    /// and unlike `cache.rs`'s fast-verify cache, a corrupt manifest is **fatal**:
+    /// `load_or_default`'s parse error is propagated with `?` and aborts the whole job (see
+    /// `main.rs::execute_generation_backup`), permanently breaking every future
+    /// incremental/differential/retention run against that destination until an operator manually
+    /// intervenes. A write interrupted by a crash, a forced kill, or a dropped SMB/NAS share
+    /// mid-write must never be able to cause that.
     pub fn save(&self, dest_root: &Path, job_name: Option<&str>) -> Result<(), IngestError> {
         let path = Self::path_for(dest_root, job_name);
         let json = serde_json::to_string_pretty(self).map_err(|error| {
             IngestError::io(&path, std::io::Error::new(std::io::ErrorKind::InvalidData, error))
         })?;
-        std::fs::write(&path, json).map_err(|error| IngestError::io(&path, error))
+        crate::atomic_write(&path, json.as_bytes()).map_err(|error| IngestError::io(&path, error))
     }
 
     /// The most recently recorded generation, regardless of type — what an incremental backup
@@ -248,6 +258,73 @@ mod tests {
             size_bytes: size,
             modified_timestamp: mtime,
         }
+    }
+
+    /// Bug-hunting probe (not a regression test): measures the *real* serialized size of a
+    /// `GenerationManifest` at the scale actually observed in `_ops_reports/full-profile-test.json`
+    /// (1,340,613 files) to answer hypothesis #1 from `NEXT_SESSION_PROMPT.md` — "does the manifest
+    /// become a real problem on a million-file tree, or is that just a theoretical worry?" — with a
+    /// real number instead of a guess. `#[ignore]`d because it allocates ~1.3M entries and is a
+    /// one-off measurement, not something that should run on every `cargo test`.
+    #[test]
+    #[ignore]
+    fn probe_manifest_size_at_real_world_scale() {
+        // Average relative path length modeled on the real paths seen in
+        // `_ops_reports/claude-code_dest2-qnap-datas01_20260805_153728.log` (deeply nested
+        // node_modules trees), not an arbitrary guess.
+        let sample_paths = [
+            "aica2-course-orchestrator/node_modules/rxjs/dist/esm5/internal/operators/timeoutWith.js.map",
+            "src/hooks/useNotifyAfterTimeout.ts",
+            "src/utils/bash/specs/timeout.ts",
+            "aica2-course-orchestrator/node_modules/rxjs/src/internal/operators/timeout.ts",
+        ];
+        let file_count = 1_340_613usize;
+        let files: Vec<GenerationFile> = (0..file_count)
+            .map(|i| {
+                let base = sample_paths[i % sample_paths.len()];
+                generation_file(&format!("{base}.{i}"), 4096, 1_754_000_000 + i as u64)
+            })
+            .collect();
+        let manifest = GenerationManifest {
+            generations: vec![Generation {
+                id: "20260806_full".to_string(),
+                backup_type: BackupType::Full,
+                created_at: "2026-08-06T10:00:00Z".to_string(),
+                files_copied: file_count,
+                files,
+            }],
+        };
+
+        let json = serde_json::to_string(&manifest).expect("serialize");
+        let one_generation_mb = json.len() as f64 / (1024.0 * 1024.0);
+        // Empirically measured (6 Agosto 2026, this session): ~174 MB for one generation. Asserted
+        // as a loose range rather than pinned exactly, so this doesn't become a brittle byte-count
+        // regression test — the point is confirming "tens to hundreds of MB", not an exact figure.
+        assert!(
+            (100.0..250.0).contains(&one_generation_mb),
+            "one generation at real-world scale should serialize to roughly 100-250 MB, got {one_generation_mb:.1} MB — \
+             re-check this against the D14 note in generations.rs::save if the shape of GenerationFile changed"
+        );
+
+        // --keep-generations retention keeps whole cycles, not single generations (F35) — a
+        // realistic worst case before rotation kicks in is a handful of cycles sitting in the
+        // manifest at once. Model 5 generations (the default a cautious operator might pick for
+        // --keep-generations) to see how the *file* (not just one generation) scales, since
+        // `GenerationManifest::save` rewrites the whole file every run regardless of how many
+        // generations are in it.
+        let mut multi = manifest.clone();
+        for n in 1..5 {
+            let mut gen = multi.generations[0].clone();
+            gen.id = format!("20260806_full_{n}");
+            multi.generations.push(gen);
+        }
+        let multi_json = serde_json::to_string(&multi).expect("serialize");
+        let five_generations_mb = multi_json.len() as f64 / (1024.0 * 1024.0);
+        assert!(
+            five_generations_mb > one_generation_mb * 4.0,
+            "5 generations should scale roughly linearly with generation count (full inventory \
+             stored per generation, not a delta) — got {five_generations_mb:.1} MB vs {one_generation_mb:.1} MB for 1"
+        );
     }
 
     #[test]

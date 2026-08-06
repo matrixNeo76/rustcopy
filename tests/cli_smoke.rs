@@ -1602,6 +1602,113 @@ backup_type = "full"
     );
 }
 
+/// D13 black-box regression test: `run_jobs` shares one log file across every job in the batch
+/// (deliberate, see its own doc comment). Before this fix, only the "starting job" boundary line
+/// carried the job's name — every other event logged while a job actually ran (transfer start,
+/// warnings, the actual robocopy invocation and its per-file output, the final "ingestion
+/// finished") was indistinguishable from another job's, so two jobs failing in close succession
+/// couldn't be told apart from the log file alone. Each job's work is now wrapped in a
+/// `tracing::info_span!("job", job = ..)`, and every `tokio::task::spawn_blocking` call site in
+/// `main.rs` goes through `spawn_blocking_with_span` (which re-enters the captured span on the
+/// blocking thread) instead of the bare `tokio::task::spawn_blocking` — otherwise the blocking
+/// thread wouldn't inherit the span and the robocopy transfer's own log lines (arguably the most
+/// useful ones to attribute) would stay untagged. The default `tracing_subscriber` formatter
+/// prints active span context (`job{job=name}:`) on every line logged within it.
+#[cfg(windows)]
+#[test]
+fn log_lines_are_tagged_with_the_owning_job_name_in_a_multi_job_batch() {
+    let source_alpha = fixture_tree(&[("alpha.csv", 8)]);
+    let source_beta = fixture_tree(&[("beta.csv", 8)]);
+    let workdir = tempfile::tempdir().expect("workdir");
+    let to_toml_path = |p: &Path| p.to_str().expect("utf8").replace('\\', "/");
+
+    let config_path = workdir.path().join("jobs.toml");
+    let report_path = workdir.path().join("report.json");
+    let log_path = workdir.path().join("ingest.log");
+    let dest_alpha = workdir.path().join("out_alpha");
+    let dest_beta = workdir.path().join("out_beta");
+
+    std::fs::write(
+        &config_path,
+        format!(
+            r#"
+report_path = "{report}"
+log_path = "{log}"
+
+[[jobs]]
+name = "alpha"
+source = "{source_a}"
+dest = "{dest_alpha}"
+
+[[jobs]]
+name = "beta"
+source = "{source_b}"
+dest = "{dest_beta}"
+"#,
+            report = to_toml_path(&report_path),
+            log = to_toml_path(&log_path),
+            source_a = to_toml_path(source_alpha.path()),
+            dest_alpha = to_toml_path(&dest_alpha),
+            source_b = to_toml_path(source_beta.path()),
+            dest_beta = to_toml_path(&dest_beta),
+        ),
+    )
+    .expect("write config");
+
+    let output = run(&["--config", config_path.to_str().expect("utf8")]);
+    assert!(output.status.success(), "stderr: {}", stderr_of(&output));
+
+    let log_contents = std::fs::read_to_string(&log_path).expect("read log");
+    let alpha_starting = log_contents
+        .lines()
+        .find(|l| l.contains("ingestion starting") && l.contains("job{job=alpha}"));
+    let beta_starting = log_contents
+        .lines()
+        .find(|l| l.contains("ingestion starting") && l.contains("job{job=beta}"));
+    assert!(
+        alpha_starting.is_some(),
+        "alpha's 'ingestion starting' line must be tagged with its own job span: {log_contents}"
+    );
+    assert!(
+        beta_starting.is_some(),
+        "beta's 'ingestion starting' line must be tagged with its own job span: {log_contents}"
+    );
+
+    let alpha_finished = log_contents
+        .lines()
+        .find(|l| l.contains("ingestion finished") && l.contains("job{job=alpha}"));
+    let beta_finished = log_contents
+        .lines()
+        .find(|l| l.contains("ingestion finished") && l.contains("job{job=beta}"));
+    assert!(
+        alpha_finished.is_some(),
+        "alpha's 'ingestion finished' line must be tagged too, not just the boundary line: {log_contents}"
+    );
+    assert!(
+        beta_finished.is_some(),
+        "beta's 'ingestion finished' line must be tagged too, not just the boundary line: {log_contents}"
+    );
+
+    // The line that matters most: the actual robocopy invocation runs inside
+    // `spawn_blocking_with_span` (main.rs::transfer), on a different OS thread than the one that
+    // entered the job span. Without span propagation across that hop, this exact line is the one
+    // that would stay untagged and unattributable to either job.
+    let alpha_invoking = log_contents
+        .lines()
+        .find(|l| l.contains("invoking robocopy") && l.contains("job{job=alpha}"));
+    let beta_invoking = log_contents
+        .lines()
+        .find(|l| l.contains("invoking robocopy") && l.contains("job{job=beta}"));
+    assert!(
+        alpha_invoking.is_some(),
+        "alpha's robocopy invocation (on a spawn_blocking thread) must inherit the job span: {log_contents}"
+    );
+    assert!(
+        beta_invoking.is_some(),
+        "beta's robocopy invocation (on a spawn_blocking thread) must inherit the job span: {log_contents}"
+    );
+}
+
 /// F34 black-box test: `--backup-type full` then `--backup-type incremental` against the same
 /// destination actually produce two generation subfolders, a manifest recording both, and the
 /// incremental run copies only the file that changed (and the new one) — not the unchanged file.
@@ -1809,6 +1916,94 @@ fn differential_backup_without_a_prior_full_generation_fails_clearly() {
 
     assert!(!output.status.success());
     assert!(stderr_of(&output).contains("no prior full generation"), "stderr: {}", stderr_of(&output));
+}
+
+/// D15 black-box regression test (hypothesis #7 from `NEXT_SESSION_PROMPT.md` — exit-code
+/// consistency between the plain-sync and `--backup-type` pipelines): before this fix, a copy
+/// failure in `execute_generation_backup` propagated as a fatal `anyhow::Error` all the way to
+/// `async_main()`, which mapped it to `EXIT_UNRECOVERABLE` (2) — the same code used for a bad
+/// `--pattern` or a missing source directory — instead of `EXIT_INGESTION_PROBLEM` (1), the code
+/// the plain-sync pipeline's `transfer()` already uses for "the copy itself failed". Worse: no
+/// JSON report was written at all on that path, unlike the plain-sync pipeline, which always
+/// writes one. This forces a source file open failure (share_mode(0), deny-all-sharing, the same
+/// technique `permanently_uncopyable_file_does_not_undercount_the_rest_of_the_transfer` above uses
+/// against a destination file) so `engine::naive::copy_one` fails deterministically inside a real
+/// `--backup-type full` run, and checks both halves of the fix: exit code 1, and a written report
+/// carrying the new `copy_error` field.
+#[cfg(windows)]
+#[test]
+fn a_failed_generation_backup_reports_exit_code_1_not_2_and_still_writes_a_report() {
+    use std::os::windows::fs::OpenOptionsExt;
+
+    let source = fixture_tree(&[("a.csv", 8)]);
+    let locked_source_file = source.path().join("a.csv");
+    let _locked_handle = std::fs::OpenOptions::new()
+        .read(true)
+        .share_mode(0)
+        .open(&locked_source_file)
+        .expect("lock the source file exclusively");
+
+    let workdir = tempfile::tempdir().expect("workdir");
+    let dest = workdir.path().join("dest");
+
+    let output = run_generation_backup(source.path(), &dest, workdir.path(), "full", "report.json", &[]);
+    drop(_locked_handle);
+
+    assert!(!output.status.success());
+    assert_eq!(
+        output.status.code(),
+        Some(1),
+        "a failed generation copy must map to EXIT_INGESTION_PROBLEM (1), not EXIT_UNRECOVERABLE (2); stderr: {}",
+        stderr_of(&output)
+    );
+
+    let report_path = workdir.path().join("report.json");
+    assert!(
+        report_path.is_file(),
+        "a report must still be written for a failed generation backup, same as the plain-sync pipeline"
+    );
+    let report: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(&report_path).expect("read")).expect("json");
+    assert!(
+        report["copy_error"].as_str().is_some_and(|s| !s.is_empty()),
+        "the report must record why the generation copy failed: {report}"
+    );
+
+    // The bug this guards against, second half: a failed generation must not be recorded in the
+    // manifest as if it succeeded (it already wasn't, but confirm the manifest wasn't even created
+    // at all rather than existing empty/inconsistent).
+    let manifest = dest.join(".rustcopy_generations.json");
+    assert!(
+        !manifest.is_file(),
+        "a failed first generation must not leave a manifest behind, empty or otherwise"
+    );
+}
+
+/// D14 black-box regression test: `GenerationManifest::save` and `IngestCache::save_to` used to
+/// write via a bare `std::fs::write`, so a crash mid-write of a large manifest (~174 MB for the
+/// real-world 1.34M-file profile in `_ops_reports/full-profile-test.json`) could leave a
+/// truncated, unparseable `.rustcopy_generations.json` — fatal for every future
+/// incremental/differential/retention run against that destination. Both now go through
+/// `robocopy_ingest::atomic_write` (temp file + rename). This test doesn't simulate a real crash
+/// (covered by the pure unit tests in `lib.rs`) — it exercises the real binary end-to-end and
+/// confirms no stray `.rustcopy-tmp` sibling file is ever left behind after a normal successful
+/// run, i.e. the temp-file plumbing is actually wired up in the real save path, not just present
+/// in the helper function.
+#[cfg(windows)]
+#[test]
+fn a_successful_backup_leaves_no_atomic_write_temp_files_behind() {
+    let source = fixture_tree(&[("a.csv", 8), ("b.csv", 16)]);
+    let workdir = tempfile::tempdir().expect("workdir");
+    let dest = workdir.path().join("dest");
+
+    let output = run_generation_backup(source.path(), &dest, workdir.path(), "full", "report.json", &[]);
+    assert!(output.status.success(), "stderr: {}", stderr_of(&output));
+
+    let manifest_tmp = dest.join(".rustcopy_generations.json.rustcopy-tmp");
+    assert!(!manifest_tmp.exists(), "no stray manifest temp file must remain after a successful run");
+
+    let manifest = dest.join(".rustcopy_generations.json");
+    assert!(manifest.is_file(), "the real manifest must exist after a successful run");
 }
 
 /// Runs one `--backup-type` backup against a shared source/dest/log, writing its report to

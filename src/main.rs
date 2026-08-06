@@ -11,6 +11,7 @@ use std::time::{Duration, Instant};
 use anyhow::{Context, Result};
 use clap::Parser;
 use tempfile::TempDir;
+use tracing::Instrument;
 
 use robocopy_ingest::cache::{self, IngestCache};
 use robocopy_ingest::cli::Args;
@@ -237,9 +238,19 @@ async fn run_jobs(base_args: Args, config: robocopy_ingest::config::IngestConfig
         }
 
         println!("\n=== job '{job_name}' ({}/{}) ===", idx + 1, jobs.len());
-        tracing::info!(job = %job_name, "starting job");
+        // Every event logged while this job runs (not just the "starting job" line below) must
+        // carry the job's identity: `run_one` shares one log file across the whole batch (see its
+        // own doc comment), and without a span wrapping it, two jobs failing in close succession
+        // would be indistinguishable from the log file alone.
+        let job_span = tracing::info_span!("job", job = %job_name);
+        let result = async {
+            tracing::info!("starting job");
+            run_one(&job_args, &log, Arc::clone(&child_pid)).await
+        }
+        .instrument(job_span)
+        .await?;
 
-        match run_one(&job_args, &log, Arc::clone(&child_pid)).await? {
+        match result {
             JobRunResult::Completed(code) => worst_exit_code = worst_exit_code.max(code),
             JobRunResult::Interrupted => {
                 worst_exit_code = worst_exit_code.max(EXIT_INGESTION_PROBLEM);
@@ -346,6 +357,25 @@ fn kill_active_child(child_pid: &Arc<AtomicU32>) {
 #[cfg(not(windows))]
 fn kill_active_child(_child_pid: &Arc<AtomicU32>) {}
 
+/// D13: `tokio::task::spawn_blocking` runs its closure on a dedicated blocking-pool thread, which
+/// does *not* inherit the calling task's active `tracing` span — every blocking filesystem/process
+/// operation in this file (the robocopy/naive transfer itself, integrity checks, VSS, hooks, ...)
+/// would otherwise log without the job identity that `run_jobs` (F33) attaches via its `job` span,
+/// making a multi-job batch's shared log file impossible to attribute per job for exactly the lines
+/// that matter most (the actual robocopy invocation and its per-file output). This captures the
+/// current span before handing off to the blocking thread and re-enters it there, so every event
+/// logged inside `f` still carries it. A drop-in replacement for `tokio::task::spawn_blocking`,
+/// same bounds — every call site in this file should go through this instead of the bare
+/// `tokio::task::spawn_blocking`.
+fn spawn_blocking_with_span<F, T>(f: F) -> tokio::task::JoinHandle<T>
+where
+    F: FnOnce() -> T + Send + 'static,
+    T: Send + 'static,
+{
+    let span = tracing::Span::current();
+    tokio::task::spawn_blocking(move || span.in_scope(f))
+}
+
 /// F30: holds a VSS shadow copy for the lifetime of the run and deletes it on drop.
 ///
 /// A plain synchronous `Drop` impl (rather than an async cleanup step at the end of `execute()`)
@@ -394,7 +424,7 @@ async fn create_vss_snapshot(args: &Args) -> Result<Option<VssGuard>> {
 
     let shadow = {
         let volume = volume.clone();
-        tokio::task::spawn_blocking(move || robocopy_ingest::vss::create_shadow_copy(&volume))
+        spawn_blocking_with_span(move || robocopy_ingest::vss::create_shadow_copy(&volume))
             .await
             .context("the VSS snapshot task panicked")?
             .context(
@@ -439,7 +469,7 @@ async fn execute(args: &Args, child_pid: Arc<AtomicU32>) -> Result<RunOutcome> {
     // snapshot is even taken, not just before the copy. Blocking (waits for the child process),
     // so it runs in spawn_blocking like every other blocking operation in this file.
     if let Some(pre_command) = args.pre_command.clone() {
-        tokio::task::spawn_blocking(move || robocopy_ingest::hooks::run_pre_command(&pre_command))
+        spawn_blocking_with_span(move || robocopy_ingest::hooks::run_pre_command(&pre_command))
             .await
             .context("the pre-command task panicked")?
             .context("pre-command failed")?;
@@ -561,7 +591,7 @@ async fn execute(args: &Args, child_pid: Arc<AtomicU32>) -> Result<RunOutcome> {
     report.decrypted = decrypted_count.unwrap_or(0) > 0;
 
     if let Some(post_command) = args.post_command.clone() {
-        let error = tokio::task::spawn_blocking(move || robocopy_ingest::hooks::run_post_command(&post_command))
+        let error = spawn_blocking_with_span(move || robocopy_ingest::hooks::run_post_command(&post_command))
             .await
             .context("the post-command task panicked")?;
         if let Some(error) = error {
@@ -658,7 +688,7 @@ async fn execute_generation_backup(
     let manifest = {
         let dest_root = dest_root.clone();
         let job_name = job_name.clone();
-        tokio::task::spawn_blocking(move || GenerationManifest::load_or_default(&dest_root, job_name.as_deref()))
+        spawn_blocking_with_span(move || GenerationManifest::load_or_default(&dest_root, job_name.as_deref()))
             .await
             .context("the generation manifest load task panicked")?
             .context("cannot load the generation manifest")?
@@ -722,7 +752,18 @@ async fn execute_generation_backup(
         args.dry_run,
         Arc::clone(&progress),
     );
-    let copy_outcome = tokio::task::spawn_blocking(move || {
+    // D15 (closes half of hypothesis #7): a copy failure here used to propagate fatally via `?`,
+    // which `async_main()` maps to `EXIT_UNRECOVERABLE` (2) — unlike the plain-sync pipeline's
+    // `transfer()`, whose failure is caught explicitly and surfaces as `EXIT_INGESTION_PROBLEM`
+    // (1), the correct code for "the copy itself failed" rather than a usage/config error. It also
+    // meant no report was ever written for a failed generation backup, unlike the plain-sync
+    // pipeline which always writes one. This closes the exit-code half of the gap; a JSON report
+    // is now written here too. It does *not* attempt to reconstruct per-file success/failure
+    // counts (`engine::naive::copy_files` aborts its loop on the first failing file without
+    // returning any partial `CopyOutcome` at all) — that would mean changing the naive engine
+    // itself, deliberately out of scope for this fix (see the `AskUserQuestion` decision recorded
+    // in `ANALYSIS.md` D15).
+    let (copy_outcome, copy_error) = match spawn_blocking_with_span(move || {
         robocopy_ingest::engine::naive::copy_selected(
             &source_owned,
             &dest_owned,
@@ -733,10 +774,17 @@ async fn execute_generation_backup(
     })
     .await
     .context("the generation copy task panicked")?
-    .context("generation copy failed")?;
+    {
+        Ok(outcome) => (outcome, None),
+        Err(error) => {
+            tracing::error!("generation copy failed: {error}");
+            eprintln!("generation copy failed: {error}");
+            (CopyOutcome::new("naive"), Some(error))
+        }
+    };
     let transfer_seconds = start_transfer.elapsed().as_secs_f64();
 
-    if !args.dry_run {
+    if !args.dry_run && copy_error.is_none() {
         let mut manifest = manifest;
         manifest.push(generations::Generation {
             id: generation_id.clone(),
@@ -747,7 +795,7 @@ async fn execute_generation_backup(
         });
         let dest_root_for_save = dest_root.clone();
         let job_name_for_save = job_name.clone();
-        tokio::task::spawn_blocking(move || manifest.save(&dest_root_for_save, job_name_for_save.as_deref()))
+        spawn_blocking_with_span(move || manifest.save(&dest_root_for_save, job_name_for_save.as_deref()))
             .await
             .context("the generation manifest save task panicked")?
             .context("cannot save the generation manifest")?;
@@ -780,9 +828,10 @@ async fn execute_generation_backup(
     };
 
     let mut report = IngestReport::with_timing(&gen_args, &scoped_inventory, &copy_outcome, None, None, timing);
+    report.copy_error = copy_error.as_ref().map(|error| error.to_string());
 
     if let Some(post_command) = args.post_command.clone() {
-        let error = tokio::task::spawn_blocking(move || robocopy_ingest::hooks::run_post_command(&post_command))
+        let error = spawn_blocking_with_span(move || robocopy_ingest::hooks::run_post_command(&post_command))
             .await
             .context("the post-command task panicked")?;
         if let Some(error) = error {
@@ -811,7 +860,7 @@ async fn execute_generation_backup(
     tracing::info!(path = %args.report_path.display(), "report written");
 
     Ok(RunOutcome {
-        exit_code: 0,
+        exit_code: if copy_error.is_some() { EXIT_INGESTION_PROBLEM } else { 0 },
         summary: report.human_summary(),
         report_path: args.report_path.clone(),
     })
@@ -836,7 +885,7 @@ async fn prune_old_generations(args: &Args, dest_root: &Path, keep_cycles: usize
     let manifest = {
         let dest_root = dest_root.to_path_buf();
         let job_name = job_name.clone();
-        tokio::task::spawn_blocking(move || GenerationManifest::load_or_default(&dest_root, job_name.as_deref()))
+        spawn_blocking_with_span(move || GenerationManifest::load_or_default(&dest_root, job_name.as_deref()))
             .await
             .context("the generation manifest load task panicked")?
             .context("cannot load the generation manifest for retention")?
@@ -874,7 +923,7 @@ async fn prune_old_generations(args: &Args, dest_root: &Path, keep_cycles: usize
 
     let dest_root_owned = dest_root.to_path_buf();
     let job_name_owned = job_name.clone();
-    tokio::task::spawn_blocking(move || -> Result<(), IngestError> {
+    spawn_blocking_with_span(move || -> Result<(), IngestError> {
         let ids: HashSet<String> = prune_ids.into_iter().collect();
         for id in &ids {
             let folder = dest_root_owned.join(id);
@@ -910,7 +959,7 @@ async fn inventory_source(args: &Args, effective_source: &Path) -> Result<ScanSu
     let exclude_files = args.exclude_files.clone();
 
     let inventory = if no_prescan {
-        tokio::task::spawn_blocking(move || {
+        spawn_blocking_with_span(move || {
             scan::inventory(&source, &pattern, follow_links, &exclude_dirs, &exclude_files)
         })
         .await
@@ -918,7 +967,7 @@ async fn inventory_source(args: &Args, effective_source: &Path) -> Result<ScanSu
         .context("cannot scan the source directory")?
         .into_scan_summary()
     } else {
-        tokio::task::spawn_blocking(move || {
+        spawn_blocking_with_span(move || {
             scan::scan(&source, &pattern, follow_links, &exclude_dirs, &exclude_files)
         })
         .await
@@ -991,7 +1040,7 @@ async fn check_mirror_safety(args: &Args, inventory: &ScanSummary) -> Result<()>
     let follow_links = !args.exclude_junctions;
     let exclude_dirs = args.exclude_dirs.clone();
     let exclude_files = args.exclude_files.clone();
-    let dest_all = tokio::task::spawn_blocking(move || {
+    let dest_all = spawn_blocking_with_span(move || {
         scan::scan(&dest, "*", follow_links, &exclude_dirs, &exclude_files)
     })
     .await
@@ -1057,7 +1106,7 @@ async fn encrypt_destination(args: &Args, inventory: &ScanSummary, key_spec: &st
     let dest_root = args.dest().to_path_buf();
     let files = inventory.files.clone();
 
-    let count = tokio::task::spawn_blocking(move || -> Result<usize, IngestError> {
+    let count = spawn_blocking_with_span(move || -> Result<usize, IngestError> {
         let mut encrypted = 0usize;
         for file in &files {
             let path = dest_root.join(&file.relative_path);
@@ -1089,7 +1138,7 @@ async fn decrypt_destination(args: &Args, inventory: &ScanSummary, key_spec: &st
     let dest_root = args.dest().to_path_buf();
     let files = inventory.files.clone();
 
-    let count = tokio::task::spawn_blocking(move || -> Result<usize, IngestError> {
+    let count = spawn_blocking_with_span(move || -> Result<usize, IngestError> {
         let mut decrypted = 0usize;
         for file in &files {
             let path = dest_root.join(&file.relative_path);
@@ -1132,7 +1181,7 @@ async fn transfer(
     let sink = Arc::clone(&progress);
     let started = Instant::now();
 
-    let result = tokio::task::spawn_blocking(move || {
+    let result = spawn_blocking_with_span(move || {
         let engine = RobocopyEngine::new_with_pid_slot(child_pid);
         engine::run_with_retries(&engine, &request, sink.as_ref(), &policy, &ThreadSleeper)
     })
@@ -1175,7 +1224,7 @@ async fn transfer(
             let follow_links = !args.exclude_junctions;
             let exclude_dirs = args.exclude_dirs.clone();
             let exclude_files = args.exclude_files.clone();
-            let observed = tokio::task::spawn_blocking(move || {
+            let observed = spawn_blocking_with_span(move || {
                 scan::inventory(&dest_for_count, "*", follow_links, &exclude_dirs, &exclude_files)
             })
             .await
@@ -1228,7 +1277,7 @@ async fn baseline(args: &Args, effective_source: &Path, inventory: &ScanSummary)
     let sink = Arc::clone(&progress);
 
     let outcome =
-        tokio::task::spawn_blocking(move || NaiveCopyEngine::new().copy(&request, sink.as_ref()))
+        spawn_blocking_with_span(move || NaiveCopyEngine::new().copy(&request, sink.as_ref()))
             .await
             .context("the baseline task panicked")?
             .context("the naive baseline copy failed")?;
@@ -1280,7 +1329,7 @@ async fn verify(args: &Args, effective_source: &Path, inventory: &ScanSummary) -
     let (files_to_check, cache) = if fast_verify {
         let candidates = all_files.clone();
         let load_path = cache_path.clone();
-        tokio::task::spawn_blocking(move || {
+        spawn_blocking_with_span(move || {
             let cache = IngestCache::load_from(&load_path);
             let changed: Vec<ScannedFile> = candidates
                 .into_iter()
@@ -1318,7 +1367,7 @@ async fn verify(args: &Args, effective_source: &Path, inventory: &ScanSummary) -
     let sink = Arc::clone(&progress);
     let files_for_verify = files_to_check.clone();
 
-    let mut check = tokio::task::spawn_blocking(move || {
+    let mut check = spawn_blocking_with_span(move || {
         integrity::verify(&source, &dest, &files_for_verify, algo, sink.as_ref())
     })
     .await
@@ -1348,7 +1397,7 @@ async fn verify(args: &Args, effective_source: &Path, inventory: &ScanSummary) -
             }
         }
         let save_path = cache_path.clone();
-        let save_result = tokio::task::spawn_blocking(move || cache.save_to(&save_path))
+        let save_result = spawn_blocking_with_span(move || cache.save_to(&save_path))
             .await
             .context("the fast-verify cache save task panicked")?;
         if let Err(error) = save_result {
@@ -1403,7 +1452,7 @@ fn spawn_dest_poller(
         loop {
             ticker.tick().await;
             let sampled = dest.clone();
-            match tokio::task::spawn_blocking(move || scan::directory_size(&sampled, follow_links)).await {
+            match spawn_blocking_with_span(move || scan::directory_size(&sampled, follow_links)).await {
                 Ok(size) => progress.observe_total_bytes(size.saturating_sub(already_present)),
                 Err(_) => break,
             }
