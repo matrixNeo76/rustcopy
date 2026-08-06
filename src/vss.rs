@@ -69,17 +69,27 @@ pub fn volume_of(path: &Path) -> Result<String, IngestError> {
 /// Example: `original = C:\data\source`, `volume = C:`,
 /// `shadow.device_path = \\?\GLOBALROOT\Device\HarddiskVolumeShadowCopy12` ->
 /// `\\?\GLOBALROOT\Device\HarddiskVolumeShadowCopy12\data\source`.
+///
+/// Builds the result via explicit `\` string concatenation rather than `PathBuf::push`: the
+/// output only ever makes sense as a Windows device path (this whole module is `#[cfg(windows)]`
+/// past `create_shadow_copy`/`delete_shadow_copy`), but this pure function and its unit tests are
+/// not platform-gated — `PathBuf::push`'s separator behavior depends on the *host* platform
+/// running the test, not on the Windows semantics the input/output actually represent, which
+/// silently produced a wrong (mixed `/`/`\`) path when this ran on Linux for the first time.
 pub fn remap_to_shadow(original: &Path, volume: &str, shadow: &ShadowCopy) -> PathBuf {
     let text = original.to_string_lossy();
     let relative = text
         .strip_prefix(volume)
         .map(|rest| rest.trim_start_matches(['\\', '/']))
         .unwrap_or(text.as_ref());
-    let mut result = PathBuf::from(&shadow.device_path);
+    let mut result = shadow.device_path.clone();
     if !relative.is_empty() {
-        result.push(relative);
+        if !result.ends_with('\\') {
+            result.push('\\');
+        }
+        result.push_str(relative);
     }
-    result
+    PathBuf::from(result)
 }
 
 /// Create a shadow copy of `volume` (e.g. `C:`). Requires Administrator privileges; fails clearly
