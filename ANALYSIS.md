@@ -144,8 +144,15 @@ Se l'applicazione Rust intercetta `Ctrl+C` e si arresta senza terminare il proce
 > transitori, `--resume-from` e file troncati) sono state verificate empiricamente contro i log
 > operativi reali in `_ops_reports/` e **non hanno prodotto un fix**: nessuna evidenza reale le
 > supporta come bug concreti, solo rischi teorici o trade-off già dichiarati — vedi
-> `NEXT_SESSION_PROMPT.md` per il dettaglio di ciascuna. Porta il totale storico a 15 (D1-D15), di
-> cui solo D10 resta aperto.
+> `NEXT_SESSION_PROMPT.md` per il dettaglio di ciascuna.
+>
+> **Aggiornamento (6 Agosto 2026, stesso giro, prima CI su Linux)**: durante il consolidamento del
+> repository (LICENSE, metadata, `.github/`) è stata aggiunta la prima CI del progetto, su Windows
+> **e Linux** — mai eseguita prima su Linux, nonostante l'affermazione (mai verificata) che l'intera
+> suite fosse compatibile. La prima run reale ha trovato **D16**: un bug reale in produzione
+> (`vss::remap_to_shadow` produceva un path errato quando eseguito su un host non-Windows) più
+> diversi test obsoleti/non platform-gated correttamente, mai eseguiti prima d'ora. Porta il totale
+> storico a 16 (D1-D16), di cui solo D10 resta aperto.
 
 ## 🛑 3.1 Difetti aperti confermati
 
@@ -765,6 +772,61 @@ file sorgente con `share_mode(0)` (stessa tecnica già usata dal test D2/F29b es
 file di destinazione) per forzare un fallimento di copia reale e verifica: exit code 1 (non 2), un
 report scritto con `copy_error` valorizzato, e nessun manifest generazioni creato per la
 generazione fallita.
+
+### D16 — Bug reale e test obsoleti scoperti dalla prima esecuzione su Linux in CI ✅ RISOLTO (6 Agosto 2026)
+
+**Stato: chiuso e verificato.**
+
+**Gravità: MEDIA.** Nella stessa sessione, oltre all'audit mirato (D13-D15), è stata aggiunta la
+prima CI del progetto (`.github/workflows/ci.yml`, Windows + Linux). L'affermazione in
+`ARCHITECTURE.md` ("l'intera suite di test... è al 100% passante sia su Windows che su
+Linux/macOS") era finora **mai stata verificata empiricamente** — si basava sul design (trait
+`CommandRunner` + mock `ScriptedRunner`), non su un'esecuzione reale. La prima run su
+`ubuntu-latest` ha effettivamente trovato problemi reali, mai emersi prima:
+
+1. **Bug reale in produzione**: `vss::remap_to_shadow` costruiva il path remappato con
+   `PathBuf::push`, il cui comportamento di separatore dipende dalla piattaforma **host** che
+   esegue il codice — non dalla semantica Windows del path che la funzione produce (un device path
+   `\\?\GLOBALROOT\Device\...`, significativo solo su Windows). Su Linux il risultato era un path
+   con separatori misti (`.../HarddiskVolumeShadowCopy12/data\source` invece di
+   `...\data\source`), sbagliato. In produzione la funzione è raggiungibile solo da
+   `create_shadow_copy`/`delete_shadow_copy` (`#[cfg(windows)]`), quindi il bug non ha mai
+   impattato un utente reale — ma la funzione pura e il suo unit test non erano platform-gated
+   (per design, come il resto della logica pura del crate), e nessuno li aveva mai eseguiti su
+   Linux prima d'ora. **Fix**: costruzione del risultato via concatenazione di stringa con `\`
+   esplicito invece di `PathBuf::push`, identica su qualunque piattaforma host.
+2. **Test obsoleti mai eseguiti**: due test `#[cfg(not(windows))]` in `tests/cli_smoke.rs`
+   asserivano ancora il vecchio default `--pattern *.csv` (cambiato in `*` moltissimo tempo fa,
+   commit `e406b27`, mai propagato a questi due test perché — essendo `#[cfg(not(windows))]` — non
+   erano mai stati eseguiti da nessuno prima di questa CI). **Fix**: assert aggiornati al default
+   reale (`*`), un test riscritto con un albero sorgente genuinely vuoto per preservare l'intento
+   originale ("nessun file corrisponde, avvisa prima di fallire").
+3. **Test non platform-gated per errore**: 2 test in `tests/notify_server_e2e.rs`
+   (`real_backup_delivers_to_a_real_notify_server`,
+   `notify_server_requires_the_configured_token`) eseguono un vero trasferimento robocopy e ne
+   asseriscono il successo — impossibile su Linux (`robocopy.exe` non esiste,
+   `RobocopyUnavailable` per design). Mancava `#[cfg(windows)]`, a differenza di ogni altro test
+   analogo nel crate. **Fix**: gate aggiunto, insieme ai relativi import/costanti (`fixture_tree`,
+   `INGEST_BIN`) ora anch'essi `#[cfg(windows)]`.
+4. **Falsi positivi di compilazione minori**: alcuni import (`std::sync::atomic::Ordering`,
+   `std::process::Command` in `vss.rs`) e un campo (`ProcessRunner::pid_slot`,
+   `VssGuard::shadow_id`) erano dichiarati incondizionatamente ma letti solo dentro blocchi
+   `#[cfg(windows)]`, causando `unused-imports`/`dead-code` sotto `clippy -D warnings` su Linux.
+   Nessun impatto funzionale — solo la CI stessa (con `-D warnings`) li rende bloccanti. **Fix**:
+   gating degli import/campi allineato a dove sono effettivamente usati.
+5. **Test ambiente-dipendente**: `install_and_uninstall_service_fail_cleanly_without_elevation`
+   assumeva di girare senza elevazione — falso sui runner `windows-latest` di GitHub Actions, che
+   eseguono i job come Amministratore per default. **Fix**: rilevamento dell'elevazione a runtime
+   (trucco standard `net session`), assert stringenti saltati con nota esplicativa quando già
+   elevato, pulizia del servizio via `WindowsServiceGuard` in ogni caso.
+
+**Verificato**: nessun nuovo test aggiunto per questo difetto (i fix sono correzioni ai test
+esistenti/al codice di produzione già coperto), ma la CI reale su GitHub Actions
+(`.github/workflows/ci.yml`) ha validato ogni fix, iterativamente, fino a ottenere entrambi i job
+(`windows-latest`, `ubuntu-latest`) verdi con `cargo fmt --check`, `cargo clippy -D warnings` (in
+entrambe le configurazioni di feature) e `cargo test` (in entrambe le configurazioni di feature)
+tutti passanti — la prima volta nella storia del progetto che questo è stato verificato
+empiricamente su Linux, non solo assunto dal design.
 
 ---
 

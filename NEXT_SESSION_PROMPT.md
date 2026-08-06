@@ -1,19 +1,23 @@
 # Prompt per la prossima sessione — robocopy-ingest-cli (rustcopy)
 
-## Stato del progetto (6 Agosto 2026, dopo il giro di audit D13-D15)
+## Stato del progetto (6 Agosto 2026, dopo l'audit D13-D16 + consolidamento repo)
 
-`Cargo.toml` = **6.0.0**. Ultimo commit pushato su `main`: `625426f` (fix D12). **Modifiche non
-ancora committate in questa sessione** (fix D13, D14, D15, vedi sotto) — chiedere conferma esplicita
-all'utente prima di commit/push, come da convenzione. Milestone 5.2.0/5.3.0/6.0.0 chiuse. Milestone
-6.1.0: solo F41 chiuso, F42-F45 in backlog (nessuna decisione da riproporre — vedi `ROADMAP.md`).
-Difetti storici documentati: **D1-D15**, di cui solo D10 (strumentazione del grafo Graphify, bassa
-priorità) resta aperto — vedi `ANALYSIS.md` Parte 3.
+`Cargo.toml` = **6.0.0**. Ultimo commit pushato su `main`: `caf87a2` (fix cfg gating D16), tutto
+già committato e pushato in questa sessione (fix D13-D16 + consolidamento repository: `LICENSE`,
+metadata `Cargo.toml`, CI GitHub Actions su Windows+Linux, `CHANGELOG.md`, `SECURITY.md`,
+`.editorconfig`, Dependabot, tag retroattivi `v0.2.0`/`v5.1.0`/`v5.4.0`/`v5.4.1`/`v5.4.2`/`v6.0.0`).
+Milestone 5.2.0/5.3.0/6.0.0 chiuse. Milestone 6.1.0: solo F41 chiuso, F42-F45 in backlog (nessuna
+decisione da riproporre — vedi `ROADMAP.md`). Difetti storici documentati: **D1-D16**, di cui solo
+D10 (strumentazione del grafo Graphify, bassa priorità) resta aperto — vedi `ANALYSIS.md` Parte 3.
 
 Suite di test: **284** (`cargo test`), **299** con `cargo test --features notify-server` (più 3
 test `#[ignore]` — 2 round-trip reali dei servizi Windows che richiedono elevazione, più 1 probe di
 misurazione a scala reale, `generations::tests::probe_manifest_size_at_real_world_scale`, ~2 minuti,
-non da eseguire di default). Binari release e installer **non ancora ricompilati** dopo i fix di
-questo giro — farlo solo su richiesta esplicita dell'utente (vedi convenzioni sotto).
+non da eseguire di default). **CI reale su GitHub Actions** (`.github/workflows/ci.yml`) verde su
+`windows-latest` e `ubuntu-latest`, entrambe le configurazioni di feature — prima volta che la
+suite viene effettivamente eseguita su Linux, non solo assunta compatibile per design (ha trovato
+D16). Binari release e installer **non ancora ricompilati** dopo i fix di questo giro — farlo solo
+su richiesta esplicita dell'utente (vedi convenzioni sotto).
 
 **Cronologia audit di bug hunting** (per contesto, non da rileggere per intero — dettagli in
 `ANALYSIS.md`): un giro precedente aveva verificato empiricamente 3 ipotesi — 2 falsi allarmi
@@ -64,6 +68,21 @@ lettura del codice. Esito:
 
 **Non ci sono più ipotesi ereditate da riprendere all'inizio della prossima sessione** — il prossimo
 giro di audit deve partire da una nuova lettura del codice/dei log reali, non da questa lista.
+
+**Consolidamento repository (stesso giorno, sessione successiva)**: aggiunti `LICENSE`, metadata
+`Cargo.toml`, `CHANGELOG.md`, `SECURITY.md`, `.editorconfig`, `.github/workflows/ci.yml` (CI su
+Windows+Linux, `cargo fmt --check` + `cargo clippy -D warnings` + `cargo test`, entrambe le
+configurazioni di feature), `.github/dependabot.yml`, tag Git retroattivi sui bump di versione
+reali in `Cargo.toml`. Deciso esplicitamente di **non** aggiungere `CONTRIBUTING.md`, template
+issue/PR, `CODEOWNERS`: l'utente ha confermato che questo repo non ha contributor esterni previsti
+(solo l'utente stesso via sessioni locali Claude Code/Antigravity). La prima esecuzione reale della
+CI su Linux ha trovato **D16** (vedi `ANALYSIS.md`): un bug reale in `vss::remap_to_shadow` più
+diversi test obsoleti/non platform-gated correttamente, tutti mai stati eseguiti su Linux prima
+d'ora. **Lezione per il futuro**: qualunque logica pura condivisa cross-platform che costruisce un
+path con semantica specifica di una sola piattaforma (es. device path Windows `\\?\GLOBALROOT\...`)
+deve costruire il risultato con manipolazione di stringa esplicita, non con `PathBuf::push`/`Path`
+— il comportamento di `Path`/`PathBuf` dipende dalla piattaforma **host** che esegue il codice, non
+dalla semantica del valore che rappresentano.
 
 ---
 
@@ -208,6 +227,15 @@ agire, stesso discorso di sempre):
   mappatura a `EXIT_UNRECOVERABLE` (2) invece di `EXIT_INGESTION_PROBLEM` (1) e la perdita del
   report su fallimento. `IngestReport::copy_error` è popolato **solo** da questa pipeline — non
   aggiungerlo alla pipeline plain-sync, che non ne ha bisogno.
+- `vss::remap_to_shadow` (D16) costruisce il path remappato con concatenazione di stringa esplicita
+  (`\` manuale), non con `PathBuf::push` — il valore prodotto è un device path Windows, significativo
+  solo con semantica Windows, indipendentemente da quale piattaforma host esegue il codice/i test.
+  Qualunque nuova logica pura condivisa cross-platform che costruisce un path con semantica di una
+  sola piattaforma deve seguire lo stesso principio.
+- `.github/workflows/ci.yml` gira su `windows-latest` **e** `ubuntu-latest`, entrambe le
+  configurazioni di feature — non rimuovere il job Linux per "far passare" un fix più in fretta:
+  è quello che ha trovato D16, ed è l'unica verifica reale (non assunta per design) che la logica
+  pura del crate sia davvero cross-platform.
 
 ## Skill disponibile per operare rustcopy
 

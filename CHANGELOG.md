@@ -20,6 +20,12 @@ For full technical detail behind any entry, see `ANALYSIS.md` (defect list, `D<N
 - **D15**: a copy failure in a `--backup-type` generation backup now returns exit code 1 (transfer
   failed) instead of 2 (usage/unrecoverable error), matching the plain-sync pipeline's semantics,
   and always writes a JSON report (previously none was written on this path).
+- **D16**: `vss::remap_to_shadow` produced a wrong (mixed `/`/`\`) path when run on a non-Windows
+  host — found by the project's first-ever Linux CI run. No production impact (the function is
+  only reachable from Windows-only code paths), but its pure logic and unit test were not
+  platform-gated and had never actually been exercised on Linux before. Also fixed several tests
+  that were stale (asserting a `--pattern` default changed long ago) or missing a `#[cfg(windows)]`
+  gate they needed, all likewise never caught before this session's CI addition.
 
 ### Repository
 - Added `LICENSE` (MIT), `SECURITY.md`, `.editorconfig`, `.github/workflows/ci.yml` (test on
@@ -28,6 +34,8 @@ For full technical detail behind any entry, see `ANALYSIS.md` (defect list, `D<N
   corrected `description`).
 - Tagged the release history retroactively: `v0.2.0`, `v5.1.0`, `v5.4.0`, `v5.4.1`, `v5.4.2`,
   `v6.0.0`.
+- `cargo fmt --all` applied across the whole tree (mechanical, no behavior change) so the new CI's
+  `fmt --check` starts green.
 
 ## [6.0.0] - 2026-08-05
 
