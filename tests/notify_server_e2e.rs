@@ -61,6 +61,11 @@ fn spawn_notify_server(token: Option<&str>) -> NotifyServerHandle {
     NotifyServerHandle { child, addr }
 }
 
+// Needs a real robocopy.exe transfer to succeed — Windows-only, like every other test elsewhere
+// in this crate that expects a real backup to actually complete (e.g. cli_smoke.rs's
+// a_real_dry_run_succeeds_on_windows). Caught only now that CI runs the notify-server feature set
+// on Linux for the first time.
+#[cfg(windows)]
 #[test]
 fn real_backup_delivers_to_a_real_notify_server() {
     let server = spawn_notify_server(None);
@@ -126,6 +131,9 @@ async fn notify_server_health_endpoint_responds() {
     panic!("could not reach notify-server /health: {last_err:?}");
 }
 
+// Same reason as real_backup_delivers_to_a_real_notify_server above: needs a real robocopy.exe
+// transfer to succeed.
+#[cfg(windows)]
 #[test]
 fn notify_server_requires_the_configured_token() {
     let server = spawn_notify_server(Some("integration-test-token"));
