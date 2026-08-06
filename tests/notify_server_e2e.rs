@@ -12,9 +12,11 @@ use std::io::{BufRead, BufReader};
 use std::process::{Child, Command, Stdio};
 use std::time::Duration;
 
+#[cfg(windows)]
 use robocopy_ingest::testkit::fixture_tree;
 
 const NOTIFY_SERVER_BIN: &str = env!("CARGO_BIN_EXE_notify-server");
+#[cfg(windows)]
 const INGEST_BIN: &str = env!("CARGO_BIN_EXE_robocopy_ingest");
 
 /// Handle on a spawned `notify-server` child that kills it on drop, so a test failure (panic)
