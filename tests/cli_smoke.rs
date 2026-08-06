@@ -715,11 +715,14 @@ fn on_linux_the_run_scans_logs_and_then_explains_that_robocopy_needs_windows() {
         "robocopy is unavailable here"
     );
 
-    // The inventory phase runs before any copy, and it must respect the pattern.
+    // The inventory phase runs before any copy, and it must respect the pattern. The default
+    // pattern is "*" (not "*.csv" — changed long before this test last actually ran, since it's
+    // #[cfg(not(windows))] and this is the first time CI has run the suite on Linux), so all 3
+    // fixture files match, not just the 2 .csv ones.
     let stdout = stdout_of(&output);
-    assert!(stdout.contains("2 file(s) matching *.csv"), "got: {stdout}");
+    assert!(stdout.contains("3 file(s) matching *"), "got: {stdout}");
     assert!(
-        stdout.contains("3.07 KB"),
+        stdout.contains("3.08 KB"),
         "byte total missing from: {stdout}"
     );
 
@@ -746,7 +749,11 @@ fn on_linux_the_run_scans_logs_and_then_explains_that_robocopy_needs_windows() {
 #[cfg(not(windows))]
 #[test]
 fn an_empty_source_tree_warns_before_failing() {
-    let source = fixture_tree(&[("notes.txt", 10)]);
+    // The default pattern is "*" (matches everything), so the source tree must be genuinely
+    // empty — a single non-matching file used to be enough back when the default was "*.csv", but
+    // this test is #[cfg(not(windows))] and this is the first time CI has ever run it on Linux, so
+    // that stale assumption was never caught until now.
+    let source = fixture_tree(&[]);
     let workdir = tempfile::tempdir().expect("workdir");
     let output = run(&[
         "--source",
@@ -758,7 +765,7 @@ fn an_empty_source_tree_warns_before_failing() {
     ]);
 
     let stdout = stdout_of(&output);
-    assert!(stdout.contains("no file matching *.csv"), "got: {stdout}");
+    assert!(stdout.contains("no file matching * found"), "got: {stdout}");
 }
 
 #[test]
