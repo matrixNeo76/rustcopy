@@ -18,7 +18,7 @@ clap = { version = "4", features = ["derive"] }
 tokio = { version = "1", features = ["rt-multi-thread", "macros", "fs", "io-util", "sync", "time", "signal"] }
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["fmt", "std", "env-filter", "time"] }
-indicatif = "0.17"
+indicatif = "0.18"
 sha2 = "0.11"
 blake3 = "1"
 xxhash-rust = { version = "0.8", features = ["xxh3"] }
