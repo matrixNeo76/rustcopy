@@ -41,3 +41,31 @@ jobs:
 
       - name: cargo test (notify-server feature)
         run: cargo test --all-targets --features notify-server
+
+  docs:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache cargo registry and build artifacts
+        uses: Swatinem/rust-cache@v2
+
+      - name: Install okf
+        run: cargo install okf --locked
+
+      - name: Validate OKF frontmatter on managed docs
+        # Scoped to the project's own maintained docs, not the whole repo — okf has no
+        # exclude-pattern flag, and a bundle-wide scan also picks up .agents/skills/ and
+        # graphify-out/, which aren't ours to annotate.
+        run: |
+          set -e
+          for f in README.md ARCHITECTURE.md ANALYSIS.md ROADMAP.md CLAUDE.md AGENTS.md \
+                   RUNBOOK.md CHANGELOG.md SECURITY.md NEXT_SESSION_PROMPT.md \
+                   docs/archive/PIANO_NOTIFY_SERVER.md; do
+            echo "::group::okf parse $f"
+            okf parse "$f"
+            echo "::endgroup::"
+          done

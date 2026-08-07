@@ -1,3 +1,13 @@
+---
+type: Reference
+title: Security Policy
+description: How to report vulnerabilities, and the security scope of this project.
+status: stable
+generated:
+  by: process:claude-code
+  at: 2026-08-06T00:00:00Z
+---
+
 # Security Policy
 
 ## Supported Versions

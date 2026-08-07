@@ -1,3 +1,13 @@
+---
+type: Concept
+title: Prompt per la prossima sessione
+description: Handoff di sessione — stato progetto, aree da investigare, convenzioni stabilite. Riscritto ad ogni sessione.
+status: draft
+generated:
+  by: process:claude-code
+  at: 2026-08-06T00:00:00Z
+---
+
 # Prompt per la prossima sessione — robocopy-ingest-cli (rustcopy)
 
 ## Stato del progetto (6 Agosto 2026, dopo l'audit D13-D16 + consolidamento repo)
@@ -236,6 +246,14 @@ agire, stesso discorso di sempre):
   configurazioni di feature — non rimuovere il job Linux per "far passare" un fix più in fretta:
   è quello che ha trovato D16, ed è l'unica verifica reale (non assunta per design) che la logica
   pura del crate sia davvero cross-platform.
+- I 10 file `.md` in root + `docs/archive/PIANO_NOTIFY_SERVER.md` portano un frontmatter YAML OKF
+  minimo (`type`/`title`/`description`/`status`/`generated`, `verified` dove pertinente) — vedi la
+  nota tecnica in `CLAUDE.md` per il perché (rendere le affermazioni non verificate riconoscibili
+  da un agente, non solo dalla lettura umana). Deliberatamente **non** tutta la spec OKF (niente
+  `sources`/footnote, niente ristrutturazione a bundle). Il job CI `docs` valida solo questi 11
+  file con un ciclo esplicito, mai `okf validate .` sull'intero repo (prenderebbe anche
+  `.agents/skills/` e `graphify-out/`, non pertinenti). Un nuovo file `.md` permanente in root va
+  aggiunto sia col frontmatter sia alla lista nel job `docs`.
 
 ## Skill disponibile per operare rustcopy
 

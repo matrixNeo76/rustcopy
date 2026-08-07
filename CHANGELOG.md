@@ -1,3 +1,13 @@
+---
+type: Log
+title: Changelog
+description: Cronologia lineare delle versioni, in stile Keep a Changelog.
+status: stable
+generated:
+  by: process:claude-code
+  at: 2026-08-06T00:00:00Z
+---
+
 # Changelog
 
 All notable changes to this project are documented here. Format loosely follows

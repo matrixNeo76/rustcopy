@@ -1,3 +1,13 @@
+---
+type: Reference
+title: Piano di Implementazione — Notify Server (axum)
+description: Piano eseguito il 31 Luglio 2026 (Release 5.4.0). Archiviato, non più attivo.
+status: deprecated
+generated:
+  by: process:claude-code
+  at: 2026-07-31T00:00:00Z
+---
+
 # 📬 Piano di Implementazione — Notify Server (axum)
 
 > **Archiviato (6 Agosto 2026)**: questo piano è stato eseguito il 31 Luglio 2026 (Release 5.4.0,

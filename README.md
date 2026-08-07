@@ -1,3 +1,13 @@
+---
+type: Reference
+title: robocopy-ingest-cli (rustcopy) — README
+description: Manuale utente — installazione, flag CLI, esempi d'uso, esecuzione dei test.
+status: stable
+generated:
+  by: process:claude-code
+  at: 2026-08-06T00:00:00Z
+---
+
 # 🚀 robocopy-ingest-cli (rustcopy)
 
 > **CLI High-Performance in Rust per Ingestion Massiva, Backup Enterprise, Disaster Recovery e Real-Time Web Monitoring su Windows (e Cross-Platform).**

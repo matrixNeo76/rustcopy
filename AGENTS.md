@@ -1,3 +1,13 @@
+---
+type: Reference
+title: AGENTS.md — Developer & AI Agent Guidelines
+description: Architectural rules, directory tree, and testing conventions for this codebase.
+status: stable
+generated:
+  by: process:claude-code
+  at: 2026-08-06T00:00:00Z
+---
+
 # AGENTS.md — Developer & AI Agent Guidelines for robocopy-ingest-cli
 
 Welcome to `robocopy-ingest-cli` (`rustcopy`). This document serves as the primary guidance file for **AI Agents (Antigravity, Claude, Codex, GPT-4)** and **Human Contributors** working on this codebase.

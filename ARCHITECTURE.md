@@ -1,3 +1,16 @@
+---
+type: Reference
+title: Architettura di Sistema — robocopy-ingest-cli
+description: Diagrammi Mermaid, tabella moduli, pipeline di esecuzione, pattern trasversali (D13/D14).
+status: stable
+generated:
+  by: process:claude-code
+  at: 2026-08-06T00:00:00Z
+verified:
+  by: process:github-actions-ci
+  at: 2026-08-06T00:00:00Z
+---
+
 # Architettura di Sistema — robocopy-ingest-cli (v6.0.0)
 
 Questo documento descrive in dettaglio l'**architettura interna, la pipeline di esecuzione, i pattern di progettazione ed i meccanismi di sicurezza e performance** implementati nel crate `robocopy_ingest`.

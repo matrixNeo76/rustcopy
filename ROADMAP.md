@@ -1,3 +1,13 @@
+---
+type: Reference
+title: Roadmap di Progetto — robocopy-ingest-cli
+description: Milestone, elenco feature F1-F41, backlog, debito tecnico noto.
+status: stable
+generated:
+  by: process:claude-code
+  at: 2026-08-06T00:00:00Z
+---
+
 # 🗺️ Roadmap di Progetto — robocopy-ingest-cli
 
 > **Stato Attuale**: 🟢 **Release 6.0.0** (`Cargo.toml` = 6.0.0) — Milestone 5.2.0 (Correttezza) e

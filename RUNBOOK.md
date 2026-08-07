@@ -1,3 +1,13 @@
+---
+type: Reference
+title: Runbook Operativo — robocopy-ingest-cli
+description: Guide operative pratiche, esempi reali, benchmark SMB/NAS.
+status: stable
+generated:
+  by: process:claude-code
+  at: 2026-08-06T00:00:00Z
+---
+
 # 📖 OPERATIONAL RUNBOOK: robocopy-ingest-cli (rustcopy)
 
 > **Manuale Operativo di Ingestion Massiva, Backup Incrementali Multi-Sorgente e Casi d'Uso REALI Verificati**  
