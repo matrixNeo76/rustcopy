@@ -47,6 +47,9 @@ extern "system" {
 /// The process's actual OEM code page on Windows, or `None` off Windows / on lookup failure.
 #[cfg(windows)]
 pub fn active_oem_code_page() -> Option<u32> {
+    // SAFETY: GetOEMCP takes no arguments, performs no pointer dereferences, and cannot fail in a
+    // way that corrupts memory — it returns 0 on lookup failure rather than trapping. Safe to call
+    // unconditionally.
     let cp = unsafe { GetOEMCP() };
     if cp == 0 {
         None
