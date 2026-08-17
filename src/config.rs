@@ -225,4 +225,40 @@ mod tests {
         );
         assert_eq!(resolved.source, Some(PathBuf::from("D:/photos")));
     }
+
+    /// Deliberate asymmetry with `Args::apply_job_config` (documented in `ROADMAP.md` and
+    /// `PIANO_MIGLIORAMENTI.md`, not a bug): a `[[jobs]]` entry that declares its own
+    /// `exclude_files`/`exclude_dirs` REPLACES the file's top-level defaults entirely, per the
+    /// doc comment on `merged_over` above — every field merges the same way (whole-value
+    /// overwrite), lists included, rather than special-casing lists as "extend". This is the
+    /// only one of the two merge semantics that lets a job *narrow* an inherited exclude list;
+    /// accumulating unconditionally (like `apply_job_config` does for CLI+TOML) would make an
+    /// inherited exclude permanently un-droppable by any job. A job that wants "the shared
+    /// defaults plus my own" must repeat the shared ones explicitly — see
+    /// `examples/scheduled-incremental.toml` for the documented example.
+    #[test]
+    fn job_excludes_replace_not_extend_the_shared_defaults() {
+        let defaults = JobConfig {
+            exclude_files: Some(vec!["*.tmp".to_string(), "thumbs.db".to_string()]),
+            exclude_dirs: Some(vec![".git".to_string()]),
+            ..JobConfig::default()
+        };
+        let job = JobConfig {
+            name: Some("archivio".to_string()),
+            exclude_files: Some(vec!["*.bak".to_string()]),
+            ..JobConfig::default()
+        };
+
+        let resolved = job.merged_over(&defaults);
+        assert_eq!(
+            resolved.exclude_files,
+            Some(vec!["*.bak".to_string()]),
+            "job's own exclude_files replaces the shared defaults, not extends them"
+        );
+        assert_eq!(
+            resolved.exclude_dirs,
+            Some(vec![".git".to_string()]),
+            "a field the job leaves unset still falls back to the shared default"
+        );
+    }
 }

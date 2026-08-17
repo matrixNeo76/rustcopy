@@ -11,6 +11,17 @@ retries = 5
 retry_wait_seconds = 10
 log_level = "info"
 
+# exclude_files/exclude_dirs qui sono i default condivisi. ATTENZIONE: le due semantiche di
+# merge NON sono le stesse.
+#   - CLI + questi default di primo livello si SOMMANO (--exclude-files passato sulla riga di
+#     comando si aggiunge a questi, non li sostituisce).
+#   - un singolo [[jobs]] che dichiara la propria exclude_files SOSTITUISCE per intero questi
+#     default — non li eredita. Un job che vuole "i default più le proprie" deve ripetere anche
+#     quelle di default. Scelta deliberata per uniformità del merge su tutti i campi (non solo
+#     le liste) — vedi la nota su JobConfig::merged_over in src/config.rs.
+exclude_files = ["*.tmp", "thumbs.db"]
+exclude_dirs = [".git"]
+
 # --no-prescan qui è sicuro (a differenza di smb-nas-mirror.toml): senza mirror = true non
 # esiste alcun controllo di sicurezza pre-cancellazione da cui dipendere. Evita comunque il
 # doppio scan (rustcopy + robocopy) sullo stesso albero — un risparmio reale anche se non
@@ -27,6 +38,10 @@ name = "archivio"
 source = "<PERCORSO_SORGENTE_2>"        # es. "D:\\Archivio"
 dest = "<PERCORSO_NAS_2>"               # es. "\\\\NAS\\backup\\archivio"
 threads = 8                              # sovrascrive il default solo per questo job
+# Questo job NON dichiara exclude_files/exclude_dirs propri: eredita quelli di primo livello
+# (*.tmp, thumbs.db, .git) invariati. Se dichiarasse exclude_files = ["*.bak"], quella lista
+# SOSTITUIREBBE ["*.tmp", "thumbs.db"] — .git resterebbe (campo diverso, non toccato) ma i due
+# pattern di file andrebbero ripetuti esplicitamente per non perderli.
 
 # Ogni job produce il proprio report (namespaced automaticamente sul nome del job se
 # report_path non è impostato: report.json -> report.progetti.json, report.archivio.json).

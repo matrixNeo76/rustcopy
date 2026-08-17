@@ -797,6 +797,50 @@ mod tests {
         assert_eq!(args.pattern, "*.csv");
     }
 
+    /// Deliberate asymmetry between the two exclude-merge call sites (documented in
+    /// `ROADMAP.md` and `PIANO_MIGLIORAMENTI.md`, not a bug): `apply_job_config` (this call
+    /// site, shared by single-job `merge_config` and multi-job mode) ACCUMULATES CLI-provided
+    /// excludes with the config/job's own list, because CLI and top-level TOML defaults are two
+    /// independent sources for the same run. Contrast with
+    /// `JobConfig::merged_over`'s REPLACE semantics (`config::tests::job_excludes_replace_not_extend_the_shared_defaults`),
+    /// which governs a `[[jobs]]` entry inheriting from the file's own top-level defaults — a
+    /// different relationship (inheritance-with-override, not two sources for one run). Do not
+    /// "fix" this call site to replace instead of extend: that would silently drop an
+    /// `--exclude-files` the user typed on the command line whenever a config file is also
+    /// given.
+    #[test]
+    fn apply_job_config_accumulates_cli_excludes_with_config_excludes() {
+        let mut args = Args::try_parse_from([
+            "robocopy_ingest",
+            "--source",
+            ".",
+            "--dest",
+            "./out",
+            "--exclude-files",
+            "*.tmp",
+            "--exclude-dirs",
+            "node_modules",
+        ])
+        .expect("parse");
+
+        let job = crate::config::JobConfig {
+            exclude_files: Some(vec!["thumbs.db".to_string()]),
+            exclude_dirs: Some(vec![".git".to_string()]),
+            ..crate::config::JobConfig::default()
+        };
+        args.apply_job_config(&job);
+
+        assert_eq!(
+            args.exclude_files,
+            vec!["*.tmp".to_string(), "thumbs.db".to_string()],
+            "CLI excludes must survive alongside the config's own, not be replaced by them"
+        );
+        assert_eq!(
+            args.exclude_dirs,
+            vec!["node_modules".to_string(), ".git".to_string()]
+        );
+    }
+
     /// F31: `--resume-from` alone must parse without `--source`/`--dest`, mirroring F24's fix for
     /// `--restore-from` (both share the same `required_unless_present_any` mechanism).
     #[test]
