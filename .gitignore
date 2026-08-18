@@ -11,6 +11,7 @@ graphify-out/cost.json
 graphify-out/.graphify_*
 _ops_reports/
 scripts/*.local.ps1
+scripts/profiles.json
 examples/*.local.toml
 installer-output/
 installer/Output/

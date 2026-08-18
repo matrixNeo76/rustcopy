@@ -1,0 +1,24 @@
+[
+  {
+    "name": "fileserv01",
+    "source": "C:\\Users\\auresystem\\claude-code",
+    "dest": "\\\\FILESERV01\\dati01\\provarust2",
+    "threads": 16,
+    "mirror": false,
+    "verify_integrity": true,
+    "hash_algo": "blake3",
+    "requires_smb_creds": false,
+    "creds_file": null
+  },
+  {
+    "name": "nas-qnap",
+    "source": "C:\\Users\\auresystem\\claude-code",
+    "dest": "\\\\192.168.1.187\\datas01",
+    "threads": 16,
+    "mirror": true,
+    "verify_integrity": true,
+    "hash_algo": "blake3",
+    "requires_smb_creds": true,
+    "creds_file": "nas-qnap-credentials.local.ps1"
+  }
+]
