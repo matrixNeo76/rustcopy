@@ -167,7 +167,20 @@ graph TD
 
 **File**: `scripts/rustcopy-launcher.ps1` [NEW], `scripts/profiles.example.json` [NEW], `scripts/profiles.json` [gitignored], `.gitignore` [MODIFY].
 
-**Refactor a seguire**: `backup-fileserv01.ps1` e `backup-nas-qnap.ps1` diventano wrapper sottili (`& launcher.ps1 -Profile "..."`), non vengono eliminati. Più `scripts/run-all-profiles.ps1` per l'esecuzione in sequenza.
+**✅ Chiuso il 18 Ago 2026**, branch `feat/pilastro-d-launcher` (diramato da `chore/b3-b4-pilastro-a`, non da `main` — quella PR non era ancora mergiata; branch spostato in corsa da `main` con uno stash/reset/pop per non perdere la continuità con questo stesso file). `scripts/_ingest-common.ps1` esteso con `-Mirror`/`-VerifyIntegrity` (default `$true`, comportamento invariato per i due script esistenti che non li passano) perché i profili richiedono di poter attivare/disattivare entrambi, cosa che l'helper condiviso non permetteva ancora.
+
+**Verifica reale eseguita** (non stimata):
+- `[scriptblock]::Create(...)` sui due file `.ps1` — sintassi valida
+- Round-trip JSON di `Save-RustcopyProfiles`/`Import-RustcopyProfiles` testato isolatamente per 0/1/2 profili (bug trovato **nel test, non nello script reale**: senza avvolgere la chiamata in `@(...)`, PowerShell "srotola" un array a 0 o 1 elemento in `$null`/scalare — lo script reale avvolge già ogni chiamata in `@(...)`, verificato rileggendo il file)
+- `Get-UncShareRoot` testato su path annidati e su path locali (nessun match, come atteso)
+- **Test end-to-end reale** in modalità batch (`-Profile`) contro il binario compilato, dentro una sandbox `tempdir` (mai contro path reali): copia riuscita, exit code 0, struttura `_ops_reports/{profile}/{timestamp}/` esattamente come da spec, JSON/log/HTML generati
+- Percorso di errore credenziali SMB mancanti: exit code 2, messaggio chiaro, nessun tentativo di mapping di rete
+- Percorso di errore profilo sconosciuto: exit code 2, messaggio chiaro
+- `cargo test` (nessun `src/` toccato in questo blocco) → 286 passed, 0 failed, invariato
+
+**Scelta di design non nello spec originale**: le credenziali SMB per i profili del launcher usano una convenzione **nuova e generica** (`$SmbUser`/`$SmbPassword` nel `creds_file`), non i nomi `$Nas2User`/`$Nas2Password` già usati da `scripts/nas2-credentials.local.ps1`. Motivo: quel file appartiene a `backup-nas-qnap.ps1`, che **non è ancora** un wrapper del launcher (è il prossimo blocco, "Refactor script → wrapper") — riusare i suoi nomi di variabile avrebbe accoppiato il launcher a uno script che non lo chiama ancora.
+
+**Refactor a seguire** (blocco successivo, non ancora fatto): `backup-fileserv01.ps1` e `backup-nas-qnap.ps1` diventano wrapper sottili (`& launcher.ps1 -Profile "..."`), non vengono eliminati. Più `scripts/run-all-profiles.ps1` per l'esecuzione in sequenza. **Dipendenza da chiarire in quel blocco**: `nas2-credentials.local.ps1` usa `$Nas2User`/`$Nas2Password`, il launcher si aspetta `$SmbUser`/`$SmbPassword` — va deciso se rinominare le variabili nel file esistente o scrivere un adapter, non risolto qui.
 
 > **Nota di coerenza architetturale**: il launcher genera argv/TOML per il binario esistente — **nessuna logica di backup in PowerShell**. Stessa disciplina di `.agents/skills/rustcopy-flow/`, che pilota il binario compilato senza reimplementarne il comportamento. Se una funzione serve al launcher e non esiste nel binario, va aggiunta al binario, non aggirata nello script.
 
@@ -229,8 +242,8 @@ Ordinato per rapporto valore/rischio, non per numerazione.
 | 1 | ~~**B4**~~ (commento `// SAFETY:`) | 5 min | Nullo | ✅ **Chiuso 17 Ago 2026** |
 | 2 | ~~**B3**~~ (documentare le due semantiche + test che le fissano) | 20 min | Nullo | ✅ **Chiuso 17 Ago 2026** — vedi §Esecuzione blocco 1 per l'evidenza dei test |
 | 3 | ~~**Pilastro A**~~ (A1-A4, documentazione) | 1-1.5h | Nullo | ✅ **Chiuso 17 Ago 2026** — diff meccanico verificato pulito, vedi §Pilastro A |
-| 4 | **Pilastro D** (launcher PowerShell) | 2-3h | Basso | Richiesta originale dell'utente, valore pratico quotidiano più alto. Forma decisa in D-Q1 (terminale, nessun WinForms) |
-| 5 | **Refactor script → wrapper** | 30 min | Basso | Dipende da 4 |
+| 4 | ~~**Pilastro D**~~ (launcher PowerShell) | 2-3h | Basso | ✅ **Chiuso 18 Ago 2026** — test end-to-end reale in sandbox, vedi §Pilastro D |
+| 5 | **Refactor script → wrapper** | 30 min | Basso | Dipende da 4. **Nuova dipendenza emersa**: va deciso come riconciliare `nas2-credentials.local.ps1` (`$Nas2User`/`$Nas2Password`) con la convenzione `$SmbUser`/`$SmbPassword` attesa dal launcher — vedi nota in fondo al Pilastro D |
 | 6 | **P1 / P2** (performance) | 2h | Basso | Valore reale ma nessuno lo blocca oggi |
 | 7 | **B5** (dedup `CLAUDE.md`, 44K → ~25K) | 1-2h | Medio | Approvato in D-Q4. Resta per ultimo: va verificato riga per riga con `grep` sulla destinazione, e non va mescolato ad altro lavoro nello stesso diff |
 
