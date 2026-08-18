@@ -25,7 +25,13 @@ function Invoke-Ingest {
         [Parameter(Mandatory)] [string]$Timestamp,
         [int]$Threads,
         [string]$HashAlgo = "blake3",
-        [switch]$DryRun
+        [switch]$DryRun,
+        # Added for scripts/rustcopy-launcher.ps1 (Pilastro D): the two fixed destination
+        # scripts never needed --mirror or a way to turn --verify-integrity off, so both
+        # defaults below reproduce this function's exact pre-existing behaviour for them
+        # (verify-integrity always on, mirror never passed) without touching their call sites.
+        [switch]$Mirror,
+        [bool]$VerifyIntegrity = $true
     )
 
     $reportPath = Join-Path $ReportsDir "${Label}_$Timestamp.json"
@@ -35,16 +41,18 @@ function Invoke-Ingest {
     $argList = @(
         "--source", $Source,
         "--dest", $Dest,
-        "--verify-integrity",
         "--hash-algo", $HashAlgo,
-        # F28: skip re-hashing files whose source size+mtime already match the last clean pass
-        # (cached per-destination in <dest>\.ingest_cache).
-        "--fast-verify",
         "--report-path", $reportPath,
         "--log-path", $logPath,
         "--html-report-path", $htmlPath
     )
+    if ($VerifyIntegrity) {
+        # --fast-verify has no effect without --verify-integrity (see CLAUDE.md), so the two
+        # are kept paired rather than exposing --fast-verify as its own independent toggle.
+        $argList += @("--verify-integrity", "--fast-verify")
+    }
     if ($Threads) { $argList += @("--threads", "$Threads") }
+    if ($Mirror) { $argList += "--mirror" }
     if ($DryRun) { $argList += "--dry-run" }
 
     Write-Host ""
