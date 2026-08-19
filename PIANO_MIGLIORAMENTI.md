@@ -67,7 +67,7 @@ Priorità più alta del piano: sono le uniche lacune verificate, e sono a rischi
 
 **Verifica reale eseguita** (non stimata):
 
-```
+```text
 diff <(./target/release/robocopy_ingest.exe --help | grep -oE '\-\-[a-z0-9-]+' | sort -u) \
      <(grep -oE '`--[a-z0-9-]+' README.md | tr -d '`' | sort -u)
 # → residuo: --help/--version (mai stati nella tabella, per design) e --features
@@ -248,7 +248,7 @@ Entrambi chiusi sullo stesso branch `chore/b3-b4-pilastro-a`, non ancora mergiat
 
 **Verifica reale eseguita** (non stimata):
 
-```
+```text
 cargo test                              → 232 (lib) + 48 (cli_smoke) + 6 (ingest_pipeline) = 286 passed, 0 failed
 cargo test --features notify-server     → 242 (lib) + 48 + 6 + 5 (notify_server_e2e)      = 301 passed, 0 failed
 cargo fmt --all -- --check              → nessuna riformattazione necessaria
