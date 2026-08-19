@@ -14,7 +14,7 @@ verified:
 # Piano di Miglioramento Consolidato — rustcopy
 
 **Baseline**: v6.0.0 — commit `0d8a9f0`
-**Test**: 296 default / 311 con `--features notify-server` *(misurati il 19 Agosto 2026 dopo P2 — erano 286/301 dopo B3/B4 il 17 Agosto (284/299 fino al 7 Agosto); +10 dovuti ai 9 unit test + 1 black-box aggiunti da P2, vedi §P2 — implementazione)*
+**Test**: 302 default / 317 con `--features notify-server` *(misurati il 19 Agosto 2026 dopo P1 — erano 296/311 dopo P2 lo stesso giorno (286/301 dopo B3/B4 il 17 Agosto; 284/299 fino al 7 Agosto); +6 dovuti ai 4 unit test + 2 black-box aggiunti da P1, vedi §P1 — implementazione)*
 
 ---
 
@@ -205,7 +205,7 @@ Fondamenta già solide: zero-allocation stdout streaming, hashing parallelo Rayo
 
 | ID | Impatto | Proposta |
 |---|---|---|
-| **P1** | 🟡 | **Placeholder `{timestamp}` in `--report-path`** — oggi un job schedulato sovrascrive il report precedente. Elimina il bisogno di un wrapper PS1 solo per lo storico. Interagisce con `main.rs::namespaced_path` (F33/D12): verificare che le due namespacizzazioni si compongano, non si escludano |
+| **P1** | ~~🟡~~ | ~~**Placeholder `{timestamp}` in `--report-path`**~~ — ✅ **Chiuso 19 Ago 2026**, vedi sotto |
 | **P2** | ~~🟡~~ | ~~**`previous_run_comparison` nel report JSON**~~ — ✅ **Chiuso 19 Ago 2026**, vedi sotto |
 | **P3** | 🟢 | **Cache dell'inventario di scan** ⚠️ — **prima di implementare**, verificare la sovrapposizione con i due meccanismi esistenti: `cache.rs` (`--fast-verify`, size+mtime per file) e `generations.rs` (F34, inventario **completo** della sorgente per generazione). Rischio concreto di creare una terza struttura che duplica le prime due |
 | **P4** | 🟢 | **Retention dei report JSON** — `--log-max-backups` copre i log ma non i report. Eventuale `--report-retention-days N` |
@@ -238,6 +238,25 @@ Il piano trattava P1/P2 come un blocco unico. Analisi del codice reale mostra ch
 - `cargo test --features notify-server` → 311 passed, 0 failed (era 301, +10)
 - `cargo clippy --all-targets -- -D warnings` → 0 warning
 - `cargo fmt --all -- --check` → pulito dopo un `cargo fmt --all` (formattazione automatica di alcune righe lunghe)
+
+### P1 — implementazione (chiusa il 19 Ago 2026)
+
+`robocopy_ingest::resolve_report_path_timestamp` (nuova, in `lib.rs` accanto a `namespaced_path`, stessa famiglia di utility): sostituisce la stringa letterale `{timestamp}` in un path con `now` formattato `yyyyMMdd_HHmmss` — lo stesso formato già usato dal launcher PowerShell (`Get-Date -Format "yyyyMMdd_HHmmss"`), così i nomi dei report sono coerenti sia che li produca il binario direttamente sia il launcher. `now` è un parametro esplicito (non `Utc::now()` interno), per restare testabile senza mockare l'orologio. Un path senza placeholder torna invariato — comportamento pre-P1 intatto.
+
+**Un solo punto per ciascuno dei due percorsi** (non uno condiviso, perché `run_one` — l'unico punto realmente condiviso da entrambi — riceve `&Args`, non `&mut Args`): chiamata in `main.rs::run()` subito prima di `args.validate()` per il caso single-job, e dentro il loop di `run_jobs()` per ciascun job (con un proprio `chrono::Utc::now()` fresco ad ogni iterazione, non un timestamp condiviso per l'intero batch — i job girano in sequenza e uno tardo in un batch lungo può partire ore dopo il primo). In entrambi i casi la chiamata avviene **dopo** che i rami `--restore-from`/`--resume-from`/`--config` hanno finito di manipolare `report_path`, e **prima** che `checkpoint_path_for` (su Ctrl+C) o la namespacizzazione per-job (F33/D12) lo derivino — altrimenti questi ultimi due porterebbero avanti la stringa `{timestamp}` letterale invece del valore.
+
+**L'ordine tra risoluzione del placeholder e namespacizzazione per-job non conta**: toccano parti disgiunte del nome file (il testo dello stem contro l'inserimento di `.{nome-job}` prima dell'estensione) — verificato con un test black-box dedicato, non solo assunto.
+
+**`--install-schedule` non richiede alcuna gestione speciale**: cattura l'argv **grezzo** dell'invocazione corrente (`schedule::strip_schedule_flags`/`build_task_run_command`), non il campo `Args.report_path` già risolto — quindi una voce di Task Scheduler installata con `--report-path "report-{timestamp}.json"` mantiene il placeholder letterale nel comando pianificato, e ottiene un timestamp fresco ad ogni esecuzione pianificata futura, non uno congelato al momento dell'installazione. Verificato leggendo `schedule.rs`, non assunto.
+
+**Verifica reale eseguita** (non stimata):
+- 4 unit test in `lib.rs` (sostituzione, path senza placeholder invariato, placeholder in un componente di directory, sostituzione di occorrenze multiple)
+- **2 test black-box** in `tests/cli_smoke.rs`: uno single-job (il binario compilato scrive davvero un file con timestamp risolto, il path letterale con `{timestamp}` non esiste mai su disco), uno multi-job (`[[jobs]]`, verifica che risoluzione del placeholder e namespacizzazione per-job compongano correttamente per entrambi i job in un solo run) — la parte che gli unit test da soli non potevano provare (il collegamento reale in `main.rs`)
+- `cargo test` → 302 passed, 0 failed (era 296, +6: 4 unit + 2 black-box)
+- `cargo test --features notify-server` → 317 passed, 0 failed (era 311, +6)
+- `cargo clippy --all-targets -- -D warnings` (entrambi i set di feature) → 0 warning
+- `cargo fmt --all -- --check` → pulito dopo un `cargo fmt --all`
+- `cargo tree | grep -i axum` → vuoto (regola 8)
 
 ---
 
@@ -287,7 +306,7 @@ Ordinato per rapporto valore/rischio, non per numerazione.
 | 4 | ~~**Pilastro D**~~ (launcher PowerShell) | 2-3h | Basso | ✅ **Chiuso 18 Ago 2026** — test end-to-end reale in sandbox, vedi §Pilastro D |
 | 5 | ~~**Refactor script → wrapper**~~ | 30 min | Basso | ✅ **Chiuso 19 Ago 2026** — adapter credenziali (opzione 2), test end-to-end reale, vedi §Pilastro D |
 | 6a | ~~**P2**~~ (`previous_run_comparison`) | 1h | Basso | ✅ **Chiuso 19 Ago 2026** — 296/311 test, vedi §P2 — implementazione |
-| 6b | **P1** (placeholder `{timestamp}`) | 1-1.5h | Medio | Tocca anche `checkpoint_path_for` e la namespacizzazione per-job — vedi Pilastro E |
+| 6b | ~~**P1**~~ (placeholder `{timestamp}`) | 1-1.5h | Medio | ✅ **Chiuso 19 Ago 2026** — 302/317 test, vedi §P1 — implementazione |
 | 7 | **B5** (dedup `CLAUDE.md`, 44K → ~25K) | 1-2h | Medio | Approvato in D-Q4. Resta per ultimo: va verificato riga per riga con `grep` sulla destinazione, e non va mescolato ad altro lavoro nello stesso diff |
 
 ## Esecuzione blocco 1 (B4 + B3) — 17 Agosto 2026
