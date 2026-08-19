@@ -164,6 +164,18 @@ impl RunComparison {
 /// fall back to nothing on a parse error" pattern (see `cache.rs`) -- a corrupt or foreign JSON
 /// file at `path` degrades this nice-to-have field to absent, it must never fail the run that's
 /// trying to write a report of its own.
+///
+/// **Known limitation, not fixed here (deliberately)**: no locking between this read and the
+/// later `write_to` that replaces `path`. Two processes racing on the exact same `--report-path`
+/// (an unusual setup -- normally scheduled, not run concurrently against the same fixed path)
+/// could each read the other's report as "previous", or one run's write could land between the
+/// other's read and write. The worst case is a wrong (not corrupt, not missing-data) comparison
+/// field in a nice-to-have JSON annotation -- not the backup itself, which this function never
+/// touches. Cross-process locking would be a new pattern nowhere else in this crate (neither
+/// `IngestCache` nor `GenerationManifest`, which have comparable read-then-maybe-write shapes and
+/// a much higher cost of being wrong, lock either); adding one here for this field's stakes was
+/// judged disproportionate. Revisit if a real concurrent-run scenario against a shared
+/// `--report-path` actually shows up.
 pub fn read_previous_report(path: &Path) -> Option<IngestReport> {
     let content = std::fs::read_to_string(path).ok()?;
     serde_json::from_str(&content).ok()
