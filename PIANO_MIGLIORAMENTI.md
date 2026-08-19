@@ -14,7 +14,7 @@ verified:
 # Piano di Miglioramento Consolidato — rustcopy
 
 **Baseline**: v6.0.0 — commit `0d8a9f0`
-**Test**: 286 default / 301 con `--features notify-server` *(misurati il 17 Agosto 2026 dopo l'esecuzione di B3+B4 — erano 284/299 fino al 7 Agosto; +2 dovuti ai due unit test aggiunti da B3 per fissare le semantiche di merge exclude, vedi §Esecuzione blocco 1)*
+**Test**: 296 default / 311 con `--features notify-server` *(misurati il 19 Agosto 2026 dopo P2 — erano 286/301 dopo B3/B4 il 17 Agosto (284/299 fino al 7 Agosto); +10 dovuti ai 9 unit test + 1 black-box aggiunti da P2, vedi §P2 — implementazione)*
 
 ---
 
@@ -206,9 +206,34 @@ Fondamenta già solide: zero-allocation stdout streaming, hashing parallelo Rayo
 | ID | Impatto | Proposta |
 |---|---|---|
 | **P1** | 🟡 | **Placeholder `{timestamp}` in `--report-path`** — oggi un job schedulato sovrascrive il report precedente. Elimina il bisogno di un wrapper PS1 solo per lo storico. Interagisce con `main.rs::namespaced_path` (F33/D12): verificare che le due namespacizzazioni si compongano, non si escludano |
-| **P2** | 🟡 | **`previous_run_comparison` nel report JSON** — se esiste un report precedente nella stessa directory, leggerne `files_copied`/`elapsed_seconds`/`throughput_mbps` e calcolare il delta % |
+| **P2** | ~~🟡~~ | ~~**`previous_run_comparison` nel report JSON**~~ — ✅ **Chiuso 19 Ago 2026**, vedi sotto |
 | **P3** | 🟢 | **Cache dell'inventario di scan** ⚠️ — **prima di implementare**, verificare la sovrapposizione con i due meccanismi esistenti: `cache.rs` (`--fast-verify`, size+mtime per file) e `generations.rs` (F34, inventario **completo** della sorgente per generazione). Rischio concreto di creare una terza struttura che duplica le prime due |
 | **P4** | 🟢 | **Retention dei report JSON** — `--log-max-backups` copre i log ma non i report. Eventuale `--report-retention-days N` |
+
+### Ordine interno P1 vs P2 (deciso il 19 Ago 2026, dopo verifica sul codice reale)
+
+Il piano trattava P1/P2 come un blocco unico. Analisi del codice reale mostra che **hanno rischio diverso**, quindi vanno separati e ordinati: **P2 → P1**.
+
+**P1 è più delicato di quanto sembri sulla carta**: `Args::report_path` non è un campo isolato — alimenta anche `checkpoint::checkpoint_path_for()` (concatena `.checkpoint.json` direttamente sull'`OsString`, byte per byte) e la namespacizzazione per-job già esistente (`robocopy_ingest::namespaced_path`, F33/D12, chiamata in `run_jobs` su `job_args.report_path`). Se `{timestamp}` non viene sostituito **prima** che questi due punti derivino i propri path, finiscono con la stringa letterale `{timestamp}` nel nome file invece del valore. Serve quindi un unico punto preciso nella pipeline dove risolvere il placeholder (subito dopo il parsing di `Args`/merge config, prima di qualunque derivazione) — non impossibile, ma tocca tre punti del codice e va testato sia in modalità single-job sia multi-job (nessuna regressione quando `{timestamp}` non è presente nel path, comportamento invariato).
+
+**P2 è genuinamente più semplice**: `IngestReport` (`src/report.rs`) ha già il pattern esatto da seguire — `baseline_transfer`/`speedup_factor` sono entrambi `Option<T>` con `#[serde(skip_serializing_if = "Option::is_none")]`. Serve solo: individuare il report precedente nella stessa directory, leggere 3 campi (`files_copied`/`elapsed_seconds`/`throughput_mbps`), calcolare i delta. Nessuna interazione con checkpoint o namespacing multi-job.
+
+**Motivazione dell'ordine**: partire da P2 dà un blocco chiuso e verificabile subito, con rischio di regressione minimo (un solo campo opzionale in più). Arrivando a P1 dopo, il pattern "campo opzionale aggiunto al report" è già rodato nella stessa area di codice (`report.rs`/`main.rs`), e la sequenza dei punti da toccare per P1 è già mappata sopra invece di doverla scoprire in corsa.
+
+### P2 — implementazione (chiusa il 19 Ago 2026)
+
+**Design deciso durante l'implementazione, diverso da "scansiona la directory"**: `--report-path` viene sovrascritto ad ogni run (nessun convenzione di directory-con-storico in questo crate), quindi "il report precedente" è definito come *"qualunque cosa fosse già scritta esattamente in `--report-path` un istante prima che questo run la sovrascrivesse"* — letto una volta sola, subito prima di `report.write_to(&args.report_path)`, non tramite scan della directory. Funziona da subito con il comportamento attuale (path fisso, sovrascritto ogni run) e continuerà a funzionare quando arriverà P1 (placeholder `{timestamp}`), perché a quel punto ogni run avrà comunque il proprio path univoco e "cosa c'era prima in questo path" resterà `None` — il caso multi-run-stesso-path (quello utile) resta quello di oggi con path fisso, tipico di un job schedulato.
+
+`RunComparison` nuovo tipo in `report.rs`: `previous_timestamp`, `files_copied_delta`, `elapsed_seconds_delta`, `throughput_mbps_delta`, `throughput_mbps_delta_percent` (quest'ultimo `Option`, assente — non `0`/`Infinity` — quando il throughput del run precedente era `0.0`, es. un run incrementale che non ha ricopiato nulla). `read_previous_report` segue lo stesso pattern di `IngestCache::load_from` (`cache.rs`): un file assente o non parsabile degrada silenziosamente a `None`, non fa fallire il run. Nessuna gestione speciale necessaria per la modalità multi-job (`[[jobs]]`): `report_path` è già namespaced per job (F33/D12) prima che questo codice giri, verificato leggendo `run_jobs` — ogni job confronta automaticamente contro la propria storia, mai quella di un altro.
+
+**Verifica reale eseguita** (non stimata):
+- 9 unit test in `report.rs` (round-trip JSON, caso "nessun precedente", caso "throughput precedente zero → percentuale assente", calcolo dei delta)
+- **1 test black-box** in `tests/cli_smoke.rs` che esegue il binario compilato **due volte** contro lo stesso `--report-path`: verifica che il primo report non abbia `previous_run_comparison`, che il secondo lo abbia con il `previous_timestamp` corretto — la parte che i soli unit test di `report.rs` non potevano verificare (il collegamento reale in `main.rs`, cioè che la lettura avvenga *prima* della scrittura e dal path giusto)
+- **Scoperta durante il test**: la prima assunzione ("stesso fixture copiato due volte → delta 0") era sbagliata — robocopy non ricopia un file già corrispondente (stesso size+timestamp), quindi il secondo run copia 0 file contro 1 del primo, delta reale `-1`. Corretta l'asserzione al valore vero invece di quello atteso, non il codice
+- `cargo test` → 296 passed, 0 failed (era 286, +10: 9 unit + 1 black-box)
+- `cargo test --features notify-server` → 311 passed, 0 failed (era 301, +10)
+- `cargo clippy --all-targets -- -D warnings` → 0 warning
+- `cargo fmt --all -- --check` → pulito dopo un `cargo fmt --all` (formattazione automatica di alcune righe lunghe)
 
 ---
 
@@ -257,7 +282,8 @@ Ordinato per rapporto valore/rischio, non per numerazione.
 | 3 | ~~**Pilastro A**~~ (A1-A4, documentazione) | 1-1.5h | Nullo | ✅ **Chiuso 17 Ago 2026** — diff meccanico verificato pulito, vedi §Pilastro A |
 | 4 | ~~**Pilastro D**~~ (launcher PowerShell) | 2-3h | Basso | ✅ **Chiuso 18 Ago 2026** — test end-to-end reale in sandbox, vedi §Pilastro D |
 | 5 | ~~**Refactor script → wrapper**~~ | 30 min | Basso | ✅ **Chiuso 19 Ago 2026** — adapter credenziali (opzione 2), test end-to-end reale, vedi §Pilastro D |
-| 6 | **P1 / P2** (performance) | 2h | Basso | Valore reale ma nessuno lo blocca oggi |
+| 6a | ~~**P2**~~ (`previous_run_comparison`) | 1h | Basso | ✅ **Chiuso 19 Ago 2026** — 296/311 test, vedi §P2 — implementazione |
+| 6b | **P1** (placeholder `{timestamp}`) | 1-1.5h | Medio | Tocca anche `checkpoint_path_for` e la namespacizzazione per-job — vedi Pilastro E |
 | 7 | **B5** (dedup `CLAUDE.md`, 44K → ~25K) | 1-2h | Medio | Approvato in D-Q4. Resta per ultimo: va verificato riga per riga con `grep` sulla destinazione, e non va mescolato ad altro lavoro nello stesso diff |
 
 ## Esecuzione blocco 1 (B4 + B3) — 17 Agosto 2026
