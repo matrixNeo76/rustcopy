@@ -38,6 +38,7 @@ $defaults = [PSCustomObject]@{
     dest               = "\\FILESERV01\dati01\provarust2"
     threads            = $null
     mirror             = $false
+    force_purge        = $false
     verify_integrity   = $true
     hash_algo          = "blake3"
     requires_smb_creds = $false

@@ -148,6 +148,13 @@ function New-RustcopyProfileInteractive {
     $dest   = Read-RustcopyPath -Prompt "Destination path (UNC or local; need not exist yet)"
     $threads = Read-RustcopyInt -Prompt "Threads"
     $mirror  = Read-YesNo -Prompt "Mirror (delete files in dest that are not in source)?" -DefaultValue $false
+    # Never implied by $mirror alone (AGENTS.md rule 6: --force-purge must never become the
+    # default) -- only asked, and only ever set true, when the operator explicitly wants an
+    # unattended --mirror run to purge without a terminal confirmation available to answer it.
+    $forcePurge = $false
+    if ($mirror) {
+        $forcePurge = Read-YesNo -Prompt "  Allow this profile to purge WITHOUT confirmation when run unattended (e.g. Task Scheduler)? Leave No to have unattended runs safely abort instead" -DefaultValue $false
+    }
     $verifyIntegrity = Read-YesNo -Prompt "Verify integrity after copy?" -DefaultValue $true
     $hashAlgo = Read-NonEmpty -Prompt "Hash algorithm (sha256/blake3/xxh3)" -DefaultValue "blake3"
 
@@ -164,14 +171,19 @@ function New-RustcopyProfileInteractive {
             # Plaintext in a gitignored *.local.ps1 file, same convention already established by
             # scripts\nas2-credentials.local.ps1 -- not a new/weaker choice introduced here.
             $smbPassword = Read-NonEmpty -Prompt "  SMB password"
+            # Escaped before interpolation: an unescaped apostrophe in either value would close
+            # the single-quoted literal early and corrupt (or inject into) the generated file,
+            # which gets dot-sourced on every run.
+            $smbUserLiteral = ConvertTo-RustcopySingleQuotedLiteral -Value $smbUser
+            $smbPasswordLiteral = ConvertTo-RustcopySingleQuotedLiteral -Value $smbPassword
             $credsContent = @"
 <#
     Local-only SMB credentials for the '$name' rustcopy-launcher profile.
     Excluded from git via .gitignore: scripts/*.local.ps1
 #>
 
-`$SmbUser     = '$smbUser'
-`$SmbPassword = '$smbPassword'
+`$SmbUser     = '$smbUserLiteral'
+`$SmbPassword = '$smbPasswordLiteral'
 "@
             Set-Content -LiteralPath $credsPath -Value $credsContent -Encoding utf8
             Write-Host "  Credentials saved to $credsFile (gitignored)." -ForegroundColor Green
@@ -184,6 +196,7 @@ function New-RustcopyProfileInteractive {
         dest               = $dest
         threads            = $threads
         mirror             = $mirror
+        force_purge        = $forcePurge
         verify_integrity   = $verifyIntegrity
         hash_algo          = $hashAlgo
         requires_smb_creds = $requiresCreds
@@ -201,6 +214,17 @@ function Edit-RustcopyProfileInteractive {
     $RustcopyProfile.dest   = Read-RustcopyPath -Prompt "Destination path" -DefaultValue $RustcopyProfile.dest
     $RustcopyProfile.threads = Read-RustcopyInt -Prompt "Threads" -DefaultValue $RustcopyProfile.threads
     $RustcopyProfile.mirror = Read-YesNo -Prompt "Mirror?" -DefaultValue ([bool]$RustcopyProfile.mirror)
+    # Add-Member -Force, not plain assignment: a profile saved before force_purge existed has no
+    # such NoteProperty yet, and assigning to a genuinely missing property on a PSCustomObject
+    # throws (verified) -- unlike reading one, which just returns $null. -Force makes this work
+    # identically whether the property already exists or not.
+    $forcePurge = if ($RustcopyProfile.mirror) {
+        Read-YesNo -Prompt "  Allow this profile to purge WITHOUT confirmation when run unattended?" -DefaultValue ([bool]$RustcopyProfile.force_purge)
+    }
+    else {
+        $false
+    }
+    $RustcopyProfile | Add-Member -NotePropertyName force_purge -NotePropertyValue $forcePurge -Force
     $RustcopyProfile.verify_integrity = Read-YesNo -Prompt "Verify integrity?" -DefaultValue ([bool]$RustcopyProfile.verify_integrity)
     $RustcopyProfile.hash_algo = Read-NonEmpty -Prompt "Hash algorithm" -DefaultValue $RustcopyProfile.hash_algo
 
@@ -223,6 +247,10 @@ function Invoke-RustcopyProfile {
 
     $threads = if ($ThreadsOverride) { $ThreadsOverride } elseif ($RustcopyProfile.threads) { [int]$RustcopyProfile.threads } else { 0 }
     $mirror = [bool]$RustcopyProfile.mirror
+    # [bool]$null is $false, so a profile saved before force_purge existed (missing property,
+    # reads back as $null) safely defaults to "unattended --mirror aborts on extraneous files"
+    # rather than silently gaining purge-without-confirmation behavior.
+    $forcePurge = [bool]$RustcopyProfile.force_purge
     $verifyIntegrity = if ($null -eq $RustcopyProfile.verify_integrity) { $true } else { [bool]$RustcopyProfile.verify_integrity }
     $dryRunEffective = [bool]$DryRun
 
@@ -230,6 +258,12 @@ function Invoke-RustcopyProfile {
         Write-Host ""
         Write-Host "=== Run options for '$($RustcopyProfile.name)' (Enter keeps the profile's saved value) ===" -ForegroundColor Cyan
         $mirror = Read-YesNo -Prompt "  --mirror?" -DefaultValue $mirror
+        if ($mirror) {
+            $forcePurge = Read-YesNo -Prompt "  --force-purge (skip confirmation on destination-only files)?" -DefaultValue $forcePurge
+        }
+        else {
+            $forcePurge = $false
+        }
         $threadsPrompted = Read-RustcopyInt -Prompt "  --threads" -DefaultValue $(if ($threads) { $threads } else { $null })
         if ($threadsPrompted) { $threads = $threadsPrompted }
         $dryRunEffective = Read-YesNo -Prompt "  --dry-run?" -DefaultValue $dryRunEffective
@@ -269,7 +303,7 @@ function Invoke-RustcopyProfile {
         # same as backup-nas-qnap.ps1 relies on for its own Subfolder case.
         $exitCode = Invoke-Ingest -Exe $Exe -Label $RustcopyProfile.name -Source $RustcopyProfile.source -Dest $RustcopyProfile.dest `
             -ReportsDir $reportsDir -Timestamp $timestamp -Threads $threads -HashAlgo $RustcopyProfile.hash_algo `
-            -Mirror:$mirror -VerifyIntegrity $verifyIntegrity -DryRun:$dryRunEffective
+            -Mirror:$mirror -ForcePurge:$forcePurge -VerifyIntegrity $verifyIntegrity -DryRun:$dryRunEffective
     }
     catch {
         Write-Host "Could not run profile '$($RustcopyProfile.name)': $_" -ForegroundColor Red

@@ -49,12 +49,16 @@ function Sync-LegacyNasCredentials {
         [Parameter(Mandatory)][string]$LegacyCredsPath
     )
 
-    if (-not (Test-Path -LiteralPath $LegacyCredsPath)) { return $false }
-
     # Dot-sourced in a nested scope of this function, not the script's own scope, so
     # $Nas2User/$Nas2Password never leak into the rest of this script.
     . $LegacyCredsPath
     if (-not $Nas2User -or -not $Nas2Password) { return $false }
+
+    # Escaped before interpolation: an unescaped apostrophe in either legacy value would close
+    # the single-quoted literal early and corrupt (or inject into) the generated adapter file,
+    # which gets dot-sourced by the launcher on every run.
+    $nas2UserLiteral = ConvertTo-RustcopySingleQuotedLiteral -Value $Nas2User
+    $nas2PasswordLiteral = ConvertTo-RustcopySingleQuotedLiteral -Value $Nas2Password
 
     $content = @"
 <#
@@ -64,8 +68,8 @@ function Sync-LegacyNasCredentials {
     nas2-credentials.local.ps1 instead, this file is overwritten from it every run.
 #>
 
-`$SmbUser     = '$Nas2User'
-`$SmbPassword = '$Nas2Password'
+`$SmbUser     = '$nas2UserLiteral'
+`$SmbPassword = '$nas2PasswordLiteral'
 "@
     Set-Content -LiteralPath $NewCredsPath -Value $content -Encoding utf8
     return $true
@@ -76,9 +80,16 @@ $NewCredsFile    = "nas-qnap-credentials.local.ps1"
 $NewCredsPath    = Join-Path $PSScriptRoot $NewCredsFile
 $LegacyCredsPath = Join-Path $PSScriptRoot "nas2-credentials.local.ps1"
 
-if (-not (Sync-LegacyNasCredentials -NewCredsPath $NewCredsPath -LegacyCredsPath $LegacyCredsPath)) {
+# Checked separately from Sync-LegacyNasCredentials's own return value so "file missing" and
+# "file present but incomplete" get distinct messages instead of both being reported as
+# "not found", which would contradict what's actually on disk in the second case.
+if (-not (Test-Path -LiteralPath $LegacyCredsPath)) {
     Write-Host "NAS backup skipped: $LegacyCredsPath not found." -ForegroundColor Yellow
     Write-Host "Create it with `$Nas2User and `$Nas2Password to enable this script." -ForegroundColor Yellow
+    exit 1
+}
+if (-not (Sync-LegacyNasCredentials -NewCredsPath $NewCredsPath -LegacyCredsPath $LegacyCredsPath)) {
+    Write-Host "NAS backup skipped: $LegacyCredsPath exists but does not define both `$Nas2User and `$Nas2Password." -ForegroundColor Yellow
     exit 1
 }
 
@@ -89,6 +100,7 @@ $defaults = [PSCustomObject]@{
     dest               = $DestRoot
     threads            = $null
     mirror             = $false
+    force_purge        = $false
     verify_integrity   = $true
     hash_algo          = "blake3"
     requires_smb_creds = $true
@@ -107,6 +119,7 @@ if ($Subfolder) {
         dest               = Join-Path $DestRoot $Subfolder
         threads            = $defaults.threads
         mirror             = $defaults.mirror
+        force_purge        = $defaults.force_purge
         verify_integrity   = $defaults.verify_integrity
         hash_algo          = $defaults.hash_algo
         requires_smb_creds = $defaults.requires_smb_creds

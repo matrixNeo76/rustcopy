@@ -44,6 +44,23 @@ function Save-RustcopyProfiles {
     Set-Content -LiteralPath $Path -Value $json -Encoding utf8
 }
 
+<#
+.SYNOPSIS
+    Escapes a value for safe interpolation into a PowerShell single-quoted string literal.
+
+.DESCRIPTION
+    Used wherever a credential value (username/password) is written into a generated
+    *.local.ps1 file as `'...'`. Without this, a value containing an apostrophe closes the
+    literal early -- the rest of the value (and whatever follows it in the template) is then
+    parsed as PowerShell code instead of string content, in a file that gets dot-sourced later.
+    PowerShell's own escape for an apostrophe inside a single-quoted string is a doubled
+    apostrophe (`''`), so that is the only substitution needed here.
+#>
+function ConvertTo-RustcopySingleQuotedLiteral {
+    param([Parameter(Mandatory)][AllowEmptyString()][string]$Value)
+    return $Value -replace "'", "''"
+}
+
 function Get-UncShareRoot {
     param([Parameter(Mandatory)][string]$UncPath)
     $match = [regex]::Match($UncPath, '^\\\\[^\\]+\\[^\\]+')

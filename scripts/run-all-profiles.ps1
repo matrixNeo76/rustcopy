@@ -41,8 +41,27 @@ $failures = @()
 foreach ($p in $profiles) {
     Write-Host ""
     Write-Host "##### Running profile '$($p.name)' #####" -ForegroundColor Magenta
-    & $launcher -Profile $p.name -DryRun:$DryRun -ProfilesPath $profilesFile
-    $code = $LASTEXITCODE
+
+    # Reset before each run: $LASTEXITCODE is a global automatic variable, so without this a
+    # profile that throws instead of reaching its own `exit N` would silently inherit the
+    # PREVIOUS profile's exit code -- a crash right after a success would be recorded as success.
+    $global:LASTEXITCODE = $null
+    try {
+        & $launcher -Profile $p.name -DryRun:$DryRun -ProfilesPath $profilesFile
+        # $null here means the launcher terminated without reaching an exit statement at all
+        # (e.g. a terminating error from something outside its own try/catch, like a malformed
+        # profiles.json in Import-RustcopyProfiles) -- treat that as exit code 2 (usage/
+        # unrecoverable error), the same code the launcher itself uses for comparable failures.
+        $code = if ($null -eq $LASTEXITCODE) { 2 } else { $LASTEXITCODE }
+    }
+    catch {
+        # $ErrorActionPreference = "Stop" (this script's own) would otherwise let a terminating
+        # error from the launcher invocation abort this entire loop, silently skipping every
+        # remaining profile instead of recording just this one as failed and moving on.
+        Write-Host "Profile '$($p.name)' aborted: $_" -ForegroundColor Red
+        $code = 2
+    }
+
     if ($code -ne 0) {
         $failures += [PSCustomObject]@{ name = $p.name; exitCode = $code }
     }

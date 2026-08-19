@@ -31,7 +31,13 @@ function Invoke-Ingest {
         # defaults below reproduce this function's exact pre-existing behaviour for them
         # (verify-integrity always on, mirror never passed) without touching their call sites.
         [switch]$Mirror,
-        [bool]$VerifyIntegrity = $true
+        [bool]$VerifyIntegrity = $true,
+        # Never implied by -Mirror alone -- AGENTS.md rule 6: "Never remove this check or make
+        # --force-purge the default." A profile that wants unattended --mirror execution must opt
+        # in explicitly (its own force_purge field, defaulting to false); without it, an
+        # unattended --mirror run against a destination with extraneous files safely aborts with
+        # exit code 3 rather than purging without confirmation, exactly like the CLI itself.
+        [switch]$ForcePurge
     )
 
     $reportPath = Join-Path $ReportsDir "${Label}_$Timestamp.json"
@@ -53,6 +59,7 @@ function Invoke-Ingest {
     }
     if ($Threads) { $argList += @("--threads", "$Threads") }
     if ($Mirror) { $argList += "--mirror" }
+    if ($Mirror -and $ForcePurge) { $argList += "--force-purge" }
     if ($DryRun) { $argList += "--dry-run" }
 
     Write-Host ""
