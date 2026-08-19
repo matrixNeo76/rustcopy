@@ -2461,6 +2461,11 @@ fn fixtures_are_created_where_expected() {
 /// second report whose `previous_run_comparison` reflects the first run -- this is the actual
 /// wiring in `main.rs` (read the file at `--report-path` before `write_to` overwrites it), not
 /// just `report.rs`'s own unit tests of `RunComparison::between` in isolation.
+///
+/// `#[cfg(windows)]`, same reason as `quiet_suppresses_per_file_debug_lines_in_the_real_log`
+/// above: a real (non-`--compare-baseline`) transfer needs `robocopy.exe`, which only exists on
+/// Windows -- on Linux/macOS `run(&args)` fails outright before any report is even written.
+#[cfg(windows)]
 #[test]
 fn a_second_run_against_the_same_report_path_gets_a_comparison_against_the_first() {
     let source = fixture_tree(&[("a.csv", 10)]);
