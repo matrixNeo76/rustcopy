@@ -180,7 +180,20 @@ graph TD
 
 **Scelta di design non nello spec originale**: le credenziali SMB per i profili del launcher usano una convenzione **nuova e generica** (`$SmbUser`/`$SmbPassword` nel `creds_file`), non i nomi `$Nas2User`/`$Nas2Password` già usati da `scripts/nas2-credentials.local.ps1`. Motivo: quel file appartiene a `backup-nas-qnap.ps1`, che **non è ancora** un wrapper del launcher (è il prossimo blocco, "Refactor script → wrapper") — riusare i suoi nomi di variabile avrebbe accoppiato il launcher a uno script che non lo chiama ancora.
 
-**Refactor a seguire** (blocco successivo, non ancora fatto): `backup-fileserv01.ps1` e `backup-nas-qnap.ps1` diventano wrapper sottili (`& launcher.ps1 -Profile "..."`), non vengono eliminati. Più `scripts/run-all-profiles.ps1` per l'esecuzione in sequenza. **Dipendenza da chiarire in quel blocco**: `nas2-credentials.local.ps1` usa `$Nas2User`/`$Nas2Password`, il launcher si aspetta `$SmbUser`/`$SmbPassword` — va deciso se rinominare le variabili nel file esistente o scrivere un adapter, non risolto qui.
+**Refactor script → wrapper — ✅ chiuso il 19 Ago 2026.** `backup-fileserv01.ps1` e `backup-nas-qnap.ps1` sono ora wrapper sottili che delegano a `rustcopy-launcher.ps1 -Profile "..."`, non sono stati eliminati. Aggiunto `scripts/run-all-profiles.ps1` per l'esecuzione in sequenza di tutti i profili salvati.
+
+**Dipendenza risolta con l'opzione 2** (adapter, decisione dell'utente il 18 Ago 2026): `nas2-credentials.local.ps1` (`$Nas2User`/`$Nas2Password`) resta invariato — `backup-nas-qnap.ps1` lo legge e rigenera da esso, **ad ogni run**, un file `nas-qnap-credentials.local.ps1` nella forma `$SmbUser`/`$SmbPassword` attesa dal launcher (`Sync-LegacyNasCredentials`). Il file vecchio resta la fonte di verità; quello nuovo è un derivato usa-e-getta, mai da editare a mano — se la password cambia nel file vecchio, il nuovo si autoaggiorna al run successivo senza intervento.
+
+**Estrazione architetturale non prevista dallo spec originale**: le funzioni di storage dei profili (`Import-RustcopyProfiles`, `Save-RustcopyProfiles`, `Get-UncShareRoot`) sono state spostate da `rustcopy-launcher.ps1` a un nuovo file condiviso `scripts/_profiles-common.ps1` (stessa convenzione di `_ingest-common.ps1`: prefisso `_`, mai eseguito direttamente, solo dot-sourced), con l'aggiunta di `Confirm-RustcopyProfile` — bootstrap non interattivo, idempotente, che **non sovraschive mai** un profilo già modificato a mano. Necessario perché i due wrapper devono poter leggere/creare il proprio profilo senza eseguire l'intera logica del launcher (menu interattivo, modalità batch).
+
+**Verifica reale eseguita** (non stimata):
+- Sintassi valida (`[scriptblock]::Create`) su tutti e 5 i file toccati/nuovi
+- `Confirm-RustcopyProfile` testato in isolamento: crea al primo run, e **non sovrascrive** una modifica fatta a mano tra una chiamata e l'altra (verificato esplicitamente, non solo assunto)
+- `Sync-LegacyNasCredentials` testato in isolamento: file legacy assente → `$false` senza side effect; file legacy presente → adapter generato e **verificato che si dot-sorgenti correttamente** in `$SmbUser`/`$SmbPassword`
+- **Test end-to-end reale** di `run-all-profiles.ps1` contro il binario compilato, sandbox `tempdir`, due profili (uno valido, uno con sorgente inesistente): il primo riesce (exit 0), il secondo fallisce con errore chiaro (exit 2), l'aggregazione finale riporta correttamente "1 di 2 falliti" con l'exit code specifico e termina con quello
+- `cargo test` (nessun `src/` toccato) → 286 passed, 0 failed, invariato
+
+**Non testato end-to-end** (limite dichiarato, stesso principio di F30/F37 in `CLAUDE.md`): `backup-fileserv01.ps1`/`backup-nas-qnap.ps1` stessi non sono stati eseguiti realmente, perché hardcodano destinazioni di rete reali (`\\FILESERV01\...`, `\\192.168.1.187\...`) — eseguirli avrebbe violato la regola "mai contro path reali". La logica che effettivamente cambia (bootstrap del profilo, adapter delle credenziali, delega al launcher) è la stessa testata sopra in isolamento e end-to-end tramite `run-all-profiles.ps1`; solo l'ultimo miglio (path reali, mapping SMB reale) resta non verificato automaticamente, come già per VSS e i servizi Windows.
 
 > **Nota di coerenza architetturale**: il launcher genera argv/TOML per il binario esistente — **nessuna logica di backup in PowerShell**. Stessa disciplina di `.agents/skills/rustcopy-flow/`, che pilota il binario compilato senza reimplementarne il comportamento. Se una funzione serve al launcher e non esiste nel binario, va aggiunta al binario, non aggirata nello script.
 
@@ -243,7 +256,7 @@ Ordinato per rapporto valore/rischio, non per numerazione.
 | 2 | ~~**B3**~~ (documentare le due semantiche + test che le fissano) | 20 min | Nullo | ✅ **Chiuso 17 Ago 2026** — vedi §Esecuzione blocco 1 per l'evidenza dei test |
 | 3 | ~~**Pilastro A**~~ (A1-A4, documentazione) | 1-1.5h | Nullo | ✅ **Chiuso 17 Ago 2026** — diff meccanico verificato pulito, vedi §Pilastro A |
 | 4 | ~~**Pilastro D**~~ (launcher PowerShell) | 2-3h | Basso | ✅ **Chiuso 18 Ago 2026** — test end-to-end reale in sandbox, vedi §Pilastro D |
-| 5 | **Refactor script → wrapper** | 30 min | Basso | Dipende da 4. **Nuova dipendenza emersa**: va deciso come riconciliare `nas2-credentials.local.ps1` (`$Nas2User`/`$Nas2Password`) con la convenzione `$SmbUser`/`$SmbPassword` attesa dal launcher — vedi nota in fondo al Pilastro D |
+| 5 | ~~**Refactor script → wrapper**~~ | 30 min | Basso | ✅ **Chiuso 19 Ago 2026** — adapter credenziali (opzione 2), test end-to-end reale, vedi §Pilastro D |
 | 6 | **P1 / P2** (performance) | 2h | Basso | Valore reale ma nessuno lo blocca oggi |
 | 7 | **B5** (dedup `CLAUDE.md`, 44K → ~25K) | 1-2h | Medio | Approvato in D-Q4. Resta per ultimo: va verificato riga per riga con `grep` sulla destinazione, e non va mescolato ad altro lavoro nello stesso diff |
 
