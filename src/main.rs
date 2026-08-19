@@ -146,6 +146,13 @@ async fn run(mut args: Args) -> Result<u8> {
         args.merge_config(config);
     }
 
+    // P1: resolved once, here, right before validate() -- after the restore/resume/config
+    // branches above have all had their say on report_path, and before anything downstream
+    // (checkpoint_path_for on Ctrl+C in run_one, the final write_to, P2's read_previous_report)
+    // reads it. A path with no `{timestamp}` placeholder is untouched.
+    args.report_path =
+        robocopy_ingest::resolve_report_path_timestamp(&args.report_path, chrono::Utc::now());
+
     args.validate()?;
 
     // F36: install the current invocation (minus the scheduling flags themselves) as a recurring
@@ -254,6 +261,15 @@ async fn run_jobs(base_args: Args, config: robocopy_ingest::config::IngestConfig
         // namespace them with the job name in a multi-job run, otherwise jobs sharing a `dest`
         // would silently read/write each other's fast-verify cache and generation history (D12).
         job_args.job_name = Some(job_name.clone());
+        // P1: resolved per job, after namespacing above (order between the two doesn't matter --
+        // they touch disjoint parts of the filename) and before validate(), each job getting its
+        // own timestamp captured at its own start rather than one shared across the whole batch,
+        // since jobs run sequentially and a later job in a long batch can start meaningfully
+        // later than the first.
+        job_args.report_path = robocopy_ingest::resolve_report_path_timestamp(
+            &job_args.report_path,
+            chrono::Utc::now(),
+        );
         if let Err(error) = job_args.validate() {
             eprintln!("error: job '{job_name}' failed validation: {error} — skipping");
             worst_exit_code = worst_exit_code.max(EXIT_UNRECOVERABLE);

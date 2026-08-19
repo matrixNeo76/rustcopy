@@ -44,6 +44,35 @@ pub mod vss;
 
 use std::path::{Path, PathBuf};
 
+use chrono::{DateTime, Utc};
+
+/// Placeholder recognized in `--report-path` (P1, `PIANO_MIGLIORAMENTI.md`). Resolved exactly
+/// once per invocation, as early as possible after `Args` is finalized (`main.rs::run`/
+/// `run_jobs`, right before `validate()`) — everything downstream that derives from
+/// `report_path` (`checkpoint::checkpoint_path_for`, the per-job `namespaced_path` above, P2's
+/// `report::read_previous_report`) already sees the resolved, timestamped value, never the raw
+/// placeholder text.
+pub const REPORT_PATH_TIMESTAMP_PLACEHOLDER: &str = "{timestamp}";
+
+/// Replaces `{timestamp}` in `path` with `now` formatted as `yyyyMMdd_HHmmss` — the same format
+/// `scripts/_ingest-common.ps1` and the PowerShell launcher's own `_ops_reports/<profile>/
+/// <timestamp>/` folders already use (`Get-Date -Format "yyyyMMdd_HHmmss"`), so report filenames
+/// look the same whether produced by this binary directly or via the launcher.
+///
+/// A path with no placeholder is returned unchanged — the pre-P1 default (a fixed `--report-path`
+/// overwritten every run, which is what P2's `previous_run_comparison` actually depends on) stays
+/// exactly as it was; this is opt-in, not a behavior change for anyone who never types
+/// `{timestamp}`. `now` is a parameter rather than an internal `Utc::now()` call so this stays
+/// trivially unit-testable without mocking the clock.
+pub fn resolve_report_path_timestamp(path: &Path, now: DateTime<Utc>) -> PathBuf {
+    let rendered = path.to_string_lossy();
+    if !rendered.contains(REPORT_PATH_TIMESTAMP_PLACEHOLDER) {
+        return path.to_path_buf();
+    }
+    let timestamp = now.format("%Y%m%d_%H%M%S").to_string();
+    PathBuf::from(rendered.replace(REPORT_PATH_TIMESTAMP_PLACEHOLDER, &timestamp))
+}
+
 /// Inserts `.{name}` before a path's extension (or at the end, if there is none). Shared by every
 /// place that needs to give one job in a `[[jobs]]` batch (F33) its own file next to a `dest` it
 /// shares with other jobs — the report path (`main.rs::run_jobs`), the fast-verify cache
@@ -115,6 +144,51 @@ mod tests {
         assert_eq!(
             namespaced_path(Path::new(".rustcopy_generations.json"), "photos"),
             PathBuf::from(".rustcopy_generations.photos.json")
+        );
+    }
+
+    fn fixed_now() -> DateTime<Utc> {
+        "2026-08-20T14:05:09Z".parse().expect("valid timestamp")
+    }
+
+    #[test]
+    fn resolve_report_path_timestamp_substitutes_the_placeholder() {
+        assert_eq!(
+            resolve_report_path_timestamp(Path::new("report-{timestamp}.json"), fixed_now()),
+            PathBuf::from("report-20260820_140509.json")
+        );
+    }
+
+    #[test]
+    fn resolve_report_path_timestamp_leaves_a_plain_path_unchanged() {
+        assert_eq!(
+            resolve_report_path_timestamp(Path::new("report.json"), fixed_now()),
+            PathBuf::from("report.json")
+        );
+    }
+
+    #[test]
+    fn resolve_report_path_timestamp_handles_the_placeholder_inside_a_directory_component() {
+        assert_eq!(
+            resolve_report_path_timestamp(
+                Path::new("_ops_reports/{timestamp}/report.json"),
+                fixed_now()
+            ),
+            PathBuf::from("_ops_reports/20260820_140509/report.json")
+        );
+    }
+
+    #[test]
+    fn resolve_report_path_timestamp_replaces_every_occurrence() {
+        // Not documented/expected usage, but the naive string-replace this is built on handles it
+        // for free -- worth pinning down so a future rewrite doesn't silently only replace the
+        // first occurrence.
+        assert_eq!(
+            resolve_report_path_timestamp(
+                Path::new("{timestamp}/report-{timestamp}.json"),
+                fixed_now()
+            ),
+            PathBuf::from("20260820_140509/report-20260820_140509.json")
         );
     }
 
