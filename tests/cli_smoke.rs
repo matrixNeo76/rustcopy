@@ -2455,3 +2455,60 @@ fn fixtures_are_created_where_expected() {
     let path: &Path = &dir.path().join("nested/a.csv");
     assert_eq!(std::fs::metadata(path).expect("metadata").len(), 32);
 }
+
+/// P2 black-box test (PIANO_MIGLIORAMENTI.md): running the real binary twice against the same
+/// fixed `--report-path` must produce a first report with no `previous_run_comparison` and a
+/// second report whose `previous_run_comparison` reflects the first run -- this is the actual
+/// wiring in `main.rs` (read the file at `--report-path` before `write_to` overwrites it), not
+/// just `report.rs`'s own unit tests of `RunComparison::between` in isolation.
+///
+/// `#[cfg(windows)]`, same reason as `quiet_suppresses_per_file_debug_lines_in_the_real_log`
+/// above: a real (non-`--compare-baseline`) transfer needs `robocopy.exe`, which only exists on
+/// Windows -- on Linux/macOS `run(&args)` fails outright before any report is even written.
+#[cfg(windows)]
+#[test]
+fn a_second_run_against_the_same_report_path_gets_a_comparison_against_the_first() {
+    let source = fixture_tree(&[("a.csv", 10)]);
+    let workdir = tempfile::tempdir().expect("workdir");
+    let dest = workdir.path().join("out");
+    let report_path = workdir.path().join("report.json");
+
+    let args = [
+        "--source",
+        source.path().to_str().expect("utf8"),
+        "--dest",
+        dest.to_str().expect("utf8"),
+        "--report-path",
+        report_path.to_str().expect("utf8"),
+    ];
+
+    let first = run(&args);
+    assert!(first.status.success(), "stderr: {}", stderr_of(&first));
+    let first_report: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(&report_path).expect("read")).expect("json");
+    assert!(
+        first_report.get("previous_run_comparison").is_none(),
+        "the first run against a fresh --report-path must have nothing to compare against"
+    );
+    let first_timestamp = first_report["timestamp"]
+        .as_str()
+        .expect("timestamp")
+        .to_string();
+
+    let second = run(&args);
+    assert!(second.status.success(), "stderr: {}", stderr_of(&second));
+    let second_report: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(&report_path).expect("read")).expect("json");
+    let comparison = &second_report["previous_run_comparison"];
+    assert!(
+        !comparison.is_null(),
+        "the second run must carry a comparison against the first: {second_report}"
+    );
+    assert_eq!(comparison["previous_timestamp"], first_timestamp);
+    // Robocopy's own default behaviour skips a destination file that already matches (same
+    // size+timestamp): the first run copies the 1 fixture file, the second copies 0 (nothing
+    // changed) -- so the real, correct delta is -1, not 0. Asserting this exact non-zero value
+    // (rather than just "is present") is what actually proves the field is computed from the
+    // real previous run, not a coincidental default.
+    assert_eq!(comparison["files_copied_delta"], -1);
+}

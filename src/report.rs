@@ -116,6 +116,71 @@ impl From<&CopyOutcome> for TransferReport {
     }
 }
 
+/// P2: delta between this run's transfer and whatever run's report already existed at
+/// `--report-path` immediately before this run overwrote it. This crate has no directory-of-
+/// historical-reports convention of its own -- the file at `--report-path` is overwritten every
+/// run by design -- so "the previous run" here specifically means "whatever was already sitting
+/// at this exact path a moment ago", read before this run's `write_to` call touches it, not a
+/// directory scan for the most recent file. `PIANO_MIGLIORAMENTI.md` P2.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct RunComparison {
+    pub previous_timestamp: DateTime<Utc>,
+    pub files_copied_delta: i64,
+    pub elapsed_seconds_delta: f64,
+    pub throughput_mbps_delta: f64,
+    /// Percent change in throughput vs the previous run. Absent (not zero, not infinite) when
+    /// the previous run's throughput was 0 -- e.g. an all-skipped incremental run -- since
+    /// dividing by that would be undefined, not meaningfully "0% faster".
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub throughput_mbps_delta_percent: Option<f64>,
+}
+
+impl RunComparison {
+    fn between(current: &IngestReport, previous: &IngestReport) -> Self {
+        let current_mbps = current.robocopy_transfer.throughput_mbps;
+        let previous_mbps = previous.robocopy_transfer.throughput_mbps;
+        Self {
+            previous_timestamp: previous.timestamp,
+            files_copied_delta: current.robocopy_transfer.files_copied as i64
+                - previous.robocopy_transfer.files_copied as i64,
+            elapsed_seconds_delta: round3(
+                current.robocopy_transfer.elapsed_seconds
+                    - previous.robocopy_transfer.elapsed_seconds,
+            ),
+            throughput_mbps_delta: round3(current_mbps - previous_mbps),
+            throughput_mbps_delta_percent: if previous_mbps > 0.0 {
+                Some(round3(
+                    (current_mbps - previous_mbps) / previous_mbps * 100.0,
+                ))
+            } else {
+                None
+            },
+        }
+    }
+}
+
+/// Reads and parses whatever report (if any) already exists at `path`, for
+/// `IngestReport::previous_run_comparison` (P2). Mirrors `IngestCache::load_from`'s "silently
+/// fall back to nothing on a parse error" pattern (see `cache.rs`) -- a corrupt or foreign JSON
+/// file at `path` degrades this nice-to-have field to absent, it must never fail the run that's
+/// trying to write a report of its own.
+///
+/// **Known limitation, not fixed here (deliberately)**: no locking between this read and the
+/// later `write_to` that replaces `path`. Two processes racing on the exact same `--report-path`
+/// (an unusual setup -- normally scheduled, not run concurrently against the same fixed path)
+/// could each read the other's report as "previous", or one run's write could land between the
+/// other's read and write. The worst case is a wrong (not corrupt, not missing-data) comparison
+/// field in a nice-to-have JSON annotation -- not the backup itself, which this function never
+/// touches. Cross-process locking would be a new pattern nowhere else in this crate (neither
+/// `IngestCache` nor `GenerationManifest`, which have comparable read-then-maybe-write shapes and
+/// a much higher cost of being wrong, lock either); adding one here for this field's stakes was
+/// judged disproportionate. Revisit if a real concurrent-run scenario against a shared
+/// `--report-path` actually shows up.
+pub fn read_previous_report(path: &Path) -> Option<IngestReport> {
+    let content = std::fs::read_to_string(path).ok()?;
+    serde_json::from_str(&content).ok()
+}
+
 /// Full report written to `--report-path`.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct IngestReport {
@@ -165,6 +230,11 @@ pub struct IngestReport {
     /// per-file stats even on failure; the generation pipeline's naive copy engine does not).
     #[serde(skip_serializing_if = "Option::is_none", default)]
     pub copy_error: Option<String>,
+    /// P2: absent on the first run against a given `--report-path`, or if whatever was there
+    /// wasn't a valid `IngestReport`. Set via `attach_previous_comparison`, not the constructor
+    /// -- computing it requires the fully-built current report to diff against.
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub previous_run_comparison: Option<RunComparison>,
 }
 
 impl IngestReport {
@@ -221,7 +291,16 @@ impl IngestReport {
             webhook_error: None,
             post_command_error: None,
             copy_error: None,
+            previous_run_comparison: None,
         }
+    }
+
+    /// Sets `previous_run_comparison` from `previous`, if given. Call sites read `previous` via
+    /// `read_previous_report(&args.report_path)` immediately before this report's own
+    /// `write_to` overwrites that same path -- ordering matters, this must run first.
+    pub fn attach_previous_comparison(&mut self, previous: Option<IngestReport>) {
+        self.previous_run_comparison =
+            previous.map(|previous| RunComparison::between(self, &previous));
     }
 
     /// Pretty-printed JSON, newline terminated.
@@ -289,6 +368,20 @@ impl IngestReport {
                 integrity.files_checked,
                 integrity.mismatches.len(),
                 integrity.missing_in_dest.len(),
+            ));
+        }
+        if let Some(cmp) = &self.previous_run_comparison {
+            let percent = cmp
+                .throughput_mbps_delta_percent
+                .map(|p| format!(" ({p:+.1}%)"))
+                .unwrap_or_default();
+            lines.push(format!(
+                "Vs previous run : {:+} file(s), {:+.2}s, {:+.2} MB/s{} (previous run: {})",
+                cmp.files_copied_delta,
+                cmp.elapsed_seconds_delta,
+                cmp.throughput_mbps_delta,
+                percent,
+                cmp.previous_timestamp.to_rfc3339(),
             ));
         }
         if self.configuration.dry_run {
@@ -574,5 +667,109 @@ mod tests {
         assert_eq!(round3(f64::NAN), 0.0);
         assert_eq!(round3(f64::INFINITY), 0.0);
         assert_eq!(round3(Duration::from_millis(1234).as_secs_f64()), 1.234);
+    }
+
+    #[test]
+    fn read_previous_report_returns_none_for_a_missing_file() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let path = dir.path().join("does-not-exist.json");
+        assert!(read_previous_report(&path).is_none());
+    }
+
+    #[test]
+    fn read_previous_report_returns_none_for_unparseable_content() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let path = dir.path().join("garbage.json");
+        std::fs::write(&path, b"this is not json").expect("write");
+        assert!(read_previous_report(&path).is_none());
+    }
+
+    #[test]
+    fn read_previous_report_parses_a_valid_previous_report() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let path = dir.path().join("report.json");
+        let previous = IngestReport::new(&args(), &inventory(), &robocopy_outcome(), None, None);
+        previous.write_to(&path).expect("write");
+
+        let read_back = read_previous_report(&path).expect("should parse");
+        assert_eq!(read_back, previous);
+    }
+
+    #[test]
+    fn attach_previous_comparison_computes_deltas_against_the_prior_run() {
+        let previous = IngestReport::new(&args(), &inventory(), &robocopy_outcome(), None, None);
+
+        let mut faster_bigger_outcome = robocopy_outcome();
+        faster_bigger_outcome.files_copied = 5;
+        faster_bigger_outcome.elapsed = Duration::from_secs(5); // half the previous run's 10s
+        let mut current =
+            IngestReport::new(&args(), &inventory(), &faster_bigger_outcome, None, None);
+
+        current.attach_previous_comparison(Some(previous.clone()));
+
+        let cmp = current
+            .previous_run_comparison
+            .as_ref()
+            .expect("comparison attached");
+        assert_eq!(cmp.previous_timestamp, previous.timestamp);
+        // previous: 2 files copied; current: 5 files copied.
+        assert_eq!(cmp.files_copied_delta, 3);
+        // previous: 10s elapsed; current: 5s elapsed.
+        assert_eq!(cmp.elapsed_seconds_delta, -5.0);
+        // previous: 1_000_000_000 B / 10s = 100 MB/s; current: same bytes / 5s = 200 MB/s.
+        assert_eq!(cmp.throughput_mbps_delta, 100.0);
+        assert_eq!(cmp.throughput_mbps_delta_percent, Some(100.0));
+    }
+
+    #[test]
+    fn attach_previous_comparison_is_none_when_there_is_no_previous_report() {
+        let mut report = IngestReport::new(&args(), &inventory(), &robocopy_outcome(), None, None);
+        report.attach_previous_comparison(None);
+        assert_eq!(report.previous_run_comparison, None);
+    }
+
+    #[test]
+    fn attach_previous_comparison_omits_percent_when_previous_throughput_was_zero() {
+        let mut zero_throughput_outcome = robocopy_outcome();
+        zero_throughput_outcome.bytes_copied = 0;
+        let previous =
+            IngestReport::new(&args(), &inventory(), &zero_throughput_outcome, None, None);
+
+        let mut current = IngestReport::new(&args(), &inventory(), &robocopy_outcome(), None, None);
+        current.attach_previous_comparison(Some(previous));
+
+        let cmp = current
+            .previous_run_comparison
+            .expect("comparison attached");
+        assert_eq!(cmp.throughput_mbps_delta_percent, None);
+    }
+
+    #[test]
+    fn previous_run_comparison_is_omitted_from_json_when_absent() {
+        let report = IngestReport::new(&args(), &inventory(), &robocopy_outcome(), None, None);
+        let json: serde_json::Value =
+            serde_json::from_str(&report.to_json().expect("serialize")).expect("valid json");
+        assert!(json.get("previous_run_comparison").is_none());
+    }
+
+    #[test]
+    fn previous_run_comparison_round_trips_through_json_when_present() {
+        let previous = IngestReport::new(&args(), &inventory(), &robocopy_outcome(), None, None);
+        let mut current = IngestReport::new(&args(), &inventory(), &robocopy_outcome(), None, None);
+        current.attach_previous_comparison(Some(previous));
+
+        let decoded: IngestReport =
+            serde_json::from_str(&current.to_json().expect("serialize")).expect("deserialize");
+        assert_eq!(decoded, current);
+    }
+
+    #[test]
+    fn human_summary_includes_previous_run_comparison_when_present() {
+        let previous = IngestReport::new(&args(), &inventory(), &robocopy_outcome(), None, None);
+        let mut current = IngestReport::new(&args(), &inventory(), &robocopy_outcome(), None, None);
+        current.attach_previous_comparison(Some(previous));
+
+        let summary = current.human_summary();
+        assert!(summary.contains("Vs previous run"));
     }
 }
