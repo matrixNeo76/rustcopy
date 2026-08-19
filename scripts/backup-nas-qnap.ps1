@@ -4,19 +4,26 @@
     SMB (credentialed mapping required).
 
 .DESCRIPTION
-    Split out from the old combined run-ingest-claude-code.ps1 (5 August 2026) - see
-    backup-fileserv01.ps1's own note for why. Measured real-world throughput on this leg: ~26
-    Mbit/s copying 32k small files (~25 KB average), dominated by SMB per-file protocol overhead
-    rather than raw bandwidth - don't assume a higher --threads helps without validating it with
-    scripts/benchmark-threads.ps1 against this actual NAS first.
+    Thin wrapper around scripts\rustcopy-launcher.ps1's "nas-qnap" profile (PIANO_MIGLIORAMENTI.md,
+    "Refactor script -> wrapper"): all the actual invocation/exit-code/report/SMB-mapping logic
+    now lives in the launcher, so a fix there only needs to happen once. This script's remaining
+    job is to (1) self-seed its profile on first run, (2) bridge the pre-existing SMB credentials
+    file to the shape the launcher expects, and (3) support -Subfolder as a one-off override
+    without persisting it into the stored profile.
 
-    Requires SMB credentials (user "backup") in scripts\nas2-credentials.local.ps1, which is NOT
-    committed to git (see .gitignore: scripts/*.local.ps1) so the password never ends up in
-    source control. Establishes a credentialed SMB mapping to the share root before the copy and
-    removes it afterwards, whether the copy succeeded or not.
+    Credentials adapter (decision "opzione 2", 18 Ago 2026): the launcher's SMB-credentialed
+    profiles expect a creds_file defining $SmbUser/$SmbPassword, a different shape from this
+    script's pre-existing scripts\nas2-credentials.local.ps1 ($Nas2User/$Nas2Password). Rather
+    than rename the variables in that file directly -- it holds a real password and a human, not
+    this script, has to touch it -- Sync-LegacyNasCredentials below regenerates a
+    nas-qnap-credentials.local.ps1 adapter file from it on every run, so the two stay in sync
+    automatically if the password in the legacy file ever changes. Both files are gitignored
+    (scripts/*.local.ps1).
 
-    Shares the actual invocation/exit-code logic with backup-fileserv01.ps1 via
-    scripts/_ingest-common.ps1, so a fix there only needs to happen once.
+    Measured real-world throughput on this leg: ~26 Mbit/s copying 32k small files (~25 KB
+    average), dominated by SMB per-file protocol overhead rather than raw bandwidth - don't
+    assume a higher --threads helps without validating it with scripts/benchmark-threads.ps1
+    against this actual NAS first.
 
 .EXAMPLE
     .\scripts\backup-nas-qnap.ps1
@@ -28,59 +35,93 @@ param(
     [switch]$DryRun,
     [int]$Threads,   # validate with .\scripts\benchmark-threads.ps1 before hardcoding a value here
     # Copy into a subfolder of the share instead of its root (e.g. "backup01" for
-    # \\192.168.1.187\datas01\backup01). The SMB credential mapping still targets the share root.
+    # \\192.168.1.187\datas01\backup01), for this run only -- does not modify the stored profile.
     [string]$Subfolder
 )
 
 $ErrorActionPreference = "Stop"
 
-$RepoRoot   = Split-Path -Parent $PSScriptRoot
-$Exe        = Join-Path $RepoRoot "target\release\robocopy_ingest.exe"
-$Source     = "C:\Users\auresystem\claude-code"
-$DestRoot   = "\\192.168.1.187\datas01"
-$Dest       = if ($Subfolder) { Join-Path $DestRoot $Subfolder } else { $DestRoot }
-$ReportsDir = Join-Path $RepoRoot "_ops_reports"
-$Timestamp  = Get-Date -Format "yyyyMMdd_HHmmss"
+. (Join-Path $PSScriptRoot "_profiles-common.ps1")
 
-New-Item -ItemType Directory -Force -Path $ReportsDir | Out-Null
+function Sync-LegacyNasCredentials {
+    param(
+        [Parameter(Mandatory)][string]$NewCredsPath,
+        [Parameter(Mandatory)][string]$LegacyCredsPath
+    )
 
-if (-not (Test-Path $Exe)) {
-    Write-Host "Binary not found at $Exe - build it first with:" -ForegroundColor Yellow
-    Write-Host "  cargo build --release" -ForegroundColor Yellow
-    exit 1
+    if (-not (Test-Path -LiteralPath $LegacyCredsPath)) { return $false }
+
+    # Dot-sourced in a nested scope of this function, not the script's own scope, so
+    # $Nas2User/$Nas2Password never leak into the rest of this script.
+    . $LegacyCredsPath
+    if (-not $Nas2User -or -not $Nas2Password) { return $false }
+
+    $content = @"
+<#
+    Auto-generated adapter (regenerated on every backup-nas-qnap.ps1 run) - translates
+    scripts\nas2-credentials.local.ps1's `$Nas2User/`$Nas2Password into the shape
+    scripts\rustcopy-launcher.ps1 profiles expect. Do not edit by hand: edit
+    nas2-credentials.local.ps1 instead, this file is overwritten from it every run.
+#>
+
+`$SmbUser     = '$Nas2User'
+`$SmbPassword = '$Nas2Password'
+"@
+    Set-Content -LiteralPath $NewCredsPath -Value $content -Encoding utf8
+    return $true
 }
 
-$credsFile = Join-Path $PSScriptRoot "nas2-credentials.local.ps1"
-if (-not (Test-Path $credsFile)) {
-    Write-Host "NAS backup skipped: $credsFile not found." -ForegroundColor Yellow
+$ProfilesPath    = Join-Path $PSScriptRoot "profiles.json"
+$NewCredsFile    = "nas-qnap-credentials.local.ps1"
+$NewCredsPath    = Join-Path $PSScriptRoot $NewCredsFile
+$LegacyCredsPath = Join-Path $PSScriptRoot "nas2-credentials.local.ps1"
+
+if (-not (Sync-LegacyNasCredentials -NewCredsPath $NewCredsPath -LegacyCredsPath $LegacyCredsPath)) {
+    Write-Host "NAS backup skipped: $LegacyCredsPath not found." -ForegroundColor Yellow
     Write-Host "Create it with `$Nas2User and `$Nas2Password to enable this script." -ForegroundColor Yellow
     exit 1
 }
-. $credsFile
 
-. (Join-Path $PSScriptRoot "_ingest-common.ps1")
-
-$mappingEstablished = $false
-try {
-    Write-Host "Authenticating to $DestRoot as $Nas2User ..." -ForegroundColor Cyan
-    New-SmbMapping -RemotePath $DestRoot -UserName $Nas2User -Password $Nas2Password -Persistent $false -ErrorAction Stop | Out-Null
-    $mappingEstablished = $true
-
-    # No need to pre-create $Dest (subfolder or not): robocopy_ingest's own execute() already
-    # creates the destination directory if missing (outside --dry-run) before transferring.
-    $exitCode = Invoke-Ingest -Exe $Exe -Label "claude-code_nas-qnap" -Source $Source -Dest $Dest `
-        -ReportsDir $ReportsDir -Timestamp $Timestamp -Threads $Threads -DryRun:$DryRun
+$DestRoot = "\\192.168.1.187\datas01"
+$defaults = [PSCustomObject]@{
+    name               = "nas-qnap"
+    source             = "C:\Users\auresystem\claude-code"
+    dest               = $DestRoot
+    threads            = $null
+    mirror             = $false
+    verify_integrity   = $true
+    hash_algo          = "blake3"
+    requires_smb_creds = $true
+    creds_file         = $NewCredsFile
 }
-catch {
-    Write-Host "Could not reach/authenticate to $DestRoot : $_" -ForegroundColor Red
-    $exitCode = 2
-}
-finally {
-    if ($mappingEstablished) {
-        Remove-SmbMapping -RemotePath $DestRoot -Force -ErrorAction SilentlyContinue | Out-Null
+Confirm-RustcopyProfile -Path $ProfilesPath -Defaults $defaults | Out-Null
+
+if ($Subfolder) {
+    # One-off override: run against a subfolder of the share without persisting it into the
+    # stored profile (which stays pointed at the share root). Reuses -ProfilesPath, the same
+    # extension point the launcher already exposes for pointing it at a non-default profiles
+    # file, instead of adding a new override mechanism to the launcher itself.
+    $override = [PSCustomObject]@{
+        name               = $defaults.name
+        source             = $defaults.source
+        dest               = Join-Path $DestRoot $Subfolder
+        threads            = $defaults.threads
+        mirror             = $defaults.mirror
+        verify_integrity   = $defaults.verify_integrity
+        hash_algo          = $defaults.hash_algo
+        requires_smb_creds = $defaults.requires_smb_creds
+        creds_file         = $defaults.creds_file
     }
-    # Credentials only need to live for the duration of this script.
-    Remove-Variable -Name Nas2User, Nas2Password -ErrorAction SilentlyContinue
+    $tempProfilesPath = Join-Path ([System.IO.Path]::GetTempPath()) "rustcopy-nas-qnap-subfolder-$PID.json"
+    Save-RustcopyProfiles -Path $tempProfilesPath -Profiles @($override)
+    try {
+        & (Join-Path $PSScriptRoot "rustcopy-launcher.ps1") -Profile $defaults.name -DryRun:$DryRun -Threads $Threads -ProfilesPath $tempProfilesPath
+        exit $LASTEXITCODE
+    }
+    finally {
+        Remove-Item -LiteralPath $tempProfilesPath -Force -ErrorAction SilentlyContinue
+    }
 }
 
-exit $exitCode
+& (Join-Path $PSScriptRoot "rustcopy-launcher.ps1") -Profile $defaults.name -DryRun:$DryRun -Threads $Threads -ProfilesPath $ProfilesPath
+exit $LASTEXITCODE

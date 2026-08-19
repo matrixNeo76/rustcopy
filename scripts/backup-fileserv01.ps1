@@ -4,20 +4,17 @@
     share - no NAS-style credential mapping needed).
 
 .DESCRIPTION
-    Split out from the old combined run-ingest-claude-code.ps1 (5 August 2026): the SMB-to-
-    Windows-share and SMB-to-NAS legs turned out to have different enough performance profiles
-    in practice (measured on the NAS leg: ~26 Mbit/s realised throughput copying 32k small files,
-    dominated by SMB per-file overhead) that each destination deserves its own --threads tuning
-    without a shared script muddying which number applies to which leg. See
-    scripts/benchmark-threads.ps1 to validate a value for THIS destination before hardcoding one
-    below via -Threads.
+    Thin wrapper around scripts\rustcopy-launcher.ps1's "fileserv01" profile (PIANO_MIGLIORAMENTI.md,
+    "Refactor script -> wrapper"): all the actual invocation/exit-code/report logic now lives in
+    the launcher (via scripts\_ingest-common.ps1's Invoke-Ingest, as before), so a fix there only
+    needs to happen once instead of being duplicated per destination script. This script's only
+    remaining job is to self-seed its profile into scripts\profiles.json on first run (via
+    Confirm-RustcopyProfile) with exactly the values it used to hardcode directly, then delegate.
 
-    Shares the actual invocation/exit-code logic with backup-nas-qnap.ps1 via
-    scripts/_ingest-common.ps1, so a fix there only needs to happen once.
-
-    Report/log/html are written under this repo's own _ops_reports folder, OUTSIDE the source
-    tree being copied - this avoids the self-referential integrity "mismatch" that happens when
-    the tool's own live log file sits inside the folder it is scanning.
+    See scripts/benchmark-threads.ps1 to validate a --threads value for THIS destination before
+    hardcoding one below via -Threads. Measured on the NAS leg (backup-nas-qnap.ps1): ~26 Mbit/s
+    realised throughput copying 32k small files, dominated by SMB per-file overhead -- the same
+    caution likely applies here.
 
 .EXAMPLE
     .\scripts\backup-fileserv01.ps1
@@ -32,24 +29,21 @@ param(
 
 $ErrorActionPreference = "Stop"
 
-$RepoRoot   = Split-Path -Parent $PSScriptRoot
-$Exe        = Join-Path $RepoRoot "target\release\robocopy_ingest.exe"
-$Source     = "C:\Users\auresystem\claude-code"
-$Dest       = "\\FILESERV01\dati01\provarust2"
-$ReportsDir = Join-Path $RepoRoot "_ops_reports"
-$Timestamp  = Get-Date -Format "yyyyMMdd_HHmmss"
+. (Join-Path $PSScriptRoot "_profiles-common.ps1")
 
-New-Item -ItemType Directory -Force -Path $ReportsDir | Out-Null
-
-if (-not (Test-Path $Exe)) {
-    Write-Host "Binary not found at $Exe - build it first with:" -ForegroundColor Yellow
-    Write-Host "  cargo build --release" -ForegroundColor Yellow
-    exit 1
+$ProfilesPath = Join-Path $PSScriptRoot "profiles.json"
+$defaults = [PSCustomObject]@{
+    name               = "fileserv01"
+    source             = "C:\Users\auresystem\claude-code"
+    dest               = "\\FILESERV01\dati01\provarust2"
+    threads            = $null
+    mirror             = $false
+    verify_integrity   = $true
+    hash_algo          = "blake3"
+    requires_smb_creds = $false
+    creds_file         = $null
 }
+Confirm-RustcopyProfile -Path $ProfilesPath -Defaults $defaults | Out-Null
 
-. (Join-Path $PSScriptRoot "_ingest-common.ps1")
-
-$exitCode = Invoke-Ingest -Exe $Exe -Label "claude-code_fileserv01" -Source $Source -Dest $Dest `
-    -ReportsDir $ReportsDir -Timestamp $Timestamp -Threads $Threads -DryRun:$DryRun
-
-exit $exitCode
+& (Join-Path $PSScriptRoot "rustcopy-launcher.ps1") -Profile "fileserv01" -DryRun:$DryRun -Threads $Threads -ProfilesPath $ProfilesPath
+exit $LASTEXITCODE

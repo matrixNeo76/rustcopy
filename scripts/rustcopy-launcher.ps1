@@ -6,10 +6,12 @@
 
 .DESCRIPTION
     Reads/writes scripts\profiles.json (gitignored - see scripts\profiles.example.json for the
-    shape). Every actual copy still goes through scripts\_ingest-common.ps1's Invoke-Ingest, the
-    same shared helper used by backup-fileserv01.ps1/backup-nas-qnap.ps1 -- this script only
-    builds the profile data and the arguments passed to it; it never talks to robocopy_ingest.exe
-    directly and never reimplements any backup logic of its own.
+    shape) via scripts\_profiles-common.ps1, shared with the thin wrapper scripts
+    (backup-fileserv01.ps1, backup-nas-qnap.ps1, run-all-profiles.ps1) so they can self-seed their
+    own profile without dot-sourcing this whole file. Every actual copy still goes through
+    scripts\_ingest-common.ps1's Invoke-Ingest, the same shared helper those wrappers used to call
+    directly -- this script only builds the profile data and the arguments passed to it; it never
+    talks to robocopy_ingest.exe directly and never reimplements any backup logic of its own.
 
     Two modes:
       - No -Profile given: interactive menu (list/new/edit/delete/run, with a menu of --mirror /
@@ -27,12 +29,15 @@
 
     SMB credentials: a profile with requires_smb_creds = true dot-sources its creds_file (relative
     to this script's folder) before mapping the destination's UNC share root, same lifecycle as
-    backup-nas-qnap.ps1 (map before the copy, remove after, even on failure). The creds file must
-    define $SmbUser and $SmbPassword -- this is a NEW, generic convention for launcher-managed
-    profiles, deliberately not reusing scripts\nas2-credentials.local.ps1's existing $Nas2User/
-    $Nas2Password names: that file belongs to backup-nas-qnap.ps1, which is not yet a wrapper
-    around this launcher (see PIANO_MIGLIORAMENTI.md, "Refactor script -> wrapper", a separate
-    follow-up step). The new-profile wizard offers to generate a fresh creds file when needed.
+    backup-nas-qnap.ps1 used to implement directly (map before the copy, remove after, even on
+    failure). The creds file must define $SmbUser and $SmbPassword -- a generic convention for
+    launcher-managed profiles, deliberately not the legacy scripts\nas2-credentials.local.ps1's
+    $Nas2User/$Nas2Password names. backup-nas-qnap.ps1 is now a thin wrapper around this launcher
+    (see PIANO_MIGLIORAMENTI.md, "Refactor script -> wrapper") and keeps working against the
+    legacy file via its own Sync-LegacyNasCredentials adapter, which regenerates a
+    $SmbUser/$SmbPassword file from it on every run rather than requiring the legacy file to be
+    hand-edited. The new-profile wizard offers to generate a fresh creds file directly when a
+    profile created some other way needs one.
 
 .EXAMPLE
     .\scripts\rustcopy-launcher.ps1
@@ -65,41 +70,9 @@ if (-not (Test-Path $Exe)) {
 }
 
 . (Join-Path $PSScriptRoot "_ingest-common.ps1")
-
-# ---------------------------------------------------------------------------------------------
-# Profile storage
-# ---------------------------------------------------------------------------------------------
-
-function Import-RustcopyProfiles {
-    param([Parameter(Mandatory)][string]$Path)
-
-    if (-not (Test-Path $Path)) { return @() }
-    $raw = Get-Content -LiteralPath $Path -Raw -ErrorAction Stop
-    if ([string]::IsNullOrWhiteSpace($raw)) { return @() }
-
-    $parsed = $raw | ConvertFrom-Json
-    if ($null -eq $parsed) { return @() }
-    # ConvertFrom-Json returns a single PSCustomObject (not a 1-element array) when the JSON's
-    # top-level array has exactly one element -- wrap so callers can always treat the result as
-    # a collection regardless of how many profiles are stored.
-    if ($parsed -is [System.Array]) { return $parsed }
-    return @($parsed)
-}
-
-function Save-RustcopyProfiles {
-    param(
-        [Parameter(Mandatory)][string]$Path,
-        [AllowEmptyCollection()][array]$Profiles
-    )
-
-    if ($null -eq $Profiles) { $Profiles = @() }
-    # Passed via -InputObject (never piped): piping an array into ConvertTo-Json enumerates it
-    # element by element, which loses the array wrapper entirely for a 0- or 1-element array
-    # (silently producing "" or a bare {...} instead of "[]" / "[{...}]") -- -InputObject binds
-    # the whole array as one parameter value instead, which serializes correctly at every count.
-    $json = ConvertTo-Json -InputObject $Profiles -Depth 6
-    Set-Content -LiteralPath $Path -Value $json -Encoding utf8
-}
+# Import-RustcopyProfiles / Save-RustcopyProfiles / Get-UncShareRoot / Confirm-RustcopyProfile --
+# shared with the wrapper scripts (backup-fileserv01.ps1, backup-nas-qnap.ps1, run-all-profiles.ps1).
+. (Join-Path $PSScriptRoot "_profiles-common.ps1")
 
 # ---------------------------------------------------------------------------------------------
 # Prompt helpers (D-Q1: plain terminal input, validated, re-prompt on error)
@@ -237,13 +210,6 @@ function Edit-RustcopyProfileInteractive {
 # ---------------------------------------------------------------------------------------------
 # Run a profile
 # ---------------------------------------------------------------------------------------------
-
-function Get-UncShareRoot {
-    param([Parameter(Mandatory)][string]$UncPath)
-    $match = [regex]::Match($UncPath, '^\\\\[^\\]+\\[^\\]+')
-    if (-not $match.Success) { return $null }
-    return $match.Value
-}
 
 function Invoke-RustcopyProfile {
     param(
