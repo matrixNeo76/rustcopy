@@ -10,6 +10,10 @@ generated:
 
 # 🚀 robocopy-ingest-cli (rustcopy)
 
+[![CI](https://github.com/matrixNeo76/rustcopy/actions/workflows/ci.yml/badge.svg)](https://github.com/matrixNeo76/rustcopy/actions/workflows/ci.yml)
+[![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
+[![Crate version](https://img.shields.io/badge/version-6.0.0-informational.svg)](Cargo.toml)
+
 > **CLI High-Performance in Rust per Ingestion Massiva, Backup Enterprise, Disaster Recovery e Real-Time Web Monitoring su Windows (e Cross-Platform).**
 
 `robocopy-ingest-cli` è uno strumento da riga di comando per il **trasferimento, sincronizzazione, backup e verifica di integrità di grandi volumi di dati (da 50 GB a oltre 10 TB con milioni di file)**.  
@@ -60,11 +64,13 @@ graph LR
 | `--pattern <GLOB>` | `*` | 3° arg | Pattern dei file da includere nell'ingestion (default `*` = tutti i file). |
 | `--config <PATH>` | *nessuno* | — | Carica la configurazione da un file TOML riutilizzabile. |
 | `--threads <N>` | *CPU logiche* | `/MT:N` | Thread paralleli di copia per Robocopy (1-128). |
+| `--retries <N>` | `3` | `/R:N` | Retry per file fallito, sia lato robocopy sia come budget del retry loop esterno di rustcopy. |
+| `--retry-wait-seconds <N>` | `5` | `/W:N` | Attesa in secondi tra un retry e l'altro, sia lato robocopy sia come base del backoff esterno. |
 | `--preserve-acl` | `false` | `/COPYALL` | Preserva i permessi di sicurezza NTFS e le ACL di dominio. |
 | `--preserve-timestamps` | `false` | `/DCOPY:DAT` | Preserva le date di creazione e modifica delle directory. |
 | `--long-paths` | `false` | — | Attiva il prefisso `\\?\` per percorsi lunghi oltre 240 caratteri. |
 | `--mirror` | `false` | `/MIR` | Sincronizza ed elimina i file in destinazione non presenti in sorgente. Senza `--force-purge`, se ci sono file estranei in destinazione l'esecuzione si interrompe (exit code 3) o chiede conferma a console. Incompatibile con `--backup-type`. |
-| `--backup-type <full\|incremental\|differential>` | *nessuno* | — | (Release 6.0.0) Attiva un backup a generazioni: scrive in `<dest>/<timestamp>_<tipo>/` e registra la generazione in `<dest>/.rustcopy_generations.json`. `full` copia tutto; `incremental` copia solo i file nuovi/cambiati dall'**ultima generazione di qualsiasi tipo** (richiede che ne esista già una); `differential` copia i file nuovi/cambiati dall'**ultimo full** (non dall'ultimo differenziale — richiede che esista già un full). Omesso, il comportamento è quello di sempre (sync diretto in `--dest`, nessuna cartella di generazione). Vedi [RUNBOOK.md](file:///c:/Users/auresystem/repos/robocopy-ingest-cli/RUNBOOK.md) per un esempio completo. |
+| `--backup-type <full\|incremental\|differential>` | *nessuno* | — | (Release 6.0.0) Attiva un backup a generazioni: scrive in `<dest>/<timestamp>_<tipo>/` e registra la generazione in `<dest>/.rustcopy_generations.json`. `full` copia tutto; `incremental` copia solo i file nuovi/cambiati dall'**ultima generazione di qualsiasi tipo** (richiede che ne esista già una); `differential` copia i file nuovi/cambiati dall'**ultimo full** (non dall'ultimo differenziale — richiede che esista già un full). Omesso, il comportamento è quello di sempre (sync diretto in `--dest`, nessuna cartella di generazione). Vedi [RUNBOOK.md](RUNBOOK.md) per un esempio completo. |
 | `--keep-generations <N>` | *nessuno* | — | (Release 6.0.0, F35) Ritenzione: mantiene gli ultimi N **cicli** (un `full` più tutti gli `incremental`/`differential` successivi fino al prossimo `full`) ed elimina interamente le cartelle e le voci di manifest dei cicli più vecchi. Richiede `--backup-type` (nessuna generazione da ruotare altrimenti) e, come `--mirror`, richiede `--force-purge` o conferma interattiva prima di eliminare — altrimenti l'esecuzione si interrompe con exit code 5 (il backup appena eseguito resta comunque salvato, solo la rotazione viene annullata). |
 | `--force-purge` | `false` | — | Disattiva la conferma interattiva per l'eliminazione di file/cartelle: per la modalità `--mirror` (F21) e, separatamente, per la rotazione di `--keep-generations` (F35). |
 | `--exclude-files <GLOB>` | *nessuno* | `/XF` | Esclude file corrispondenti ai pattern indicati (ripetibile). |
@@ -78,6 +84,8 @@ graph LR
 | `--fast-verify` | `false` | — | Salta il ri-hashing dei file il cui size+mtime sorgente coincidono con l'ultima verifica riuscita, tracciata in `<dest>/.ingest_cache`. Un file che fallisce la verifica non viene mai messo in cache come "fidato", quindi resta segnalato ad ogni run finché non è davvero corretto (F28). |
 | `--ignore-transient-missing` | `false` | — | Dopo `--verify-integrity`, non considera un fallimento l'assenza di file con pattern transienti noti (`.log`, `.tmp`, `.git/objects/`) (F26a). |
 | `--hash-algo <ALGO>` | `sha256` | — | Algoritmo per la verifica checksum: `sha256`, `blake3` (3-5x più veloce) o `xxh3` (~5-10x più veloce di blake3, **non crittografico** — solo per rilevare corruzioni accidentali, non per un backup dove un attaccante potrebbe aver manomesso i dati). |
+| `--compare-baseline` | `false` | — | Esegue anche una copia ricorsiva naive (l'equivalente di `Get-ChildItem \| Copy-Item`) verso una destinazione temporanea e ne cronometra la durata, per confronto con robocopy. |
+| `--report-path <PATH>` | `./robocopy_ingest_report.json` | — | Percorso del report JSON finale. |
 | `--log-level <LIVELLO>` | `debug` | — | Verbosità scritta su `--log-path` (trace/debug/info/warn/error). Ignorato se `RUST_LOG` è impostata. |
 | `--quiet` | `false` | — | Scorciatoia per `--log-level warn`: elimina le righe DEBUG per-file, la causa principale dei log da GB su alberi grandi (F27). |
 | `--log-max-bytes <N>` | 20 MB | — | Ruota il log precedente (`<path>.1`, `.2`, ...) quando raggiunge N byte. `0` disattiva la rotazione. |
@@ -99,6 +107,53 @@ graph LR
 | `--uninstall-service` | `false` | — | (Release 6.0.0, F37) Rimuove il servizio Windows precedentemente installato ed esce. **Richiede Amministratore**. Non richiede `--source`/`--dest`. Incompatibile con `--install-service`. |
 | `--enable-dedup` | `false` | — | **[NON IMPLEMENTATO]** Accettato per compatibilità futura; nessuna cache di stato viene usata. |
 | `--dry-run` | `false` | `/L` | Simula le operazioni senza modificare o copiare file. |
+
+> [!NOTE]
+> **`--exclude-files`/`--exclude-dirs` e la configurazione multi-job (`[[jobs]]`, F33) hanno due semantiche di merge diverse**, per scelta deliberata:
+> - **CLI + i default di primo livello del file TOML si sommano**: `--exclude-files` passato sulla riga di comando si aggiunge a quelli eventualmente presenti nel file, non li sostituisce.
+> - **Un singolo `[[jobs]]` che dichiara le proprie `exclude_files`/`exclude_dirs` le sostituisce per intero** rispetto ai default di primo livello — non le eredita. Un job che vuole "i default più le proprie" deve ripetere anche quelle di default.
+>
+> Vedi `examples/scheduled-incremental.toml` per un esempio commentato dei due casi.
+
+---
+
+## 🔢 Codici di Uscita
+
+| Codice | Significato |
+|---|---|
+| `0` | Successo. |
+| `1` | Il trasferimento è fallito (robocopy ha esaurito i retry su almeno un elemento). |
+| `2` | Errore d'uso o non recuperabile (flag non validi, precondizione violata, `--pre-command` fallito). |
+| `3` | `--mirror`: la purge di sicurezza è stata abortita (file estranei in destinazione senza `--force-purge` né conferma interattiva). |
+| `4` | `--verify-integrity` ha trovato un mismatch di checksum — il trasferimento in sé è comunque riuscito, distinto da `1` (F29b). |
+| `5` | `--keep-generations`: la purge di ritenzione è stata abortita — il backup appena eseguito resta comunque salvato, solo la rotazione dei cicli più vecchi viene annullata (F35). |
+
+---
+
+## 🗂️ Generazioni di Backup (Full / Incrementale / Differenziale)
+
+`--backup-type <full|incremental|differential>` (Release 6.0.0, F34) trasforma il comportamento di default (sync diretto in `--dest`) in un backup a generazioni: ogni run scrive in una nuova sottocartella `<dest>/<timestamp>_<tipo>/` e registra la generazione in `<dest>/.rustcopy_generations.json` (o `<dest>/.rustcopy_generations.<nome-job>.json` in modalità multi-job `[[jobs]]`, F33 — ogni job ha il proprio manifest namespaced, D12: due job che condividono la stessa `dest` altrimenti mescolerebbero le rispettive cronologie di generazioni), che conserva per ciascuna l'inventario **completo** della sorgente a quel momento (non solo il delta copiato). `incremental` diffa contro l'ultima generazione di qualsiasi tipo (richiede che ne esista già una); `differential` diffa sempre contro l'ultimo `full` (non contro l'ultimo differenziale), così ogni differenziale ha lo stesso riferimento indipendentemente da quanti ne sono girati nel frattempo. Incompatibile con `--mirror` (un mirror presume una singola destinazione speculare, non un manifest con più generazioni). `--keep-generations <N>` (F35) ruota per **cicli** (un `full` più tutti gli `incremental`/`differential` fino al prossimo `full`), non per singola generazione — così non elimina mai un `full` ancora referenziato da una generazione più recente rimasta.
+
+## 📸 Volume Shadow Copy (VSS)
+
+`--vss-snapshot` crea uno snapshot VSS del volume sorgente prima di scansionare/copiare (via `vssadmin.exe`), utile per leggere file bloccati da altri processi invece di fallire dopo aver esaurito i retry. **Richiede Amministratore**; fallisce in modo esplicito senza fallback silenzioso sul volume live. Solo Windows. Lo snapshot è **crash-consistent**, non applicazione-consistent: non c'è coordinamento con VSS writer applicativi (es. un database), quindi va combinato con `--pre-command`/`--post-command` se serve fermare un servizio prima dello snapshot.
+
+## ⏰ Scheduling e Servizi Windows
+
+`--install-schedule <SPEC>` registra l'invocazione corrente (senza i flag di scheduling stessi) come voce ricorrente di Task Scheduler via `schtasks.exe` — `SPEC` accetta `daily@HH:MM`, `hourly@N` o `weekly@LUN,...@HH:MM`. Nessuno scheduler interno: è Windows stesso a risvegliare il binario alla scadenza, rileggendo `--config` se presente. `--install-service`/`--uninstall-service` registra invece questo binario come **servizio Windows reale** via Service Control Manager.
+
+> [!IMPORTANT]
+> **Ci sono due identità di servizio distinte, non una sola**:
+> - `RustcopyIngestService` — il servizio di `robocopy_ingest.exe` stesso (F37). Una volta avviato resta **inattivo** (risponde solo a Stop/Interrogate): è pura infrastruttura, senza logica di backup al suo interno.
+> - `RustcopyNotifyServer` — il servizio di `notify-server.exe` (F41), che **ospita davvero** il router axum. Non è lo stesso servizio con un nome diverso: sono due processi, due identità SCM, installate/rimosse separatamente con `--install-service`/`--uninstall-service` sul rispettivo binario.
+
+## ▶️⏹️ Comandi Pre/Post Job
+
+`--pre-command <CMD>` gira **prima di tutto**, incluso lo snapshot VSS — utile per fermare un servizio/database perché i suoi file siano coerenti al momento della copia. Se esce con codice diverso da zero (o non può essere lanciato), il job si interrompe **senza copiare nulla** (exit code 2). `--post-command <CMD>` gira dopo che il backup è già riuscito (es. riavviare il servizio fermato da `--pre-command`): a differenza del pre-command, un suo fallimento **non** fa fallire il job — viene solo loggato e registrato nel campo `post_command_error` del report JSON. Entrambi via `cmd /C` su Windows, `sh -c` altrove.
+
+## ⚡ Fast Verify
+
+`--fast-verify` (richiede `--verify-integrity`) salta il ri-hashing dei file il cui size+mtime sorgente coincidono con l'ultima verifica riuscita, tracciata in `<dest>/.ingest_cache`. Un file che fallisce la verifica non viene mai messo in cache come "fidato": resta ri-controllato ad ogni run finché non passa davvero. **Limite dichiarato**: si fida dell'identità della sorgente (size+mtime), non ri-controlla i byte reali della destinazione — una corruzione indipendente lato destinazione (es. bit rot) con una sorgente invariata non verrebbe rilevata in un run in cui quel file viene saltato.
 
 ---
 
@@ -240,19 +295,19 @@ di `--webhook-url`; risponde `200` se consegnato su tutti i canali, `401` senza/
 ## 🏗️ Architettura e Documentazione Estesa
 
 Per dettagli tecnici approfonditi, diagrammi architetturali e roadmap di sviluppo consultare:
-- 📖 **[RUNBOOK.md](file:///c:/Users/auresystem/repos/robocopy-ingest-cli/RUNBOOK.md)** — Manuale operativo, copie multi-sorgente e comandi reali verificati.
-- 📄 **[ARCHITECTURE.md](file:///c:/Users/auresystem/repos/robocopy-ingest-cli/ARCHITECTURE.md)** — Diagrammi di sequenza, gestione memoria anti-OOM e struttura interna dei moduli.
-- 📊 **[ANALYSIS.md](file:///c:/Users/auresystem/repos/robocopy-ingest-cli/ANALYSIS.md)** — Diagnosi delle criticità storiche e validazione dei 284 test.
-- 🗺️ **[ROADMAP.md](file:///c:/Users/auresystem/repos/robocopy-ingest-cli/ROADMAP.md)** — Diagramma Gantt dello storico delle release e pianificazione futura.
-- 🤖 **[AGENTS.md](file:///c:/Users/auresystem/repos/robocopy-ingest-cli/AGENTS.md)** — Linee guida per sviluppatori e contributori AI.
+- 📖 **[RUNBOOK.md](RUNBOOK.md)** — Manuale operativo, copie multi-sorgente e comandi reali verificati.
+- 📄 **[ARCHITECTURE.md](ARCHITECTURE.md)** — Diagrammi di sequenza, gestione memoria anti-OOM e struttura interna dei moduli.
+- 📊 **[ANALYSIS.md](ANALYSIS.md)** — Diagnosi delle criticità storiche e validazione dei 286 test.
+- 🗺️ **[ROADMAP.md](ROADMAP.md)** — Diagramma Gantt dello storico delle release e pianificazione futura.
+- 🤖 **[AGENTS.md](AGENTS.md)** — Linee guida per sviluppatori e contributori AI.
 
 ---
 
-## 🧪 Esecuzione dei Test (284 di Base, 299 con `notify-server`)
+## 🧪 Esecuzione dei Test (286 di Base, 301 con `notify-server`)
 
 ```bash
-cargo test                              # 284 test (default build, senza axum)
-cargo test --features notify-server     # 299 test (+15 test sul router axum e sui binari reali)
+cargo test                              # 286 test (default build, senza axum)
+cargo test --features notify-server     # 301 test (+15 test sul router axum e sui binari reali)
 ```
 
 Esito atteso: `test result: ok.` su tutti i target, in entrambe le modalità.
