@@ -635,6 +635,13 @@ async fn execute(args: &Args, child_pid: Arc<AtomicU32>) -> Result<RunOutcome> {
     report.encrypted = encrypted_count.unwrap_or(0) > 0;
     report.decrypted = decrypted_count.unwrap_or(0) > 0;
 
+    // Must read before write_to below overwrites this exact path -- nothing else in this
+    // function touches args.report_path before that point, so reading it here (rather than
+    // right before write_to) is equally correct and lets the webhook payload below carry the
+    // comparison too.
+    let previous_report = robocopy_ingest::report::read_previous_report(&args.report_path);
+    report.attach_previous_comparison(previous_report);
+
     if let Some(post_command) = args.post_command.clone() {
         let error = spawn_blocking_with_span(move || {
             robocopy_ingest::hooks::run_post_command(&post_command)
@@ -887,6 +894,9 @@ async fn execute_generation_backup(
         timing,
     );
     report.copy_error = copy_error.as_ref().map(|error| error.to_string());
+
+    let previous_report = robocopy_ingest::report::read_previous_report(&args.report_path);
+    report.attach_previous_comparison(previous_report);
 
     if let Some(post_command) = args.post_command.clone() {
         let error = spawn_blocking_with_span(move || {
