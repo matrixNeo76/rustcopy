@@ -65,7 +65,7 @@ jobs:
           for f in README.md ARCHITECTURE.md ANALYSIS.md ROADMAP.md CLAUDE.md AGENTS.md \
                    RUNBOOK.md CHANGELOG.md SECURITY.md NEXT_SESSION_PROMPT.md \
                    PIANO_MIGLIORAMENTI.md \
-                   docs/archive/PIANO_NOTIFY_SERVER.md; do
+                   docs/archive/PIANO_NOTIFY_SERVER.md docs/archive/AGENT_HARNESS_PLAN.md; do
             echo "::group::okf parse $f"
             okf parse "$f"
             echo "::endgroup::"
