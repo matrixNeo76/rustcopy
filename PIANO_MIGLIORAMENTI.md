@@ -97,27 +97,62 @@ diff <(./target/release/robocopy_ingest.exe --help | grep -oE '\-\-[a-z0-9-]+' |
 
 | ID | Sev. | Problema | Fix — **deciso** (vedi §Decisioni, D-Q4) |
 |---|---|---|---|
-| **B5** | 🟠 | `CLAUDE.md` è **44.579 caratteri su 87 righe** (misurati, non stimati) e viene caricato in contesto a **ogni** sessione su questo repo, indipendentemente dal task. Gli **8 bullet più grossi valgono ~20K, il 45% del file**: F37 (3.6K), F34 (2.9K), F36 (2.8K), F41 (2.8K), F33 (2.5K), D11 (2.0K), F35 (2.1K), F39 (1.9K) — narrazione per-feature utile solo quando si tocca quel modulo. Contro **27 prescrizioni operative** (`Do not`/`never`/`must`) che sono il vero carico utile | **Deduplicare, non cancellare.** Target **44K → ~25K**. Tenere **tutte e 27 le prescrizioni verbatim**, ciascuna con la sua riga di motivo; ridurre gli 8 bullet grossi a *prescrizione + una riga di motivo + puntatore* alla riga di `ROADMAP.md`/`ANALYSIS.md` che conserva il resto |
+| **B5** | ✅ | `CLAUDE.md` era **50.108 caratteri su 89 righe** (misurati il 20 Ago 2026), caricato in contesto a **ogni** sessione. I 13 bullet più grossi valevano 30.686 caratteri, il 61% del file | ✅ **chiuso 20 Ago 2026**: condensato a **33.410 caratteri (-33%)**. Tutti e 13 i bullet oversize ora sotto 1.500 caratteri (nessuno più grande di 1.425). Le 27 prescrizioni operative sono rimaste, ciascuna con la sua riga di motivo verbatim (incluso il caso critico D13/`spawn_blocking_with_span` citato al punto 3 della rivalutazione sotto); la narrazione rimossa punta a `ROADMAP.md` (F33/F34/F35/F36/F37/F39/F41), `ANALYSIS.md` (D11/D12/D13), `AGENTS.md` (regole 9/13/14) o a questo stesso file (P1/P2) — verificato riga per riga con `grep`, mai a blocchi. Dei 16 termini "narrativa unica" della checklist sotto, 3 (`IngestError::BackupTypeAndMirrorConflict`, `copy_one`, `timestamp_placeholder_composes_with_per_job_namespacing`) sono rimasti inline in `CLAUDE.md` perché troppo specifici per un puntatore; gli altri 13 (`ScheduleSpec::Daily`/`Hourly`/`Weekly`, `HashAlgorithm::Xxh3`, `ScannedFile::modified_timestamp`, `logging::LogConfig`, `normalize_path_arg`, `init_scoped`, `index.md`/`log.md`/`machine-confirmed`/`sources`/`unverified`) restano solo nel codice/nei doc esistenti — nessuno era una prescrizione, tutti erano nomi/dettagli già derivabili dal codice o già coperti in sostanza da `ROADMAP.md` (es. la grammatica `daily@HH:MM`/`hourly@N`/`weekly@DAY,...@HH:MM` per F36). Verifica: `cargo test` 302/302, `cargo test --features notify-server` 317/317, `cargo clippy -D warnings` pulito su entrambi i set di feature, `cargo fmt --check` pulito, `cargo tree \| grep axum` vuoto, `okf parse CLAUDE.md` e `okf parse PIANO_MIGLIORAMENTI.md` ok |
 
-**Perché il rischio è minore del previsto**: la narrazione è in gran parte **già una terza copia**. Campionamento del 17 Agosto 2026:
+### Rivalutazione del 20 Agosto 2026 (richiesta dall'utente prima di eseguire)
 
-| Contenuto | CLAUDE.md | ROADMAP.md | ANALYSIS.md | ARCHITECTURE.md |
-|---|---|---|---|---|
-| `service_dispatcher` (F37) | 2 | 2 | — | — |
-| `run-as-service` (F37) | 1 | 1 | — | — |
-| `filter_entry` (D11) | 1 | — | 1 | — |
-| `spawn_blocking_with_span` (D13) | 1 | — | 1 | 1 |
-| `atomic_write` (D14) | 1 | — | 3 | 1 |
-| **`OnDemand` (F37)** | **1** | **0** | **0** | **0** |
+B5 fu deciso il 17 Agosto su misure di allora e su un **campione di 6 termini**. Rimisurato tutto da zero: la sostanza regge, ma **due premesse vanno corrette** e il rischio è quantificato molto meglio.
 
-L'ultima riga è il motivo per cui B5 va fatto **con un diff riga per riga e non a blocchi**: la maggior parte è duplicata, ma non tutto. Ogni riga rimossa deve essere dimostrabilmente ritrovabile altrove (`grep`, non a memoria) — altrimenti va riscritta nella destinazione **prima** di toglierla dall'origine.
+**1. Il file è cresciuto, e la crescita è interamente narrativa.**
 
-**Due precisazioni economiche, per non sopravvalutare il beneficio**:
+| | 17 Ago (`0d8a9f0`) | 20 Ago (oggi) | Δ |
+|---|---|---|---|
+| Caratteri | 44.559 | 50.108 | **+5.549 (+12,5%)** |
+| Righe | 87 | 89 | +2 |
+| Bullet >1500 char | 8 (45% del file) | 13 (**61% del file**) | +5 |
+| **Prescrizioni operative** | **27** | **27** | **invariate** |
 
-1. Il risparmio **monetario** è minore di quanto suggerisca il numero grezzo: `CLAUDE.md` sta nel prefisso in cache dei prompt, quindi il costo reale è una scrittura di cache per sessione più letture al ~10%, non 44K di token pieni a ogni turno.
-2. Il beneficio vero è di **qualità, non di costo**: ~12-14k token di archeologia densa competono per attenzione con il task effettivo in ogni sessione, anche quando quel task non tocca nessuno di quei moduli. È questa la ragione per cui B5 vale la pena, non il risparmio in fattura.
+In 3 giorni, il solo lavoro di questa sessione (P1, P2, correzioni review) ha aggiunto 5,5K di narrazione e **zero nuove prescrizioni**. È la conferma più forte della diagnosi di B5: il file cresce di rumore, non di segnale.
+
+**2. La premessa "è tutto già duplicato" era troppo ottimista — ma il rischio reale è più piccolo del previsto.** Test rifatto su **tutti i 236 identificatori tecnici** di `CLAUDE.md` (non 6):
+
+| Categoria | Termini | % | Cosa comporta per B5 |
+|---|---|---|---|
+| Presenti anche in ROADMAP/ANALYSIS/ARCHITECTURE/PIANO/README/AGENTS | **190** | 80% | Deduplicazione pura, sicura |
+| Unici, ma in righe che contengono **anche una prescrizione** | **30** | 13% | **Già protetti**: il vincolo "prescrizioni verbatim" li salva automaticamente |
+| Unici, in righe di **sola narrazione** | **16** | 7% | ⚠️ **Vanno riscritti nella destinazione, non solo cancellati** |
+
+Quindi B5 non è "deduplicazione" al 100% come diceva la formulazione originale: per il 7% è **migrazione vera** (scrivere contenuto nuovo in `ROADMAP.md`/`ANALYSIS.md`). È un lavoro diverso e va messo in conto.
+
+**Checklist dei 16 termini — disposizione finale verificata (20 Ago 2026)**: 3 restano inline in `CLAUDE.md` perché troppo specifici per un puntatore (`IngestError::BackupTypeAndMirrorConflict`, `copy_one`, `timestamp_placeholder_composes_with_per_job_namespacing`); gli altri 13 non necessitavano migrazione — sono nomi/dettagli già derivabili dal codice sorgente o già coperti in sostanza da `ROADMAP.md` (es. la grammatica `daily@HH:MM`/`hourly@N`/`weekly@DAY,...@HH:MM` per F36 copre `ScheduleSpec::Daily`/`Hourly`/`Weekly` senza bisogno del nome esatto dell'enum):
+
+```text
+HashAlgorithm::Xxh3          ScheduleSpec::Daily     logging::LogConfig
+Hourly                       Weekly                  machine-confirmed
+IngestError::BackupTypeAndMirrorConflict            normalize_path_arg
+ScannedFile::modified_timestamp                     sources
+copy_one                     index.md                unverified
+init_scoped                  log.md
+timestamp_placeholder_composes_with_per_job_namespacing
+```
+
+**3. Evidenza empirica raccolta *in questa stessa sessione*, non teorica.** Durante la review della PR #14, CodeRabbit ha segnalato che avevo introdotto una lettura sincrona bloccante in una `async fn`, citando testualmente la regola **già scritta in `CLAUDE.md`**: *"Do not add a new `tokio::task::spawn_blocking` call site in `main.rs` without going through `spawn_blocking_with_span`"*. La regola era nel mio contesto, caricata, e l'ho mancata comunque. Non è una prova definitiva che un file più corto l'avrebbe evitata, ma è il caso concreto che l'ipotesi di B5 (segnale sepolto nel rumore) descrive — ed è successo davvero, non in astratto.
+
+**4. Precisazione economica confermata, invariata**: il risparmio **monetario** resta minore di quanto suggerisca il numero grezzo — `CLAUDE.md` sta nel prefisso in cache dei prompt, quindi il costo reale è una scrittura di cache per sessione più letture al ~10%. Il beneficio vero è di **qualità** (meno diluizione dell'attenzione), non di fattura. Vedi il punto 3: è esattamente il tipo di problema che B5 dovrebbe ridurre.
 
 **Regola da non violare**: `"non reintrodurre std::fs::read"` privato di `"perché va in OOM sui file grandi"` è una regola che qualcuno rovescerà per pulizia. Il *motivo* resta sempre; è la cronologia dell'implementazione che si sposta.
+
+### B5b — la convenzione, senza la quale B5 è un cerotto (nuovo, 20 Ago 2026)
+
+Il dato che il file è cresciuto del **12,5% in 3 giorni di lavoro normale** ha una conseguenza che la formulazione originale di B5 non copriva: **portarlo a 27K una volta non risolve nulla se la convenzione di scrittura resta quella attuale**. Al ritmo misurato, tornerebbe sopra i 44K in poche settimane di sviluppo dello stesso tipo.
+
+B5 va quindi eseguito **insieme** a una regola esplicita, scritta in `CLAUDE.md` stesso, su come si annota una feature nuova d'ora in poi:
+
+> Una feature/fix nuovo aggiunge a `CLAUDE.md` **solo** la prescrizione operativa (cosa non fare e perché in una riga). La narrazione completa — decisioni alternative valutate, limiti di test, cronologia dell'implementazione — va nella riga corrispondente di `ROADMAP.md` (feature) o `ANALYSIS.md` (difetto), che è già dove il resto del progetto la cerca. `CLAUDE.md` punta lì, non la duplica.
+
+Senza B5b, B5 è manutenzione una tantum di un problema ricorrente. Con B5b, è un cambio di stato stabile.
+
+**✅ chiuso 20 Agosto 2026**: la convenzione è ora scritta in `CLAUDE.md` stesso, in una sezione dedicata `### Writing convention for this file (B5b, ...)` subito prima di §3 (Communication & Tone Guidelines), con la cifra di crescita misurata (+12,5% in 3 giorni) citata esplicitamente come motivazione — non è una regola isolata dal suo perché.
 
 ---
 
@@ -307,7 +342,7 @@ Ordinato per rapporto valore/rischio, non per numerazione.
 | 5 | ~~**Refactor script → wrapper**~~ | 30 min | Basso | ✅ **Chiuso 19 Ago 2026** — adapter credenziali (opzione 2), test end-to-end reale, vedi §Pilastro D |
 | 6a | ~~**P2**~~ (`previous_run_comparison`) | 1h | Basso | ✅ **Chiuso 19 Ago 2026** — 296/311 test, vedi §P2 — implementazione |
 | 6b | ~~**P1**~~ (placeholder `{timestamp}`) | 1-1.5h | Medio | ✅ **Chiuso 19 Ago 2026** — 302/317 test, vedi §P1 — implementazione |
-| 7 | **B5** (dedup `CLAUDE.md`, 44K → ~25K) | 1-2h | Medio | Approvato in D-Q4. Resta per ultimo: va verificato riga per riga con `grep` sulla destinazione, e non va mescolato ad altro lavoro nello stesso diff |
+| 7 | **B5 + B5b** (dedup/migrazione `CLAUDE.md`, target iniziale 50K → ~27K, **più** la convenzione anti-ricrescita) | 2-3h | Medio | ✅ **chiuso 20 Ago 2026**: risultato effettivo `CLAUDE.md` 50.108 → 33.410 caratteri (-33%, sopra il target iniziale perché tutte le 27 prescrizioni sono state tenute verbatim con il loro motivo), convenzione B5b scritta nel file stesso. Verificato riga per riga con `grep`, non a blocchi. Dettagli in §Pilastro B sopra |
 
 ## Esecuzione blocco 1 (B4 + B3) — 17 Agosto 2026
 
