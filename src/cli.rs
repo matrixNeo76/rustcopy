@@ -158,7 +158,10 @@ pub struct Args {
     #[arg(long, default_value_t = false)]
     pub compare_baseline: bool,
 
-    /// Path of the final JSON report.
+    /// Path of the final JSON report. Supports the placeholder {timestamp}, replaced with this
+    /// run's start time as yyyyMMdd_HHmmss (e.g. report-{timestamp}.json), so a scheduled job
+    /// keeps its report history instead of overwriting the same file every run. Without the
+    /// placeholder the path is fixed and overwritten every run, exactly as before.
     #[arg(
         long,
         default_value = "./robocopy_ingest_report.json",

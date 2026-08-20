@@ -2512,3 +2512,140 @@ fn a_second_run_against_the_same_report_path_gets_a_comparison_against_the_first
     // real previous run, not a coincidental default.
     assert_eq!(comparison["files_copied_delta"], -1);
 }
+
+/// P1 black-box test (PIANO_MIGLIORAMENTI.md): `{timestamp}` in `--report-path` must be resolved
+/// by the real binary to an actual timestamp, not left as literal text -- this is the wiring in
+/// `main.rs::run` (right before `validate()`), not just `lib.rs`'s own unit tests of
+/// `resolve_report_path_timestamp` in isolation.
+///
+/// `#[cfg(windows)]`, same reason as `a_second_run_against_the_same_report_path_...` above (P2's
+/// equivalent test): a real (non-`--compare-baseline`) transfer needs `robocopy.exe`, which only
+/// exists on Windows -- on Linux/macOS `run(&args)` fails outright before any report is written.
+#[cfg(windows)]
+#[test]
+fn timestamp_placeholder_in_report_path_is_resolved_by_the_real_binary() {
+    let source = fixture_tree(&[("a.csv", 10)]);
+    let workdir = tempfile::tempdir().expect("workdir");
+    let dest = workdir.path().join("out");
+    let report_path_template = workdir.path().join("report-{timestamp}.json");
+
+    let output = run(&[
+        "--source",
+        source.path().to_str().expect("utf8"),
+        "--dest",
+        dest.to_str().expect("utf8"),
+        "--report-path",
+        report_path_template.to_str().expect("utf8"),
+    ]);
+    assert!(output.status.success(), "stderr: {}", stderr_of(&output));
+
+    // The literal template path must never exist: the placeholder is always resolved before
+    // anything writes to report_path, including this run's own report.
+    assert!(
+        !report_path_template.exists(),
+        "the unresolved {{timestamp}} path must not have been written to"
+    );
+
+    let written: Vec<_> = std::fs::read_dir(workdir.path())
+        .expect("read workdir")
+        .filter_map(|entry| entry.ok())
+        .map(|entry| entry.file_name().to_string_lossy().into_owned())
+        .filter(|name| name.starts_with("report-") && name.ends_with(".json"))
+        .collect();
+    assert_eq!(
+        written.len(),
+        1,
+        "expected exactly one resolved report file, found: {written:?}"
+    );
+    // yyyyMMdd_HHmmss -- 15 digits/underscore between "report-" and ".json", never the literal
+    // "{timestamp}" text.
+    let resolved_name = &written[0];
+    let timestamp_part = &resolved_name["report-".len()..resolved_name.len() - ".json".len()];
+    assert_eq!(
+        timestamp_part.len(),
+        15,
+        "unexpected shape: {resolved_name}"
+    );
+    assert!(
+        timestamp_part
+            .chars()
+            .all(|c| c.is_ascii_digit() || c == '_'),
+        "unexpected shape: {resolved_name}"
+    );
+}
+
+/// P1 black-box test: in multi-job (`[[jobs]]`) mode, each job's `report_path` must end up with
+/// *both* its own resolved timestamp *and* the per-job namespace (F33/D12) -- proving the two
+/// independent path transformations (P1's placeholder resolution, F33's `namespaced_path`)
+/// compose correctly instead of one clobbering the other, which is exactly the interaction
+/// `PIANO_MIGLIORAMENTI.md`'s P1 analysis flagged as needing an explicit check.
+///
+/// `#[cfg(windows)]`, same reason as the test above: needs a real `robocopy.exe` transfer.
+#[cfg(windows)]
+#[test]
+fn timestamp_placeholder_composes_with_per_job_namespacing() {
+    let source_alpha = fixture_tree(&[("alpha.csv", 8)]);
+    let source_beta = fixture_tree(&[("beta.csv", 8)]);
+    let workdir = tempfile::tempdir().expect("workdir");
+    let to_toml_path = |p: &Path| p.to_str().expect("utf8").replace('\\', "/");
+
+    let config_path = workdir.path().join("jobs.toml");
+    let report_path_template = workdir.path().join("report-{timestamp}.json");
+    let dest_alpha = workdir.path().join("out_alpha");
+    let dest_beta = workdir.path().join("out_beta");
+
+    std::fs::write(
+        &config_path,
+        format!(
+            r#"
+dry_run = true
+report_path = "{report}"
+
+[[jobs]]
+name = "alpha"
+source = "{source_a}"
+dest = "{dest_alpha}"
+
+[[jobs]]
+name = "beta"
+source = "{source_b}"
+dest = "{dest_beta}"
+"#,
+            report = to_toml_path(&report_path_template),
+            source_a = to_toml_path(source_alpha.path()),
+            dest_alpha = to_toml_path(&dest_alpha),
+            source_b = to_toml_path(source_beta.path()),
+            dest_beta = to_toml_path(&dest_beta),
+        ),
+    )
+    .expect("write config");
+
+    let output = run(&["--config", config_path.to_str().expect("utf8")]);
+    assert!(output.status.success(), "stderr: {}", stderr_of(&output));
+
+    let written: Vec<_> = std::fs::read_dir(workdir.path())
+        .expect("read workdir")
+        .filter_map(|entry| entry.ok())
+        .map(|entry| entry.file_name().to_string_lossy().into_owned())
+        .filter(|name| name.starts_with("report-") && name.ends_with(".json"))
+        .collect();
+    assert_eq!(
+        written.len(),
+        2,
+        "expected one resolved+namespaced report per job, found: {written:?}"
+    );
+    assert!(
+        written.iter().any(|name| name.contains(".alpha.")),
+        "missing alpha's report: {written:?}"
+    );
+    assert!(
+        written.iter().any(|name| name.contains(".beta.")),
+        "missing beta's report: {written:?}"
+    );
+    for name in &written {
+        assert!(
+            !name.contains("{timestamp}"),
+            "placeholder left unresolved: {name}"
+        );
+    }
+}
