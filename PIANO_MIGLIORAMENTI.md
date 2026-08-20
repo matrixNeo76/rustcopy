@@ -124,7 +124,7 @@ In 3 giorni, il solo lavoro di questa sessione (P1, P2, correzioni review) ha ag
 
 Quindi B5 non è "deduplicazione" al 100% come diceva la formulazione originale: per il 7% è **migrazione vera** (scrivere contenuto nuovo in `ROADMAP.md`/`ANALYSIS.md`). È un lavoro diverso e va messo in conto.
 
-**Checklist dei 16 termini da migrare** (non cancellare senza averli prima riscritti altrove) — da usare come verifica finale con `grep`:
+**Checklist dei 16 termini — disposizione finale verificata (20 Ago 2026)**: 3 restano inline in `CLAUDE.md` perché troppo specifici per un puntatore (`IngestError::BackupTypeAndMirrorConflict`, `copy_one`, `timestamp_placeholder_composes_with_per_job_namespacing`); gli altri 13 non necessitavano migrazione — sono nomi/dettagli già derivabili dal codice sorgente o già coperti in sostanza da `ROADMAP.md` (es. la grammatica `daily@HH:MM`/`hourly@N`/`weekly@DAY,...@HH:MM` per F36 copre `ScheduleSpec::Daily`/`Hourly`/`Weekly` senza bisogno del nome esatto dell'enum):
 
 ```text
 HashAlgorithm::Xxh3          ScheduleSpec::Daily     logging::LogConfig
@@ -342,7 +342,7 @@ Ordinato per rapporto valore/rischio, non per numerazione.
 | 5 | ~~**Refactor script → wrapper**~~ | 30 min | Basso | ✅ **Chiuso 19 Ago 2026** — adapter credenziali (opzione 2), test end-to-end reale, vedi §Pilastro D |
 | 6a | ~~**P2**~~ (`previous_run_comparison`) | 1h | Basso | ✅ **Chiuso 19 Ago 2026** — 296/311 test, vedi §P2 — implementazione |
 | 6b | ~~**P1**~~ (placeholder `{timestamp}`) | 1-1.5h | Medio | ✅ **Chiuso 19 Ago 2026** — 302/317 test, vedi §P1 — implementazione |
-| 7 | **B5 + B5b** (dedup/migrazione `CLAUDE.md` 50K → ~27K, **più** la convenzione anti-ricrescita) | 2-3h | Medio | ✅ **chiuso 20 Ago 2026**: `CLAUDE.md` 50.108 → 33.410 caratteri (-33%), 27/27 prescrizioni verbatim, convenzione B5b scritta nel file stesso. Verificato riga per riga con `grep`, non a blocchi. Dettagli in §Pilastro B sopra |
+| 7 | **B5 + B5b** (dedup/migrazione `CLAUDE.md`, target iniziale 50K → ~27K, **più** la convenzione anti-ricrescita) | 2-3h | Medio | ✅ **chiuso 20 Ago 2026**: risultato effettivo `CLAUDE.md` 50.108 → 33.410 caratteri (-33%, sopra il target iniziale perché tutte le 27 prescrizioni sono state tenute verbatim con il loro motivo), convenzione B5b scritta nel file stesso. Verificato riga per riga con `grep`, non a blocchi. Dettagli in §Pilastro B sopra |
 
 ## Esecuzione blocco 1 (B4 + B3) — 17 Agosto 2026
 
