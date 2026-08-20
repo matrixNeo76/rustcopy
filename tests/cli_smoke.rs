@@ -2517,6 +2517,11 @@ fn a_second_run_against_the_same_report_path_gets_a_comparison_against_the_first
 /// by the real binary to an actual timestamp, not left as literal text -- this is the wiring in
 /// `main.rs::run` (right before `validate()`), not just `lib.rs`'s own unit tests of
 /// `resolve_report_path_timestamp` in isolation.
+///
+/// `#[cfg(windows)]`, same reason as `a_second_run_against_the_same_report_path_...` above (P2's
+/// equivalent test): a real (non-`--compare-baseline`) transfer needs `robocopy.exe`, which only
+/// exists on Windows -- on Linux/macOS `run(&args)` fails outright before any report is written.
+#[cfg(windows)]
 #[test]
 fn timestamp_placeholder_in_report_path_is_resolved_by_the_real_binary() {
     let source = fixture_tree(&[("a.csv", 10)]);
@@ -2574,6 +2579,9 @@ fn timestamp_placeholder_in_report_path_is_resolved_by_the_real_binary() {
 /// independent path transformations (P1's placeholder resolution, F33's `namespaced_path`)
 /// compose correctly instead of one clobbering the other, which is exactly the interaction
 /// `PIANO_MIGLIORAMENTI.md`'s P1 analysis flagged as needing an explicit check.
+///
+/// `#[cfg(windows)]`, same reason as the test above: needs a real `robocopy.exe` transfer.
+#[cfg(windows)]
 #[test]
 fn timestamp_placeholder_composes_with_per_job_namespacing() {
     let source_alpha = fixture_tree(&[("alpha.csv", 8)]);
