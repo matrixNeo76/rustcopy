@@ -46,12 +46,14 @@ use std::path::{Path, PathBuf};
 
 use chrono::{DateTime, Utc};
 
-/// Placeholder recognized in `--report-path` (P1, `PIANO_MIGLIORAMENTI.md`). Resolved exactly
-/// once per invocation, as early as possible after `Args` is finalized (`main.rs::run`/
-/// `run_jobs`, right before `validate()`) — everything downstream that derives from
-/// `report_path` (`checkpoint::checkpoint_path_for`, the per-job `namespaced_path` above, P2's
-/// `report::read_previous_report`) already sees the resolved, timestamped value, never the raw
-/// placeholder text.
+/// Placeholder recognized in `--report-path` (P1, `PIANO_MIGLIORAMENTI.md`). Resolved once for a
+/// single-job run, or once per job in `run_jobs` — in the multi-job case, *after* that job's
+/// `namespaced_path` call above (`main.rs::run_jobs` applies the two in that order; which one
+/// runs first doesn't actually matter, since they touch disjoint parts of the filename — the
+/// stem's own text vs. the `.{job_name}` insertion before the extension). Always resolved before
+/// `validate()`, so everything else downstream that derives from `report_path`
+/// (`checkpoint::checkpoint_path_for`, P2's `report::read_previous_report`) sees the resolved,
+/// timestamped value, never the raw placeholder text.
 pub const REPORT_PATH_TIMESTAMP_PLACEHOLDER: &str = "{timestamp}";
 
 /// Replaces `{timestamp}` in `path` with `now` formatted as `yyyyMMdd_HHmmss` — the same format
