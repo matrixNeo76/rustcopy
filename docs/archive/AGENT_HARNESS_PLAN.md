@@ -5,7 +5,7 @@ description: Proposta di framework di test YAML/harness per rustcopy, creata il 
 status: deprecated
 generated:
   by: process:claude-code
-  at: 2026-08-20T00:00:00Z
+  at: 2026-08-10T00:00:00Z
 ---
 
 # Piano di Implementazione: integrazione AgentHarnesses (agentharnesses.io)

@@ -56,17 +56,56 @@ jobs:
       - name: Install okf
         run: cargo install okf --locked
 
+      - name: Check no untracked root-level .md file (AGENTS.md rule 15)
+        # A root-level .md file with no OKF frontmatter and no entry in the list below
+        # can go unnoticed for weeks (found: AGENT_HARNESS_PLAN.md, created 10 Agosto
+        # 2026, discovered orphaned 20 Agosto 2026). This fails CI the moment a new one
+        # appears, instead of relying on a manual sweep to catch it.
+        run: |
+          set -e
+          declare -a TRACKED_DOCS=(README.md ARCHITECTURE.md ANALYSIS.md ROADMAP.md \
+            CLAUDE.md AGENTS.md RUNBOOK.md CHANGELOG.md SECURITY.md \
+            NEXT_SESSION_PROMPT.md PIANO_MIGLIORAMENTI.md)
+          untracked=0
+          for f in *.md; do
+            if [[ ! " ${TRACKED_DOCS[*]} " =~ " ${f} " ]]; then
+              echo "::error file=${f}::Untracked root-level .md file — add OKF frontmatter and add it to TRACKED_DOCS in ci.yml (or move it to docs/archive/ if superseded)"
+              untracked=1
+            fi
+          done
+          exit $untracked
+
       - name: Validate OKF frontmatter on managed docs
         # Scoped to the project's own maintained docs, not the whole repo — okf has no
         # exclude-pattern flag, and a bundle-wide scan also picks up .agents/skills/ and
         # graphify-out/, which aren't ours to annotate.
         run: |
           set -e
-          for f in README.md ARCHITECTURE.md ANALYSIS.md ROADMAP.md CLAUDE.md AGENTS.md \
-                   RUNBOOK.md CHANGELOG.md SECURITY.md NEXT_SESSION_PROMPT.md \
-                   PIANO_MIGLIORAMENTI.md \
-                   docs/archive/PIANO_NOTIFY_SERVER.md docs/archive/AGENT_HARNESS_PLAN.md; do
+          declare -a TRACKED_DOCS=(README.md ARCHITECTURE.md ANALYSIS.md ROADMAP.md \
+            CLAUDE.md AGENTS.md RUNBOOK.md CHANGELOG.md SECURITY.md \
+            NEXT_SESSION_PROMPT.md PIANO_MIGLIORAMENTI.md \
+            docs/archive/PIANO_NOTIFY_SERVER.md docs/archive/AGENT_HARNESS_PLAN.md)
+          for f in "${TRACKED_DOCS[@]}"; do
             echo "::group::okf parse $f"
             okf parse "$f"
             echo "::endgroup::"
           done
+
+      - name: Validate OKF bundle conformance (staged copy)
+        # `okf validate`/`okf lint` need a bundle (directory), not a file list, and have
+        # no exclude-pattern flag — running them against the repo root directly would also
+        # pick up .agents/skills/ and graphify-out/, unrelated to this convention. Staging
+        # just the 13 tracked docs into a temp dir sidesteps that with no extra tooling,
+        # and validate checks more than parse alone (cross-concept link resolution).
+        run: |
+          set -e
+          declare -a TRACKED_DOCS=(README.md ARCHITECTURE.md ANALYSIS.md ROADMAP.md \
+            CLAUDE.md AGENTS.md RUNBOOK.md CHANGELOG.md SECURITY.md \
+            NEXT_SESSION_PROMPT.md PIANO_MIGLIORAMENTI.md \
+            docs/archive/PIANO_NOTIFY_SERVER.md docs/archive/AGENT_HARNESS_PLAN.md)
+          STAGE=$(mktemp -d)
+          for f in "${TRACKED_DOCS[@]}"; do
+            mkdir -p "$STAGE/$(dirname "$f")"
+            cp "$f" "$STAGE/$f"
+          done
+          okf validate "$STAGE"
