@@ -646,7 +646,7 @@ mod tests {
     fn min_age_days_excludes_files_younger_than_the_threshold() {
         let now = 2_000_000_000u64;
         let ten_days_ago = now - 10 * 24 * 60 * 60;
-        let one_day_ago = now - 1 * 24 * 60 * 60;
+        let one_day_ago = now - 24 * 60 * 60;
 
         assert!(
             !fails_age_filter(ten_days_ago, now, Some(5), None),
@@ -664,7 +664,7 @@ mod tests {
     fn max_age_days_excludes_files_older_than_the_threshold() {
         let now = 2_000_000_000u64;
         let ten_days_ago = now - 10 * 24 * 60 * 60;
-        let one_day_ago = now - 1 * 24 * 60 * 60;
+        let one_day_ago = now - 24 * 60 * 60;
 
         assert!(
             fails_age_filter(ten_days_ago, now, None, Some(5)),
