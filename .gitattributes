@@ -1,0 +1,17 @@
+# Line-ending policy.
+#
+# This repo is developed on Windows with core.autocrlf=true, which would otherwise check
+# these files out with CRLF. Two things break when that happens:
+#
+#  * `scripts/*.sh` — a shell script with CRLF fails in subtle ways (the trailing \r ends up
+#    part of the last token on every line), both in CI on Linux and in Git Bash on Windows.
+#  * `*.md` — `scripts/okf-docs.sh check` diffs the committed `index.md` files against what
+#    `okf index` regenerates, and okf emits LF. With CRLF on disk that diff is never clean,
+#    so the gate would be permanently red for a Windows developer after a fresh clone while
+#    passing in CI. Pinning LF keeps the gate meaningful on both.
+#
+# .ps1 files are deliberately left to the default: they are Windows-only by design and
+# nothing compares them byte-for-byte.
+
+*.sh  text eol=lf
+*.md  text eol=lf
