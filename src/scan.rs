@@ -9,6 +9,7 @@
 //! * F2.1: `directory_size` is preserved but only called with much longer intervals now.
 
 use std::path::{Path, PathBuf};
+use std::time::{SystemTime, UNIX_EPOCH};
 
 use globset::{GlobBuilder, GlobMatcher};
 use walkdir::WalkDir;
@@ -95,6 +96,42 @@ fn is_excluded(name: &std::ffi::OsStr, matchers: &[GlobMatcher]) -> bool {
     matchers.iter().any(|m| m.is_match(Path::new(name)))
 }
 
+/// D17: whether a file's `modified_timestamp` fails `--min-age-days`/`--max-age-days`, matching
+/// real `robocopy.exe`'s own `/MINAGE`/`/MAXAGE` semantics — verified empirically against the
+/// real binary, not assumed from docs (this crate's own `--help` text had the two directions
+/// backwards until this fix, see `CLAUDE.md`): `/MINAGE:N` excludes files modified **less** than
+/// N days ago (only files at least N days old survive); `/MAXAGE:N` excludes files modified
+/// **more** than N days ago (only files within the last N days survive). `now` is a parameter
+/// rather than an internal `SystemTime::now()` call so this stays unit-testable without mocking
+/// the clock, same pattern as `resolve_report_path_timestamp` in `lib.rs`.
+fn fails_age_filter(
+    modified_timestamp: u64,
+    now_unix_secs: u64,
+    min_age_days: Option<u32>,
+    max_age_days: Option<u32>,
+) -> bool {
+    const SECONDS_PER_DAY: u64 = 24 * 60 * 60;
+    let age_days = now_unix_secs.saturating_sub(modified_timestamp) / SECONDS_PER_DAY;
+    if let Some(min_age) = min_age_days {
+        if age_days < u64::from(min_age) {
+            return true;
+        }
+    }
+    if let Some(max_age) = max_age_days {
+        if age_days > u64::from(max_age) {
+            return true;
+        }
+    }
+    false
+}
+
+fn now_unix_secs() -> u64 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .unwrap_or(0)
+}
+
 /// Walk `root` recursively and collect every file whose **relative path** matches `pattern`.
 ///
 /// F1.4: matching is done on the relative path (e.g. `subdir/file.csv`) instead of the bare
@@ -122,16 +159,25 @@ fn is_excluded(name: &std::ffi::OsStr, matchers: &[GlobMatcher]) -> bool {
 /// (skips the whole subtree, not just a post-hoc filter — matches robocopy's own behaviour of
 /// never descending into an excluded directory) rather than filtered after the fact, so this
 /// fixes the wasted-scan-time half of the problem too, not just the false-FAILED half.
+///
+/// D17: `min_age_days`/`max_age_days` had the identical structural gap as D11's `exclude_dirs`/
+/// `exclude_files` — accepted by the CLI, applied to the real `robocopy.exe` transfer, but never
+/// threaded into this scan, so `--verify-integrity` reported age-filtered files as spuriously
+/// `missing_in_dest` and `--backup-type` (which never goes through robocopy, see `AGENTS.md` rule
+/// 9) ignored the flags entirely. See [`fails_age_filter`] for the exact semantics.
 pub fn scan(
     root: &Path,
     pattern: &str,
     follow_links: bool,
     exclude_dirs: &[String],
     exclude_files: &[String],
+    min_age_days: Option<u32>,
+    max_age_days: Option<u32>,
 ) -> Result<ScanSummary, IngestError> {
     let matcher = build_matcher(pattern)?;
     let dir_matchers = build_exclude_matchers(exclude_dirs)?;
     let file_matchers = build_exclude_matchers(exclude_files)?;
+    let now = now_unix_secs();
     let mut summary = ScanSummary::default();
 
     let walker = WalkDir::new(root)
@@ -178,6 +224,10 @@ pub fn scan(
             }
         };
 
+        if fails_age_filter(modified_timestamp, now, min_age_days, max_age_days) {
+            continue;
+        }
+
         summary.total_bytes += size_bytes;
         summary.files.push(ScannedFile {
             relative_path,
@@ -221,17 +271,21 @@ impl InventorySummary {
 /// Walk `root` and return just totals, without keeping individual paths in RAM.
 ///
 /// F26d: see [`scan`] for the meaning of `follow_links`. See [`scan`]'s doc comment for why
-/// `exclude_dirs`/`exclude_files` matter here too, not just for the real `robocopy.exe` transfer.
+/// `exclude_dirs`/`exclude_files` (and, since D17, `min_age_days`/`max_age_days`) matter here
+/// too, not just for the real `robocopy.exe` transfer.
 pub fn inventory(
     root: &Path,
     pattern: &str,
     follow_links: bool,
     exclude_dirs: &[String],
     exclude_files: &[String],
+    min_age_days: Option<u32>,
+    max_age_days: Option<u32>,
 ) -> Result<InventorySummary, IngestError> {
     let matcher = build_matcher(pattern)?;
     let dir_matchers = build_exclude_matchers(exclude_dirs)?;
     let file_matchers = build_exclude_matchers(exclude_files)?;
+    let now = now_unix_secs();
     let mut total_files = 0u64;
     let mut total_bytes = 0u64;
 
@@ -270,8 +324,12 @@ pub fn inventory(
         }
 
         if let Ok(meta) = entry.metadata() {
+            let (size_bytes, modified_timestamp) = size_bytes_and_mtime(&meta);
+            if fails_age_filter(modified_timestamp, now, min_age_days, max_age_days) {
+                continue;
+            }
             total_files += 1;
-            total_bytes += meta.len();
+            total_bytes += size_bytes;
         }
     }
 
@@ -314,7 +372,7 @@ mod tests {
             ("ignore.txt", 999),
         ]);
 
-        let summary = scan(dir.path(), "*.csv", false, &[], &[]).expect("scan");
+        let summary = scan(dir.path(), "*.csv", false, &[], &[], None, None).expect("scan");
 
         assert_eq!(summary.file_count(), 3);
         assert_eq!(summary.total_bytes, 600);
@@ -333,7 +391,7 @@ mod tests {
     #[test]
     fn scan_of_empty_tree_is_empty() {
         let dir = fixture_tree(&[]);
-        let summary = scan(dir.path(), "*.csv", false, &[], &[]).expect("scan");
+        let summary = scan(dir.path(), "*.csv", false, &[], &[], None, None).expect("scan");
         assert!(summary.is_empty());
         assert_eq!(summary.total_bytes, 0);
     }
@@ -341,7 +399,7 @@ mod tests {
     #[test]
     fn patterns_other_than_csv_are_supported() {
         let dir = fixture_tree(&[("a.csv", 10), ("b.tsv", 20), ("c.tsv", 30)]);
-        let summary = scan(dir.path(), "*.tsv", false, &[], &[]).expect("scan");
+        let summary = scan(dir.path(), "*.tsv", false, &[], &[], None, None).expect("scan");
         assert_eq!(summary.file_count(), 2);
         assert_eq!(summary.total_bytes, 50);
     }
@@ -368,7 +426,7 @@ mod tests {
     fn glob_matches_against_relative_path_not_just_filename() {
         let dir = fixture_tree(&[("a.csv", 10), ("nested/b.csv", 20), ("other/c.csv", 30)]);
         // A flat glob still matches all CSV files regardless of depth.
-        let summary = scan(dir.path(), "*.csv", false, &[], &[]).expect("scan");
+        let summary = scan(dir.path(), "*.csv", false, &[], &[], None, None).expect("scan");
         assert_eq!(
             summary.file_count(),
             3,
@@ -380,8 +438,8 @@ mod tests {
     #[test]
     fn inventory_matches_scan_totals() {
         let dir = fixture_tree(&[("a.csv", 100), ("nested/b.csv", 200), ("c.txt", 50)]);
-        let full = scan(dir.path(), "*.csv", false, &[], &[]).expect("scan");
-        let light = inventory(dir.path(), "*.csv", false, &[], &[]).expect("inventory");
+        let full = scan(dir.path(), "*.csv", false, &[], &[], None, None).expect("scan");
+        let light = inventory(dir.path(), "*.csv", false, &[], &[], None, None).expect("inventory");
         assert_eq!(light.total_files, full.file_count() as u64);
         assert_eq!(light.total_bytes, full.total_bytes);
     }
@@ -395,7 +453,7 @@ mod tests {
         let link = dir.path().join("link");
         std::os::unix::fs::symlink(dir.path().join("real"), &link).expect("create symlink");
 
-        let summary = scan(dir.path(), "*.csv", false, &[], &[]).expect("scan");
+        let summary = scan(dir.path(), "*.csv", false, &[], &[], None, None).expect("scan");
         assert_eq!(
             summary.file_count(),
             1,
@@ -412,7 +470,7 @@ mod tests {
         let link = dir.path().join("link");
         std::os::unix::fs::symlink(dir.path().join("real"), &link).expect("create symlink");
 
-        let summary = scan(dir.path(), "*.csv", true, &[], &[]).expect("scan");
+        let summary = scan(dir.path(), "*.csv", true, &[], &[], None, None).expect("scan");
         assert_eq!(
             summary.file_count(),
             2,
@@ -447,15 +505,16 @@ mod tests {
             "mklink /J must succeed to exercise this test"
         );
 
-        let excluded =
-            scan(dir.path(), "*.csv", false, &[], &[]).expect("scan without following junctions");
+        let excluded = scan(dir.path(), "*.csv", false, &[], &[], None, None)
+            .expect("scan without following junctions");
         assert_eq!(
             excluded.file_count(),
             1,
             "with follow_links=false (--exclude-junctions), the junction must not be descended into"
         );
 
-        let followed = scan(dir.path(), "*.csv", true, &[], &[]).expect("scan following junctions");
+        let followed = scan(dir.path(), "*.csv", true, &[], &[], None, None)
+            .expect("scan following junctions");
         assert_eq!(
             followed.file_count(),
             2,
@@ -478,8 +537,16 @@ mod tests {
             ("AppData/deep/d.csv", 9999),
         ]);
 
-        let summary =
-            scan(dir.path(), "*.csv", false, &["AppData".to_string()], &[]).expect("scan");
+        let summary = scan(
+            dir.path(),
+            "*.csv",
+            false,
+            &["AppData".to_string()],
+            &[],
+            None,
+            None,
+        )
+        .expect("scan");
 
         assert_eq!(
             summary.file_count(),
@@ -506,7 +573,16 @@ mod tests {
             ("nested/real.csv", 30),
         ]);
 
-        let summary = scan(dir.path(), "*.csv", false, &[".git".to_string()], &[]).expect("scan");
+        let summary = scan(
+            dir.path(),
+            "*.csv",
+            false,
+            &[".git".to_string()],
+            &[],
+            None,
+            None,
+        )
+        .expect("scan");
 
         assert_eq!(summary.file_count(), 2);
         assert!(summary
@@ -530,6 +606,8 @@ mod tests {
             false,
             &[],
             &["thumbs.db.csv".to_string()],
+            None,
+            None,
         )
         .expect("scan");
 
@@ -546,10 +624,85 @@ mod tests {
     fn inventory_also_respects_exclude_dirs() {
         let dir = fixture_tree(&[("a.csv", 10), ("AppData/b.csv", 9999)]);
 
-        let light = inventory(dir.path(), "*.csv", false, &["AppData".to_string()], &[])
-            .expect("inventory");
+        let light = inventory(
+            dir.path(),
+            "*.csv",
+            false,
+            &["AppData".to_string()],
+            &[],
+            None,
+            None,
+        )
+        .expect("inventory");
 
         assert_eq!(light.total_files, 1);
         assert_eq!(light.total_bytes, 10);
+    }
+
+    /// D17: `--min-age-days N` excludes files modified **less** than N days ago, matching real
+    /// `robocopy.exe`'s `/MINAGE:N` — verified empirically against the real binary (see
+    /// `CLAUDE.md`), the opposite of what this crate's own `--help` text said before this fix.
+    #[test]
+    fn min_age_days_excludes_files_younger_than_the_threshold() {
+        let now = 2_000_000_000u64;
+        let ten_days_ago = now - 10 * 24 * 60 * 60;
+        let one_day_ago = now - 1 * 24 * 60 * 60;
+
+        assert!(
+            !fails_age_filter(ten_days_ago, now, Some(5), None),
+            "a file 10 days old must survive --min-age-days 5"
+        );
+        assert!(
+            fails_age_filter(one_day_ago, now, Some(5), None),
+            "a file 1 day old must be excluded by --min-age-days 5"
+        );
+    }
+
+    /// D17: `--max-age-days N` excludes files modified **more** than N days ago, matching real
+    /// `robocopy.exe`'s `/MAXAGE:N`.
+    #[test]
+    fn max_age_days_excludes_files_older_than_the_threshold() {
+        let now = 2_000_000_000u64;
+        let ten_days_ago = now - 10 * 24 * 60 * 60;
+        let one_day_ago = now - 1 * 24 * 60 * 60;
+
+        assert!(
+            fails_age_filter(ten_days_ago, now, None, Some(5)),
+            "a file 10 days old must be excluded by --max-age-days 5"
+        );
+        assert!(
+            !fails_age_filter(one_day_ago, now, None, Some(5)),
+            "a file 1 day old must survive --max-age-days 5"
+        );
+    }
+
+    /// A file exactly at the N-day boundary is inclusive on both sides (`<`/`>`, not `<=`/`>=`),
+    /// matching robocopy's own boundary behaviour.
+    #[test]
+    fn age_filters_are_inclusive_at_the_exact_boundary() {
+        let now = 2_000_000_000u64;
+        let exactly_five_days_ago = now - 5 * 24 * 60 * 60;
+
+        assert!(!fails_age_filter(exactly_five_days_ago, now, Some(5), None));
+        assert!(!fails_age_filter(exactly_five_days_ago, now, None, Some(5)));
+    }
+
+    /// `--min-age-days`/`--max-age-days` given together narrow to a window, same as passing both
+    /// `/MINAGE`/`/MAXAGE` to robocopy at once.
+    #[test]
+    fn min_and_max_age_days_together_form_a_window() {
+        let now = 2_000_000_000u64;
+        let three_days_ago = now - 3 * 24 * 60 * 60;
+        let twenty_days_ago = now - 20 * 24 * 60 * 60;
+
+        // window: files between 2 and 10 days old survive.
+        assert!(
+            !fails_age_filter(three_days_ago, now, Some(2), Some(10)),
+            "3 days old is inside the [2, 10] window"
+        );
+        assert!(
+            fails_age_filter(twenty_days_ago, now, Some(2), Some(10)),
+            "20 days old is outside the [2, 10] window"
+        );
     }
 }

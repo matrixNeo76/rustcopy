@@ -12,7 +12,7 @@ generated:
 
 ## Stato del progetto (20 Agosto 2026)
 
-`Cargo.toml` = **6.0.0**. Ultimo commit su `main`: `62b2294` (merge PR [#16](https://github.com/matrixNeo76/rustcopy/pull/16), chiusura B5+B5b). Suite di test: **302** (`cargo test`), **317** con `cargo test --features notify-server` (più test `#[ignore]` — round-trip reali dei servizi Windows/Task Scheduler che richiedono elevazione, più un probe di misurazione a scala reale). CI reale su GitHub Actions verde su `windows-latest` e `ubuntu-latest`, entrambe le configurazioni di feature.
+`Cargo.toml` = **6.0.0**. Ultimo lavoro: D17 (21 Agosto 2026, vedi `ANALYSIS.md`) — `--min-age-days`/`--max-age-days` ora applicati anche dal prescan/motore naive, non solo dal transfer robocopy reale, più una direzione invertita nel loro `--help` corretta dopo verifica empirica contro il binario reale. Suite di test: **307** (`cargo test`), **322** con `cargo test --features notify-server` (più test `#[ignore]` — round-trip reali dei servizi Windows/Task Scheduler che richiedono elevazione, più un probe di misurazione a scala reale). CI reale su GitHub Actions verde su `windows-latest` e `ubuntu-latest`, entrambe le configurazioni di feature.
 
 Milestone 5.2.0/5.3.0/6.0.0/6.1.0 tutte chiuse. Difetti storici: **D1-D16**, solo D10 (strumentazione grafo Graphify, bassa priorità) resta aperto. Feature F1-F61 tutte classificate (chiuse, o rimandate al backlog con motivazione — vedi `ROADMAP.md`).
 

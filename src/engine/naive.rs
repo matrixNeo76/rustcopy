@@ -41,12 +41,17 @@ impl CopyEngine for NaiveCopyEngine {
         request: &CopyRequest,
         sink: &dyn ProgressSink,
     ) -> Result<CopyOutcome, IngestError> {
+        // D17: min_age_days/max_age_days were present on CopyRequest (already used by
+        // engine::robocopy::build_args for the real transfer) but never threaded into this
+        // engine's own scan, so --compare-baseline ignored both flags entirely.
         let inventory = scan::scan(
             &request.source,
             &request.pattern,
             !request.exclude_junctions,
             &request.exclude_dirs,
             &request.exclude_files,
+            request.min_age_days,
+            request.max_age_days,
         )?;
         tracing::info!(
             files = inventory.file_count(),
