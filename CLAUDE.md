@@ -22,7 +22,7 @@ This file contains specific context, conventions, and operational instructions f
 - **Run Specific Test**: `rtk cargo test <test_name>`
 - **Check Compilation**: `rtk cargo check`
 - **Summarize Module Impact**: `rtk smart <file>`
-- **Query Code Graph**: `graphify query "<question>" --graph src/graphify-out/graph.json`
+- **Query Code Graph**: `graphify query "<question>" --graph graphify-out/graph.json`
 
 ---
 
