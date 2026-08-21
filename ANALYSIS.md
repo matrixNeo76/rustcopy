@@ -1,7 +1,7 @@
 ---
 type: Log
 title: Analisi di Robustezza e Ottimizzazione Prestazioni
-description: Audit trail dei difetti D1-D16 e delle opportunità di miglioramento O1-O10.
+description: Audit trail dei difetti D1-D17 e delle opportunità di miglioramento O1-O10.
 status: stable
 generated:
   by: process:claude-code
@@ -161,8 +161,10 @@ Se l'applicazione Rust intercetta `Ctrl+C` e si arresta senza terminare il proce
 > **e Linux** — mai eseguita prima su Linux, nonostante l'affermazione (mai verificata) che l'intera
 > suite fosse compatibile. La prima run reale ha trovato **D16**: un bug reale in produzione
 > (`vss::remap_to_shadow` produceva un path errato quando eseguito su un host non-Windows) più
-> diversi test obsoleti/non platform-gated correttamente, mai eseguiti prima d'ora. Porta il totale
-> storico a 16 (D1-D16), di cui solo D10 resta aperto.
+> diversi test obsoleti/non platform-gated correttamente, mai eseguiti prima d'ora. **D17** (21
+> Agosto 2026) chiude il gap parallelo a D11 per `--min-age-days`/`--max-age-days`, più una
+> direzione invertita nel loro `--help` scoperta durante il fix. Porta il totale storico a 17
+> (D1-D17), di cui solo D10 resta aperto.
 
 ## 🛑 3.1 Difetti aperti confermati
 
@@ -638,9 +640,8 @@ deliberatamente il vecchio bug come tecnica di test sono stati riscritti per usa
 `--max-age-days` + un nuovo helper `backdate_file()` invece di `--exclude-files`, preservando
 l'intento originale del test senza dipendere dal comportamento ora corretto.
 
-**Gap parallelo noto, non corretto in questo fix**: `--min-age-days`/`--max-age-days` hanno la
-stessa lacuna strutturale (mai passati a `scan.rs`, applicati solo a valle) — non richiesto
-dall'utente in questa sessione, lasciato come follow-up futuro.
+**Gap parallelo, chiuso separatamente**: `--min-age-days`/`--max-age-days` avevano la stessa
+lacuna strutturale — vedi D17 (21 Agosto 2026).
 
 ---
 
@@ -862,6 +863,71 @@ esistenti/al codice di produzione già coperto), ma la CI reale su GitHub Action
 entrambe le configurazioni di feature) e `cargo test` (in entrambe le configurazioni di feature)
 tutti passanti — la prima volta nella storia del progetto che questo è stato verificato
 empiricamente su Linux, non solo assunto dal design.
+
+---
+
+### D17 — `--min-age-days`/`--max-age-days` mai applicati dal prescan, e con la direzione invertita nel `--help` ✅ RISOLTO (21 Agosto 2026)
+
+**Stato: chiuso e verificato.**
+
+**Gravità: MEDIA.** Due difetti distinti, scoperti insieme durante lo stesso audit e corretti nello
+stesso fix perché la seconda scoperta rendeva impossibile implementare correttamente la prima senza
+prima chiarirla.
+
+**1. Gap strutturale identico a D11, mai chiuso**: `--min-age-days`/`--max-age-days` erano accettati
+dalla CLI e applicati correttamente a `engine/robocopy.rs::build_args` (`/MINAGE:N`/`/MAXAGE:N` per
+il transfer reale), ma **mai** passati a `scan::scan`/`scan::inventory` — né dal prescan
+(`inventory_source`), né dalla scansione di sicurezza del mirror (`check_mirror_safety`), né dal
+motore naive (`engine::naive::NaiveCopyEngine::copy`, usato da `--compare-baseline`). Conseguenza
+concreta: `--verify-integrity` segnalava come `missing_in_dest` un file correttamente escluso da
+robocopy per età, esattamente lo stesso sintomo di D11 prima del fix del 5 Agosto. `--backup-type`
+(che non passa mai da robocopy, vedi `AGENTS.md` regola 9) ignorava i due flag del tutto.
+
+**2. Direzione invertita nel `--help`/doc comment di `src/cli.rs`**, scoperta *verificando
+empiricamente* `robocopy.exe` reale prima di implementare il fix del punto 1 (per non replicare la
+direzione sbagliata nel nuovo codice `scan.rs`). Test diretto con due file, uno backdated 30 giorni
+e uno fresco:
+
+```powershell
+robocopy $src $dst /MINAGE:7   # -> copia SOLO il file vecchio (30gg), esclude quello fresco (0gg)
+robocopy $src $dst /MAXAGE:7   # -> copia SOLO il file fresco (0gg), esclude quello vecchio (30gg)
+```
+
+Confermato anche con `/MIR`: un file già presente in destinazione ma escluso per età da
+`/MAXAGE`/`/MINAGE` **non viene purgato** — stesso comportamento già noto per `/XD`/`/XF`, rilevante
+per `check_mirror_safety`. Il commento `--help` di `min_age_days` diceva *"Skip files modified more
+than N days ago"* (salta i file vecchi, tieni i recenti) — l'esatto opposto del comportamento reale
+di `/MINAGE` (salta i file recenti, tieni i vecchi). Stesso discorso invertito per `max_age_days`.
+**`README.md` aveva invece già la direzione corretta** (non toccato). Solo `src/cli.rs`'s doc
+comment (quindi l'output di `--help`) era sbagliato.
+
+#### ✅ Fix reale e verifica
+
+`scan::scan`/`scan::inventory` ora accettano `min_age_days: Option<u32>, max_age_days: Option<u32>`
+e applicano `fails_age_filter` (funzione pura, calcola l'età in giorni da `modified_timestamp` a un
+`now` passato come parametro per restare testabile senza il clock reale, stesso pattern di
+`resolve_report_path_timestamp` in `lib.rs`) con la direzione **verificata** sopra. Chiamanti
+aggiornati: `inventory_source`, `check_mirror_safety` (lato destinazione, stessa logica di D11 per
+`/MIR`), `engine::naive::NaiveCopyEngine::copy`. **Deliberatamente non toccata**: la scansione di
+riconciliazione post-`CopyFailed` in `main.rs`, che conta cosa è realmente presente in destinazione
+in questo momento — non è una decisione di selezione lato sorgente, l'età del file al momento della
+scansione non c'entra. `src/cli.rs`'s doc comment corretto per riflettere la direzione reale.
+
+**Verificato**: 4 nuovi unit test puri in `scan.rs` su `fails_age_filter`
+(`min_age_days_excludes_files_younger_than_the_threshold`,
+`max_age_days_excludes_files_older_than_the_threshold`,
+`age_filters_are_inclusive_at_the_exact_boundary`,
+`min_and_max_age_days_together_form_a_window`); 1 nuovo test black-box
+(`min_and_max_age_days_are_applied_consistently_end_to_end`) che esegue un transfer reale con
+`--max-age-days`/`--min-age-days` e verifica che prescan e robocopy concordino (nessun
+`missing_in_dest` spurio). I 2 test che sfruttavano deliberatamente questo bug come tecnica di test
+(`fast_verify_never_caches_a_failed_file_so_it_keeps_being_reported`,
+`ignore_transient_missing_turns_an_excluded_log_into_a_pass`) sono stati riscritti per usare una
+tecnica indipendente da qualunque bug di questo crate: un file `sub` pre-creato in destinazione dove
+robocopy dovrebbe creare una sottodirectory — verificato empiricamente che robocopy tratta questo
+come un "mismatch" non fatale (exit code 5, `is_success()` resta `true` in `exit_code.rs`) e
+continua con gli altri file, dando un modo deterministico e reale per riprodurre "file atteso dal
+prescan ma mai atterrato in destinazione" senza dipendere da nessuna delle due lacune appena chiuse.
 
 ---
 

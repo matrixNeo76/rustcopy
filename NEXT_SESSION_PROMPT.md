@@ -10,11 +10,11 @@ generated:
 
 # Prompt per la prossima sessione — robocopy-ingest-cli (rustcopy)
 
-## Stato del progetto (20 Agosto 2026)
+## Stato del progetto (21 Agosto 2026)
 
-`Cargo.toml` = **6.0.0**. Ultimo commit su `main`: `62b2294` (merge PR [#16](https://github.com/matrixNeo76/rustcopy/pull/16), chiusura B5+B5b). Suite di test: **302** (`cargo test`), **317** con `cargo test --features notify-server` (più test `#[ignore]` — round-trip reali dei servizi Windows/Task Scheduler che richiedono elevazione, più un probe di misurazione a scala reale). CI reale su GitHub Actions verde su `windows-latest` e `ubuntu-latest`, entrambe le configurazioni di feature.
+`Cargo.toml` = **6.0.0**. Ultimo lavoro: D17 (21 Agosto 2026, vedi `ANALYSIS.md`) — `--min-age-days`/`--max-age-days` ora applicati anche dal prescan/motore naive, non solo dal transfer robocopy reale, più una direzione invertita nel loro `--help` corretta dopo verifica empirica contro il binario reale. Suite di test: **307** (`cargo test`), **322** con `cargo test --features notify-server` (più test `#[ignore]` — round-trip reali dei servizi Windows/Task Scheduler che richiedono elevazione, più un probe di misurazione a scala reale). CI reale su GitHub Actions verde su `windows-latest` e `ubuntu-latest`, entrambe le configurazioni di feature.
 
-Milestone 5.2.0/5.3.0/6.0.0/6.1.0 tutte chiuse. Difetti storici: **D1-D16**, solo D10 (strumentazione grafo Graphify, bassa priorità) resta aperto. Feature F1-F61 tutte classificate (chiuse, o rimandate al backlog con motivazione — vedi `ROADMAP.md`).
+Milestone 5.2.0/5.3.0/6.0.0/6.1.0 tutte chiuse. Difetti storici: **D1-D17**, solo D10 (strumentazione grafo Graphify, bassa priorità) resta aperto. Feature F1-F61 tutte classificate (chiuse, o rimandate al backlog con motivazione — vedi `ROADMAP.md`).
 
 **Questa sessione ha chiuso l'intero `PIANO_MIGLIORAMENTI.md`** ad eccezione di due voci a bassa priorità mai promosse (P3/P4, vedi sotto):
 
@@ -25,7 +25,7 @@ Milestone 5.2.0/5.3.0/6.0.0/6.1.0 tutte chiuse. Difetti storici: **D1-D16**, sol
 - **Pilastro E / P1-P2** (placeholder `{timestamp}` in `--report-path`, `previous_run_comparison` nel report JSON) — chiuso 19 Agosto 2026.
 - **Pilastro E / P3-P4** — **ancora aperti**, priorità bassa (🟢), mai richiesti esplicitamente: P3 (cache dell'inventario di scan — verificare prima la sovrapposizione con `cache.rs`/`generations.rs` esistenti, rischio concreto di terza struttura duplicata) e P4 (retention dei report JSON, tipo `--report-retention-days N`).
 
-**Coerenza documentale verificata e corretta in questa stessa sessione** (l'utente ha chiesto esplicitamente un controllo di coerenza ROADMAP/OKF dopo la chiusura di B5): conteggi test allineati a 302/317 in `README.md`/`ARCHITECTURE.md`/`AGENTS.md`/`ROADMAP.md`/`RUNBOOK.md` (erano fermi a 286/301 o 284/299); `ROADMAP.md` riga sulla dimensione di `CLAUDE.md` aggiornata per riflettere la chiusura di B5 (misure e stato, non più "approvato, in attesa"); `docs/archive/AGENT_HARNESS_PLAN.md` (file orfano trovato in root, creato il 10 Agosto 2026, mai eseguito, senza frontmatter OKF) spostato in `docs/archive/` con frontmatter e nota, aggiunto al loop `okf parse` in CI — **13 file** coperti ora (11 root + 2 archiviati), non più 12. Nessuna azione da riaprire su questo fronte salvo nuove derive rilevate in futuro.
+**Coerenza documentale verificata e corretta nella sessione del 20 Agosto** (l'utente ha chiesto esplicitamente un controllo di coerenza ROADMAP/OKF dopo la chiusura di B5): conteggi test allineati a 302/317 in `README.md`/`ARCHITECTURE.md`/`AGENTS.md`/`ROADMAP.md`/`RUNBOOK.md` (erano fermi a 286/301 o 284/299) — **da allora aggiornati di nuovo a 307/322 dopo D17 (21 Agosto), vedi sopra**; `ROADMAP.md` riga sulla dimensione di `CLAUDE.md` aggiornata per riflettere la chiusura di B5 (misure e stato, non più "approvato, in attesa"); `docs/archive/AGENT_HARNESS_PLAN.md` (file orfano trovato in root, creato il 10 Agosto 2026, mai eseguito, senza frontmatter OKF) spostato in `docs/archive/` con frontmatter e nota, aggiunto al loop `okf parse` in CI — **13 file** coperti ora (11 root + 2 archiviati), non più 12. Nessuna azione da riaprire su questo fronte salvo nuove derive rilevate in futuro.
 
 ---
 

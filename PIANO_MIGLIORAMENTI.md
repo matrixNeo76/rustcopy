@@ -14,7 +14,7 @@ verified:
 # Piano di Miglioramento Consolidato — rustcopy
 
 **Baseline**: v6.0.0 — commit `0d8a9f0`
-**Test**: 302 default / 317 con `--features notify-server` *(misurati il 19 Agosto 2026 dopo P1 — erano 296/311 dopo P2 lo stesso giorno (286/301 dopo B3/B4 il 17 Agosto; 284/299 fino al 7 Agosto); +6 dovuti ai 4 unit test + 2 black-box aggiunti da P1, vedi §P1 — implementazione)*
+**Test**: 307 default / 322 con `--features notify-server` *(misurati il 21 Agosto 2026 dopo D17 (fuori dal perimetro di questo piano, vedi `ANALYSIS.md`) — erano 302/317 dopo P1 il 19 Agosto (296/311 dopo P2 lo stesso giorno; 286/301 dopo B3/B4 il 17 Agosto; 284/299 fino al 7 Agosto); +5 dovuti ai 4 unit test + 1 black-box aggiunti da D17)*
 
 ---
 

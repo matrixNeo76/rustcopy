@@ -435,7 +435,8 @@ mod tests {
         let dest = tempfile::tempdir().expect("dest");
         copy_tree(source.path(), dest.path());
 
-        let inventory = scan::scan(source.path(), "*.csv", false, &[], &[]).expect("scan");
+        let inventory =
+            scan::scan(source.path(), "*.csv", false, &[], &[], None, None).expect("scan");
         let check = verify(
             source.path(),
             dest.path(),
@@ -458,7 +459,8 @@ mod tests {
         copy_tree(source.path(), dest.path());
         std::fs::write(dest.path().join("b.csv"), vec![0u8; 1024]).expect("corrupt");
 
-        let inventory = scan::scan(source.path(), "*.csv", false, &[], &[]).expect("scan");
+        let inventory =
+            scan::scan(source.path(), "*.csv", false, &[], &[], None, None).expect("scan");
         let check = verify(
             source.path(),
             dest.path(),
@@ -484,7 +486,8 @@ mod tests {
         copy_tree(source.path(), dest.path());
         write_fixture_file(&dest.path().join("a.csv"), 1024);
 
-        let inventory = scan::scan(source.path(), "*.csv", false, &[], &[]).expect("scan");
+        let inventory =
+            scan::scan(source.path(), "*.csv", false, &[], &[], None, None).expect("scan");
         let check = verify(
             source.path(),
             dest.path(),
@@ -504,7 +507,8 @@ mod tests {
         copy_tree(source.path(), dest.path());
         std::fs::remove_file(dest.path().join("nested/b.csv")).expect("remove");
 
-        let inventory = scan::scan(source.path(), "*.csv", false, &[], &[]).expect("scan");
+        let inventory =
+            scan::scan(source.path(), "*.csv", false, &[], &[], None, None).expect("scan");
         let check = verify(
             source.path(),
             dest.path(),
@@ -538,7 +542,8 @@ mod tests {
         let dest = tempfile::tempdir().expect("dest");
         copy_tree(source.path(), dest.path());
 
-        let inventory = scan::scan(source.path(), "*.csv", false, &[], &[]).expect("scan");
+        let inventory =
+            scan::scan(source.path(), "*.csv", false, &[], &[], None, None).expect("scan");
         let check = verify(
             source.path(),
             dest.path(),
@@ -557,7 +562,8 @@ mod tests {
         let dest = tempfile::tempdir().expect("dest");
         copy_tree(source.path(), dest.path());
 
-        let inventory = scan::scan(source.path(), "*.csv", false, &[], &[]).expect("scan");
+        let inventory =
+            scan::scan(source.path(), "*.csv", false, &[], &[], None, None).expect("scan");
         let check = verify(
             source.path(),
             dest.path(),
@@ -581,7 +587,8 @@ mod tests {
         bytes[0] ^= 0xFF;
         std::fs::write(&dest_file, bytes).expect("corrupt");
 
-        let inventory = scan::scan(source.path(), "*.csv", false, &[], &[]).expect("scan");
+        let inventory =
+            scan::scan(source.path(), "*.csv", false, &[], &[], None, None).expect("scan");
         let check = verify(
             source.path(),
             dest.path(),

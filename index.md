@@ -8,7 +8,7 @@ okf_version: "0.2"
 
 # Log
 
-* [Analisi di Robustezza e Ottimizzazione Prestazioni](ANALYSIS.md) - Audit trail dei difetti D1-D16 e delle opportunità di miglioramento O1-O10.
+* [Analisi di Robustezza e Ottimizzazione Prestazioni](ANALYSIS.md) - Audit trail dei difetti D1-D17 e delle opportunità di miglioramento O1-O10.
 * [Changelog](CHANGELOG.md) - Cronologia lineare delle versioni, in stile Keep a Changelog.
 
 # Reference

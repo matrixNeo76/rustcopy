@@ -20,13 +20,16 @@ fn stderr_of(output: &std::process::Output) -> String {
 }
 
 /// Backdates `path`'s last-write time by `days`, via a PowerShell one-liner (same "shell out for
-/// a real OS-level effect" pattern already used elsewhere in this file, e.g. `mklink /J`). Used
-/// to make a file old enough for `--max-age-days` to exclude it from robocopy's own transfer
-/// while a same-run fresh file still copies normally — see the doc comments on the two tests that
-/// use this for why this replaced `--exclude-files` as the "deterministic, non-racy missing file"
-/// technique (`scan.rs`'s prescan doesn't apply `--min-age-days`/`--max-age-days` either, only
-/// robocopy's own `/MINAGE`/`/MAXAGE` do — same latent gap as the one fixed for
-/// `--exclude-files`/`--exclude-dirs`, deliberately left open for now).
+/// a real OS-level effect" pattern already used elsewhere in this file, e.g. `mklink /J`). Used to
+/// make a file old enough for `--max-age-days`/young enough for `--min-age-days` to exercise real
+/// age filtering (D17) — since `scan.rs`'s prescan now applies these too (D17, closes the last
+/// instance of the gap `--exclude-files`/`--exclude-dirs` had until 5 August 2026), this can no
+/// longer be used as a "deterministic missing file" trick the way it briefly was: the prescan and
+/// robocopy now agree on which files an age filter excludes, so a backdated+filtered file is
+/// simply never expected at the destination, not reported as missing. See
+/// `min_and_max_age_days_are_applied_consistently_end_to_end` for the real age-filter test, and
+/// the two "missing at dest" tests below for the (unrelated) technique that replaced this one for
+/// that purpose: a destination path segment that is a plain file where robocopy needs a directory.
 #[cfg(windows)]
 fn backdate_file(path: &Path, days: i64) {
     let status = Command::new("powershell")
@@ -342,20 +345,27 @@ fn fast_verify_recatches_only_the_file_whose_source_changed() {
 /// F28 black-box test: a file that fails verification must never be cached as trusted — otherwise
 /// a genuinely broken file would silently stop being reported after the first run.
 ///
-/// Uses `--max-age-days` (not `--exclude-files`, which used to have the same effect via a bug
-/// fixed 5 August 2026 — `scan.rs`'s own prescan now correctly excludes `--exclude-files`/
-/// `--exclude-dirs` matches from what it expects to find at the destination too, so an excluded
-/// file is no longer "missing", it's just not expected at all) to make `stale.log` too old for
-/// robocopy to copy while `a.csv` still does — `scan.rs` doesn't apply `--max-age-days` either
-/// (a separate, still-open instance of the same category of gap), so the prescan still expects
-/// `stale.log` to be there. See `backdate_file`'s doc comment.
+/// Neither `--exclude-files` (fixed 5 August 2026) nor `--max-age-days` (fixed 21 August 2026,
+/// D17) can be used as a "deterministic missing file" trick any more, since `scan.rs`'s prescan
+/// now applies both the same way robocopy's own transfer does — an excluded/age-filtered file is
+/// no longer "missing", it's just never expected at the destination in the first place. This test
+/// instead makes `sub/stale.log` genuinely unreachable via a real filesystem conflict: `dest/sub`
+/// is pre-created as a plain **file**, so when robocopy tries to create it as a directory to hold
+/// `stale.log`, that one file fails (robocopy reports it as a "mismatch", not a fatal error, and
+/// continues with everything else — verified against the real binary: exit code 5 = `BIT_COPIED`
+/// + `BIT_MISMATCH`, still `is_success()` per `exit_code.rs`). `a.csv` at the root is unaffected.
 #[cfg(windows)]
 #[test]
 fn fast_verify_never_caches_a_failed_file_so_it_keeps_being_reported() {
-    let source = fixture_tree(&[("a.csv", 10), ("stale.log", 20)]);
-    backdate_file(&source.path().join("stale.log"), 10);
+    let source = fixture_tree(&[("a.csv", 10), ("sub/stale.log", 20)]);
     let workdir = tempfile::tempdir().expect("workdir");
     let dest = workdir.path().join("out");
+    std::fs::create_dir_all(&dest).expect("create dest");
+    std::fs::write(
+        dest.join("sub"),
+        b"blocks robocopy from creating sub/ as a directory",
+    )
+    .expect("pre-create the blocking file");
 
     let base_args = |report: &Path| -> Vec<String> {
         vec![
@@ -374,8 +384,6 @@ fn fast_verify_never_caches_a_failed_file_so_it_keeps_being_reported() {
             report.to_str().expect("utf8").to_string(),
             "--verify-integrity".into(),
             "--fast-verify".into(),
-            "--max-age-days".into(),
-            "5".into(),
         ]
     };
 
@@ -386,7 +394,8 @@ fn fast_verify_never_caches_a_failed_file_so_it_keeps_being_reported() {
     assert_eq!(
         output1.status.code(),
         Some(4),
-        "stale.log is excluded from the copy, so verification must fail"
+        "stale.log can never land at dest (sub/ is blocked), so verification must fail; stderr: {}",
+        stderr_of(&output1)
     );
     let json1: serde_json::Value =
         serde_json::from_str(&std::fs::read_to_string(&report1).expect("read")).expect("json");
@@ -419,6 +428,82 @@ fn fast_verify_never_caches_a_failed_file_so_it_keeps_being_reported() {
             .expect("array")
             .len(),
         1
+    );
+}
+
+/// D17 black-box test: `--min-age-days`/`--max-age-days` must now be honoured by the prescan
+/// (`scan.rs`) exactly the way real `robocopy.exe`'s own `/MINAGE`/`/MAXAGE` are — before this
+/// fix, the prescan ignored both flags entirely, so `--verify-integrity` would report an
+/// age-excluded file as spuriously `missing_in_dest` even though robocopy correctly skipped it on
+/// purpose (this is the scenario the two tests above used to exploit as free test scaffolding).
+/// Runs a real transfer with `--max-age-days`, so both the prescan's expectations and robocopy's
+/// actual copy decision come from the same real binary, not a unit-level assumption about either.
+#[cfg(windows)]
+#[test]
+fn min_and_max_age_days_are_applied_consistently_end_to_end() {
+    let source = fixture_tree(&[("old.txt", 10), ("new.txt", 20)]);
+    backdate_file(&source.path().join("old.txt"), 10);
+    let workdir = tempfile::tempdir().expect("workdir");
+
+    // --max-age-days 5: old.txt (10 days) must be excluded, new.txt (0 days) must survive. If the
+    // prescan and robocopy agree (the D17 fix), --verify-integrity finds nothing missing.
+    let dest = workdir.path().join("out");
+    let report = workdir.path().join("report.json");
+    let output = run(&[
+        "--source",
+        source.path().to_str().expect("utf8"),
+        "--dest",
+        dest.to_str().expect("utf8"),
+        "--log-path",
+        workdir.path().join("ingest.log").to_str().expect("utf8"),
+        "--report-path",
+        report.to_str().expect("utf8"),
+        "--max-age-days",
+        "5",
+        "--verify-integrity",
+    ]);
+    assert!(
+        output.status.success(),
+        "prescan and robocopy must agree on which files --max-age-days excludes; stderr: {}",
+        stderr_of(&output)
+    );
+    assert!(dest.join("new.txt").is_file(), "new.txt must be copied");
+    assert!(
+        !dest.join("old.txt").exists(),
+        "old.txt must be excluded by --max-age-days, not copied"
+    );
+    let json: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(&report).expect("read")).expect("json");
+    assert_eq!(
+        json["integrity_check"]["missing_in_dest"]
+            .as_array()
+            .expect("array")
+            .len(),
+        0,
+        "the prescan must not expect old.txt either, once --max-age-days is threaded into scan.rs: {json}"
+    );
+
+    // --min-age-days 5, the opposite direction: only old.txt (>= 5 days) survives, new.txt (0
+    // days) is excluded.
+    let dest2 = workdir.path().join("out2");
+    let output2 = run(&[
+        "--source",
+        source.path().to_str().expect("utf8"),
+        "--dest",
+        dest2.to_str().expect("utf8"),
+        "--log-path",
+        workdir.path().join("ingest2.log").to_str().expect("utf8"),
+        "--min-age-days",
+        "5",
+    ]);
+    assert!(output2.status.success(), "stderr: {}", stderr_of(&output2));
+    assert!(
+        dest2.join("old.txt").is_file(),
+        "old.txt (10 days) must survive --min-age-days 5"
+    );
+    assert!(
+        !dest2.join("new.txt").exists(),
+        "new.txt (0 days) must be excluded by --min-age-days 5"
     );
 }
 
@@ -1337,25 +1422,30 @@ fn hash_algo_xxh3_verifies_successfully_end_to_end() {
     assert_eq!(report["integrity_check"]["files_checked"], 2);
 }
 
-/// F26a black-box test (closes half of D2): `scan.rs`'s prescan doesn't apply `--max-age-days`
-/// (only robocopy's own `/MAXAGE` does, at copy time — a still-open instance of the same category
-/// of gap that `--exclude-files`/`--exclude-dirs` had until 5 August 2026, see `backdate_file`'s
-/// doc comment for why this test switched to age instead of exclusion), so a file matched by the
-/// pattern but too old for robocopy to copy is a deterministic, non-racy way to reproduce "file
-/// present in the prescan inventory but missing at the destination when `--verify-integrity` runs"
-/// — exactly the scenario `--ignore-transient-missing` exists for, without needing a real timing
-/// race.
+/// F26a black-box test (closes half of D2): a file matched by the pattern but genuinely unable to
+/// land at the destination is a deterministic, non-racy way to reproduce "file present in the
+/// prescan inventory but missing at the destination when `--verify-integrity` runs" — exactly the
+/// scenario `--ignore-transient-missing` exists for, without needing a real timing race. Uses the
+/// same `dest/sub`-is-a-file filesystem conflict as
+/// `fast_verify_never_caches_a_failed_file_so_it_keeps_being_reported` — see that test's doc
+/// comment for why `--max-age-days` can no longer be used for this (D17 fixed `scan.rs`'s prescan
+/// to apply it too, so it no longer produces a prescan/destination mismatch).
 #[cfg(windows)]
 #[test]
 fn ignore_transient_missing_turns_an_excluded_log_into_a_pass() {
-    let source = fixture_tree(&[("a.csv", 10), ("stale.log", 20)]);
-    backdate_file(&source.path().join("stale.log"), 10);
+    let source = fixture_tree(&[("a.csv", 10), ("sub/stale.log", 20)]);
     let workdir = tempfile::tempdir().expect("workdir");
 
     // Without --ignore-transient-missing: stale.log is in the prescan inventory (matched by the
-    // default "*" pattern) but never reaches the destination (too old for --max-age-days), so
-    // verification must fail.
+    // default "*" pattern) but can never reach the destination (sub/ is blocked), so verification
+    // must fail.
     let dest_a = workdir.path().join("out-a");
+    std::fs::create_dir_all(&dest_a).expect("create dest_a");
+    std::fs::write(
+        dest_a.join("sub"),
+        b"blocks robocopy from creating sub/ as a directory",
+    )
+    .expect("pre-create the blocking file");
     let output_a = run(&[
         "--source",
         source.path().to_str().expect("utf8"),
@@ -1365,8 +1455,6 @@ fn ignore_transient_missing_turns_an_excluded_log_into_a_pass() {
         workdir.path().join("a.log").to_str().expect("utf8"),
         "--report-path",
         workdir.path().join("a-report.json").to_str().expect("utf8"),
-        "--max-age-days",
-        "5",
         "--verify-integrity",
     ]);
     assert_eq!(
@@ -1379,6 +1467,12 @@ fn ignore_transient_missing_turns_an_excluded_log_into_a_pass() {
 
     // With --ignore-transient-missing: the same missing stale.log must be tolerated.
     let dest_b = workdir.path().join("out-b");
+    std::fs::create_dir_all(&dest_b).expect("create dest_b");
+    std::fs::write(
+        dest_b.join("sub"),
+        b"blocks robocopy from creating sub/ as a directory",
+    )
+    .expect("pre-create the blocking file");
     let report_b = workdir.path().join("b-report.json");
     let output_b = run(&[
         "--source",
@@ -1389,8 +1483,6 @@ fn ignore_transient_missing_turns_an_excluded_log_into_a_pass() {
         workdir.path().join("b.log").to_str().expect("utf8"),
         "--report-path",
         report_b.to_str().expect("utf8"),
-        "--max-age-days",
-        "5",
         "--verify-integrity",
         "--ignore-transient-missing",
     ]);

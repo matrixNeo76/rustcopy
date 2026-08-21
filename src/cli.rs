@@ -249,11 +249,14 @@ pub struct Args {
     pub exclude_dirs: Vec<String>,
 
     // ── F4.2: Date-based filters ────────────────────────────────────────────
-    /// Skip files modified more than N days ago (maps to robocopy /MINAGE:N).
+    /// Skip files modified less than N days ago — keep only files at least N days old (maps to
+    /// robocopy /MINAGE:N). D17: this help text had the direction backwards until it was
+    /// verified against the real robocopy.exe binary; see CLAUDE.md.
     #[arg(long, value_name = "DAYS")]
     pub min_age_days: Option<u32>,
 
-    /// Skip files modified less than N days ago (maps to robocopy /MAXAGE:N).
+    /// Skip files modified more than N days ago — keep only files within the last N days (maps
+    /// to robocopy /MAXAGE:N). D17: see the note on --min-age-days above.
     #[arg(long, value_name = "DAYS")]
     pub max_age_days: Option<u32>,
 

@@ -1063,6 +1063,12 @@ async fn inventory_source(args: &Args, effective_source: &Path) -> Result<ScanSu
     let follow_links = !args.exclude_junctions;
     let exclude_dirs = args.exclude_dirs.clone();
     let exclude_files = args.exclude_files.clone();
+    // D17: min_age_days/max_age_days must be threaded through the same way exclude_dirs/
+    // exclude_files are (D11), or --verify-integrity spuriously reports age-excluded files as
+    // missing_in_dest and --backup-type ignores the flags entirely (it never goes through
+    // robocopy, see AGENTS.md rule 9).
+    let min_age_days = args.min_age_days;
+    let max_age_days = args.max_age_days;
 
     let inventory = if no_prescan {
         spawn_blocking_with_span(move || {
@@ -1072,6 +1078,8 @@ async fn inventory_source(args: &Args, effective_source: &Path) -> Result<ScanSu
                 follow_links,
                 &exclude_dirs,
                 &exclude_files,
+                min_age_days,
+                max_age_days,
             )
         })
         .await
@@ -1086,6 +1094,8 @@ async fn inventory_source(args: &Args, effective_source: &Path) -> Result<ScanSu
                 follow_links,
                 &exclude_dirs,
                 &exclude_files,
+                min_age_days,
+                max_age_days,
             )
         })
         .await
@@ -1151,12 +1161,24 @@ async fn check_mirror_safety(args: &Args, inventory: &ScanSummary) -> Result<()>
     // exclude_dirs/exclude_files: robocopy's /XD /XF leave matching destination-side entries
     // alone during /MIR (neither copied nor purged), so this diff must exclude them too, or it
     // would flag as "extraneous" (and prompt to delete) destination content robocopy itself
-    // would never touch.
+    // would never touch. D17: min_age_days/max_age_days need the identical treatment — verified
+    // empirically against the real binary (`/MIR /MAXAGE:N` does not purge a destination file
+    // that fails the age filter, matching how /XD /XF already behave here), see CLAUDE.md.
     let follow_links = !args.exclude_junctions;
     let exclude_dirs = args.exclude_dirs.clone();
     let exclude_files = args.exclude_files.clone();
+    let min_age_days = args.min_age_days;
+    let max_age_days = args.max_age_days;
     let dest_all = spawn_blocking_with_span(move || {
-        scan::scan(&dest, "*", follow_links, &exclude_dirs, &exclude_files)
+        scan::scan(
+            &dest,
+            "*",
+            follow_links,
+            &exclude_dirs,
+            &exclude_files,
+            min_age_days,
+            max_age_days,
+        )
     })
     .await
     .context("the mirror safety scan task panicked")?
@@ -1347,6 +1369,9 @@ async fn transfer(
             let follow_links = !args.exclude_junctions;
             let exclude_dirs = args.exclude_dirs.clone();
             let exclude_files = args.exclude_files.clone();
+            // D17: min_age_days/max_age_days deliberately NOT passed here — this counts what is
+            // actually present at the destination right now for the report, not a source-side
+            // selection decision, so a file's age at scan time has no bearing on it.
             let observed = spawn_blocking_with_span(move || {
                 scan::inventory(
                     &dest_for_count,
@@ -1354,6 +1379,8 @@ async fn transfer(
                     follow_links,
                     &exclude_dirs,
                     &exclude_files,
+                    None,
+                    None,
                 )
             })
             .await
