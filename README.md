@@ -306,8 +306,8 @@ Per dettagli tecnici approfonditi, diagrammi architetturali e roadmap di svilupp
 ## 🧪 Esecuzione dei Test (307 di Base, 322 con `notify-server`)
 
 ```bash
-cargo test                              # 307 test (default build, senza axum)
-cargo test --features notify-server     # 322 test (+15 test sul router axum e sui binari reali)
+rtk cargo test                          # 307 test (default build, senza axum)
+rtk cargo test --features notify-server # 322 test (+15 test sul router axum e sui binari reali)
 ```
 
 Esito atteso: `test result: ok.` su tutti i target, in entrambe le modalità.
