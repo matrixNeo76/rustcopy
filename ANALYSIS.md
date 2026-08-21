@@ -563,14 +563,15 @@ file`) mentre `src/` aveva ricevuto 22 commit da allora — rigenerato per inter
 `/graphify . --mode deep`, corpus esteso a tutto il repo (93 file, ~150K parole: 46 file di codice
 + 47 documenti/skill). Risultato: **1436 nodi / 2879 archi / 84 community**.
 
-**La causa originale (ID nodo non qualificati) risulta corretta**, verificato leggendo `graph.json`
-reale: `.encrypt()`/`.decrypt()` ora hanno ID `src_crypto_cryptomanager_encrypt`/`_decrypt`, non più
-bare method names — il formato `{parent_dir}_{filename}_{entity}` documentato in
-`references/extraction-spec.md` era già in uso all'estrazione precedente, la diagnosi originale
-descriveva una versione più vecchia dell'estrattore. Nonostante questo, la reachability misurata sul
-grafo appena rigenerato resta strutturalmente bassa:
+**La causa originale (ID nodo non qualificati) è storica, non descrive più il grafo attuale**:
+verificato leggendo `graph.json` reale, `.encrypt()`/`.decrypt()` hanno oggi ID
+`src_crypto_cryptomanager_encrypt`/`_decrypt`, non più bare method names — il formato
+`{parent_dir}_{filename}_{entity}` documentato in `references/extraction-spec.md` era già la
+convenzione dell'estrattore al momento di questa rigenerazione, quindi la diagnosi originale di D10
+(scritta contro un'estrazione più vecchia) non si applica più a questo grafo. Nonostante questo, la
+reachability misurata sul grafo appena rigenerato resta strutturalmente bassa:
 
-```
+```text
 roots=2 (src_main_main, bin_notify_server_main)
 undirected: reachable=936/1436 (65%) unreachable=500
 ```
