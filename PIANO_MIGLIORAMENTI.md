@@ -5,10 +5,10 @@ description: Piano operativo unico — lacune documentazione, economia di contes
 status: stable
 generated:
   by: process:claude-code
-  at: 2026-08-17T00:00:00Z
+  at: 2026-08-20T00:00:00Z
 verified:
   by: process:claude-code
-  at: 2026-08-17T00:00:00Z
+  at: 2026-08-20T00:00:00Z
 ---
 
 # Piano di Miglioramento Consolidato — rustcopy

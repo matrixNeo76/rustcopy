@@ -1,4 +1,16 @@
+---
+type: Reference
+title: Piano di Implementazione — AgentHarnesses (agentharnesses.io)
+description: Proposta di framework di test YAML/harness per rustcopy, creata il 10 Agosto 2026, mai messa in esecuzione. Archiviata, non attiva.
+status: deprecated
+generated:
+  by: process:claude-code
+  at: 2026-08-10T00:00:00Z
+---
+
 # Piano di Implementazione: integrazione AgentHarnesses (agentharnesses.io)
+
+> **Archiviato il 20 Agosto 2026**: file orfano trovato in root senza frontmatter OKF e senza alcun riferimento da nessun documento attuale del progetto. Creato il 10 Agosto 2026, la proposta non è mai stata messa in esecuzione (termina con una domanda all'utente mai risposta). **Distinto da `ROADMAP.md` F61** ("Server MCP feature-gated") — quel piano riguarda un server MCP per host agentici, questo riguarda un framework di test a scenari YAML; non sono la stessa proposta. Spostato qui senza modifiche al contenuto, per disciplina e coerenza con `docs/archive/PIANO_NOTIFY_SERVER.md`. Se in futuro serve testing end-to-end più strutturato di quello attuale (`tests/cli_smoke.rs`, `tests/notify_server_e2e.rs`), questo documento resta un punto di partenza valido da rivalutare, non da eseguire alla lettera.
 
 Creato da: GitHub Copilot Chat Assistant
 
