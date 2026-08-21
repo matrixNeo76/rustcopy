@@ -556,21 +556,46 @@ vecchio sia preservato in `<path>.1` mentre il nuovo run scrive in un file fresc
 
 ---
 
-### D10 — Il grafo rigenerato non regge ancora la reachability
+### D10 — Il grafo rigenerato non regge ancora la reachability ⚠️ MIGLIORATO, NON CHIUSO (21 Agosto 2026)
 
-**Gravità: BASSA (strumentazione).** La rigenerazione ha portato il grafo da 168 nodi / 409 archi / 4
-file a **580 nodi / 1174 archi / 24 file**, con 22 community coincidenti con i moduli reali e archi
-inter-file effettivi: un miglioramento netto e verificabile. Ma la query di reachability da
-`main`/`lib` proposta dall'audit originale **continua a non funzionare**:
+**Gravità: BASSA (strumentazione).** Il grafo era fermo al 31 Luglio (`580 nodi / 1174 archi / 24
+file`) mentre `src/` aveva ricevuto 22 commit da allora — rigenerato per intero con
+`/graphify . --mode deep`, corpus esteso a tutto il repo (93 file, ~150K parole: 46 file di codice
++ 47 documenti/skill). Risultato: **1436 nodi / 2879 archi / 84 community**.
 
+**La causa originale (ID nodo non qualificati) è storica, non descrive più il grafo attuale**:
+verificato leggendo `graph.json` reale, `.encrypt()`/`.decrypt()` hanno oggi ID
+`src_crypto_cryptomanager_encrypt`/`_decrypt`, non più bare method names — il formato
+`{parent_dir}_{filename}_{entity}` documentato in `references/extraction-spec.md` era già la
+convenzione dell'estrattore al momento di questa rigenerazione, quindi la diagnosi originale di D10
+(scritta contro un'estrazione più vecchia) non si applica più a questo grafo. Nonostante questo, la
+reachability misurata sul grafo appena rigenerato resta strutturalmente bassa:
+
+```text
+roots=2 (src_main_main, bin_notify_server_main)
+undirected: reachable=936/1436 (65%) unreachable=500
 ```
-roots=2 reachable=33/580 unreachable=547
-```
 
-Il motivo è che l'estrattore AST emette i metodi come nodi non qualificati (`.encrypt()`,
-`.decrypt()`, `.add_bytes()`) senza il tipo proprietario, quindi le chiamate cross-modulo non si
-risolvono e 547 nodi risultano falsamente irraggiungibili. **Il risultato non va usato come gate
-anti-dead-code**: il codice morto reale (D8) è stato trovato per grep, non con il grafo.
+**Il numero grezzo include rumore non pertinente**: 500 nodi comprendono documenti (.md, skill in
+`.agents/`, script PowerShell) mai raggiungibili da `main()` per costruzione — non è dead code, è
+contenuto che non fa parte del grafo di chiamata a runtime. Isolando solo i nodi con
+`source_file` che termina in `.rs`: **882/1096 (80,5%) raggiungibili**, molto meglio del 5,7%
+originale (33/580). Dei restanti 214 nodi Rust irraggiungibili, ~104 sono ulteriore rumore
+strutturale (nomi di funzioni `#[test]`, nodi-tipo bare come `String`/`Result`/`PathBuf` che non
+hanno mai un arco "calls" in uscita per costruzione) — **ne restano ~110 che sono funzioni/struct
+di produzione reali e note per essere usate** (verificato a campione: `atomic_write()`,
+`ProcessRunner`, `ChannelWriter`, `LogHandle` — tutte richiamate nel codice, confermato da questa
+stessa sessione durante il lavoro su D13/D14).
+
+**Diagnosi aggiornata**: l'estrazione semantica via subagenti (dispatch parallelo, `--mode deep`)
+cattura bene le relazioni esplicite (import, riferimenti diretti) ma non traccia in modo affidabile
+il dispatch indiretto tipico di Rust — chiamate attraverso `Box<dyn Trait>` (`CommandRunner`),
+closure passate a `spawn_blocking`, metodi invocati tramite variabili intermedie. Questo è un limite
+strutturale dell'estrazione basata su LLM su un corpus di questa dimensione, non un bug puntuale
+risolvibile con un secondo giro. **Il risultato resta da non usare come gate anti-dead-code**: il
+codice morto reale (D8) va cercato per grep/clippy, non con il grafo — ma è ora uno strumento di
+navigazione utile (84 community etichettate, `GRAPH_REPORT.md` aggiornato), cosa che con il 5,7% di
+reachability del giro precedente non era.
 
 ---
 
