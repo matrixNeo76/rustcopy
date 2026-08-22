@@ -11,12 +11,15 @@ use crate::logging;
 pub const MIN_THREADS: u8 = 1;
 pub const MAX_THREADS: u16 = 128;
 
-/// F27: verbosity level for `--log-level`, mapped to a per-crate `tracing` filter.
+/// F27: verbosity level for `--log-level`, mapped to a per-crate `tracing` filter. D18: default
+/// is `Info`, not `Debug` — `Debug` emits one line per file copied (`robocopy transferred file`),
+/// which produced a 356 MB log on a real 1.34M-file run (`_ops_reports/full-profile-test.log`,
+/// see `logging::DEFAULT_FILTER`'s doc comment). Still available via `--log-level debug`.
 #[derive(clap::ValueEnum, Clone, Copy, Debug, PartialEq, Eq, Default)]
 pub enum LogLevel {
     Trace,
-    #[default]
     Debug,
+    #[default]
     Info,
     Warn,
     Error,
@@ -175,9 +178,10 @@ pub struct Args {
 
     // ── F27: log verbosity, quiet mode and rotation ─────────────────────────
     /// Verbosity written to --log-path (per-crate; dependencies always log at WARN). Ignored if
-    /// the RUST_LOG environment variable is set. debug (the default) writes one line per file,
-    /// which on multi-million-file trees means gigabytes per run — see --quiet or --log-level warn.
-    #[arg(long, value_enum, default_value_t = LogLevel::Debug, conflicts_with = "quiet")]
+    /// the RUST_LOG environment variable is set. debug writes one line per file, which on
+    /// multi-million-file trees means gigabytes per run (D18) — use it when actually diagnosing a
+    /// specific run, not as a standing default.
+    #[arg(long, value_enum, default_value_t = LogLevel::Info, conflicts_with = "quiet")]
     pub log_level: LogLevel,
 
     /// Shorthand for --log-level warn: suppresses the per-file DEBUG lines responsible for most of
@@ -185,9 +189,10 @@ pub struct Args {
     #[arg(long, default_value_t = false, conflicts_with = "log_level")]
     pub quiet: bool,
 
-    /// Rotate the previous run's log aside (--log-path.1, .2, ...) once it reaches this many
-    /// bytes, instead of letting repeated runs against the same --log-path grow it without bound.
-    /// 0 disables rotation.
+    /// Rotate the log aside (--log-path.1, .2, ...) once it reaches this many bytes — both at
+    /// startup (the previous run's log) and mid-run (D18: this run's own log, if it crosses the
+    /// threshold while still writing), instead of letting a single long run or repeated runs
+    /// against the same --log-path grow it without bound. 0 disables rotation.
     #[arg(long, default_value_t = logging::DEFAULT_MAX_LOG_BYTES, value_name = "BYTES")]
     pub log_max_bytes: u64,
 
@@ -729,7 +734,7 @@ mod tests {
         assert!(!args.exclude_junctions);
         assert!(!args.fast_verify);
         assert!(!args.ignore_transient_missing);
-        assert_eq!(args.log_level, LogLevel::Debug);
+        assert_eq!(args.log_level, LogLevel::Info); // D18: default changed from Debug
         assert!(!args.quiet);
         assert_eq!(args.log_max_bytes, crate::logging::DEFAULT_MAX_LOG_BYTES);
         assert_eq!(

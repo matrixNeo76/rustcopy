@@ -86,9 +86,9 @@ graph LR
 | `--hash-algo <ALGO>` | `sha256` | — | Algoritmo per la verifica checksum: `sha256`, `blake3` (3-5x più veloce) o `xxh3` (~5-10x più veloce di blake3, **non crittografico** — solo per rilevare corruzioni accidentali, non per un backup dove un attaccante potrebbe aver manomesso i dati). |
 | `--compare-baseline` | `false` | — | Esegue anche una copia ricorsiva naive (l'equivalente di `Get-ChildItem \| Copy-Item`) verso una destinazione temporanea e ne cronometra la durata, per confronto con robocopy. |
 | `--report-path <PATH>` | `./robocopy_ingest_report.json` | — | Percorso del report JSON finale. Supporta il placeholder `{timestamp}` (Release 6.0.0, P1): viene sostituito con la data/ora di avvio del run nel formato `yyyyMMdd_HHmmss`, lo stesso già usato dal launcher PowerShell — es. `report-{timestamp}.json` → `report-20260819_140509.json`. Senza il placeholder il comportamento è quello di sempre (path fisso, sovrascritto ad ogni run — è da questo caso che dipende `previous_run_comparison` nel report, vedi sopra). In modalità multi-job (`[[jobs]]`) il placeholder viene risolto per ciascun job **dopo** la namespacizzazione per nome (F33) — l'ordine tra i due non incide sul risultato finale, dato che toccano parti disgiunte del nome file — e compongono correttamente: `report-{timestamp}.json` → `report-20260819_140509.nome-job.json`. |
-| `--log-level <LIVELLO>` | `debug` | — | Verbosità scritta su `--log-path` (trace/debug/info/warn/error). Ignorato se `RUST_LOG` è impostata. |
+| `--log-level <LIVELLO>` | `info` | — | Verbosità scritta su `--log-path` (trace/debug/info/warn/error). Ignorato se `RUST_LOG` è impostata. `debug` aggiunge una riga per ogni file copiato — utile solo per diagnosticare un run specifico, non come default (D18). |
 | `--quiet` | `false` | — | Scorciatoia per `--log-level warn`: elimina le righe DEBUG per-file, la causa principale dei log da GB su alberi grandi (F27). |
-| `--log-max-bytes <N>` | 20 MB | — | Ruota il log precedente (`<path>.1`, `.2`, ...) quando raggiunge N byte. `0` disattiva la rotazione. |
+| `--log-max-bytes <N>` | 20 MB | — | Ruota il log (`<path>.1`, `.2`, ...) quando raggiunge N byte — sia all'avvio (il log del run precedente) sia durante l'esecuzione stessa se la supera mentre scrive (D18). `0` disattiva la rotazione. |
 | `--log-max-backups <N>` | `3` | — | Numero di backup di log ruotati da mantenere. |
 | `--html-report-path <PATH>`| *nessuno* | — | Genera un report visivo autonomo in formato HTML (valori interpolati sempre sottoposti ad escaping). |
 | `--webhook-url <URL>` | *nessuno* | — | Trasmette una notifica HTTP/HTTPS POST JSON a fine job (timeout 10s, errori reali riportati, non più ignorati). |
@@ -297,17 +297,17 @@ di `--webhook-url`; risponde `200` se consegnato su tutti i canali, `401` senza/
 Per dettagli tecnici approfonditi, diagrammi architetturali e roadmap di sviluppo consultare:
 - 📖 **[RUNBOOK.md](RUNBOOK.md)** — Manuale operativo, copie multi-sorgente e comandi reali verificati.
 - 📄 **[ARCHITECTURE.md](ARCHITECTURE.md)** — Diagrammi di sequenza, gestione memoria anti-OOM e struttura interna dei moduli.
-- 📊 **[ANALYSIS.md](ANALYSIS.md)** — Diagnosi delle criticità storiche e validazione dei 307 test.
+- 📊 **[ANALYSIS.md](ANALYSIS.md)** — Diagnosi delle criticità storiche e validazione dei 310 test.
 - 🗺️ **[ROADMAP.md](ROADMAP.md)** — Diagramma Gantt dello storico delle release e pianificazione futura.
 - 🤖 **[AGENTS.md](AGENTS.md)** — Linee guida per sviluppatori e contributori AI.
 
 ---
 
-## 🧪 Esecuzione dei Test (307 di Base, 322 con `notify-server`)
+## 🧪 Esecuzione dei Test (310 di Base, 325 con `notify-server`)
 
 ```bash
-rtk cargo test                          # 307 test (default build, senza axum)
-rtk cargo test --features notify-server # 322 test (+15 test sul router axum e sui binari reali)
+rtk cargo test                          # 310 test (default build, senza axum)
+rtk cargo test --features notify-server # 325 test (+15 test sul router axum e sui binari reali)
 ```
 
 Esito atteso: `test result: ok.` su tutti i target, in entrambe le modalità.
