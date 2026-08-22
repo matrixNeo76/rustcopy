@@ -1,7 +1,7 @@
 ---
 type: Log
 title: Analisi di Robustezza e Ottimizzazione Prestazioni
-description: Audit trail dei difetti D1-D17 e delle opportunità di miglioramento O1-O10.
+description: Audit trail dei difetti D1-D18 e delle opportunità di miglioramento O1-O10.
 status: stable
 generated:
   by: process:claude-code
@@ -163,8 +163,9 @@ Se l'applicazione Rust intercetta `Ctrl+C` e si arresta senza terminare il proce
 > (`vss::remap_to_shadow` produceva un path errato quando eseguito su un host non-Windows) più
 > diversi test obsoleti/non platform-gated correttamente, mai eseguiti prima d'ora. **D17** (21
 > Agosto 2026) chiude il gap parallelo a D11 per `--min-age-days`/`--max-age-days`, più una
-> direzione invertita nel loro `--help` scoperta durante il fix. Porta il totale storico a 17
-> (D1-D17), di cui solo D10 resta aperto.
+> direzione invertita nel loro `--help` scoperta durante il fix. **D18** (22 Agosto 2026) chiude i
+> due limiti che D9 aveva lasciato espliciti: il default di log a `debug` e la rotazione mai live
+> durante il run. Porta il totale storico a 18 (D1-D18), di cui solo D10 resta aperto.
 
 ## 🛑 3.1 Difetti aperti confermati
 
@@ -928,6 +929,58 @@ robocopy dovrebbe creare una sottodirectory — verificato empiricamente che rob
 come un "mismatch" non fatale (exit code 5, `is_success()` resta `true` in `exit_code.rs`) e
 continua con gli altri file, dando un modo deterministico e reale per riprodurre "file atteso dal
 prescan ma mai atterrato in destinazione" senza dipendere da nessuna delle due lacune appena chiuse.
+
+---
+
+### D18 — Livello di log di default a DEBUG, e la rotazione non era mai live ✅ RISOLTO (22 Agosto 2026)
+
+**Stato: chiuso e verificato.**
+
+**Gravità: MEDIA.** D9 (chiuso il 3 Agosto con F27) aveva già aggiunto `--log-level`/`--quiet`/
+rotazione, ma con due limiti espliciti nella sua stessa nota di chiusura: il default restava
+`debug` ("invariato"), e la rotazione era esplicitamente documentata come *"non una rotazione live
+durante l'esecuzione"*. Questo difetto chiude entrambi, trovati analizzando i dati operativi reali
+in `_ops_reports/` (non ipotizzati).
+
+**1. Il default DEBUG produce un log ingestibile alla scala reale dell'utente.**
+`_ops_reports/full-profile-test.log` (run reale sul profilo QNAP da 1.340.613 file) pesa **356 MB**
+(più un backup ruotato da 120 MB) — una riga `robocopy transferred file` per ogni singolo file
+copiato. Misurato anche su un campione controllato di 300 file: 67.082 byte a `debug` contro 877
+byte a `info` (**76× di differenza**).
+
+**2. `--log-max-bytes` non poteva limitare il run in corso.** Verificato con il binario reale:
+`--log-max-bytes 1024` su un run che produce ~67 KB di log ha comunque scritto **67.073 byte**, 65
+volte oltre il cap richiesto. Causa: `rotate_if_needed` girava una sola volta, all'avvio, prima
+dell'apertura del file — il writer task poi appendeva senza mai ricontrollare la dimensione.
+
+#### ✅ Fix reale e verifica
+
+**Default cambiato a `info`** (`logging::DEFAULT_FILTER`, `cli::LogLevel::default()` e
+`default_value_t` di `--log-level`) — `debug` resta disponibile esplicitamente per diagnosticare un
+run specifico, non più come default silenzioso.
+
+**Rotazione resa live**: il writer task in `logging::build` traccia ora `bytes_written` (inizializzato
+alla dimensione del file dopo la rotazione di avvio, non a zero, così il conteggio riflette la vera
+dimensione totale del file come fa `rotate_if_needed`) e lo incrementa ad ogni riga scritta. Al
+superamento di `--log-max-bytes`: flush, `tokio::fs::File::into_std().await` (attende eventuali
+operazioni in volo e restituisce un `std::fs::File` il cui `Drop` chiude l'handle in modo
+sincrono — nota Windows: Rust apre già i file con `FILE_SHARE_DELETE`, quindi rinominare un handle
+aperto funzionerebbe comunque, ma `into_std()` toglie ogni dubbio invece di fare affidamento su quel
+dettaglio di share-mode), poi la stessa `rotate_if_needed` già testata (non un percorso di codice
+separato), poi riapertura di un file fresco allo stesso path e reset del contatore.
+
+**Verificato**: 3 nuovi unit test in `logging.rs`
+(`debug_detail_is_suppressed_by_default_but_available_when_requested`,
+`a_single_run_rotates_mid_flight_once_it_crosses_max_bytes`,
+`a_run_under_max_bytes_never_rotates`); 2 test esistenti aggiornati alla nuova semantica
+(`oversized_log_is_rotated_aside_before_a_new_run_starts` — la soglia di test doveva restare più
+grande di una singola riga formattata per non ri-triggerare una seconda rotazione, altrimenti il
+contenuto "seed" atteso nel backup veniva sovrascritto dalla riga stessa del nuovo run); 2 test
+black-box in `tests/cli_smoke.rs` riscritti per la stessa ragione
+(`log_level_controls_per_file_debug_detail_in_the_real_log`,
+`oversized_log_is_rotated_by_a_real_run` — soglia alzata da 500 a 10.000 byte perché l'output INFO
+di un run reale con path Windows completi è più vicino alla soglia piccola usata in origine di
+quanto lo fosse l'output DEBUG che il test originale assumeva).
 
 ---
 
