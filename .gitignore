@@ -9,6 +9,14 @@ graphify-out/cache/
 graphify-out/manifest.json
 graphify-out/cost.json
 graphify-out/.graphify_*
+# Only /graphify-out (repo root) is the canonical graph, tracked deliberately (graph.json +
+# GRAPH_REPORT.md). A graphify-out/ anywhere else, at any depth, is a stray graph from running
+# `graphify extract <subdir>/` instead of `/graphify --update` on the root -- ignore it outright
+# rather than let it get committed as a second, divergent graph (see AGENTS.md's Graphify note).
+# The negation only re-includes the literal root path (`!/graphify-out/`, anchored) -- it does not
+# affect the nested case, verified empirically (git check-ignore) before relying on it here.
+**/graphify-out/
+!/graphify-out/
 _ops_reports/
 scripts/*.local.ps1
 scripts/profiles.json

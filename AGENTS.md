@@ -121,10 +121,10 @@ All AI agents and contributors working on this repository MUST utilize the insta
 - Use `rtk cargo check` or `rtk git status` to keep context clean.
 
 ### Graphify (Code Graph & AST):
-- Use `graphify extract src/ --no-viz --no-cluster` to update the AST graph when refactoring modules.
-- Use `graphify query "<question>" --graph src/graphify-out/graph.json` to inspect cross-module dependencies and call graphs.
+- The canonical graph is `graphify-out/graph.json` at the **repo root** — it covers the whole repo (code + docs + skills, not just `src/`), rebuilt with `/graphify . --mode deep` (last done 21 August 2026, see `ANALYSIS.md` D10). Use `/graphify --update` to refresh it incrementally after code changes, **not** `graphify extract src/ ...` — that writes a second, divergent graph under `src/graphify-out/`. `.gitignore` now excludes any nested `graphify-out/` (`**/graphify-out/` with a root-only negation) so a stray one can't be accidentally committed, but it would still silently drift from the real one — the fix is not running that command, not just hiding its output from git.
+- Use `graphify query "<question>" --graph graphify-out/graph.json` to inspect cross-module dependencies and call graphs.
 
-**Note**: `rtk` is installed on this machine (`rtk --version` / `rtk gain` work) but has **no hook installed** (`rtk gain` prints `[warn] No hook installed`) — commands are not auto-rewritten through it, only manual `rtk <cmd>` invocations count. Run `rtk init` (project-local) or `rtk init -g` (global) to enable automatic rewriting if the token savings should apply to every command, not just explicitly-typed `rtk` ones.
+**Note**: `rtk` is installed on this machine with the hook active (`~/.claude/settings.json` runs `rtk hook claude`) — commands typed directly (not just explicit `rtk <cmd>` invocations) are auto-rewritten. Verify with `rtk gain`; it should report accumulated savings, not a "no hook installed" warning.
 
 ### Agent Skills (`.agents/skills/`)
 - `rustcopy-flow/` — compound skill (2-level: orchestrator + molecules) that lets any coding CLI (Claude Code, OpenCode, etc.) drive `robocopy_ingest.exe` end-to-end: quick copy/mirror, generation backups + retention, restore, and Task Scheduler/service automation. Zero MCP dependency — pure Bash/PowerShell against the compiled binary, so it works outside this repo too (mirrored to `~/.claude/skills/rustcopy-flow/` for global use). See `rustcopy-flow/SKILL.md` for the scenario routing table and `rustcopy-flow/molecules/` for the per-phase steps.
