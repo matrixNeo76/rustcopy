@@ -17,11 +17,11 @@ generated:
 
 > **CLI High-Performance in Rust per Ingestion Massiva, Backup Enterprise e Disaster Recovery su Windows (e Cross-Platform).**
 
-> [!NOTE]
-> `rustcopy` è **solo una CLI**: non c'è interfaccia grafica né monitoraggio live in questa versione. Il progresso di un run si segue dalla progress bar a terminale; a run concluso restano il report JSON e la dashboard HTML statica (`--html-report-path`). Un'app desktop con progresso live e controlli interattivi è pianificata — milestone **8.0.0 (Tauri)**, feature F58, in [ROADMAP.md](ROADMAP.md) — ma **non è implementata**.
-
 `robocopy-ingest-cli` è uno strumento da riga di comando per il **trasferimento, sincronizzazione, backup e verifica di integrità di grandi volumi di dati (da 50 GB a oltre 10 TB con milioni di file)**.  
 Combina la potenza nativa di `robocopy.exe` su Windows con le garanzie di sicurezza della memoria, concorrenza multi-threaded ed asincronia di Rust.
+
+> [!NOTE]
+> `rustcopy` è **solo una CLI**: non c'è interfaccia grafica né monitoraggio live in questa versione. Il progresso di un run si segue dalla progress bar a terminale; a run concluso restano il report JSON e la dashboard HTML statica (`--html-report-path`). Un'app desktop con progresso live e controlli interattivi è pianificata — milestone **8.0.0 (Tauri)**, feature F58, in [ROADMAP.md](ROADMAP.md) — ma **non è implementata**.
 
 ---
 
