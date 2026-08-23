@@ -1,0 +1,55 @@
+name: Security audit
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "**/Cargo.toml"
+      - "**/Cargo.lock"
+  pull_request:
+    branches: [main]
+    paths:
+      - "**/Cargo.toml"
+      - "**/Cargo.lock"
+  schedule:
+    # Catches an advisory published *after* a dependency was already approved and merged --
+    # the path-filtered triggers above only re-check when Cargo.lock itself changes, so a new
+    # RustSec disclosure against an unchanged lockfile would otherwise go unnoticed until the
+    # next dependency bump.
+    - cron: "17 6 * * 1"
+
+permissions:
+  contents: read
+
+jobs:
+  # Two jobs, not one shared by every trigger: `permissions:` is per-job, so a single job
+  # covering push/pull_request/schedule would hand `issues: write` to every push and PR run too,
+  # even though only the scheduled run ever files an issue (rustsec/audit-check's own behavior).
+  # Same-repo pull requests get a write-capable GITHUB_TOKEN by default (only fork PRs are
+  # downgraded to read-only automatically), so this isn't a theoretical distinction.
+  audit-on-change:
+    if: github.event_name != 'schedule'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      checks: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - name: cargo audit (RustSec advisory database)
+        uses: rustsec/audit-check@69366f33c96575abad1ee0dba8212993eecbe998 # v2.0.0
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+  audit-scheduled:
+    if: github.event_name == 'schedule'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      checks: write
+      issues: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - name: cargo audit (RustSec advisory database)
+        uses: rustsec/audit-check@69366f33c96575abad1ee0dba8212993eecbe998 # v2.0.0
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}

@@ -70,6 +70,9 @@ For full technical detail behind any entry, see `ANALYSIS.md` (defect list, `D<N
   wanted). Only the `robocopy_ingest` binaries consume this today; flagged here because the type
   is `pub` and the next release carrying it should be semver-major.
 
+### Added
+- `.github/workflows/security-audit.yml`: runs `rustsec/audit-check` against the RustSec advisory database on any push/PR to `main` touching `Cargo.toml`/`Cargo.lock`, plus a weekly cron so a disclosure against an already-merged dependency doesn't go unnoticed until the next bump.
+
 ### Repository
 - Added `LICENSE` (MIT), `SECURITY.md`, `.editorconfig`, `.github/workflows/ci.yml` (test on
   Windows + Linux, `cargo fmt --check`, `cargo clippy -D warnings`), `.github/dependabot.yml`.
