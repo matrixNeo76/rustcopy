@@ -13,7 +13,7 @@
 //! against the previous delta.
 
 use std::collections::HashMap;
-use std::io::{BufRead, Write};
+use std::io::{BufRead, Seek, Write};
 use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
@@ -77,6 +77,101 @@ pub struct Generation {
     /// Full source inventory at the time this generation ran, used to diff the *next*
     /// generation against — not just the files actually copied this time.
     pub files: Vec<GenerationFile>,
+}
+
+/// D20: one generation **without** its `files` inventory — the part of a [`Generation`] that
+/// retention actually reads. Deserializing a manifest line into this instead of a full
+/// `Generation` lets `serde` skip the `files` array without building it, which is the whole point:
+/// at real-world scale `files` is ~145 MB per generation and everything else is a few dozen bytes
+/// (measured, see `probe_manifest_ram_at_real_world_scale`).
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+pub struct GenerationIndexEntry {
+    pub id: String,
+    pub backup_type: BackupType,
+}
+
+impl From<&Generation> for GenerationIndexEntry {
+    fn from(generation: &Generation) -> Self {
+        Self {
+            id: generation.id.clone(),
+            backup_type: generation.backup_type,
+        }
+    }
+}
+
+/// D20: the generation history with every `files` inventory dropped — what
+/// `main.rs::prune_old_generations` needs to decide *which* generations to remove. Loading this
+/// instead of a full [`GenerationManifest`] took the retention pass from 580 MB to effectively
+/// zero at the scale measured in `probe_manifest_ram_at_real_world_scale`.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct GenerationIndex {
+    pub entries: Vec<GenerationIndexEntry>,
+}
+
+impl GenerationIndex {
+    /// Streams the manifest, retaining only each generation's id and type.
+    pub fn load(dest_root: &Path, job_name: Option<&str>) -> Result<Self, IngestError> {
+        let path = GenerationManifest::path_for(dest_root, job_name);
+        if !path.exists() {
+            return Ok(Self::default());
+        }
+        if GenerationManifest::is_legacy_format(&path)? {
+            // A pre-D19 manifest can't be scanned line-wise; pay the old cost once, then let the
+            // next write migrate it forward (see `GenerationManifest::append_generation`).
+            let manifest = GenerationManifest::load_legacy(&path)?;
+            return Ok(Self {
+                entries: manifest
+                    .generations
+                    .iter()
+                    .map(GenerationIndexEntry::from)
+                    .collect(),
+            });
+        }
+        let mut entries = Vec::new();
+        GenerationManifest::for_each_entry(&path, |entry, _offset| {
+            entries.push(entry);
+            Ok(())
+        })?;
+        Ok(Self { entries })
+    }
+
+    /// Ids of the generations belonging to the cycles beyond the `keep_cycles` most recent ones.
+    /// Same rotation semantics as [`GenerationManifest::generations_to_prune`] — both go through
+    /// [`cycle_ranges`], so the two can never disagree on what a cycle is.
+    pub fn generations_to_prune(&self, keep_cycles: usize) -> Vec<String> {
+        let cycles = cycle_ranges(self.entries.iter().map(|entry| entry.backup_type));
+        if cycles.len() <= keep_cycles {
+            return Vec::new();
+        }
+        let prune_count = cycles.len() - keep_cycles;
+        cycles[..prune_count]
+            .iter()
+            .flat_map(|range| self.entries[range.clone()].iter())
+            .map(|entry| entry.id.clone())
+            .collect()
+    }
+}
+
+/// F35's definition of a *cycle*: one `Full` plus every `Incremental`/`Differential` that follows
+/// it, up to the next `Full`. Shared by [`GenerationManifest::cycles`] and
+/// [`GenerationIndex::generations_to_prune`] (D20) so the full-history and metadata-only paths can
+/// never drift apart — F35's safety argument (never prune a `Full` a kept incremental still needs)
+/// rests entirely on this one definition.
+fn cycle_ranges(backup_types: impl Iterator<Item = BackupType>) -> Vec<std::ops::Range<usize>> {
+    let mut result = Vec::new();
+    let mut start = 0;
+    let mut len = 0;
+    for (i, backup_type) in backup_types.enumerate() {
+        len = i + 1;
+        if backup_type == BackupType::Full && i != start {
+            result.push(start..i);
+            start = i;
+        }
+    }
+    if start < len {
+        result.push(start..len);
+    }
+    result
 }
 
 /// Persisted history of every generation backed up to one destination.
@@ -174,9 +269,22 @@ impl GenerationManifest {
         }
 
         // Pre-NDJSON manifest: the whole file is one JSON object.
-        serde_json::from_str(&content).map_err(|error| {
+        Self::parse_legacy(&content, &path)
+    }
+
+    /// Reads a pre-D19 (single pretty-printed object) manifest in full. Split out of
+    /// [`Self::load_or_default`] so D20's streaming readers can share the same legacy fallback
+    /// instead of restating it.
+    fn load_legacy(path: &Path) -> Result<Self, IngestError> {
+        let content =
+            std::fs::read_to_string(path).map_err(|error| IngestError::io(path, error))?;
+        Self::parse_legacy(&content, path)
+    }
+
+    fn parse_legacy(content: &str, path: &Path) -> Result<Self, IngestError> {
+        serde_json::from_str(content).map_err(|error| {
             IngestError::io(
-                &path,
+                path,
                 std::io::Error::new(std::io::ErrorKind::InvalidData, error),
             )
         })
@@ -281,6 +389,155 @@ impl GenerationManifest {
         Ok(())
     }
 
+    /// D20: the most recent generation, read **without** materializing the rest of the history —
+    /// the on-disk equivalent of [`Self::latest`], for the caller that only needs the incremental
+    /// backup's reference point. See [`Self::read_last_matching`] for the memory argument.
+    pub fn load_latest_generation(
+        dest_root: &Path,
+        job_name: Option<&str>,
+    ) -> Result<Option<Generation>, IngestError> {
+        Self::read_last_matching(&Self::path_for(dest_root, job_name), |_| true)
+    }
+
+    /// D20: the most recent `Full` generation, read **without** materializing the rest of the
+    /// history — the on-disk equivalent of [`Self::latest_full`], for the differential backup's
+    /// reference point. See [`Self::read_last_matching`] for the memory argument.
+    pub fn load_latest_full_generation(
+        dest_root: &Path,
+        job_name: Option<&str>,
+    ) -> Result<Option<Generation>, IngestError> {
+        Self::read_last_matching(&Self::path_for(dest_root, job_name), |entry| {
+            entry.backup_type == BackupType::Full
+        })
+    }
+
+    /// D20: finds the **last** line whose metadata satisfies `wanted` and returns only that
+    /// generation, fully parsed.
+    ///
+    /// Why this exists rather than `load_or_default().latest()`: at the real-world scale measured
+    /// in `probe_manifest_ram_at_real_world_scale`, a four-generation history of a 1.34M-file tree
+    /// retains **580 MB** once loaded, while the single generation the caller actually wants is
+    /// 145 MB — and the 580 MB grows with every generation kept, without bound, while the 145 MB
+    /// does not. Two passes keep the peak bounded regardless of history length: the first parses
+    /// each line's metadata only (`GenerationIndexEntry` — `serde` skips the `files` array without
+    /// building it) into a **reused** line buffer, remembering nothing but the winning line's byte
+    /// offset; the second re-reads and fully parses that one line. Peak is therefore one line's
+    /// text plus one parsed generation, never the whole file.
+    ///
+    /// A pre-D19 manifest can't be scanned line-wise at all (it is one pretty-printed object), so
+    /// it falls back to [`Self::load_or_default`] and pays the old cost — acceptable because the
+    /// very next write migrates it to NDJSON (see [`Self::append_generation`]).
+    fn read_last_matching(
+        path: &Path,
+        wanted: impl Fn(&GenerationIndexEntry) -> bool,
+    ) -> Result<Option<Generation>, IngestError> {
+        if !path.exists() {
+            return Ok(None);
+        }
+        if Self::is_legacy_format(path)? {
+            let manifest = Self::load_legacy(path)?;
+            return Ok(manifest
+                .generations
+                .into_iter()
+                .rev()
+                .find(|generation| wanted(&GenerationIndexEntry::from(generation))));
+        }
+
+        let mut winner: Option<u64> = None;
+        Self::for_each_entry(path, |entry, offset| {
+            if wanted(&entry) {
+                winner = Some(offset);
+            }
+            Ok(())
+        })?;
+
+        let Some(offset) = winner else {
+            return Ok(None);
+        };
+        let mut reader = std::io::BufReader::new(
+            std::fs::File::open(path).map_err(|error| IngestError::io(path, error))?,
+        );
+        reader
+            .seek(std::io::SeekFrom::Start(offset))
+            .map_err(|error| IngestError::io(path, error))?;
+        let mut line = String::new();
+        reader
+            .read_line(&mut line)
+            .map_err(|error| IngestError::io(path, error))?;
+        serde_json::from_str::<Generation>(line.trim())
+            .map(Some)
+            .map_err(|error| {
+                IngestError::io(
+                    path,
+                    std::io::Error::new(std::io::ErrorKind::InvalidData, error),
+                )
+            })
+    }
+
+    /// D20: walks the NDJSON manifest one line at a time, handing `visit` each line's metadata
+    /// (the `files` inventory is parsed-and-discarded by `serde`, never retained) plus that line's
+    /// byte offset. The line buffer is reused across iterations, so peak memory is one line's
+    /// text rather than the whole file.
+    ///
+    /// Torn-trailing-line and interior-corruption handling match [`Self::load_or_default`]
+    /// exactly — a truncated final line (an append interrupted mid-write) is dropped with a
+    /// warning, anything malformed earlier is real corruption and fails the read loudly. Keeping
+    /// the two in agreement matters: a manifest that loads must also scan, and vice versa.
+    fn for_each_entry(
+        path: &Path,
+        mut visit: impl FnMut(GenerationIndexEntry, u64) -> Result<(), IngestError>,
+    ) -> Result<(), IngestError> {
+        let mut reader = std::io::BufReader::new(
+            std::fs::File::open(path).map_err(|error| IngestError::io(path, error))?,
+        );
+        let mut line = String::new();
+        let mut offset = 0u64;
+        // A malformed line is only forgiven at end-of-file, so a failure is held back until the
+        // next read proves whether anything followed it.
+        let mut pending_error: Option<(serde_json::Error, u64)> = None;
+
+        loop {
+            line.clear();
+            let read = reader
+                .read_line(&mut line)
+                .map_err(|error| IngestError::io(path, error))?;
+            if read == 0 {
+                break;
+            }
+            let line_offset = offset;
+            offset += read as u64;
+
+            let trimmed = line.trim();
+            if trimmed.is_empty() {
+                continue;
+            }
+            if let Some((error, bad_offset)) = pending_error.take() {
+                return Err(IngestError::io(
+                    path,
+                    std::io::Error::new(
+                        std::io::ErrorKind::InvalidData,
+                        format!(
+                            "malformed generation manifest entry at byte {bad_offset}: {error}"
+                        ),
+                    ),
+                ));
+            }
+            match serde_json::from_str::<GenerationIndexEntry>(trimmed) {
+                Ok(entry) => visit(entry, line_offset)?,
+                Err(error) => pending_error = Some((error, line_offset)),
+            }
+        }
+
+        if let Some((error, bad_offset)) = pending_error {
+            tracing::warn!(
+                path = %path.display(),
+                "dropping a torn trailing line at byte {bad_offset} in the generation manifest \
+                 (incomplete write, likely an interrupted run): {error}"
+            );
+        }
+        Ok(())
+    }
+
     /// The most recently recorded generation, regardless of type — what an incremental backup
     /// diffs against.
     pub fn latest(&self) -> Option<&Generation> {
@@ -310,18 +567,14 @@ impl GenerationManifest {
     /// the first `Full` (if that ever happened) still form a leading pseudo-cycle rather than
     /// being silently dropped.
     pub fn cycles(&self) -> Vec<&[Generation]> {
-        let mut result = Vec::new();
-        let mut start = 0;
-        for (i, generation) in self.generations.iter().enumerate() {
-            if generation.backup_type == BackupType::Full && i != start {
-                result.push(&self.generations[start..i]);
-                start = i;
-            }
-        }
-        if start < self.generations.len() {
-            result.push(&self.generations[start..]);
-        }
-        result
+        cycle_ranges(
+            self.generations
+                .iter()
+                .map(|generation| generation.backup_type),
+        )
+        .into_iter()
+        .map(|range| &self.generations[range])
+        .collect()
     }
 
     /// The ids of every generation belonging to a cycle older than the `keep_cycles` most recent
@@ -479,6 +732,127 @@ mod tests {
             five_generations_mb > one_generation_mb * 4.0,
             "5 generations should scale roughly linearly with generation count (full inventory \
              stored per generation, not a delta) — got {five_generations_mb:.1} MB vs {one_generation_mb:.1} MB for 1"
+        );
+    }
+
+    /// Exact heap footprint of a loaded manifest, built from the real `capacity()` of every
+    /// owned allocation it holds rather than estimated from the serialized size (the two differ:
+    /// JSON pays for quoting/escaping, RAM pays for `Vec`/`String` spare capacity and struct
+    /// padding). Measures only what the structure itself retains, not process RSS — the
+    /// transient allocations `serde_json` makes while parsing are deliberately out of scope,
+    /// since the question this answers is "how much does *holding* this cost", which is what
+    /// [`GenerationManifest::load_or_default`]'s callers pay for the whole run.
+    fn retained_heap_bytes(manifest: &GenerationManifest) -> usize {
+        manifest.generations.capacity() * std::mem::size_of::<Generation>()
+            + manifest
+                .generations
+                .iter()
+                .map(|generation| {
+                    generation.id.capacity()
+                        + generation.created_at.capacity()
+                        + generation.files.capacity() * std::mem::size_of::<GenerationFile>()
+                        + generation
+                            .files
+                            .iter()
+                            .map(|file| file.relative_path.capacity())
+                            .sum::<usize>()
+                })
+                .sum::<usize>()
+    }
+
+    /// Bug-hunting probe for the read-side half of the cost D19 left open (see
+    /// `NEXT_SESSION_PROMPT.md`): D19 made *writing* one generation O(1) instead of
+    /// O(total history), but `load_or_default` still materializes every generation — including
+    /// every `files` vec — into RAM at all three of `main.rs`'s call sites, none of which
+    /// actually need the whole thing:
+    ///
+    /// * `--backup-type full` never reads `manifest` at all (see the `match` in
+    ///   `execute_generation_backup`),
+    /// * `incremental`/`differential` read exactly **one** generation (`latest`/`latest_full`),
+    /// * `prune_old_generations`'s first load reaches only `id`/`backup_type` (`cycles` and
+    ///   `generations_to_prune` never touch `files`).
+    ///
+    /// `#[ignore]`d for the same reason as `probe_manifest_size_at_real_world_scale` above: it
+    /// allocates millions of entries and is a one-off measurement, not a per-run regression test.
+    #[test]
+    #[ignore]
+    fn probe_manifest_ram_at_real_world_scale() {
+        // Same shape and scale as probe_manifest_size_at_real_world_scale, so the two numbers are
+        // directly comparable (serialized MB vs retained MB for the identical structure).
+        let sample_paths = [
+            "aica2-course-orchestrator/node_modules/rxjs/dist/esm5/internal/operators/timeoutWith.js.map",
+            "src/hooks/useNotifyAfterTimeout.ts",
+            "src/utils/bash/specs/timeout.ts",
+            "aica2-course-orchestrator/node_modules/rxjs/src/internal/operators/timeout.ts",
+        ];
+        let file_count = 1_340_613usize;
+        let generation_at_scale = |id: &str, backup_type: BackupType| Generation {
+            id: id.to_string(),
+            backup_type,
+            created_at: "2026-08-06T10:00:00Z".to_string(),
+            files_copied: file_count,
+            files: (0..file_count)
+                .map(|i| {
+                    let base = sample_paths[i % sample_paths.len()];
+                    generation_file(&format!("{base}.{i}"), 4096, 1_754_000_000 + i as u64)
+                })
+                .collect(),
+        };
+
+        // A realistic history a --keep-generations 2 operator would be holding: two cycles, each
+        // a Full plus one Incremental.
+        let manifest = GenerationManifest {
+            generations: vec![
+                generation_at_scale("1_full", BackupType::Full),
+                generation_at_scale("2_incremental", BackupType::Incremental),
+                generation_at_scale("3_full", BackupType::Full),
+                generation_at_scale("4_incremental", BackupType::Incremental),
+            ],
+        };
+
+        let mb = |bytes: usize| bytes as f64 / (1024.0 * 1024.0);
+        let whole_history_mb = mb(retained_heap_bytes(&manifest));
+
+        // What an incremental/differential run actually needs: one generation.
+        let one_generation = GenerationManifest {
+            generations: vec![manifest.latest().expect("a generation exists").clone()],
+        };
+        let one_generation_mb = mb(retained_heap_bytes(&one_generation));
+
+        // What pruning actually needs: the same generations with `files` dropped.
+        let metadata_only = GenerationManifest {
+            generations: manifest
+                .generations
+                .iter()
+                .map(|generation| Generation {
+                    files: Vec::new(),
+                    ..generation.clone()
+                })
+                .collect(),
+        };
+        let metadata_only_mb = mb(retained_heap_bytes(&metadata_only));
+
+        println!(
+            "retained heap at real-world scale ({file_count} files x {} generations):\n  \
+             whole history (what load_or_default builds today): {whole_history_mb:.1} MB\n  \
+             one generation (what incremental/differential need): {one_generation_mb:.1} MB\n  \
+             metadata only (what pruning needs): {metadata_only_mb:.3} MB\n  \
+             full backup needs: 0 MB (never reads the manifest)",
+            manifest.generations.len()
+        );
+
+        // The point of the probe: the gap between what is loaded and what is needed is a real
+        // multiple, not a rounding difference. Asserted loosely for the same reason as the
+        // sibling probe — confirming the order of magnitude, not pinning an exact byte count.
+        assert!(
+            whole_history_mb > one_generation_mb * 3.0,
+            "holding the whole history should cost several times one generation, got \
+             {whole_history_mb:.1} MB vs {one_generation_mb:.1} MB"
+        );
+        assert!(
+            metadata_only_mb < one_generation_mb / 1000.0,
+            "metadata without `files` should be negligible next to one generation, got \
+             {metadata_only_mb:.3} MB vs {one_generation_mb:.1} MB"
         );
     }
 
@@ -741,6 +1115,229 @@ mod tests {
 
         let result = GenerationManifest::load_or_default(dir.path(), None);
         assert!(result.is_err());
+    }
+
+    /// Builds a manifest at `dir` from `generations`, using the real append path.
+    fn write_manifest(dir: &Path, generations: &[Generation]) {
+        for generation in generations {
+            GenerationManifest::append_generation(dir, None, generation).expect("append");
+        }
+    }
+
+    /// D20: the streaming reader must agree with the full load it replaces. Asserted against
+    /// `load_or_default().latest()` rather than a hardcoded id, so the two can't drift apart.
+    #[test]
+    fn load_latest_generation_matches_the_full_load_it_replaces() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        write_manifest(
+            dir.path(),
+            &[
+                generation("1_full", BackupType::Full),
+                generation("2_incremental", BackupType::Incremental),
+                generation("3_differential", BackupType::Differential),
+            ],
+        );
+
+        let streamed = GenerationManifest::load_latest_generation(dir.path(), None)
+            .expect("streaming read")
+            .expect("a generation exists");
+        let whole = GenerationManifest::load_or_default(dir.path(), None).expect("full load");
+
+        assert_eq!(Some(&streamed), whole.latest());
+        assert_eq!(streamed.id, "3_differential");
+        // The point of the change: the reference's own inventory still arrives intact.
+        assert_eq!(streamed.files, whole.latest().unwrap().files);
+    }
+
+    /// D20: same agreement check for the differential reference point, which must skip back past
+    /// any `Incremental`/`Differential` to the last real `Full`.
+    #[test]
+    fn load_latest_full_generation_matches_the_full_load_it_replaces() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        write_manifest(
+            dir.path(),
+            &[
+                generation("1_full", BackupType::Full),
+                generation("2_full", BackupType::Full),
+                generation("3_incremental", BackupType::Incremental),
+                generation("4_differential", BackupType::Differential),
+            ],
+        );
+
+        let streamed = GenerationManifest::load_latest_full_generation(dir.path(), None)
+            .expect("streaming read")
+            .expect("a full generation exists");
+        let whole = GenerationManifest::load_or_default(dir.path(), None).expect("full load");
+
+        assert_eq!(Some(&streamed), whole.latest_full());
+        assert_eq!(streamed.id, "2_full");
+    }
+
+    #[test]
+    fn streaming_reads_return_none_when_there_is_nothing_to_find() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        // No manifest at all.
+        assert!(GenerationManifest::load_latest_generation(dir.path(), None)
+            .expect("read")
+            .is_none());
+
+        // A manifest with generations, but none of them Full.
+        write_manifest(
+            dir.path(),
+            &[generation("1_incremental", BackupType::Incremental)],
+        );
+        assert!(
+            GenerationManifest::load_latest_full_generation(dir.path(), None)
+                .expect("read")
+                .is_none(),
+            "no Full generation exists, so the differential reference must be absent, not the \
+             incremental one"
+        );
+    }
+
+    /// D20: the streaming readers must handle a pre-D19 manifest too — an operator upgrading with
+    /// an existing history hits this on their very next incremental/differential run.
+    #[test]
+    fn streaming_reads_fall_back_to_the_pre_ndjson_wrapper_format() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let path = GenerationManifest::path_for(dir.path(), None);
+        let old_format = serde_json::to_string_pretty(&GenerationManifest {
+            generations: vec![
+                generation("1_full", BackupType::Full),
+                generation("2_incremental", BackupType::Incremental),
+            ],
+        })
+        .expect("serialize old format");
+        std::fs::write(&path, old_format).expect("write old-format manifest");
+
+        assert_eq!(
+            GenerationManifest::load_latest_generation(dir.path(), None)
+                .expect("read")
+                .expect("a generation exists")
+                .id,
+            "2_incremental"
+        );
+        assert_eq!(
+            GenerationManifest::load_latest_full_generation(dir.path(), None)
+                .expect("read")
+                .expect("a full generation exists")
+                .id,
+            "1_full"
+        );
+        assert_eq!(
+            GenerationIndex::load(dir.path(), None)
+                .expect("index")
+                .entries
+                .len(),
+            2
+        );
+    }
+
+    /// D20: the line-scanning path must forgive a torn trailing line exactly the way
+    /// `load_or_default` does -- otherwise a manifest that loads fine would fail to scan.
+    #[test]
+    fn streaming_reads_recover_from_a_torn_trailing_line() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        write_manifest(
+            dir.path(),
+            &[
+                generation("1_full", BackupType::Full),
+                generation("2_incremental", BackupType::Incremental),
+            ],
+        );
+        let path = GenerationManifest::path_for(dir.path(), None);
+        let mut content = std::fs::read_to_string(&path).expect("read manifest");
+        content.push_str("{\"id\":\"3_incremental\",\"backup_type\""); // truncated mid-write
+        std::fs::write(&path, content).expect("write torn manifest");
+
+        assert_eq!(
+            GenerationManifest::load_latest_generation(dir.path(), None)
+                .expect("torn trailing line must be forgiven, not fatal")
+                .expect("a generation exists")
+                .id,
+            "2_incremental"
+        );
+        assert_eq!(
+            GenerationIndex::load(dir.path(), None)
+                .expect("index")
+                .entries
+                .len(),
+            2
+        );
+    }
+
+    /// D20: and it must fail loudly on interior corruption, again matching `load_or_default` --
+    /// silently skipping a generation here could let retention keep the wrong cycle.
+    #[test]
+    fn streaming_reads_fail_loudly_on_a_malformed_interior_line() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let path = GenerationManifest::path_for(dir.path(), None);
+        let first = serde_json::to_string(&generation("1_full", BackupType::Full)).unwrap();
+        let last =
+            serde_json::to_string(&generation("3_incremental", BackupType::Incremental)).unwrap();
+        std::fs::write(&path, format!("{first}\nnot valid json\n{last}\n")).expect("write");
+
+        assert!(GenerationManifest::load_latest_generation(dir.path(), None).is_err());
+        assert!(GenerationIndex::load(dir.path(), None).is_err());
+    }
+
+    /// D20: the whole point of `GenerationIndex` -- it carries the ids and types retention needs
+    /// while dropping the `files` inventory that dominates memory at real-world scale.
+    #[test]
+    fn generation_index_keeps_identity_and_drops_the_file_inventory() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        write_manifest(
+            dir.path(),
+            &[
+                generation("1_full", BackupType::Full),
+                generation("2_incremental", BackupType::Incremental),
+            ],
+        );
+
+        let index = GenerationIndex::load(dir.path(), None).expect("index");
+        assert_eq!(
+            index
+                .entries
+                .iter()
+                .map(|entry| entry.id.as_str())
+                .collect::<Vec<_>>(),
+            ["1_full", "2_incremental"]
+        );
+        assert_eq!(index.entries[0].backup_type, BackupType::Full);
+        // `GenerationIndexEntry` has no `files` field at all, so the inventory cannot be retained
+        // by construction -- this asserts the *source* really did carry one, i.e. the test isn't
+        // passing vacuously against an empty manifest.
+        let whole = GenerationManifest::load_or_default(dir.path(), None).expect("full load");
+        assert!(!whole.generations[0].files.is_empty());
+    }
+
+    /// D20: the metadata-only retention path and the full-history one must never disagree about
+    /// which generations to prune -- F35's safety argument (never orphan an incremental by
+    /// pruning the `Full` it chains from) depends on exactly one definition of a cycle, now
+    /// shared via `cycle_ranges`.
+    #[test]
+    fn generation_index_and_manifest_agree_on_what_to_prune() {
+        let history = [
+            generation("1_full", BackupType::Full),
+            generation("2_incremental", BackupType::Incremental),
+            generation("3_full", BackupType::Full),
+            generation("4_differential", BackupType::Differential),
+            generation("5_full", BackupType::Full),
+        ];
+        let dir = tempfile::tempdir().expect("tempdir");
+        write_manifest(dir.path(), &history);
+
+        let manifest = GenerationManifest::load_or_default(dir.path(), None).expect("full load");
+        let index = GenerationIndex::load(dir.path(), None).expect("index");
+
+        for keep in 0..=4 {
+            assert_eq!(
+                index.generations_to_prune(keep),
+                manifest.generations_to_prune(keep),
+                "the metadata-only and full-history retention paths disagreed at \
+                 --keep-generations {keep}"
+            );
+        }
     }
 
     #[test]

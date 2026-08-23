@@ -14,7 +14,7 @@ verified:
 # Piano di Miglioramento Consolidato — rustcopy
 
 **Baseline**: v6.0.0 — commit `0d8a9f0`
-**Test**: 318 default / 333 con `--features notify-server` *(misurati il 23 Agosto 2026 dopo D19 (fuori dal perimetro di questo piano, vedi `ANALYSIS.md`) — erano 311/326 dopo D18 il 22 Agosto (307/322 dopo D17 il 21 Agosto; 302/317 dopo P1 il 19 Agosto; 296/311 dopo P2 lo stesso giorno; 286/301 dopo B3/B4 il 17 Agosto; 284/299 fino al 7 Agosto); +7 dovuti ai nuovi unit test di D19, incluso il fix di un bug reale trovato da CodeRabbit — `append_generation` avrebbe corrotto un manifest legacy pre-D19)*
+**Test**: 326 default / 341 con `--features notify-server` *(misurati il 23 Agosto 2026 dopo D20 (fuori dal perimetro di questo piano, vedi `ANALYSIS.md`) — erano 318/333 dopo D19 lo stesso giorno (311/326 dopo D18 il 22 Agosto; 307/322 dopo D17 il 21 Agosto; 302/317 dopo P1 il 19 Agosto; 296/311 dopo P2 lo stesso giorno; 286/301 dopo B3/B4 il 17 Agosto; 284/299 fino al 7 Agosto); +8 dovuti ai nuovi unit test di D20 sulle letture streaming del manifest)*
 
 ---
 
