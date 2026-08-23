@@ -19,6 +19,24 @@ fn stderr_of(output: &std::process::Output) -> String {
     String::from_utf8_lossy(&output.stderr).into_owned()
 }
 
+/// D-NEXT: reads a `.rustcopy_generations*.json` manifest and returns its generations as a plain
+/// JSON array `Value` -- the on-disk format is now NDJSON (one compact `Generation` object per
+/// line, see `generations.rs`'s `save`/`append_generation`), not the single pretty-printed
+/// `{"generations": [...]}` object these tests were originally written against. Returning a bare
+/// array `Value` keeps every existing `manifest[i]["field"]`/`.as_array()` call site at each test
+/// site working unchanged (just without the now-nonexistent `["generations"]` wrapper key).
+/// `#[cfg(windows)]`: every caller is itself a `#[cfg(windows)]` generation-backup test (these run
+/// `robocopy.exe` for real), so on non-Windows CI this would otherwise be flagged as dead code.
+#[cfg(windows)]
+fn read_manifest_generations(path: &Path) -> serde_json::Value {
+    let generations: Vec<serde_json::Value> = std::fs::read_to_string(path)
+        .expect("read manifest")
+        .lines()
+        .map(|line| serde_json::from_str(line).expect("json manifest line"))
+        .collect();
+    serde_json::Value::Array(generations)
+}
+
 /// Backdates `path`'s last-write time by `days`, via a PowerShell one-liner (same "shell out for
 /// a real OS-level effect" pattern already used elsewhere in this file, e.g. `mklink /J`). Used to
 /// make a file old enough for `--max-age-days`/young enough for `--min-age-days` to exercise real
@@ -1825,19 +1843,13 @@ backup_type = "full"
         "the unnamespaced manifest filename must not be written by a multi-job run"
     );
 
-    let alpha: serde_json::Value =
-        serde_json::from_str(&std::fs::read_to_string(&manifest_alpha).expect("read"))
-            .expect("json");
-    let beta: serde_json::Value =
-        serde_json::from_str(&std::fs::read_to_string(&manifest_beta).expect("read"))
-            .expect("json");
+    let alpha = read_manifest_generations(&manifest_alpha);
+    let beta = read_manifest_generations(&manifest_beta);
 
-    let alpha_files = alpha["generations"][0]["files"]
+    let alpha_files = alpha[0]["files"]
         .as_array()
         .expect("alpha generation files");
-    let beta_files = beta["generations"][0]["files"]
-        .as_array()
-        .expect("beta generation files");
+    let beta_files = beta[0]["files"].as_array().expect("beta generation files");
     assert!(
         alpha_files.iter().any(|f| f["relative_path"]
             .as_str()
@@ -2005,13 +2017,8 @@ fn incremental_backup_copies_only_changed_files_since_the_last_generation() {
         manifest_path.is_file(),
         "manifest must exist after the full backup"
     );
-    let manifest_after_full: serde_json::Value =
-        serde_json::from_str(&std::fs::read_to_string(&manifest_path).expect("read"))
-            .expect("json");
-    assert_eq!(
-        manifest_after_full["generations"].as_array().unwrap().len(),
-        1
-    );
+    let manifest_after_full = read_manifest_generations(&manifest_path);
+    assert_eq!(manifest_after_full.as_array().unwrap().len(), 1);
 
     // A real filesystem mtime tick matters here: changed_since compares whole seconds.
     std::thread::sleep(std::time::Duration::from_millis(1100));
@@ -2041,10 +2048,8 @@ fn incremental_backup_copies_only_changed_files_since_the_last_generation() {
         "expected exactly a.csv+c.csv to be flagged as changed; stdout: {stdout}"
     );
 
-    let manifest_after_inc: serde_json::Value =
-        serde_json::from_str(&std::fs::read_to_string(&manifest_path).expect("read"))
-            .expect("json");
-    let generations = manifest_after_inc["generations"].as_array().unwrap();
+    let manifest_after_inc = read_manifest_generations(&manifest_path);
+    let generations = manifest_after_inc.as_array().unwrap();
     assert_eq!(generations.len(), 2, "both generations must be recorded");
     assert_eq!(generations[1]["backup_type"], "incremental");
     assert_eq!(generations[1]["files_copied"], 2);
@@ -2177,10 +2182,8 @@ fn differential_backup_always_diffs_against_the_last_full_generation() {
     );
 
     let manifest_path = dest.join(".rustcopy_generations.json");
-    let manifest: serde_json::Value =
-        serde_json::from_str(&std::fs::read_to_string(&manifest_path).expect("read"))
-            .expect("json");
-    let generations = manifest["generations"].as_array().unwrap();
+    let manifest = read_manifest_generations(&manifest_path);
+    let generations = manifest.as_array().unwrap();
     assert_eq!(
         generations.len(),
         3,
@@ -2411,10 +2414,8 @@ fn retention_prunes_older_cycles_but_keeps_the_most_recent_ones() {
     assert!(last.status.success(), "stderr: {}", stderr_of(&last));
 
     let manifest_path = dest.join(".rustcopy_generations.json");
-    let manifest: serde_json::Value =
-        serde_json::from_str(&std::fs::read_to_string(&manifest_path).expect("read"))
-            .expect("json");
-    let generations = manifest["generations"].as_array().unwrap();
+    let manifest = read_manifest_generations(&manifest_path);
+    let generations = manifest.as_array().unwrap();
     let ids: Vec<&str> = generations
         .iter()
         .map(|g| g["id"].as_str().unwrap())
@@ -2494,11 +2495,9 @@ fn retention_purge_is_aborted_without_force_purge_and_nothing_is_deleted() {
     );
 
     let manifest_path = dest.join(".rustcopy_generations.json");
-    let manifest: serde_json::Value =
-        serde_json::from_str(&std::fs::read_to_string(&manifest_path).expect("read"))
-            .expect("json");
+    let manifest = read_manifest_generations(&manifest_path);
     assert_eq!(
-        manifest["generations"].as_array().unwrap().len(),
+        manifest.as_array().unwrap().len(),
         4,
         "the 4th generation's copy+manifest save already succeeded before pruning was aborted"
     );

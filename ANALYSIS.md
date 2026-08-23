@@ -1,7 +1,7 @@
 ---
 type: Log
 title: Analisi di Robustezza e Ottimizzazione Prestazioni
-description: Audit trail dei difetti D1-D18 e delle opportunità di miglioramento O1-O10.
+description: Audit trail dei difetti D1-D19 e delle opportunità di miglioramento O1-O10.
 status: stable
 generated:
   by: process:claude-code
@@ -165,7 +165,10 @@ Se l'applicazione Rust intercetta `Ctrl+C` e si arresta senza terminare il proce
 > Agosto 2026) chiude il gap parallelo a D11 per `--min-age-days`/`--max-age-days`, più una
 > direzione invertita nel loro `--help` scoperta durante il fix. **D18** (22 Agosto 2026) chiude i
 > due limiti che D9 aveva lasciato espliciti: il default di log a `debug` e la rotazione mai live
-> durante il run. Porta il totale storico a 18 (D1-D18), di cui solo D10 resta aperto.
+> durante il run. **D19** (23 Agosto 2026) chiude un costo trovato analizzando gli stessi dati
+> operativi: `GenerationManifest::save` riscriveva l'intera cronologia (centinaia di MB su un
+> profilo reale) per registrare una sola nuova generazione — ora un formato NDJSON append-only.
+> Porta il totale storico a 19 (D1-D19), di cui solo D10 resta aperto.
 
 ## 🛑 3.1 Difetti aperti confermati
 
@@ -1011,6 +1014,78 @@ esegue in parallelo su più thread introdurrebbe un rischio di race condition fr
 peggiore del problema che risolverebbe; non essendo un rischio nuovo introdotto da questa PR (né
 osservabile in CI, che non imposta mai `RUST_LOG`), lasciato come limite noto condiviso da tutto il
 modulo, non corretto qui.
+
+---
+
+### D19 — `GenerationManifest`: ogni run riscriveva l'intera cronologia invece di appendere ✅ RISOLTO (23 Agosto 2026)
+
+**Stato: chiuso e verificato.**
+
+**Gravità: MEDIA.** Emerso dall'analisi dei dati operativi reali in `_ops_reports/` (proposta 2 di 3
+presentate all'utente il 22 Agosto 2026, approvata con "procedi come proposto"): `GenerationManifest::save`
+(D14) riscriveva l'intero file ad ogni generazione registrata, non solo quella nuova. Sul profilo
+reale da 1.340.613 file (`_ops_reports/full-profile-test.json`) una singola generazione serializza a
+~174 MB (misurato con `probe_manifest_size_at_real_world_scale`, D14) — un run che aggiunge una
+generazione a una cronologia che già ne contiene diverse riscrive quindi centinaia di MB per
+registrarne una sola, un costo che cresce linearmente con la cronologia invece di restare costante.
+
+#### ✅ Fix reale e verifica
+
+**Formato su disco cambiato a NDJSON** (una riga JSON compatta per generazione, non più un unico
+oggetto `{"generations": [...]}` pretty-printed). Deliberatamente limitato al costo di scrittura, non
+alla dimensione su disco (delta-encoding scartato in fase di design tramite `AskUserQuestion` —
+nessun guadagno aggiuntivo giustificato per questa sessione).
+
+`GenerationManifest::append_generation` (nuovo) apre il file in append e scrive solo la riga della
+generazione appena completata — O(1) rispetto alla cronologia, non più O(n). Il call site del caso
+comune in `main.rs` (`execute_generation_backup`) ora usa questo invece di `push`+`save`. `save`
+resta per l'unico caso che richiede davvero una riscrittura totale: il pruning di
+`--keep-generations`, che rimuove voci dal mezzo della cronologia.
+
+**Compatibilità all'indietro**: `load_or_default` rileva il formato provando a parsare la prima riga
+come `Generation` isolata — un manifest pre-NDJSON ha come prima riga un frammento di un oggetto più
+grande e non può mai soddisfare questo controllo da solo, quindi la distinzione non richiede alcun
+campo di versione o magic byte. Il prossimo `save`/`append_generation` lo migra automaticamente al
+nuovo formato.
+
+**Recupero da riga finale troncata**: a differenza della vecchia `save` (via `atomic_write`, D14, che
+non può mai lasciare un file parziale), `append_generation` fa un append semplice — un crash, un kill
+forzato o una condivisione di rete caduta a metà scrittura possono lasciare troncata solo l'ultima
+riga (ogni riga precedente era già stata scritta per intero dal suo append precedente, già concluso).
+Se l'ultima riga non parsa, viene scartata con un warning invece di far fallire l'intero caricamento —
+stesso pattern di recupero "i dati precedenti restano intatti, si perde solo la coda incompleta" dei
+write-ahead log. Una riga malformata in qualsiasi altra posizione **non** viene invece scartata
+silenziosamente (non può trattarsi di un append interrotto, che atterra solo in fondo al file) — fa
+fallire il caricamento con un errore esplicito, per non rischiare un diff incrementale/differenziale
+contro un riferimento silenziosamente incompleto.
+
+**Bug reale trovato e corretto prima del merge (23 Agosto 2026, CodeRabbit sulla stessa PR)**:
+la prima versione di `append_generation` apriva il file in append e scriveva la riga NDJSON senza
+mai controllare se un manifest **pre-D19** esisteva già a quel path. Per un utente reale che
+aggiorna con una cronologia già esistente, il primo backup post-upgrade avrebbe appeso una riga
+NDJSON subito dopo l'oggetto `{"generations": [...]}` pretty-printed della vecchia versione —
+un file che `load_or_default` non avrebbe più potuto interpretare né come NDJSON (la prima riga
+resta comunque un frammento dell'oggetto vecchio, non una `Generation` valida) né come vecchio
+formato (i caratteri non-whitespace dopo la `}` di chiusura fanno fallire il parse dell'intero
+file) — una corruzione fatale e irreversibile per ogni run futuro contro quella destinazione,
+esattamente il tipo di rottura che questo stesso progetto ha già visto altre volte quando un
+percorso non viene testato contro il binario reale in uno scenario di upgrade (vedi la "lezione
+metodologica ricorrente" in fondo a questo documento). Corretto: `append_generation` ora
+controlla il formato leggendo solo la prima riga del file esistente (stesso controllo economico
+di `load_or_default`, non l'intero contenuto) — se rileva il vecchio formato, carica l'intero
+manifest, aggiunge la nuova generazione in memoria e chiama `save` (riscrittura totale, l'unica
+strada corretta per migrare un file esistente), invece di appendere alla cieca.
+
+**Verificato**: 7 nuovi unit test in `generations.rs`
+(`save_writes_one_compact_ndjson_line_per_generation`,
+`append_generation_adds_one_line_without_touching_earlier_ones`,
+`append_generation_is_readable_by_save_and_vice_versa`,
+`append_generation_migrates_a_legacy_manifest_instead_of_corrupting_it`,
+`load_or_default_falls_back_to_the_pre_ndjson_wrapper_format`,
+`load_or_default_recovers_from_a_torn_trailing_line`,
+`load_or_default_fails_loudly_on_a_malformed_interior_line`); 5 test black-box preesistenti in
+`tests/cli_smoke.rs` aggiornati per leggere il nuovo formato NDJSON tramite un helper dedicato
+(`read_manifest_generations`) invece di un `serde_json::from_str::<Value>` diretto sul file intero.
 
 ---
 
