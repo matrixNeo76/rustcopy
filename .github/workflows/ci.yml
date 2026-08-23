@@ -54,7 +54,12 @@ jobs:
         uses: Swatinem/rust-cache@v2
 
       - name: Install okf
-        run: cargo install okf --locked
+        # Pinned deliberately: the docs gate compares generated indexes byte-for-byte, so an
+        # unpinned `cargo install` lets any upstream okf release fail an unrelated PR. That is
+        # not hypothetical -- okf 0.2.2 started escaping `&` in link titles and broke the gate
+        # on a PR that touched neither AGENTS.md nor CLAUDE.md. Bump this deliberately, with the
+        # regenerated indexes in the same commit.
+        run: cargo install okf --version 0.2.2 --locked
 
       - name: Check the OKF documentation bundle (AGENTS.md rule 15)
         # Every gate lives in scripts/okf-docs.sh so the tracked-docs list has exactly one

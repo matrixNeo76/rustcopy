@@ -37,6 +37,33 @@ For full technical detail behind any entry, see `ANALYSIS.md` (defect list, `D<N
   that were stale (asserting a `--pattern` default changed long ago) or missing a `#[cfg(windows)]`
   gate they needed, all likewise never caught before this session's CI addition.
 
+- **D17**: `--min-age-days`/`--max-age-days` are now applied by the prescan and the naive engine
+  too, not only by the real robocopy transfer, so the two no longer disagree on which files are in
+  scope. Their `--help` text also had the direction inverted; corrected after verifying the real
+  `robocopy.exe` semantics empirically.
+- **D18**: the default log level dropped from `debug` to `info` — the per-file `debug` line had
+  produced a 356 MB log on a real 1.34M-file run — and `--log-max-bytes` now rotates *during* a
+  run, not only at the next process start. A failed rotation no longer resets the byte counter,
+  which had let the file grow past the cap unchecked.
+- **D19**: the generation manifest is now NDJSON, appended one line per generation, instead of the
+  whole history being rewritten on every run (~174 MB per generation at real-world scale). Pre-D19
+  manifests still load and are migrated forward on the next write; a torn trailing line from an
+  interrupted append is recovered rather than fatal.
+- **D20**: the manifest is no longer loaded in full by callers that don't need it. `--backup-type
+  full` reads nothing at all, incremental/differential stream out only their reference generation,
+  and retention loads a metadata-only index. Measured: 580 MB retained before, 145 MB and ~0 MB
+  respectively after.
+- **D21**: the scan inventory is shared rather than copied at each hop. `verify` alone had held
+  four live copies of the whole file list; measured 580 MB before, 145 MB after.
+
+### Changed
+- **Breaking (library API)**: `ScanSummary::files` is now `Arc<[ScannedFile]>` instead of
+  `Vec<ScannedFile>` (D21). Read-only uses are unaffected — it derefs to `&[ScannedFile]` — but
+  code that moved or mutated the `Vec`, or constructed a `ScanSummary` literal, needs updating
+  (`.into()` on construction, `Arc::clone` to share, `.to_vec()` if an owned copy is genuinely
+  wanted). Only the `robocopy_ingest` binaries consume this today; flagged here because the type
+  is `pub` and the next release carrying it should be semver-major.
+
 ### Repository
 - Added `LICENSE` (MIT), `SECURITY.md`, `.editorconfig`, `.github/workflows/ci.yml` (test on
   Windows + Linux, `cargo fmt --check`, `cargo clippy -D warnings`), `.github/dependabot.yml`.

@@ -801,8 +801,11 @@ async fn execute_generation_backup(
         }
     };
 
-    let files_to_copy: Vec<ScannedFile> = match &reference {
-        None => inventory.files.to_vec(),
+    // D21: a full backup copies the inventory as-is, so it shares it rather than duplicating it.
+    // Only the incremental/differential arms allocate, and correctly so -- they build a genuinely
+    // different (filtered, smaller) list, not a duplicate.
+    let files_to_copy: Arc<[ScannedFile]> = match &reference {
+        None => Arc::clone(&inventory.files),
         Some(reference) => generations::changed_since(&inventory.files, &reference.files)
             .into_iter()
             .cloned()
@@ -833,7 +836,7 @@ async fn execute_generation_backup(
     let progress = new_progress(args, copied_bytes, "generation");
     // Kept for the report below (`IngestReport::with_timing` wants the file list, not just a
     // count) — the naive copy call needs its own owned copy to move into `spawn_blocking`.
-    let copied_files = files_to_copy.clone();
+    let copied_files = Arc::clone(&files_to_copy);
 
     let start_transfer = Instant::now();
     let (source_owned, dest_owned, dry_run, sink) = (
@@ -921,7 +924,7 @@ async fn execute_generation_backup(
     let mut gen_args = args.clone();
     gen_args.dest = Some(effective_dest.clone());
     let scoped_inventory = ScanSummary {
-        files: copied_files.into(),
+        files: copied_files,
         total_bytes: copied_bytes,
         total_files_hint: None,
     };

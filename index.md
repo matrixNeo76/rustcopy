@@ -13,9 +13,9 @@ okf_version: "0.2"
 
 # Reference
 
-* [AGENTS.md — Developer & AI Agent Guidelines](AGENTS.md) - Architectural rules, directory tree, and testing conventions for this codebase.
+* [AGENTS.md — Developer \& AI Agent Guidelines](AGENTS.md) - Architectural rules, directory tree, and testing conventions for this codebase.
 * [Architettura di Sistema — robocopy-ingest-cli](ARCHITECTURE.md) - Diagrammi Mermaid, tabella moduli, pipeline di esecuzione, pattern trasversali (D13/D14).
-* [CLAUDE.md — Claude Code & AI Agent Prompt Instructions](CLAUDE.md) - Technical notes and hard constraints for AI agents working on this codebase.
+* [CLAUDE.md — Claude Code \& AI Agent Prompt Instructions](CLAUDE.md) - Technical notes and hard constraints for AI agents working on this codebase.
 * [Piano di Miglioramento Consolidato — robocopy-ingest-cli](PIANO_MIGLIORAMENTI.md) - Piano operativo unico — lacune documentazione, economia di contesto, debito tecnico, launcher PowerShell, performance.
 * [Roadmap di Progetto — robocopy-ingest-cli](ROADMAP.md) - Milestone, elenco feature F1-F61, backlog, debito tecnico noto.
 * [robocopy-ingest-cli (rustcopy) — README](README.md) - Manuale utente — installazione, flag CLI, esempi d'uso, esecuzione dei test.
