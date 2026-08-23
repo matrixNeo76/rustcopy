@@ -15,7 +15,10 @@ generated:
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 [![Crate version](https://img.shields.io/badge/version-6.0.0-informational.svg)](Cargo.toml)
 
-> **CLI High-Performance in Rust per Ingestion Massiva, Backup Enterprise, Disaster Recovery e Real-Time Web Monitoring su Windows (e Cross-Platform).**
+> **CLI High-Performance in Rust per Ingestion Massiva, Backup Enterprise e Disaster Recovery su Windows (e Cross-Platform).**
+
+> [!NOTE]
+> `rustcopy` è **solo una CLI**: non c'è interfaccia grafica né monitoraggio live in questa versione. Il progresso di un run si segue dalla progress bar a terminale; a run concluso restano il report JSON e la dashboard HTML statica (`--html-report-path`). Un'app desktop con progresso live e controlli interattivi è pianificata — milestone **8.0.0 (Tauri)**, feature F58, in [ROADMAP.md](ROADMAP.md) — ma **non è implementata**.
 
 `robocopy-ingest-cli` è uno strumento da riga di comando per il **trasferimento, sincronizzazione, backup e verifica di integrità di grandi volumi di dati (da 50 GB a oltre 10 TB con milioni di file)**.  
 Combina la potenza nativa di `robocopy.exe` su Windows con le garanzie di sicurezza della memoria, concorrenza multi-threaded ed asincronia di Rust.
@@ -27,8 +30,8 @@ Combina la potenza nativa di `robocopy.exe` su Windows con le garanzie di sicure
 Quando si gestiscono backup o ingestion di volumetrie massive su Windows, l'uso diretto di script PowerShell (`Copy-Item`) o invocazioni grezze di `robocopy.exe` presenta problemi critici:
 - **Deadlock su pipe stdout/stderr** quando robocopy emette milioni di righe di diagnostica.
 - **Saturazione della RAM (OOM)** durante il logging o la generazione dei report JSON per milioni di file.
-- **Mancanza di verifica di integrità automatica e veloce** (checksum checksum single-thread troppo lenti).
-- **Mancanza di visibilità in tempo reale** o notifiche per le pipeline CI/CD aziendali.
+- **Mancanza di verifica di integrità automatica e veloce** (checksum single-thread troppo lenti).
+- **Nessun avanzamento leggibile durante il run, né notifiche a fine job** utilizzabili da uno scheduler o da una pipeline CI/CD (progress bar a terminale, report JSON, webhook).
 
 `robocopy-ingest-cli` risolve alla radice tutti questi problemi!
 
@@ -43,14 +46,14 @@ graph LR
     A[1. Inventario & Pre-scan] --> B[2. Trasferimento Robocopy Stream]
     B --> C[3. Retry Esterni & Backoff]
     C --> D[4. Verifica Integrità Rayon]
-    D --> E[5. Cifratura & Cloud Sync]
-    E --> F[6. Live Monitoring & Report]
+    D --> E[5. Cifratura AES-256-GCM]
+    E --> F[6. Report e Notifiche]
 ```
 
 1. **Scansione Iniziale (Prescan)**: Mappa l'albero della directory sorgente (`walkdir`), calcola le dimensioni ed esegue il matching dei filtri glob (`--pattern "*.csv"`). Se si gestiscono milioni di file, il flag `--no-prescan` avvia il trasferimento all'istante senza attese.
 2. **Trasferimento Robocopy Streaming**: Invoca `robocopy.exe` su Windows iniettando i flag ottimali (`/MT:N` thread automatici sulle CPU dell'host, `/COPYALL` permessi ACL, `/DCOPY:DAT` timestamp directory, `/MIR` mirroring, `/IPG` throttling). Legge stdout e stderr tramite buffer binario riutilizzato (drenati su thread separati per evitare deadlock), decodificando i caratteri OEM (CP850) con una tabella dedicata (`src/oem_codec.rs`) invece di un fallback UTF-8 silenzioso.
 3. **Retry Esterni & Resilience**: Se Robocopy restituisce exit code transitori di blocco file (codici 8, 9, 11), l'invocazione viene ripetuta automaticamente con backoff esponenziale. Se si preme `Ctrl+C`, l'applicazione intercetta il segnale e termina **solo** il processo `robocopy.exe` figlio effettivamente in corso (tramite il suo PID), senza toccare altri eventuali processi robocopy in esecuzione sull'host.
-4. **Verifica Integrità Multi-Threaded**: Verifica la corrispondenza dei checksum tra sorgente e destinazione utilizzando **Rayon** su tutte le CPU dell'host. Supporta **SHA-256** ed l'algoritmo **BLAKE3** (3-5x più veloce).
+4. **Verifica Integrità Multi-Threaded**: Verifica la corrispondenza dei checksum tra sorgente e destinazione utilizzando **Rayon** su tutte le CPU dell'host. Supporta **SHA-256**, **BLAKE3** (3-5x più veloce) e **xxHash3** (~5-10x più veloce di BLAKE3, ma **non crittografico**: rileva corruzioni accidentali, non manomissioni deliberate).
 5. **Cifratura**: Supporta la cifratura **AES-256-GCM** reale a blocchi da 1 MiB (`--encrypt-aes256`, memoria O(dimensione blocco) anche su file enormi) e la sua controparte funzionante `--decrypt`, tipicamente usata insieme a `--restore-from` per ripristinare un backup cifrato. La sincronizzazione diretta verso S3/Azure (`--cloud-sync-target`) è **riservata ma non implementata** (vedi tabella flag).
 6. **Reporting & Notifiche**: Scrive un report JSON completo con metadati sull'host, genera una **Dashboard HTML Standalone** (`--html-report-path`, con escaping di ogni valore interpolato) e invia un alert **HTTP/HTTPS Webhook** (`--webhook-url`, con timeout ed errori realmente riportati). Il **notify-server** opzionale incluso nel repo riceve queste notifiche e le inoltra su più canali.
 
@@ -104,7 +107,7 @@ graph LR
 | `--cloud-sync-target <URI>`| *nessuno* | — | **[NON IMPLEMENTATO]** Accettato per compatibilità futura; nessuna sincronizzazione viene eseguita. |
 | `--encrypt-aes256 <KEY>` | *nessuno* | — | Cifra ogni file in destinazione con **AES-256-GCM a blocchi da 1 MiB** dopo il trasferimento (nonce fresco per blocco; memoria di picco indipendente dalla dimensione del file). `KEY` può essere `env:NOME`, `file:PERCORSO` o una passphrase letterale (sconsigliata: visibile nella process list). |
 | `--decrypt <KEY>` | *nessuno* | — | Decifra ogni file in destinazione dopo il trasferimento — il simmetrico di `--encrypt-aes256`, stesso formato `KEY`. Tipicamente usato con `--restore-from` per ripristinare un backup cifrato. Non combinabile con `--encrypt-aes256` nello stesso comando. |
-| `--install-service` | `false` | — | (Release 6.0.0, F37) Registra questo binario come servizio Windows reale (via Service Control Manager) ed esce senza eseguire un backup ora. Il servizio parte `OnDemand` e resta **inattivo** una volta avviato (risponde solo a Stop/Interrogate) — nessuna logica di backup gira ancora al suo interno; è pura infrastruttura, in attesa di F41. **Richiede Amministratore**. Non richiede `--source`/`--dest`. Incompatibile con `--uninstall-service`. |
+| `--install-service` | `false` | — | (Release 6.0.0, F37) Registra questo binario come servizio Windows reale (via Service Control Manager) ed esce senza eseguire un backup ora. Il servizio parte `OnDemand` e resta **inattivo** una volta avviato (risponde solo a Stop/Interrogate) — nessuna logica di backup gira al suo interno. Il servizio che *fa* davvero qualcosa è quello di `notify-server.exe` (F41, identità separata — vedi la nota nella sezione Scheduling). **Richiede Amministratore**. Non richiede `--source`/`--dest`. Incompatibile con `--uninstall-service`. |
 | `--uninstall-service` | `false` | — | (Release 6.0.0, F37) Rimuove il servizio Windows precedentemente installato ed esce. **Richiede Amministratore**. Non richiede `--source`/`--dest`. Incompatibile con `--install-service`. |
 | `--enable-dedup` | `false` | — | **[NON IMPLEMENTATO]** Accettato per compatibilità futura; nessuna cache di stato viene usata. |
 | `--dry-run` | `false` | `/L` | Simula le operazioni senza modificare o copiare file. |
@@ -307,8 +310,8 @@ Per dettagli tecnici approfonditi, diagrammi architetturali e roadmap di svilupp
 ## 🧪 Esecuzione dei Test (326 di Base, 341 con `notify-server`)
 
 ```bash
-rtk cargo test                          # 326 test (default build, senza axum)
-rtk cargo test --features notify-server # 341 test (+15 test sul router axum e sui binari reali)
+cargo test                          # 326 test (default build, senza axum)
+cargo test --features notify-server # 341 test (+15 test sul router axum e sui binari reali)
 ```
 
 Esito atteso: `test result: ok.` su tutti i target, in entrambe le modalità.
