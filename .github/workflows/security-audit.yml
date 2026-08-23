@@ -17,6 +17,7 @@ on:
     # RustSec disclosure against an unchanged lockfile would otherwise go unnoticed until the
     # next dependency bump.
     - cron: "17 6 * * 1"
+  workflow_dispatch: {} # manual on-demand run, and how this workflow was first verified end-to-end
 
 permissions:
   contents: read
