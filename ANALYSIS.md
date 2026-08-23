@@ -982,6 +982,36 @@ black-box in `tests/cli_smoke.rs` riscritti per la stessa ragione
 di un run reale con path Windows completi è più vicino alla soglia piccola usata in origine di
 quanto lo fosse l'output DEBUG che il test originale assumeva).
 
+**Bug reale trovato e corretto prima del merge (23 Agosto 2026, CodeRabbit sulla stessa PR)**: dopo
+un tentativo di rotazione **fallito**, `bytes_written` veniva azzerato incondizionatamente. Corretto
+quando la rotazione va a buon fine (il file appena riaperto è davvero vuoto), ma `rotate_if_needed`
+è dichiaratamente *best-effort* e inghiotte i propri errori (es. un file di backup bloccato da un
+altro processo) — su un tentativo fallito, il file allo stesso path resta quello vecchio, già sopra
+`max_bytes`, e azzerare comunque il contatore avrebbe fatto ripartire il conteggio da zero,
+permettendo al file di crescere silenziosamente a multipli del cap prima del prossimo controllo.
+Corretto seminando `bytes_written` dalla dimensione reale del file appena riaperto
+(`fresh.metadata().len()`, stesso pattern già usato all'apertura iniziale). Riprodotto con un nuovo
+test (`a_failed_rotation_still_reseeds_the_byte_counter_from_the_real_file_size`) che blocca
+deliberatamente il primo tentativo di rotazione con una directory preesistente nello slot di backup
+(fallisce il rename allo stesso modo su Windows e Linux), poi lo sblocca prima di una seconda riga
+volutamente breve: con il bug, quella riga da sola non avrebbe mai fatto ripartire il conteggio
+oltre `max_bytes`, quindi nessun secondo tentativo — verificato manualmente che il test fallisce
+contro il codice con il bug ripristinato temporaneamente, e passa con il fix.
+
+Anche il finding CodeRabbit sull'isolamento dei test da `RUST_LOG` (che ha priorità sul filtro
+derivato dalla CLI, vedi il commento su `LogConfig`) è stato verificato: reale per
+`log_level_controls_per_file_debug_detail_in_the_real_log` in `tests/cli_smoke.rs`, che esegue il
+binario reale ereditando l'ambiente del processo di test — corretto passando esplicitamente
+`.env_remove("RUST_LOG")` al `Command` di quel test (non al helper `run()` condiviso, per non
+alterare il comportamento di test che non fanno assert sul livello). La controparte in-process
+(`debug_detail_is_suppressed_by_default_but_available_when_requested` in `logging.rs`) condivide lo
+stesso presupposto già implicito in **tutti** i test di questo modulo che chiamano `init_scoped`
+(nessuno di essi isola `RUST_LOG` oggi) — mutare `std::env` da un singolo test con `cargo test` che
+esegue in parallelo su più thread introdurrebbe un rischio di race condition fra test concorrenti
+peggiore del problema che risolverebbe; non essendo un rischio nuovo introdotto da questa PR (né
+osservabile in CI, che non imposta mai `RUST_LOG`), lasciato come limite noto condiviso da tutto il
+modulo, non corretto qui.
+
 ---
 
 ## 💡 3.2 Opportunità di miglioramento (non difetti)

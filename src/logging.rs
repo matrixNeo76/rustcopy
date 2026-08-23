@@ -250,8 +250,17 @@ fn build(
                             .open(&rotation_path)
                         {
                             Ok(fresh) => {
+                                // Not unconditionally 0: `rotate_if_needed` is best-effort and
+                                // swallows its own errors (e.g. a backup file locked by another
+                                // process), so a failed rotation leaves the *same* oversized file
+                                // still at `rotation_path` -- reopening it in append mode returns a
+                                // handle whose size is still >= max_bytes, not 0. Seeding from the
+                                // real size here (same pattern as the initial open above) means a
+                                // persistent rotation failure re-checks every `max_bytes` written
+                                // instead of silently growing the file to multiples of the cap
+                                // before the next check ever fires.
+                                bytes_written = fresh.metadata().map(|m| m.len()).unwrap_or(0);
                                 file = tokio::fs::File::from_std(fresh);
-                                bytes_written = 0;
                             }
                             // Can't reopen (e.g. the directory vanished) -- stop logging rather
                             // than panic the writer task; the run itself must not be affected.
@@ -616,6 +625,78 @@ mod tests {
         assert!(
             !backup_path(&path, 1).exists(),
             "well under max_bytes must never trigger rotation"
+        );
+    }
+
+    /// Found by CodeRabbit reviewing the PR that introduced mid-run rotation above: after a
+    /// *failed* rotation attempt, `bytes_written` was reset to 0 unconditionally, even though
+    /// `rotate_if_needed` is best-effort and swallows its own errors -- a failed rename leaves the
+    /// same oversized file sitting at the reopened path, not an empty one. Reproduced by blocking
+    /// the rename step with a pre-existing directory at the backup slot (fails the same way on
+    /// both Windows and Linux), then unblocking it before a second, deliberately short write: a
+    /// short line alone never crosses `max_bytes` from a wrongly-reset 0, so a still-buggy
+    /// implementation would never re-attempt rotation and `backup_path(&path, 1)` would still be
+    /// the blocking directory, not a rotated-log file, after this test's writes.
+    #[tokio::test]
+    async fn a_failed_rotation_still_reseeds_the_byte_counter_from_the_real_file_size() {
+        let dir = tempfile::tempdir().expect("tempdir");
+
+        // Measure one minimal formatted line's real byte size empirically instead of guessing it
+        // (timestamp/level/target overhead is an internal `tracing_subscriber` formatting detail),
+        // so the thresholds below stay correct even if that formatting ever changes.
+        let probe_path = dir.path().join("probe.log");
+        let probe_config = LogConfig {
+            filter: "robocopy_ingest=info,warn".to_string(),
+            max_bytes: 0,
+            max_backups: 0,
+        };
+        let short_line_len = {
+            let (_guard, handle) = init_scoped(&probe_path, &probe_config).expect("logger starts");
+            tracing::info!("x");
+            handle.flush().await;
+            handle.shutdown().await;
+            std::fs::metadata(&probe_path)
+                .expect("probe log exists")
+                .len()
+        };
+
+        let path = dir.path().join("ingest.log");
+        // Comfortably between one short line's real size and the much longer padded line below.
+        let max_bytes = short_line_len * 3;
+        let config = LogConfig {
+            filter: "robocopy_ingest=info,warn".to_string(),
+            max_bytes,
+            max_backups: 1,
+        };
+
+        // Block the first rotation attempt: an existing directory at the backup slot makes
+        // `std::fs::rename(path, backup_path(path, 1))` fail, on both Windows and Linux.
+        std::fs::create_dir(backup_path(&path, 1)).expect("create blocking dir");
+
+        let (_guard, handle) = init_scoped(&path, &config).expect("logger starts");
+
+        // Padded well past `max_bytes` on its own -- triggers a rotation attempt that fails
+        // (blocked above), reopening the live file at its real, still-oversized size.
+        let padding = "x".repeat(short_line_len as usize * 4);
+        tracing::info!(pad = %padding, "long line");
+        handle.flush().await;
+
+        // Simulate the transient lock clearing before the next write.
+        std::fs::remove_dir(backup_path(&path, 1)).expect("unblock rotation");
+
+        // A single short line -- on its own (i.e. starting from a wrongly-reset bytes_written=0)
+        // this stays under max_bytes. Only re-triggers (and this time succeeds at) rotation if
+        // bytes_written was correctly reseeded from the real, still-oversized file after the
+        // failed first attempt.
+        tracing::info!("x");
+        handle.flush().await;
+        handle.shutdown().await;
+
+        assert!(
+            backup_path(&path, 1).is_file(),
+            "a failed rotation must not reset the byte counter to 0 -- the very next short write \
+             should still be enough to re-trigger (and this time succeed at) rotation, instead of \
+             waiting for another full max_bytes worth of new output counted from zero"
         );
     }
 }

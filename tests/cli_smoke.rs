@@ -146,8 +146,15 @@ fn log_level_controls_per_file_debug_detail_in_the_real_log() {
                 .to_string(),
         ];
         argv.extend(extra.iter().map(|s| s.to_string()));
-        let argv_ref: Vec<&str> = argv.iter().map(String::as_str).collect();
-        let output = run(&argv_ref);
+        // RUST_LOG wins over the CLI-derived filter (logging.rs::build), so this test's
+        // level-specific assertions would be at the mercy of whatever the *test runner's own*
+        // environment happens to export -- cleared explicitly so this only ever exercises
+        // --log-level/--quiet, not an ambient RUST_LOG.
+        let output = Command::new(BIN)
+            .args(&argv)
+            .env_remove("RUST_LOG")
+            .output()
+            .expect("binary runs");
         assert!(output.status.success(), "stderr: {}", stderr_of(&output));
         std::fs::read_to_string(&log_path).expect("read log")
     };
