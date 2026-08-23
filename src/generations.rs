@@ -13,7 +13,7 @@
 //! against the previous delta.
 
 use std::collections::HashMap;
-use std::io::Write;
+use std::io::{BufRead, Write};
 use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
@@ -211,12 +211,29 @@ impl GenerationManifest {
     /// of history length. Does **not** use `atomic_write` (an append has nothing to atomically
     /// replace) — see [`Self::load_or_default`]'s doc comment for the torn-trailing-line recovery
     /// this trades for in exchange.
+    ///
+    /// A pre-existing **legacy** (pre-D19) manifest at `path` is migrated to NDJSON first, not
+    /// appended to blindly: its first line is a fragment of a larger pretty-printed object (e.g.
+    /// `{`), and appending an NDJSON line straight after it would leave a file
+    /// [`Self::load_or_default`] can neither read as NDJSON (the first line still fails that
+    /// check) nor as the old wrapper format (trailing non-whitespace after the closing `}` makes
+    /// the whole-file JSON parse fail) -- a fatal, unrecoverable corruption for any real user
+    /// upgrading to this format with an existing manifest. Detected the same cheap way
+    /// `load_or_default` detects format (peek at the first line only, not the whole file), so the
+    /// already-NDJSON common case still pays no more than that one extra line read.
     pub fn append_generation(
         dest_root: &Path,
         job_name: Option<&str>,
         generation: &Generation,
     ) -> Result<(), IngestError> {
         let path = Self::path_for(dest_root, job_name);
+
+        if Self::is_legacy_format(&path)? {
+            let mut manifest = Self::load_or_default(dest_root, job_name)?;
+            manifest.push(generation.clone());
+            return manifest.save(dest_root, job_name);
+        }
+
         let mut line = String::new();
         Self::write_ndjson_line(&mut line, generation, &path)?;
         let mut file = std::fs::OpenOptions::new()
@@ -226,6 +243,26 @@ impl GenerationManifest {
             .map_err(|error| IngestError::io(&path, error))?;
         file.write_all(line.as_bytes())
             .map_err(|error| IngestError::io(&path, error))
+    }
+
+    /// `Ok(false)` when `path` doesn't exist yet (nothing to migrate -- a plain append/create is
+    /// correct) or its first non-empty line already parses as a bare `Generation` (already
+    /// NDJSON). `Ok(true)` only when the file exists and is genuinely the old wrapper format.
+    fn is_legacy_format(path: &Path) -> Result<bool, IngestError> {
+        let file = match std::fs::File::open(path) {
+            Ok(file) => file,
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(false),
+            Err(error) => return Err(IngestError::io(path, error)),
+        };
+        let mut first_line = String::new();
+        std::io::BufReader::new(file)
+            .read_line(&mut first_line)
+            .map_err(|error| IngestError::io(path, error))?;
+        let first_line = first_line.trim();
+        if first_line.is_empty() {
+            return Ok(false);
+        }
+        Ok(serde_json::from_str::<Generation>(first_line).is_err())
     }
 
     fn write_ndjson_line(
@@ -607,6 +644,34 @@ mod tests {
 
         let loaded = GenerationManifest::load_or_default(dir.path(), None).expect("load");
         assert_eq!(loaded.generations.len(), 2);
+        assert_eq!(loaded.generations[1].id, "2_incremental");
+    }
+
+    #[test]
+    fn append_generation_migrates_a_legacy_manifest_instead_of_corrupting_it() {
+        // The real-world upgrade path: an operator with an existing pre-D19 manifest runs a new
+        // backup. append_generation must not blindly append an NDJSON line after the old
+        // pretty-printed `{"generations": [...]}` object -- that would leave a file
+        // load_or_default can parse as neither format (see append_generation's doc comment).
+        let dir = tempfile::tempdir().expect("tempdir");
+        let path = GenerationManifest::path_for(dir.path(), None);
+        let old_format = serde_json::to_string_pretty(&GenerationManifest {
+            generations: vec![generation("1_full", BackupType::Full)],
+        })
+        .expect("serialize old format");
+        std::fs::write(&path, old_format).expect("write old-format manifest");
+
+        GenerationManifest::append_generation(
+            dir.path(),
+            None,
+            &generation("2_incremental", BackupType::Incremental),
+        )
+        .expect("append after a legacy manifest must migrate, not corrupt");
+
+        let loaded = GenerationManifest::load_or_default(dir.path(), None)
+            .expect("manifest must still load after the migrating append");
+        assert_eq!(loaded.generations.len(), 2);
+        assert_eq!(loaded.generations[0].id, "1_full");
         assert_eq!(loaded.generations[1].id, "2_incremental");
     }
 

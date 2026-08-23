@@ -1059,10 +1059,28 @@ silenziosamente (non può trattarsi di un append interrotto, che atterra solo in
 fallire il caricamento con un errore esplicito, per non rischiare un diff incrementale/differenziale
 contro un riferimento silenziosamente incompleto.
 
-**Verificato**: 6 nuovi unit test in `generations.rs`
+**Bug reale trovato e corretto prima del merge (23 Agosto 2026, CodeRabbit sulla stessa PR)**:
+la prima versione di `append_generation` apriva il file in append e scriveva la riga NDJSON senza
+mai controllare se un manifest **pre-D19** esisteva già a quel path. Per un utente reale che
+aggiorna con una cronologia già esistente, il primo backup post-upgrade avrebbe appeso una riga
+NDJSON subito dopo l'oggetto `{"generations": [...]}` pretty-printed della vecchia versione —
+un file che `load_or_default` non avrebbe più potuto interpretare né come NDJSON (la prima riga
+resta comunque un frammento dell'oggetto vecchio, non una `Generation` valida) né come vecchio
+formato (i caratteri non-whitespace dopo la `}` di chiusura fanno fallire il parse dell'intero
+file) — una corruzione fatale e irreversibile per ogni run futuro contro quella destinazione,
+esattamente il tipo di rottura che questo stesso progetto ha già visto altre volte quando un
+percorso non viene testato contro il binario reale in uno scenario di upgrade (vedi la "lezione
+metodologica ricorrente" in fondo a questo documento). Corretto: `append_generation` ora
+controlla il formato leggendo solo la prima riga del file esistente (stesso controllo economico
+di `load_or_default`, non l'intero contenuto) — se rileva il vecchio formato, carica l'intero
+manifest, aggiunge la nuova generazione in memoria e chiama `save` (riscrittura totale, l'unica
+strada corretta per migrare un file esistente), invece di appendere alla cieca.
+
+**Verificato**: 7 nuovi unit test in `generations.rs`
 (`save_writes_one_compact_ndjson_line_per_generation`,
 `append_generation_adds_one_line_without_touching_earlier_ones`,
 `append_generation_is_readable_by_save_and_vice_versa`,
+`append_generation_migrates_a_legacy_manifest_instead_of_corrupting_it`,
 `load_or_default_falls_back_to_the_pre_ndjson_wrapper_format`,
 `load_or_default_recovers_from_a_torn_trailing_line`,
 `load_or_default_fails_loudly_on_a_malformed_interior_line`); 5 test black-box preesistenti in
