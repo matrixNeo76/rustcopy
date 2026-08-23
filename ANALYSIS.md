@@ -1,7 +1,7 @@
 ---
 type: Log
 title: Analisi di Robustezza e Ottimizzazione Prestazioni
-description: Audit trail dei difetti D1-D20 e delle opportunità di miglioramento O1-O10.
+description: Audit trail dei difetti D1-D21 e delle opportunità di miglioramento O1-O10.
 status: stable
 generated:
   by: process:claude-code
@@ -168,7 +168,7 @@ Se l'applicazione Rust intercetta `Ctrl+C` e si arresta senza terminare il proce
 > durante il run. **D19** (23 Agosto 2026) chiude un costo trovato analizzando gli stessi dati
 > operativi: `GenerationManifest::save` riscriveva l'intera cronologia (centinaia di MB su un
 > profilo reale) per registrare una sola nuova generazione — ora un formato NDJSON append-only.
-> Porta il totale storico a 20 (D1-D20), di cui solo D10 resta aperto.
+> Porta il totale storico a 21 (D1-D21), di cui solo D10 resta aperto.
 
 ## 🛑 3.1 Difetti aperti confermati
 
@@ -1166,6 +1166,72 @@ sono passati **senza modifiche**: la prova end-to-end che il comportamento osser
 comunque tokenizzare gli array `files` per saltarli. D20 riduce la **memoria**, non il tempo di
 parsing. Ridurre anche quello richiederebbe un indice separato o un formato a offset, non
 giustificato da nessuna evidenza attuale.
+
+---
+
+### D21 — L'inventario di scan veniva **duplicato** ad ogni passaggio, non condiviso ✅ RISOLTO (23 Agosto 2026)
+
+**Stato: chiuso e verificato.**
+
+**Gravità: MEDIA.** Trovato leggendo `verify` per rispondere a una domanda dell'utente su cosa fosse
+`ScanSummary` — non cercando un difetto. **Nota metodologica**: l'handoff della sessione precedente
+elencava fra gli spunti aperti "`ScanSummary` tiene l'intero inventario in RAM", lasciando intendere
+un problema della stessa forma di D19/D20. Non lo era: quella lista la leggono davvero tutti i suoi
+consumatori (`check_mirror_safety`, `verify`, encrypt/decrypt, il diff delle generazioni), è
+*working set*, non spreco, e `--no-prescan` esiste già come valvola documentata nel commento della
+struct stessa. Il difetto vero era accanto, e uno spunto formulato per analogia invece che per
+verifica lo avrebbe fatto mancare.
+
+`ScanSummary::files` era un `Vec<ScannedFile>`, ma ogni consumatore deve passare dati **posseduti**
+a `spawn_blocking` (`move`, `'static`) pur limitandosi a **leggerli**. Con un `Vec` questo significa
+una copia reale ad ogni passaggio. In `main.rs::verify`, sul percorso di default (senza
+`--fast-verify`), al momento in cui parte `integrity::verify` erano vive **quattro** copie della
+stessa lista:
+
+| # | Binding | Origine |
+|---|---|---|
+| 1 | `inventory.files` | del chiamante, ancora viva (`verify` riceve `&ScanSummary`) |
+| 2 | `all_files` | `inventory.files.clone()` |
+| 3 | `files_to_check` | `all_files.clone()` |
+| 4 | `files_for_verify` | `files_to_check.clone()` |
+
+Più una copia per `encrypt_destination` e una per `decrypt_destination`. Nessuno leggeva un
+duplicato *in quanto* duplicato: esistevano solo per soddisfare il vincolo di possesso di
+`spawn_blocking`.
+
+**Misurato, non stimato** (nuovo probe `#[ignore]`d `probe_scan_inventory_ram_at_real_world_scale`,
+stesso metodo di D20 — somma le `capacity()` reali). Sul profilo da 1.340.613 file:
+
+- una copia: **145,0 MB** (coincide con la cifra D20 per una generazione: stesse path, stessa scala)
+- quattro copie indipendenti, quello che `verify` teneva: **580,0 MB**
+- gli stessi quattro binding, condivisi: **145,0 MB**
+- **risparmiati: 435,0 MB**
+
+**Errore di misura corretto in corsa, vale la pena registrarlo**: la prima versione del probe
+costruiva le voci con `PathBuf::from(format!(...))`, che riusa il buffer di `format!` con la
+capacità in eccesso che ha accumulato, mentre lo scan reale le costruisce con
+`strip_prefix(root).to_path_buf()`, che alloca esatto. La copia originale risultava così gonfiata a
+210 MB contro i 145 MB dei cloni, e l'assert sul rapporto falliva — falsando proprio la proporzione
+che il probe doveva stabilire. Il probe ora alloca esatto e lo documenta sul posto.
+
+#### ✅ Fix reale e verifica
+
+`ScanSummary::files` è ora un `Arc<[ScannedFile]>`. Condividere costa un incremento di refcount
+invece di una copia; gli usi in sola lettura non cambiano di una riga perché deriva a
+`&[ScannedFile]`. `verify`, `encrypt_destination` e `decrypt_destination` usano `Arc::clone`.
+
+Il ramo `--fast-verify` resta l'unico che paga una copia, ed è corretto che lo faccia: costruisce
+una lista **diversa** (filtrata, e più piccola), non un duplicato.
+
+**Verificato**: nessun test nuovo di comportamento, deliberatamente — il cambiamento è di
+rappresentazione, non di semantica, e la prova che regge è che l'intera suite esistente (326 test,
+inclusi i black-box che eseguono `verify` e la cifratura/decifratura end-to-end sul binario reale)
+passa **senza una riga modificata**. Il probe asserisce che condividere costa esattamente una copia
+a prescindere da quanti handle esistono.
+
+**Limite dichiarato**: `ScanSummary` continua a materializzare l'intero inventario, ed è un costo
+consapevole, non un difetto — serve a chi lo riceve, e `--no-prescan` resta la via per non pagarlo.
+D21 elimina i *duplicati*, non il working set.
 
 ---
 

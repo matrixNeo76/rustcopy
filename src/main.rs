@@ -801,8 +801,11 @@ async fn execute_generation_backup(
         }
     };
 
-    let files_to_copy: Vec<ScannedFile> = match &reference {
-        None => inventory.files.clone(),
+    // D21: a full backup copies the inventory as-is, so it shares it rather than duplicating it.
+    // Only the incremental/differential arms allocate, and correctly so -- they build a genuinely
+    // different (filtered, smaller) list, not a duplicate.
+    let files_to_copy: Arc<[ScannedFile]> = match &reference {
+        None => Arc::clone(&inventory.files),
         Some(reference) => generations::changed_since(&inventory.files, &reference.files)
             .into_iter()
             .cloned()
@@ -833,7 +836,7 @@ async fn execute_generation_backup(
     let progress = new_progress(args, copied_bytes, "generation");
     // Kept for the report below (`IngestReport::with_timing` wants the file list, not just a
     // count) — the naive copy call needs its own owned copy to move into `spawn_blocking`.
-    let copied_files = files_to_copy.clone();
+    let copied_files = Arc::clone(&files_to_copy);
 
     let start_transfer = Instant::now();
     let (source_owned, dest_owned, dry_run, sink) = (
@@ -1266,11 +1269,11 @@ async fn encrypt_destination(
     let key = robocopy_ingest::crypto::resolve_key(key_spec)?;
     let manager = CryptoManager::new(&key)?;
     let dest_root = args.dest().to_path_buf();
-    let files = inventory.files.clone();
+    let files = Arc::clone(&inventory.files);
 
     let count = spawn_blocking_with_span(move || -> Result<usize, IngestError> {
         let mut encrypted = 0usize;
-        for file in &files {
+        for file in files.iter() {
             let path = dest_root.join(&file.relative_path);
             if !path.is_file() {
                 continue; // file missing at dest (copy skipped/failed): nothing to encrypt
@@ -1302,11 +1305,11 @@ async fn decrypt_destination(
     let key = robocopy_ingest::crypto::resolve_key(key_spec)?;
     let manager = CryptoManager::new(&key)?;
     let dest_root = args.dest().to_path_buf();
-    let files = inventory.files.clone();
+    let files = Arc::clone(&inventory.files);
 
     let count = spawn_blocking_with_span(move || -> Result<usize, IngestError> {
         let mut decrypted = 0usize;
-        for file in &files {
+        for file in files.iter() {
             let path = dest_root.join(&file.relative_path);
             if !path.is_file() {
                 continue; // file missing at dest (copy skipped/failed): nothing to decrypt
@@ -1502,7 +1505,7 @@ async fn verify(
 ) -> Result<IntegrityCheck> {
     println!("\nVerifying integrity with {:?}...", args.hash_algo);
 
-    let all_files = inventory.files.clone();
+    let all_files = Arc::clone(&inventory.files);
     let cache_path = cache::default_cache_path(args.dest(), args.job_name.as_deref());
     let fast_verify = args.fast_verify;
 
@@ -1511,13 +1514,17 @@ async fn verify(
     // actually verified it clean. This is the same trust model robocopy's own /A and rsync use —
     // not a substitute for a cryptographic re-check, but real on an incremental run where most
     // files are untouched.
-    let (files_to_check, cache) = if fast_verify {
-        let candidates = all_files.clone();
+    // D21: both arms produce an `Arc<[ScannedFile]>`. The `--fast-verify` arm genuinely builds a
+    // new (smaller, filtered) list and pays one copy for it; the default arm shares the inventory
+    // outright instead of duplicating it, which is where the 435 MB measured by
+    // `probe_scan_inventory_ram_at_real_world_scale` went.
+    let (files_to_check, cache): (Arc<[ScannedFile]>, IngestCache) = if fast_verify {
+        let candidates = Arc::clone(&all_files);
         let load_path = cache_path.clone();
         spawn_blocking_with_span(move || {
             let cache = IngestCache::load_from(&load_path);
-            let changed: Vec<ScannedFile> = candidates
-                .into_iter()
+            let changed: Arc<[ScannedFile]> = candidates
+                .iter()
                 .filter(|f| {
                     !cache.should_skip(
                         &fast_verify_cache_key(f),
@@ -1525,13 +1532,14 @@ async fn verify(
                         f.modified_timestamp,
                     )
                 })
+                .cloned()
                 .collect();
             (changed, cache)
         })
         .await
         .context("the fast-verify cache lookup task panicked")?
     } else {
-        (all_files.clone(), IngestCache::default())
+        (Arc::clone(&all_files), IngestCache::default())
     };
 
     let skipped_unchanged = all_files.len() - files_to_check.len();
@@ -1554,7 +1562,7 @@ async fn verify(
     let dest = args.dest().to_path_buf();
     let algo = args.hash_algo;
     let sink = Arc::clone(&progress);
-    let files_for_verify = files_to_check.clone();
+    let files_for_verify = Arc::clone(&files_to_check);
 
     let mut check = spawn_blocking_with_span(move || {
         integrity::verify(&source, &dest, &files_for_verify, algo, sink.as_ref())
@@ -1579,7 +1587,7 @@ async fn verify(
             .chain(check.unreadable.iter().cloned())
             .collect();
         let mut cache = cache;
-        for file in &files_to_check {
+        for file in files_to_check.iter() {
             let key = fast_verify_cache_key(file);
             if !failed.contains(&key) {
                 cache.update(key, file.size_bytes, file.modified_timestamp, None);
