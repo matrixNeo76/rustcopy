@@ -25,6 +25,9 @@ fn stderr_of(output: &std::process::Output) -> String {
 /// `{"generations": [...]}` object these tests were originally written against. Returning a bare
 /// array `Value` keeps every existing `manifest[i]["field"]`/`.as_array()` call site at each test
 /// site working unchanged (just without the now-nonexistent `["generations"]` wrapper key).
+/// `#[cfg(windows)]`: every caller is itself a `#[cfg(windows)]` generation-backup test (these run
+/// `robocopy.exe` for real), so on non-Windows CI this would otherwise be flagged as dead code.
+#[cfg(windows)]
 fn read_manifest_generations(path: &Path) -> serde_json::Value {
     let generations: Vec<serde_json::Value> = std::fs::read_to_string(path)
         .expect("read manifest")
