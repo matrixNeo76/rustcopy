@@ -455,7 +455,8 @@ mod tests {
                     size_bytes: 400_000_000,
                     modified_timestamp: 0,
                 },
-            ],
+            ]
+            .into(),
             total_bytes: 1_000_000_000,
             total_files_hint: None,
         }

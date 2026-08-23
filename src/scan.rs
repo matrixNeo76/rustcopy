@@ -9,6 +9,7 @@
 //! * F2.1: `directory_size` is preserved but only called with much longer intervals now.
 
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use globset::{GlobBuilder, GlobMatcher};
@@ -33,7 +34,14 @@ pub struct ScannedFile {
 pub struct ScanSummary {
     /// Full file list — kept for integrity verification. For large trees this can be
     /// significant RAM; `--no-prescan` avoids materialising it (see `total_files_hint`).
-    pub files: Vec<ScannedFile>,
+    ///
+    /// D21: `Arc<[ScannedFile]>`, not `Vec`, because every downstream consumer needs *owned*
+    /// data to hand to `tokio::task::spawn_blocking` while only ever **reading** it. As a `Vec`
+    /// that meant a real copy per hop — `main.rs::verify` alone held four live copies (580 MB
+    /// measured at real-world scale, see `probe_scan_inventory_ram_at_real_world_scale`) where
+    /// one would do. Sharing costs a refcount bump instead. Read-only uses are unaffected: it
+    /// derefs to `&[ScannedFile]`.
+    pub files: Arc<[ScannedFile]>,
     pub total_bytes: u64,
     /// Set when `files` is intentionally empty because `--no-prescan` used the lightweight
     /// [`inventory`] walk instead of [`scan`]. `file_count`/`is_empty` prefer this over
@@ -178,7 +186,10 @@ pub fn scan(
     let dir_matchers = build_exclude_matchers(exclude_dirs)?;
     let file_matchers = build_exclude_matchers(exclude_files)?;
     let now = now_unix_secs();
-    let mut summary = ScanSummary::default();
+    // Accumulated as a plain `Vec` so entries can be pushed and sorted, then frozen into the
+    // shared `Arc<[_]>` once at the end (D21) -- the list is never mutated after this point.
+    let mut files: Vec<ScannedFile> = Vec::new();
+    let mut total_bytes = 0u64;
 
     let walker = WalkDir::new(root)
         .follow_links(follow_links)
@@ -228,18 +239,20 @@ pub fn scan(
             continue;
         }
 
-        summary.total_bytes += size_bytes;
-        summary.files.push(ScannedFile {
+        total_bytes += size_bytes;
+        files.push(ScannedFile {
             relative_path,
             size_bytes,
             modified_timestamp,
         });
     }
 
-    summary
-        .files
-        .sort_by(|a, b| a.relative_path.cmp(&b.relative_path));
-    Ok(summary)
+    files.sort_by(|a, b| a.relative_path.cmp(&b.relative_path));
+    Ok(ScanSummary {
+        files: files.into(),
+        total_bytes,
+        total_files_hint: None,
+    })
 }
 
 /// Lightweight inventory: counts files and bytes without materialising the file list.
@@ -261,7 +274,7 @@ impl InventorySummary {
     /// mode since the individual paths were never collected.
     pub fn into_scan_summary(self) -> ScanSummary {
         ScanSummary {
-            files: Vec::new(),
+            files: Vec::new().into(),
             total_bytes: self.total_bytes,
             total_files_hint: Some(self.total_files),
         }
@@ -703,6 +716,111 @@ mod tests {
         assert!(
             fails_age_filter(twenty_days_ago, now, Some(2), Some(10)),
             "20 days old is outside the [2, 10] window"
+        );
+    }
+
+    /// Exact retained heap of a `Vec<ScannedFile>`, from the real `capacity()` of every owned
+    /// allocation rather than an estimate. Same method as `generations.rs`'s
+    /// `probe_manifest_ram_at_real_world_scale` (D20), so the two numbers are comparable.
+    fn retained_heap_bytes(files: &[ScannedFile]) -> usize {
+        std::mem::size_of_val(files)
+            + files
+                .iter()
+                .map(|file| file.relative_path.capacity())
+                .sum::<usize>()
+    }
+
+    /// Bug-hunting probe (not a regression test), following the same discipline D20 used: measure
+    /// before proposing, because estimates and real capacities diverge.
+    ///
+    /// The finding it established (D21): `main.rs::verify` receives `&ScanSummary` but must hand
+    /// **owned** data to `spawn_blocking`, so when `files` was a `Vec` it cloned its way down a
+    /// chain — `inventory.files` (the caller's, still alive) -> `all_files` -> `files_to_check` ->
+    /// `files_for_verify`. On the default path (no `--fast-verify`) all four were alive at once
+    /// when `integrity::verify` started, and `encrypt_destination`/`decrypt_destination` each
+    /// cloned again. Nobody read a duplicate *as* a duplicate: the copies existed only to satisfy
+    /// `spawn_blocking`'s `'static` ownership requirement, which sharing satisfies for free.
+    ///
+    /// Kept after the fix as the record of why `files` is an `Arc<[ScannedFile]>`, comparing what
+    /// four independent copies cost against what the shared form costs now.
+    ///
+    /// `#[ignore]`d like its D20 sibling: allocates millions of entries, one-off measurement.
+    #[test]
+    #[ignore]
+    fn probe_scan_inventory_ram_at_real_world_scale() {
+        // Same paths and scale as the D20 manifest probe, so the figures line up.
+        let sample_paths = [
+            "aica2-course-orchestrator/node_modules/rxjs/dist/esm5/internal/operators/timeoutWith.js.map",
+            "src/hooks/useNotifyAfterTimeout.ts",
+            "src/utils/bash/specs/timeout.ts",
+            "aica2-course-orchestrator/node_modules/rxjs/src/internal/operators/timeout.ts",
+        ];
+        let file_count = 1_340_613usize;
+        let build = || -> Vec<ScannedFile> {
+            (0..file_count)
+                .map(|i| ScannedFile {
+                    // `.as_str()` matters: `PathBuf::from(String)` reuses the `format!` buffer with
+                    // whatever spare capacity it grew, while the real scan builds every entry via
+                    // `strip_prefix(root).to_path_buf()`, which allocates exact-fit. Measuring the
+                    // slack would inflate one copy against the others and misreport the very ratio
+                    // this probe exists to establish (hit exactly that on the first run).
+                    relative_path: PathBuf::from(
+                        format!("{}.{i}", sample_paths[i % sample_paths.len()]).as_str(),
+                    ),
+                    size_bytes: 4096,
+                    modified_timestamp: 1_754_000_000 + i as u64,
+                })
+                .collect()
+        };
+
+        let mb = |bytes: usize| bytes as f64 / (1024.0 * 1024.0);
+        let inventory = build();
+        let one_copy_mb = mb(retained_heap_bytes(&inventory));
+
+        // What verify()'s chain used to hold: four independent copies, built the same way the
+        // scan builds them (a `Vec::clone` is exact-fit, so each weighs the same as the original).
+        let cloned_chain = [build(), build(), build()];
+        let cloned_mb = mb(retained_heap_bytes(&inventory)
+            + cloned_chain
+                .iter()
+                .map(|copy| retained_heap_bytes(copy))
+                .sum::<usize>());
+        drop(cloned_chain);
+
+        // What it holds now: the same four bindings, all pointing at one allocation.
+        let shared: Arc<[ScannedFile]> = inventory.into();
+        let (all_files, files_to_check, files_for_verify) = (
+            Arc::clone(&shared),
+            Arc::clone(&shared),
+            Arc::clone(&shared),
+        );
+        let shared_mb = mb(retained_heap_bytes(&shared));
+        assert_eq!(
+            (
+                all_files.len(),
+                files_to_check.len(),
+                files_for_verify.len()
+            ),
+            (file_count, file_count, file_count),
+            "the shared handles must still see the whole list"
+        );
+
+        println!(
+            "scan inventory retained heap at real-world scale ({file_count} files):
+               one copy: {one_copy_mb:.1} MB
+               four independent copies (what verify() held before D21): {cloned_mb:.1} MB
+               the same four bindings, shared (what it holds now): {shared_mb:.1} MB
+               saved: {:.1} MB",
+            cloned_mb - shared_mb
+        );
+
+        assert!(
+            cloned_mb > one_copy_mb * 3.5,
+            "the pre-D21 chain should have held roughly four equally-sized copies, got \n             {cloned_mb:.1} MB against {one_copy_mb:.1} MB for one -- if this drifts, check \n             whether the entries still allocate exact-fit (see the note above)"
+        );
+        assert!(
+            (shared_mb - one_copy_mb).abs() < 0.001,
+            "sharing must cost exactly one copy regardless of how many handles exist, got \n             {shared_mb:.1} MB against {one_copy_mb:.1} MB"
         );
     }
 }
