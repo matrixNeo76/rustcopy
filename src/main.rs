@@ -762,44 +762,55 @@ async fn execute_generation_backup(
 
     let dest_root = args.dest().to_path_buf();
     let job_name = args.job_name.clone();
-    let manifest = {
-        let dest_root = dest_root.clone();
-        let job_name = job_name.clone();
-        spawn_blocking_with_span(move || {
-            GenerationManifest::load_or_default(&dest_root, job_name.as_deref())
-        })
-        .await
-        .context("the generation manifest load task panicked")?
-        .context("cannot load the generation manifest")?
-    };
 
-    let files_to_copy: Vec<ScannedFile> = match backup_type {
-        BackupType::Full => inventory.files.clone(),
-        BackupType::Incremental => {
-            let reference = manifest.latest().ok_or_else(|| {
-                anyhow::anyhow!(
-                    "--backup-type incremental found no prior generation in {}; run --backup-type full first",
-                    dest_root.display()
-                )
-            })?;
-            generations::changed_since(&inventory.files, &reference.files)
-                .into_iter()
-                .cloned()
-                .collect()
-        }
-        BackupType::Differential => {
-            let reference = manifest.latest_full().ok_or_else(|| {
-                anyhow::anyhow!(
+    // D20: the reference generation is read per backup type, not by loading the whole manifest up
+    // front. `Full` needs no reference at all and now reads nothing (it used to pay for the entire
+    // history — 580 MB at the scale measured in `probe_manifest_ram_at_real_world_scale` — and
+    // then never look at it); the other two stream out the single generation they diff against,
+    // so peak memory no longer grows with how many generations the destination has accumulated.
+    // Do not reintroduce a `GenerationManifest::load_or_default` here.
+    let reference = match backup_type {
+        BackupType::Full => None,
+        BackupType::Incremental | BackupType::Differential => {
+            let dest_for_load = dest_root.clone();
+            let job_name = job_name.clone();
+            let found = spawn_blocking_with_span(move || match backup_type {
+                BackupType::Differential => GenerationManifest::load_latest_full_generation(
+                    &dest_for_load,
+                    job_name.as_deref(),
+                ),
+                _ => {
+                    GenerationManifest::load_latest_generation(&dest_for_load, job_name.as_deref())
+                }
+            })
+            .await
+            .context("the generation manifest load task panicked")?
+            .context("cannot load the generation manifest")?;
+
+            match (found, backup_type) {
+                (Some(generation), _) => Some(generation),
+                (None, BackupType::Differential) => anyhow::bail!(
                     "--backup-type differential found no prior full generation in {}; run --backup-type full first",
                     dest_root.display()
-                )
-            })?;
-            generations::changed_since(&inventory.files, &reference.files)
-                .into_iter()
-                .cloned()
-                .collect()
+                ),
+                (None, _) => anyhow::bail!(
+                    "--backup-type incremental found no prior generation in {}; run --backup-type full first",
+                    dest_root.display()
+                ),
+            }
         }
     };
+
+    let files_to_copy: Vec<ScannedFile> = match &reference {
+        None => inventory.files.clone(),
+        Some(reference) => generations::changed_since(&inventory.files, &reference.files)
+            .into_iter()
+            .cloned()
+            .collect(),
+    };
+    // The reference inventory is only needed for the diff above; drop it before the copy so its
+    // memory (145 MB at real-world scale) isn't held for the whole transfer.
+    drop(reference);
 
     let generation_id = generations::new_generation_id(backup_type);
     let effective_dest = dest_root.join(&generation_id);
@@ -988,21 +999,24 @@ async fn execute_generation_backup(
 /// Runs inside `tokio::task::spawn_blocking` for the actual filesystem deletions, same discipline
 /// as every other blocking filesystem operation in this file.
 async fn prune_old_generations(args: &Args, dest_root: &Path, keep_cycles: usize) -> Result<()> {
-    use robocopy_ingest::generations::GenerationManifest;
+    use robocopy_ingest::generations::{GenerationIndex, GenerationManifest};
 
     let job_name = args.job_name.clone();
-    let manifest = {
+    // D20: deciding *what* to prune only reads each generation's id and type, never its `files`
+    // inventory (`cycle_ranges` is driven purely by backup type) — so this loads the metadata-only
+    // index rather than the whole history, which at real-world scale is the difference between
+    // ~0 MB and 580 MB. The full manifest is still loaded further down, but only on the path that
+    // genuinely rewrites it. Do not "simplify" this back to one `load_or_default` for both.
+    let index = {
         let dest_root = dest_root.to_path_buf();
         let job_name = job_name.clone();
-        spawn_blocking_with_span(move || {
-            GenerationManifest::load_or_default(&dest_root, job_name.as_deref())
-        })
-        .await
-        .context("the generation manifest load task panicked")?
-        .context("cannot load the generation manifest for retention")?
+        spawn_blocking_with_span(move || GenerationIndex::load(&dest_root, job_name.as_deref()))
+            .await
+            .context("the generation index load task panicked")?
+            .context("cannot load the generation manifest for retention")?
     };
 
-    let mut prune_ids = manifest.generations_to_prune(keep_cycles);
+    let mut prune_ids = index.generations_to_prune(keep_cycles);
     if prune_ids.is_empty() {
         return Ok(());
     }

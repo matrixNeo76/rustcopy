@@ -1,7 +1,7 @@
 ---
 type: Log
 title: Analisi di Robustezza e Ottimizzazione Prestazioni
-description: Audit trail dei difetti D1-D19 e delle opportunità di miglioramento O1-O10.
+description: Audit trail dei difetti D1-D20 e delle opportunità di miglioramento O1-O10.
 status: stable
 generated:
   by: process:claude-code
@@ -168,7 +168,7 @@ Se l'applicazione Rust intercetta `Ctrl+C` e si arresta senza terminare il proce
 > durante il run. **D19** (23 Agosto 2026) chiude un costo trovato analizzando gli stessi dati
 > operativi: `GenerationManifest::save` riscriveva l'intera cronologia (centinaia di MB su un
 > profilo reale) per registrare una sola nuova generazione — ora un formato NDJSON append-only.
-> Porta il totale storico a 19 (D1-D19), di cui solo D10 resta aperto.
+> Porta il totale storico a 20 (D1-D20), di cui solo D10 resta aperto.
 
 ## 🛑 3.1 Difetti aperti confermati
 
@@ -1086,6 +1086,86 @@ strada corretta per migrare un file esistente), invece di appendere alla cieca.
 `load_or_default_fails_loudly_on_a_malformed_interior_line`); 5 test black-box preesistenti in
 `tests/cli_smoke.rs` aggiornati per leggere il nuovo formato NDJSON tramite un helper dedicato
 (`read_manifest_generations`) invece di un `serde_json::from_str::<Value>` diretto sul file intero.
+
+---
+
+### D20 — Il manifest veniva caricato **interamente** in RAM anche da chi non lo usava ✅ RISOLTO (23 Agosto 2026)
+
+**Stato: chiuso e verificato.**
+
+**Gravità: MEDIA.** D19 aveva chiuso il costo di **scrittura** del manifest, lasciando esplicitamente
+aperta la domanda sul costo di **lettura** (vedi lo spunto #1 in `NEXT_SESSION_PROMPT.md`). Una
+lettura del codice ha mostrato che il problema era più netto di quanto quella nota lasciasse
+intendere: `GenerationManifest::load_or_default` materializza in RAM ogni generazione — inclusi
+tutti i `files` — a **tutti e tre** i call site di `main.rs`, e **nessuno dei tre** ha bisogno
+dell'intera cronologia:
+
+| Call site | Cosa serve davvero | Cosa caricava |
+|---|---|---|
+| `execute_generation_backup`, `--backup-type full` | **niente**: il `match` su `backup_type` non tocca mai `manifest` | tutto |
+| `execute_generation_backup`, `incremental`/`differential` | **una sola** generazione (`latest()`/`latest_full()`) | tutto |
+| `prune_old_generations`, primo load | solo `id`+`backup_type`: `cycles()`/`generations_to_prune()` non leggono mai `files` | tutto, `files` inclusi |
+| `prune_old_generations`, secondo load | tutto (riscrittura reale del file) | tutto ✅ corretto |
+
+**Misurato, non stimato** (nuovo probe `#[ignore]`d `probe_manifest_ram_at_real_world_scale`, che
+somma le `capacity()` reali di ogni allocazione posseduta invece di dedurle dalla dimensione
+serializzata — le due divergono: il JSON paga quoting/escaping, la RAM paga capacità in eccesso e
+padding). Su una cronologia di 4 generazioni del profilo reale da 1.340.613 file:
+
+- cronologia intera (quello che `load_or_default` costruisce oggi): **580,0 MB**
+- una sola generazione (quello che serve a incremental/differential): **145,0 MB**
+- soli metadati (quello che serve al pruning): **~0 MB**
+- `--backup-type full`: **0 MB** (non legge mai il manifest)
+
+E i 580 MB **crescono** con ogni generazione conservata, senza limite; i 145 MB no.
+
+#### ✅ Fix reale e verifica
+
+**Perché solo ora**: prima di D19 il manifest era un unico oggetto JSON, quindi non *era possibile*
+leggerne una parte. È NDJSON riga-per-riga (D19) a rendere questa lettura parziale possibile —
+D20 è la naturale conclusione di D19, non un intervento indipendente.
+
+`GenerationManifest::load_latest_generation`/`load_latest_full_generation` (nuove) fanno due
+passate: la prima parsa di ogni riga i **soli metadati** (`GenerationIndexEntry` — `serde` salta
+l'array `files` senza costruirlo) dentro un buffer di riga **riusato**, ricordando nient'altro che
+l'offset in byte della riga vincente; la seconda rilegge e parsa per intero quella sola riga. Il
+picco è quindi *una* riga di testo più *una* generazione parsata, mai il file intero — e soprattutto
+non cresce con la lunghezza della cronologia.
+
+`GenerationIndex` (nuovo) è la cronologia con ogni inventario `files` scartato, per il primo load di
+`prune_old_generations`. Non può trattenere l'inventario **per costruzione**: `GenerationIndexEntry`
+non ha proprio il campo `files` — una garanzia di tipo, più forte di una misurazione.
+
+`execute_generation_backup` non carica più nulla per `--backup-type full`, e rilascia
+esplicitamente (`drop`) la generazione di riferimento appena finito il diff, invece di tenerla viva
+per tutta la copia.
+
+**Rischio di divergenza chiuso in partenza**: `GenerationManifest::cycles()` e
+`GenerationIndex::generations_to_prune()` passano ora entrambe da un'unica `cycle_ranges()`. La
+definizione di *ciclo* è il fondamento dell'argomento di sicurezza di F35 (non eliminare mai un
+`Full` da cui una generazione conservata dipende ancora): due implementazioni parallele avrebbero
+potuto divergere silenziosamente, ed è esattamente il tipo di deriva che questo progetto ha già
+visto altrove.
+
+**Verificato**: 8 nuovi unit test in `generations.rs`
+(`load_latest_generation_matches_the_full_load_it_replaces`,
+`load_latest_full_generation_matches_the_full_load_it_replaces`,
+`streaming_reads_return_none_when_there_is_nothing_to_find`,
+`streaming_reads_fall_back_to_the_pre_ndjson_wrapper_format`,
+`streaming_reads_recover_from_a_torn_trailing_line`,
+`streaming_reads_fail_loudly_on_a_malformed_interior_line`,
+`generation_index_keeps_identity_and_drops_the_file_inventory`,
+`generation_index_and_manifest_agree_on_what_to_prune`) più il probe di misurazione. I primi due
+asseriscono contro `load_or_default().latest()`/`.latest_full()` invece che contro id fissi, così le
+strade nuova e vecchia non possono divergere senza far fallire il test; l'ultimo confronta le due
+strade di retention su **ogni** valore di `--keep-generations` da 0 a 4. I 5 test black-box
+preesistenti sul backup a generazioni (full → incrementale → differenziale, retention per cicli)
+sono passati **senza modifiche**: la prova end-to-end che il comportamento osservabile è identico.
+
+**Limite dichiarato**: la lettura resta O(dimensione del file) in *tempo* — `serde_json` deve
+comunque tokenizzare gli array `files` per saltarli. D20 riduce la **memoria**, non il tempo di
+parsing. Ridurre anche quello richiederebbe un indice separato o un formato a offset, non
+giustificato da nessuna evidenza attuale.
 
 ---
 

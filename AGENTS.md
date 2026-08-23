@@ -83,7 +83,7 @@ src/
 ## 3. Mandatory Testing Guidelines
 
 - **Never declare success without running `cargo test`** (and `cargo test --features notify-server` if you touched `src/notify_server.rs`, `src/notify_sink.rs`, or `src/bin/notify_server.rs`).
-- All **318 unit and integration tests** (default build) MUST pass before committing changes. With `--features notify-server`, **333** must pass.
+- All **326 unit and integration tests** (default build) MUST pass before committing changes. With `--features notify-server`, **341** must pass.
 - Cross-Platform Constraint: Unit tests inside `src/engine/robocopy.rs`, `src/integrity.rs`, `src/notify.rs`, `src/notify_sink.rs`, etc. MUST pass on Linux and macOS using `ScriptedRunner`/scripted test doubles.
 
 ### Test Commands:
