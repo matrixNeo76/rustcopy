@@ -13,6 +13,7 @@
 //! against the previous delta.
 
 use std::collections::HashMap;
+use std::io::Write;
 use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
@@ -103,6 +104,23 @@ impl GenerationManifest {
     /// Loads the manifest from `<dest_root>/.rustcopy_generations.json` (or its namespaced
     /// variant, see [`Self::path_for`]), or an empty manifest if it doesn't exist yet (the
     /// destination's first-ever generation).
+    ///
+    /// D-NEXT: the on-disk format is NDJSON (one compact `Generation` per line) — see
+    /// [`Self::append_generation`] for why. Two backward-compatibility/recovery cases handled
+    /// here, both verified with dedicated tests, not just assumed:
+    ///
+    /// 1. **Pre-NDJSON manifests**: a manifest written by a version of this crate before this fix
+    ///    is one pretty-printed `{"generations": [...]}` JSON object, not NDJSON. Its first line
+    ///    (just `{` or similar) can never parse as a standalone `Generation`, which is exactly how
+    ///    this function tells the two formats apart — no version field or magic byte needed. The
+    ///    next [`Self::save`]/[`Self::append_generation`] call transparently migrates it forward.
+    /// 2. **A torn trailing line**: unlike the old whole-file [`Self::save`] (via `atomic_write`,
+    ///    D14, which can never leave a partial file), [`Self::append_generation`] does a plain
+    ///    append — a crash/kill/dropped-share mid-append can leave a truncated final line. Every
+    ///    earlier line was already fully written and fsynced by its own prior append, so only the
+    ///    *last* line can ever be torn. If it fails to parse, it's dropped with a warning rather
+    ///    than failing the whole load — the same "prior data stays intact, only the incomplete
+    ///    tail is lost" recovery pattern write-ahead logs use, not a novel scheme invented here.
     pub fn load_or_default(dest_root: &Path, job_name: Option<&str>) -> Result<Self, IngestError> {
         let path = Self::path_for(dest_root, job_name);
         if !path.exists() {
@@ -110,6 +128,52 @@ impl GenerationManifest {
         }
         let content =
             std::fs::read_to_string(&path).map_err(|error| IngestError::io(&path, error))?;
+
+        let lines: Vec<&str> = content
+            .lines()
+            .map(str::trim)
+            .filter(|line| !line.is_empty())
+            .collect();
+        if lines.is_empty() {
+            return Ok(Self::default());
+        }
+
+        // Format detection: NDJSON iff the first line alone parses as a bare `Generation`. A
+        // pre-NDJSON manifest's first line is a fragment of a larger pretty-printed object and
+        // can never satisfy that on its own.
+        if serde_json::from_str::<Generation>(lines[0]).is_ok() {
+            let last = lines.len() - 1;
+            let mut generations = Vec::with_capacity(lines.len());
+            for (i, line) in lines.iter().enumerate() {
+                match serde_json::from_str::<Generation>(line) {
+                    Ok(generation) => generations.push(generation),
+                    Err(error) if i == last => {
+                        tracing::warn!(
+                            path = %path.display(),
+                            "dropping a torn trailing line in the generation manifest \
+                             (incomplete write, likely an interrupted run): {error}"
+                        );
+                    }
+                    Err(error) => {
+                        // A malformed line anywhere but the last position isn't an interrupted
+                        // append (those only ever land at the end) -- something else corrupted
+                        // the file, and silently skipping an *interior* generation could let a
+                        // later incremental/differential diff against a stale reference. Fail
+                        // loudly rather than guess.
+                        return Err(IngestError::io(
+                            &path,
+                            std::io::Error::new(
+                                std::io::ErrorKind::InvalidData,
+                                format!("malformed generation manifest line {}: {error}", i + 1),
+                            ),
+                        ));
+                    }
+                }
+            }
+            return Ok(Self { generations });
+        }
+
+        // Pre-NDJSON manifest: the whole file is one JSON object.
         serde_json::from_str(&content).map_err(|error| {
             IngestError::io(
                 &path,
@@ -119,24 +183,65 @@ impl GenerationManifest {
     }
 
     /// D14: writes via `crate::atomic_write` (temp file + rename), not a bare `std::fs::write`.
-    /// This manifest scales with the size of the tree being backed up — ~174 MB for one
-    /// generation on the real-world 1.34M-file profile in `_ops_reports/full-profile-test.json`,
-    /// growing linearly with every generation kept before `--keep-generations` rotates it away —
-    /// and unlike `cache.rs`'s fast-verify cache, a corrupt manifest is **fatal**:
-    /// `load_or_default`'s parse error is propagated with `?` and aborts the whole job (see
-    /// `main.rs::execute_generation_backup`), permanently breaking every future
-    /// incremental/differential/retention run against that destination until an operator manually
-    /// intervenes. A write interrupted by a crash, a forced kill, or a dropped SMB/NAS share
-    /// mid-write must never be able to cause that.
+    /// Rewrites the *entire* manifest — used for retention pruning (`retain_generations`, which
+    /// removes entries from the middle of the history and therefore has no cheaper option) and as
+    /// a general "write the whole thing" primitive. The common case (recording one new completed
+    /// generation) should go through [`Self::append_generation`] instead, which doesn't pay this
+    /// whole-file cost. A corrupt manifest is **fatal**: `load_or_default`'s parse error is
+    /// propagated with `?` and aborts the whole job (see `main.rs::execute_generation_backup`),
+    /// permanently breaking every future incremental/differential/retention run against that
+    /// destination until an operator manually intervenes. A write interrupted by a crash, a
+    /// forced kill, or a dropped SMB/NAS share mid-write must never be able to cause that.
     pub fn save(&self, dest_root: &Path, job_name: Option<&str>) -> Result<(), IngestError> {
         let path = Self::path_for(dest_root, job_name);
-        let json = serde_json::to_string_pretty(self).map_err(|error| {
+        let mut buf = String::new();
+        for generation in &self.generations {
+            Self::write_ndjson_line(&mut buf, generation, &path)?;
+        }
+        crate::atomic_write(&path, buf.as_bytes()).map_err(|error| IngestError::io(&path, error))
+    }
+
+    /// D-NEXT (closes the "manifest rewritten in full on every run" half of the question left
+    /// open in `NEXT_SESSION_PROMPT.md` after D14): appends **only** the new generation as one
+    /// NDJSON line, instead of `push`ing it onto an in-memory `GenerationManifest` and calling
+    /// [`Self::save`] to rewrite the whole history. On the real-world 1.34M-file profile a single
+    /// generation serializes to ~174 MB (`ANALYSIS.md` D14) — rewriting that in full to record one
+    /// more generation is O(total history) per run, growing without bound the longer a destination
+    /// has been backed up to; appending is O(one generation), the same cost every time regardless
+    /// of history length. Does **not** use `atomic_write` (an append has nothing to atomically
+    /// replace) — see [`Self::load_or_default`]'s doc comment for the torn-trailing-line recovery
+    /// this trades for in exchange.
+    pub fn append_generation(
+        dest_root: &Path,
+        job_name: Option<&str>,
+        generation: &Generation,
+    ) -> Result<(), IngestError> {
+        let path = Self::path_for(dest_root, job_name);
+        let mut line = String::new();
+        Self::write_ndjson_line(&mut line, generation, &path)?;
+        let mut file = std::fs::OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(&path)
+            .map_err(|error| IngestError::io(&path, error))?;
+        file.write_all(line.as_bytes())
+            .map_err(|error| IngestError::io(&path, error))
+    }
+
+    fn write_ndjson_line(
+        buf: &mut String,
+        generation: &Generation,
+        path: &Path,
+    ) -> Result<(), IngestError> {
+        let json = serde_json::to_string(generation).map_err(|error| {
             IngestError::io(
-                &path,
+                path,
                 std::io::Error::new(std::io::ErrorKind::InvalidData, error),
             )
         })?;
-        crate::atomic_write(&path, json.as_bytes()).map_err(|error| IngestError::io(&path, error))
+        buf.push_str(&json);
+        buf.push('\n');
+        Ok(())
     }
 
     /// The most recently recorded generation, regardless of type — what an incremental backup
@@ -437,6 +542,140 @@ mod tests {
         let default_manifest =
             GenerationManifest::load_or_default(dir.path(), None).expect("load default");
         assert!(default_manifest.generations.is_empty());
+    }
+
+    #[test]
+    fn save_writes_one_compact_ndjson_line_per_generation() {
+        let mut manifest = GenerationManifest::default();
+        manifest.push(generation("1_full", BackupType::Full));
+        manifest.push(generation("2_incremental", BackupType::Incremental));
+
+        let dir = tempfile::tempdir().expect("tempdir");
+        manifest.save(dir.path(), None).expect("save");
+
+        let content = std::fs::read_to_string(GenerationManifest::path_for(dir.path(), None))
+            .expect("read manifest file");
+        let lines: Vec<&str> = content.lines().collect();
+        assert_eq!(
+            lines.len(),
+            2,
+            "one line per generation, not one big object"
+        );
+        assert!(serde_json::from_str::<Generation>(lines[0]).is_ok());
+        assert!(serde_json::from_str::<Generation>(lines[1]).is_ok());
+    }
+
+    #[test]
+    fn append_generation_adds_one_line_without_touching_earlier_ones() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        GenerationManifest::append_generation(
+            dir.path(),
+            None,
+            &generation("1_full", BackupType::Full),
+        )
+        .expect("append 1");
+        GenerationManifest::append_generation(
+            dir.path(),
+            None,
+            &generation("2_incremental", BackupType::Incremental),
+        )
+        .expect("append 2");
+
+        let loaded = GenerationManifest::load_or_default(dir.path(), None).expect("load");
+        assert_eq!(loaded.generations.len(), 2);
+        assert_eq!(loaded.generations[0].id, "1_full");
+        assert_eq!(loaded.generations[1].id, "2_incremental");
+    }
+
+    #[test]
+    fn append_generation_is_readable_by_save_and_vice_versa() {
+        // The two write paths (whole-file rewrite for pruning vs. single-line append for the
+        // common case) must produce a format each other's reader understands -- a manifest built
+        // partly by one and partly by the other (e.g. several runs, then a prune) is the normal
+        // case in production, not an edge case.
+        let dir = tempfile::tempdir().expect("tempdir");
+        let mut manifest = GenerationManifest::default();
+        manifest.push(generation("1_full", BackupType::Full));
+        manifest.save(dir.path(), None).expect("save");
+
+        GenerationManifest::append_generation(
+            dir.path(),
+            None,
+            &generation("2_incremental", BackupType::Incremental),
+        )
+        .expect("append after save");
+
+        let loaded = GenerationManifest::load_or_default(dir.path(), None).expect("load");
+        assert_eq!(loaded.generations.len(), 2);
+        assert_eq!(loaded.generations[1].id, "2_incremental");
+    }
+
+    #[test]
+    fn load_or_default_falls_back_to_the_pre_ndjson_wrapper_format() {
+        // A manifest written by a version of this crate before this fix is one pretty-printed
+        // `{"generations": [...]}` object. Loading it must keep working without any manual
+        // migration step from the operator.
+        let dir = tempfile::tempdir().expect("tempdir");
+        let path = GenerationManifest::path_for(dir.path(), None);
+        let old_format = serde_json::to_string_pretty(&GenerationManifest {
+            generations: vec![generation("1_full", BackupType::Full)],
+        })
+        .expect("serialize old format");
+        std::fs::write(&path, old_format).expect("write old-format manifest");
+
+        let loaded = GenerationManifest::load_or_default(dir.path(), None).expect("load");
+        assert_eq!(loaded.generations.len(), 1);
+        assert_eq!(loaded.generations[0].id, "1_full");
+    }
+
+    #[test]
+    fn load_or_default_recovers_from_a_torn_trailing_line() {
+        // Simulates a crash/kill mid-append: every earlier line is complete (each was fsynced by
+        // its own prior, already-finished append), only the last one is cut short.
+        let dir = tempfile::tempdir().expect("tempdir");
+        GenerationManifest::append_generation(
+            dir.path(),
+            None,
+            &generation("1_full", BackupType::Full),
+        )
+        .expect("append 1");
+        GenerationManifest::append_generation(
+            dir.path(),
+            None,
+            &generation("2_incremental", BackupType::Incremental),
+        )
+        .expect("append 2");
+
+        let path = GenerationManifest::path_for(dir.path(), None);
+        let mut content = std::fs::read_to_string(&path).expect("read manifest");
+        content.push_str("{\"id\":\"3_incremental\",\"backup_type\""); // truncated mid-write
+        std::fs::write(&path, content).expect("write torn manifest");
+
+        let loaded = GenerationManifest::load_or_default(dir.path(), None).expect("load");
+        assert_eq!(
+            loaded.generations.len(),
+            2,
+            "the torn trailing line should be dropped, not fail the whole load"
+        );
+        assert_eq!(loaded.generations[0].id, "1_full");
+        assert_eq!(loaded.generations[1].id, "2_incremental");
+    }
+
+    #[test]
+    fn load_or_default_fails_loudly_on_a_malformed_interior_line() {
+        // A malformed line anywhere but the last position can't be an interrupted append (those
+        // only ever land at the end) -- something else corrupted the file, so this must not be
+        // silently treated the same as a torn trailing line. The first line must parse as a bare
+        // `Generation` so the NDJSON path (not the old-wrapper-format fallback) is exercised.
+        let dir = tempfile::tempdir().expect("tempdir");
+        let path = GenerationManifest::path_for(dir.path(), None);
+        let first = serde_json::to_string(&generation("1_full", BackupType::Full)).unwrap();
+        let last =
+            serde_json::to_string(&generation("3_incremental", BackupType::Incremental)).unwrap();
+        std::fs::write(&path, format!("{first}\nnot valid json\n{last}\n")).expect("write");
+
+        let result = GenerationManifest::load_or_default(dir.path(), None);
+        assert!(result.is_err());
     }
 
     #[test]

@@ -297,17 +297,17 @@ di `--webhook-url`; risponde `200` se consegnato su tutti i canali, `401` senza/
 Per dettagli tecnici approfonditi, diagrammi architetturali e roadmap di sviluppo consultare:
 - 📖 **[RUNBOOK.md](RUNBOOK.md)** — Manuale operativo, copie multi-sorgente e comandi reali verificati.
 - 📄 **[ARCHITECTURE.md](ARCHITECTURE.md)** — Diagrammi di sequenza, gestione memoria anti-OOM e struttura interna dei moduli.
-- 📊 **[ANALYSIS.md](ANALYSIS.md)** — Diagnosi delle criticità storiche e validazione dei 311 test.
+- 📊 **[ANALYSIS.md](ANALYSIS.md)** — Diagnosi delle criticità storiche e validazione dei 318 test.
 - 🗺️ **[ROADMAP.md](ROADMAP.md)** — Diagramma Gantt dello storico delle release e pianificazione futura.
 - 🤖 **[AGENTS.md](AGENTS.md)** — Linee guida per sviluppatori e contributori AI.
 
 ---
 
-## 🧪 Esecuzione dei Test (311 di Base, 326 con `notify-server`)
+## 🧪 Esecuzione dei Test (318 di Base, 333 con `notify-server`)
 
 ```bash
-rtk cargo test                          # 311 test (default build, senza axum)
-rtk cargo test --features notify-server # 326 test (+15 test sul router axum e sui binari reali)
+rtk cargo test                          # 318 test (default build, senza axum)
+rtk cargo test --features notify-server # 333 test (+15 test sul router axum e sui binari reali)
 ```
 
 Esito atteso: `test result: ok.` su tutti i target, in entrambe le modalità.

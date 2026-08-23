@@ -864,22 +864,29 @@ async fn execute_generation_backup(
     let transfer_seconds = start_transfer.elapsed().as_secs_f64();
 
     if !args.dry_run && copy_error.is_none() {
-        let mut manifest = manifest;
-        manifest.push(generations::Generation {
+        let new_generation = generations::Generation {
             id: generation_id.clone(),
             backup_type,
             created_at: chrono::Utc::now().to_rfc3339(),
             files_copied: copy_outcome.files_copied as usize,
             files: generations::to_generation_files(&inventory.files),
-        });
+        };
         let dest_root_for_save = dest_root.clone();
         let job_name_for_save = job_name.clone();
+        // D-NEXT: appends the one new generation as an NDJSON line instead of rewriting the whole
+        // manifest (`GenerationManifest::save`) -- see that function's doc comment for why this
+        // matters at scale. `manifest` (loaded above, used only to find the incremental/
+        // differential reference generation) is intentionally not reused here.
         spawn_blocking_with_span(move || {
-            manifest.save(&dest_root_for_save, job_name_for_save.as_deref())
+            GenerationManifest::append_generation(
+                &dest_root_for_save,
+                job_name_for_save.as_deref(),
+                &new_generation,
+            )
         })
         .await
-        .context("the generation manifest save task panicked")?
-        .context("cannot save the generation manifest")?;
+        .context("the generation manifest append task panicked")?
+        .context("cannot append to the generation manifest")?;
 
         if let Some(keep_cycles) = args.keep_generations {
             prune_old_generations(args, &dest_root, keep_cycles).await?;
