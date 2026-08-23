@@ -168,7 +168,13 @@ Se l'applicazione Rust intercetta `Ctrl+C` e si arresta senza terminare il proce
 > durante il run. **D19** (23 Agosto 2026) chiude un costo trovato analizzando gli stessi dati
 > operativi: `GenerationManifest::save` riscriveva l'intera cronologia (centinaia di MB su un
 > profilo reale) per registrare una sola nuova generazione — ora un formato NDJSON append-only.
-> Porta il totale storico a 21 (D1-D21), di cui solo D10 resta aperto.
+> **D20** (23 Agosto 2026) chiude la metà in lettura dello stesso costo: il manifest veniva
+> caricato per intero in RAM anche da chi non lo usava (580 MB misurati). **D21** (23 Agosto
+> 2026) elimina la duplicazione dell'inventario di scan, che `verify` teneva vivo in quattro
+> copie. Porta il totale storico a 21 (D1-D21). **Nessun difetto resta aperto**: D10, l'ultima
+> voce ancora segnata come tale, è stato riclassificato il 23 Agosto 2026 come *limite noto*
+> dello strumento di estrazione del grafo — la sua parte azionabile era già stata fatta, e ciò
+> che resta non ha un fix (vedi la sezione D10 per il razionale).
 
 ## 🛑 3.1 Difetti aperti confermati
 
@@ -562,7 +568,7 @@ vecchio sia preservato in `<path>.1` mentre il nuovo run scrive in un file fresc
 
 ---
 
-### D10 — Il grafo rigenerato non regge ancora la reachability ⚠️ MIGLIORATO, NON CHIUSO (21 Agosto 2026)
+### D10 — Il grafo non regge la reachability ✅ CHIUSO — RICLASSIFICATO COME LIMITE NOTO (23 Agosto 2026)
 
 **Gravità: BASSA (strumentazione).** Il grafo era fermo al 31 Luglio (`580 nodi / 1174 archi / 24
 file`) mentre `src/` aveva ricevuto 22 commit da allora — rigenerato per intero con
@@ -602,6 +608,29 @@ risolvibile con un secondo giro. **Il risultato resta da non usare come gate ant
 codice morto reale (D8) va cercato per grep/clippy, non con il grafo — ma è ora uno strumento di
 navigazione utile (84 community etichettate, `GRAPH_REPORT.md` aggiornato), cosa che con il 5,7% di
 reachability del giro precedente non era.
+
+#### ✅ Riclassificazione (23 Agosto 2026)
+
+**Chiuso, non perché risolto, ma perché non è un difetto azionabile.** Restava l'unica voce aperta
+di tutto l'elenco D1-D21, e questo era fuorviante: un difetto aperto implica che qualcuno debba
+sistemarlo, mentre qui la risposta corretta è "va usato sapendo cosa non fa".
+
+La parte azionabile di D10 **è stata fatta**: il grafo era fermo al 31 Luglio con una diagnosi
+(ID nodo non qualificati) che non descriveva più l'estrazione reale; rigenerato e ri-diagnosticato,
+la reachability sui nodi Rust è passata dal 5,7% all'80,5% e la causa vera è stata isolata.
+
+Quello che resta **non ha un fix**: l'estrazione semantica basata su LLM non traccia in modo
+affidabile il dispatch indiretto (`Box<dyn Trait>` come `CommandRunner`, closure passate a
+`spawn_blocking`, metodi invocati tramite variabili intermedie) — che in Rust è ovunque. Non è un
+bug puntuale risolvibile con un secondo giro di estrazione: è una proprietà dello strumento su un
+corpus di questa dimensione. Attendersi altro significherebbe pianificare lavoro che non può
+riuscire.
+
+Diventa quindi un **limite noto con una prescrizione operativa permanente**, registrata in
+`AGENTS.md` e `CLAUDE.md`: il grafo è uno strumento di navigazione, **mai** un gate anti-dead-code —
+per quello servono `grep` e `clippy`, che è esattamente come D8 era stato trovato. Se un domani
+l'estrattore imparasse a seguire il dispatch indiretto, la cosa da fare è rimisurare la
+reachability, non riaprire questa voce.
 
 ---
 
@@ -1260,7 +1289,7 @@ Proposte ordinate per rapporto valore/rischio, motivate da problemi osservati su
 |---|---|---|
 | **P0** | ~~D1~~ ✅, ~~D3~~ ✅, ~~D4~~ ✅ | Tutte e tre risolte e verificate: D1 il 31 Luglio 2026 (F24), D3/D4 il 3 Agosto 2026 (F25a/F25b). Nessun difetto P0 aperto al momento. |
 | **P1** | D2, D5, D6, D7 | Correttezza e coerenza: flag muti, blocco del runtime, versionamento dello schema, semantica delle junction. |
-| **P2** | D8, D9, D10 + O1-O10 | Debito tecnico, ergonomia operativa ed evoluzione funzionale. |
+| **P2** | D8, D9, ~~D10~~ + O1-O10 | Debito tecnico, ergonomia operativa ed evoluzione funzionale. D10 non è più in questa lista: riclassificato il 23 Agosto 2026 come limite noto dello strumento, non come lavoro da pianificare. |
 
 **Lezione metodologica ricorrente**: D1 e D2 erano *invisibili ai test* perché i test verificavano
 l'unità sottostante (`build_restore_args`) o non verificavano affatto (flag mai letti). Il difetto non

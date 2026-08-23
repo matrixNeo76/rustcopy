@@ -57,6 +57,12 @@ For full technical detail behind any entry, see `ANALYSIS.md` (defect list, `D<N
   four live copies of the whole file list; measured 580 MB before, 145 MB after.
 
 ### Changed
+- **D10** reclassified from open defect to documented known limitation. Its actionable half was
+  done (graph regenerated, Rust-node reachability 5.7% -> 80.5%, root cause re-diagnosed); what
+  remains — LLM-based extraction not tracing indirect dispatch through `Box<dyn Trait>`, closures
+  and intermediate variables — has no fix, so listing it as open implied work that cannot succeed.
+  The standing prescription is unchanged: the graph is a navigation aid, never an anti-dead-code
+  gate. No defects are open now.
 - **Breaking (library API)**: `ScanSummary::files` is now `Arc<[ScannedFile]>` instead of
   `Vec<ScannedFile>` (D21). Read-only uses are unaffected — it derefs to `&[ScannedFile]` — but
   code that moved or mutated the `Vec`, or constructed a `ScanSummary` literal, needs updating
