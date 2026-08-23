@@ -10,11 +10,11 @@ generated:
 
 # Prompt per la prossima sessione — robocopy-ingest-cli (rustcopy)
 
-## Stato del progetto (21 Agosto 2026)
+## Stato del progetto (22 Agosto 2026)
 
-`Cargo.toml` = **6.0.0**. Ultimo lavoro: D17 (21 Agosto 2026, vedi `ANALYSIS.md`) — `--min-age-days`/`--max-age-days` ora applicati anche dal prescan/motore naive, non solo dal transfer robocopy reale, più una direzione invertita nel loro `--help` corretta dopo verifica empirica contro il binario reale. Suite di test: **307** (`cargo test`), **322** con `cargo test --features notify-server` (più test `#[ignore]` — round-trip reali dei servizi Windows/Task Scheduler che richiedono elevazione, più un probe di misurazione a scala reale). CI reale su GitHub Actions verde su `windows-latest` e `ubuntu-latest`, entrambe le configurazioni di feature.
+`Cargo.toml` = **6.0.0**. Ultimo lavoro: D18 (22 Agosto 2026, vedi `ANALYSIS.md`) — default di `--log-level` da `debug` a `info` (una riga per-file a `debug` aveva prodotto un log da 356 MB su un run reale da 1,34M file) e `--log-max-bytes` reso una rotazione live durante il run in corso, non solo all'avvio del processo successivo. CodeRabbit sulla stessa PR ha trovato e fatto correggere prima del merge un bug reale: `bytes_written` veniva azzerato anche dopo un tentativo di rotazione fallito (rotate_if_needed è best-effort), lasciando il file libero di crescere oltre il cap prima del prossimo controllo — corretto seminando il contatore dalla dimensione reale del file riaperto. Prima ancora, D17 (21 Agosto) — `--min-age-days`/`--max-age-days` ora applicati anche dal prescan/motore naive, più una direzione invertita nel loro `--help` corretta dopo verifica empirica. Suite di test: **311** (`cargo test`), **326** con `cargo test --features notify-server` (più test `#[ignore]` — round-trip reali dei servizi Windows/Task Scheduler che richiedono elevazione, più un probe di misurazione a scala reale). CI reale su GitHub Actions verde su `windows-latest` e `ubuntu-latest`, entrambe le configurazioni di feature.
 
-Milestone 5.2.0/5.3.0/6.0.0/6.1.0 tutte chiuse. Difetti storici: **D1-D17**, solo D10 (strumentazione grafo Graphify, bassa priorità) resta aperto. Feature F1-F61 tutte classificate (chiuse, o rimandate al backlog con motivazione — vedi `ROADMAP.md`).
+Milestone 5.2.0/5.3.0/6.0.0/6.1.0 tutte chiuse. Difetti storici: **D1-D18**, solo D10 (strumentazione grafo Graphify, bassa priorità) resta aperto. Feature F1-F61 tutte classificate (chiuse, o rimandate al backlog con motivazione — vedi `ROADMAP.md`).
 
 **Questa sessione ha chiuso l'intero `PIANO_MIGLIORAMENTI.md`** ad eccezione di due voci a bassa priorità mai promosse (P3/P4, vedi sotto):
 

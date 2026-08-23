@@ -117,68 +117,68 @@ fn an_invalid_thread_count_is_reported_clearly() {
     assert!(stderr_of(&output).contains("between 1 and 128"));
 }
 
-/// F27 black-box test (closes D9): `--quiet` suppresses the per-file DEBUG lines in the real log
-/// file written by the compiled binary — those lines are what drove the multi-GB logs observed
-/// in the field on large trees (see `ANALYSIS.md` D9).
+/// F27/D18 black-box test (closes D9): the default log level (now INFO, D18) already omits the
+/// per-file DEBUG lines that drove the multi-GB logs observed in the field on large trees (see
+/// `ANALYSIS.md` D9/D18) — DEBUG is opt-in via `--log-level debug`, not the standing default.
+/// `--quiet` goes further still, dropping INFO too (only warnings/errors survive).
 #[cfg(windows)]
 #[test]
-fn quiet_suppresses_per_file_debug_lines_in_the_real_log() {
+fn log_level_controls_per_file_debug_detail_in_the_real_log() {
     let source = fixture_tree(&[("a.csv", 10), ("b.csv", 20)]);
     let workdir = tempfile::tempdir().expect("workdir");
-    let dest = workdir.path().join("out");
-    let log_default = workdir.path().join("default.log");
-    let log_quiet = workdir.path().join("quiet.log");
 
-    let output_default = run(&[
-        "--source",
-        source.path().to_str().expect("utf8"),
-        "--dest",
-        dest.to_str().expect("utf8"),
-        "--log-path",
-        log_default.to_str().expect("utf8"),
-        "--report-path",
-        workdir
-            .path()
-            .join("default-report.json")
-            .to_str()
-            .expect("utf8"),
-    ]);
+    let run_with = |dest_name: &str, log_name: &str, extra: &[&str]| -> String {
+        let dest = workdir.path().join(dest_name);
+        let log_path = workdir.path().join(log_name);
+        let mut argv = vec![
+            "--source".to_string(),
+            source.path().to_str().expect("utf8").to_string(),
+            "--dest".to_string(),
+            dest.to_str().expect("utf8").to_string(),
+            "--log-path".to_string(),
+            log_path.to_str().expect("utf8").to_string(),
+            "--report-path".to_string(),
+            workdir
+                .path()
+                .join(format!("{dest_name}-report.json"))
+                .to_str()
+                .expect("utf8")
+                .to_string(),
+        ];
+        argv.extend(extra.iter().map(|s| s.to_string()));
+        // RUST_LOG wins over the CLI-derived filter (logging.rs::build), so this test's
+        // level-specific assertions would be at the mercy of whatever the *test runner's own*
+        // environment happens to export -- cleared explicitly so this only ever exercises
+        // --log-level/--quiet, not an ambient RUST_LOG.
+        let output = Command::new(BIN)
+            .args(&argv)
+            .env_remove("RUST_LOG")
+            .output()
+            .expect("binary runs");
+        assert!(output.status.success(), "stderr: {}", stderr_of(&output));
+        std::fs::read_to_string(&log_path).expect("read log")
+    };
+
+    let default_log = run_with("out-default", "default.log", &[]);
     assert!(
-        output_default.status.success(),
-        "stderr: {}",
-        stderr_of(&output_default)
+        !default_log.contains("DEBUG"),
+        "the new INFO default must not include per-file DEBUG detail; got: {default_log}"
     );
-    let default_log = std::fs::read_to_string(&log_default).expect("read default log");
     assert!(
-        default_log.contains("DEBUG"),
-        "the default log level must include per-file DEBUG detail; got: {default_log}"
+        default_log.contains("INFO"),
+        "the default must still record INFO-level progress; got: {default_log}"
     );
 
-    let dest2 = workdir.path().join("out2");
-    let output_quiet = run(&[
-        "--source",
-        source.path().to_str().expect("utf8"),
-        "--dest",
-        dest2.to_str().expect("utf8"),
-        "--log-path",
-        log_quiet.to_str().expect("utf8"),
-        "--report-path",
-        workdir
-            .path()
-            .join("quiet-report.json")
-            .to_str()
-            .expect("utf8"),
-        "--quiet",
-    ]);
+    let debug_log = run_with("out-debug", "debug.log", &["--log-level", "debug"]);
     assert!(
-        output_quiet.status.success(),
-        "stderr: {}",
-        stderr_of(&output_quiet)
+        debug_log.contains("DEBUG"),
+        "explicit --log-level debug must still record per-file detail; got: {debug_log}"
     );
-    let quiet_log = std::fs::read_to_string(&log_quiet).expect("read quiet log");
+
+    let quiet_log = run_with("out-quiet", "quiet.log", &["--quiet"]);
     assert!(
-        !quiet_log.contains("DEBUG"),
-        "--quiet must suppress DEBUG lines; got: {quiet_log}"
+        !quiet_log.contains("DEBUG") && !quiet_log.contains("INFO"),
+        "--quiet must suppress DEBUG and INFO alike, keeping only warnings/errors; got: {quiet_log}"
     );
 }
 
@@ -191,7 +191,12 @@ fn oversized_log_is_rotated_by_a_real_run() {
     let workdir = tempfile::tempdir().expect("workdir");
     let dest = workdir.path().join("out");
     let log_path = workdir.path().join("ingest.log");
-    std::fs::write(&log_path, "x".repeat(1000)).expect("seed an oversized log");
+    // D18: max_bytes must sit strictly between this run's own INFO-level output (a handful of
+    // lines, but with full temp-dir paths embedded — comfortably under ~2 KB) and the seeded
+    // content below, or the run's own output would itself cross the threshold and trigger a
+    // *second*, mid-run rotation (D18) on top of the startup one this test actually checks —
+    // exactly the miscalibration that broke this test when the log-level default changed.
+    std::fs::write(&log_path, "x".repeat(20_000)).expect("seed an oversized log");
 
     let output = run(&[
         "--source",
@@ -203,7 +208,7 @@ fn oversized_log_is_rotated_by_a_real_run() {
         "--report-path",
         workdir.path().join("report.json").to_str().expect("utf8"),
         "--log-max-bytes",
-        "500",
+        "10000",
         "--log-max-backups",
         "2",
     ]);
@@ -214,7 +219,7 @@ fn oversized_log_is_rotated_by_a_real_run() {
     let rotated = std::fs::read_to_string(&rotated_path).expect("rotated backup must exist");
     assert_eq!(
         rotated,
-        "x".repeat(1000),
+        "x".repeat(20_000),
         "old content must be preserved in the rotated file"
     );
 

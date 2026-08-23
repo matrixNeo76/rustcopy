@@ -377,5 +377,5 @@ tramite questo stesso comando, senza `--source`/`--dest`.
 | 📘 **[README.md](file:///c:/Users/auresystem/repos/robocopy-ingest-cli/README.md)** | Guida generale, tabella flag CLI e panoramica di alto livello. |
 | 📖 **[RUNBOOK.md](file:///c:/Users/auresystem/repos/robocopy-ingest-cli/RUNBOOK.md)** | **[QUESTO DOCUMENTO]** Guida operativa, backup multi-sorgente e comandi reali testati. |
 | 📄 **[ARCHITECTURE.md](file:///c:/Users/auresystem/repos/robocopy-ingest-cli/ARCHITECTURE.md)** | Architettura interna v6.0.0, diagrammi di flusso e mappa dei moduli Rust. |
-| 📊 **[ANALYSIS.md](file:///c:/Users/auresystem/repos/robocopy-ingest-cli/ANALYSIS.md)** | Diagnosi di robustezza, tuning 3x performance e 307 test di validazione (322 con `notify-server`). |
+| 📊 **[ANALYSIS.md](file:///c:/Users/auresystem/repos/robocopy-ingest-cli/ANALYSIS.md)** | Diagnosi di robustezza, tuning 3x performance e 311 test di validazione (326 con `notify-server`). |
 | 🗺️ **[ROADMAP.md](file:///c:/Users/auresystem/repos/robocopy-ingest-cli/ROADMAP.md)** | Diagramma Gantt delle release (v1.0 → v8.0) e pianificazione futura. |
