@@ -11,7 +11,7 @@ generated:
 # 📖 OPERATIONAL RUNBOOK: robocopy-ingest-cli (rustcopy)
 
 > **Manuale Operativo di Ingestion Massiva, Backup Incrementali Multi-Sorgente e Casi d'Uso REALI Verificati**  
-> *Data: 5 Agosto 2026 | Versione: 6.0.0-Runbook | Stato: Documentazione Verificata su Share SMB Remota*
+> *Versione: 6.0.0 | Stato: comandi verificati su share SMB remota reale*
 
 ---
 
@@ -140,7 +140,7 @@ le cartelle dei cicli più vecchi:
   run **resta comunque salvato**: solo l'eliminazione dei cicli vecchi viene annullata, va
   ripetuta con `--force-purge` (o confermata a console) in un run successivo.
 
-### Comandi pre/post job (`--pre-command`/`--post-command`, F35→F39)
+### Comandi pre/post job (`--pre-command`/`--post-command`, F39)
 
 Gli "eventi" di Cobian: un comando eseguito prima e uno dopo il job, tipicamente per fermare un
 servizio/database perché i suoi file siano coerenti durante il backup, e riavviarlo dopo:
@@ -374,8 +374,10 @@ tramite questo stesso comando, senza `--source`/`--dest`.
 
 | Documento | Descrizione e Contenuto |
 |---|---|
-| 📘 **[README.md](file:///c:/Users/auresystem/repos/robocopy-ingest-cli/README.md)** | Guida generale, tabella flag CLI e panoramica di alto livello. |
-| 📖 **[RUNBOOK.md](file:///c:/Users/auresystem/repos/robocopy-ingest-cli/RUNBOOK.md)** | **[QUESTO DOCUMENTO]** Guida operativa, backup multi-sorgente e comandi reali testati. |
-| 📄 **[ARCHITECTURE.md](file:///c:/Users/auresystem/repos/robocopy-ingest-cli/ARCHITECTURE.md)** | Architettura interna v6.0.0, diagrammi di flusso e mappa dei moduli Rust. |
-| 📊 **[ANALYSIS.md](file:///c:/Users/auresystem/repos/robocopy-ingest-cli/ANALYSIS.md)** | Diagnosi di robustezza, tuning 3x performance e 326 test di validazione (341 con `notify-server`). |
-| 🗺️ **[ROADMAP.md](file:///c:/Users/auresystem/repos/robocopy-ingest-cli/ROADMAP.md)** | Diagramma Gantt delle release (v1.0 → v8.0) e pianificazione futura. |
+| 📘 **[README.md](README.md)** | Panoramica del progetto, primi comandi e indice della documentazione. |
+| 📋 **[docs/cli-reference.md](docs/cli-reference.md)** | Riferimento completo dei flag CLI, codici di uscita e comportamento per funzionalità. |
+| 📦 **[docs/installation.md](docs/installation.md)** | Requisiti, installer Windows, deploy silenzioso e notify-server. |
+| 📖 **[RUNBOOK.md](RUNBOOK.md)** | **[QUESTO DOCUMENTO]** Guida operativa, backup multi-sorgente e comandi reali testati. |
+| 📄 **[ARCHITECTURE.md](ARCHITECTURE.md)** | Architettura interna v6.0.0, diagrammi di flusso e mappa dei moduli Rust. |
+| 📊 **[ANALYSIS.md](ANALYSIS.md)** | Diagnosi di robustezza, tuning 3x performance e 326 test di validazione (341 con `notify-server`). |
+| 🗺️ **[ROADMAP.md](ROADMAP.md)** | Diagramma Gantt delle release (v1.0 → v8.0) e pianificazione futura. |
