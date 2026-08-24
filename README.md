@@ -8,6 +8,10 @@ generated:
   at: 2026-08-06T00:00:00Z
 ---
 
+<p align="center">
+  <img src="images/rustcopy.jpg" alt="Logo di rustcopy: un ingranaggio con due frecce intrecciate e la scritta RUSTCOPY" width="220">
+</p>
+
 # 🚀 robocopy-ingest-cli (rustcopy)
 
 [![CI](https://github.com/matrixNeo76/rustcopy/actions/workflows/ci.yml/badge.svg)](https://github.com/matrixNeo76/rustcopy/actions/workflows/ci.yml)
