@@ -24,20 +24,20 @@ graph TD
     User(["Utente / Script CLI / TOML Config"]) -->|Args / Flags| CLI["src/cli.rs - Clap Parser & Validazione"]
     CLI --> Main["src/main.rs - Orchestratore Principale"]
 
-    subgraph Pipeline Ingestion Engine
+    subgraph PipelineEngine ["Pipeline Ingestion Engine"]
         Main -->|1. Prescan| Scan["src/scan.rs - Scansione Walkdir & Sizing"]
         Main -->|2. Backup Engine| RobocopyEngine["src/engine/robocopy.rs - Process Streaming Engine"]
         RobocopyEngine -->|Invoca| Exec["robocopy.exe - Native Windows Binary"]
         Exec -->|"Stdout+Stderr Stream OEM"| Dec["Decodifica CP850 dedicata (oem_codec.rs) & Zero-Alloc Parsing"]
     end
 
-    subgraph Integrity & Security Layer
+    subgraph IntegritySecurity ["Integrity & Security Layer"]
         Main -->|3. Integrity Check| RayonVerify["src/integrity.rs - Rayon Parallel Hashing"]
         RayonVerify -->|"SHA-256 / BLAKE3 / xxHash3"| Hash["Motore di Hashing"]
         Main -->|4. Zero-Trust Crypto| Crypto["src/crypto.rs - AES-256-GCM su file destinazione"]
     end
 
-    subgraph Monitoring, Logging & Reporting
+    subgraph MonitoringLogging ["Monitoring, Logging & Reporting"]
         Main -->|Async Logging| Log["src/logging.rs - Bounded Channel Logger 10k MSGs"]
         Main -->|Report Output| JSONReport["src/report.rs - JSON Report & Host Metadata"]
         Main -->|HTML Dashboard| HTMLReport["src/html_report.rs - Standalone Dashboard HTML"]
@@ -47,21 +47,21 @@ graph TD
     subgraph Notify Server ["Binario separato, feature notify-server"]
         Main -->|"POST /notify"| NotifyServer["src/bin/notify_server.rs + src/notify_server.rs - axum Router"]
         NotifyServer -->|dispatch| Sinks["src/notify_sink.rs - LogSink / NtfySink / GenericWebhookSink"]
-        NotifyServer -->|"--install-service / --uninstall-service"| NotifyServiceMod["src/service.rs (generico) - servizio Windows dedicato \"RustcopyNotifyServer\" (F41)"]
+        NotifyServer -->|"--install-service / --uninstall-service"| NotifyServiceMod["src/service.rs (generico) - servizio Windows dedicato #quot;RustcopyNotifyServer#quot; (F41)"]
     end
 
-    subgraph Disaster Recovery & Continuità
-        Main -->|--restore-from| Restore["src/restore.rs - Reverse Restore Engine"]
-        Main -->|--resume-from| Checkpoint["src/checkpoint.rs - Checkpoint & Resume"]
+    subgraph DisasterRecovery ["Disaster Recovery & Continuità"]
+        Main -->|"--restore-from"| Restore["src/restore.rs - Reverse Restore Engine"]
+        Main -->|"--resume-from"| Checkpoint["src/checkpoint.rs - Checkpoint & Resume"]
     end
 
     subgraph Backup Enterprise ["Release 6.0.0"]
-        Main -->|--vss-snapshot| VSS["src/vss.rs - Volume Shadow Copy (vssadmin)"]
-        Main -->|--backup-type| Generations["src/generations.rs - Generazioni Full/Incrementale/Differenziale + Retention per cicli (F35)"]
+        Main -->|"--vss-snapshot"| VSS["src/vss.rs - Volume Shadow Copy (vssadmin)"]
+        Main -->|"--backup-type"| Generations["src/generations.rs - Generazioni Full/Incrementale/Differenziale + Retention per cicli (F35)"]
         Generations -->|copia selettiva| NaiveEngine["src/engine/naive.rs - copy_selected"]
         Main -->|"--pre-command / --post-command"| Hooks["src/hooks.rs - Comandi pre/post job (F39)"]
         Main -->|"--install-schedule / --uninstall-schedule"| Schedule["src/schedule.rs - Task Scheduler via schtasks.exe (F36)"]
-        Main -->|"--install-service / --uninstall-service"| ServiceMod["src/service.rs - Windows Service SCM, servizio idle \"RustcopyIngestService\" (F37)"]
+        Main -->|"--install-service / --uninstall-service"| ServiceMod["src/service.rs - Windows Service SCM, servizio idle #quot;RustcopyIngestService#quot; (F37)"]
     end
 
     subgraph Stubs ["Scaffolding (non implementato)"]
@@ -69,7 +69,7 @@ graph TD
     end
 
     A2["src/cache.rs - State Cache (.ingest_cache)"]
-    Main -->|--fast-verify| A2
+    Main -->|"--fast-verify"| A2
 ```
 
 ---
@@ -106,6 +106,7 @@ graph TD
 | `src/errors.rs` | Enum `IngestError` con classificazione retry. | Errori tipizzati con `is_retryable()` per il backoff automatico. |
 | `src/progress.rs` | Progress bar monotonica con throughput. | Observer pattern per aggiornamenti in tempo reale dalla pipeline di trasferimento. |
 | `src/testkit.rs` | `ScriptedRunner` e test doubles cross-platform. | Implementa `CommandRunner` con output predefiniti per testare parser, retry e progress senza `robocopy.exe`. |
+| `src/lib.rs` | Radice del crate e helper trasversali. | Espone i moduli pubblici e ospita le funzioni condivise che non appartengono a un modulo specifico: `atomic_write` (scrittura temp-file + rename, D14), `namespaced_path` (namespacing per job in un batch `[[jobs]]`, D12) e `resolve_report_path_timestamp` (placeholder `{timestamp}` in `--report-path`, P1). |
 
 ---
 
@@ -187,7 +188,7 @@ Per garantire la stabilità su dataset da **milioni di file**:
 
 ## 5. Matrice di Cross-Platform & Mock Testability
 
-Nonostante `robocopy.exe` sia un binario esclusivamente Windows, l'intera suite di **326 test** (`cargo test` di base) viene eseguita ed è al 100% passante sia su Windows che su Linux (le due piattaforme coperte da `.github/workflows/ci.yml`; macOS non fa parte della matrice CI, anche se nulla nel codice lo esclude a priori) grazie al trait `CommandRunner` ed al mock `ScriptedRunner` che simula perfettamente gli exit code ed i flussi stdout di Robocopy. Su Windows, i test aggiuntivi eseguono `robocopy.exe` realmente (dry-run, cifratura AES-256-GCM end-to-end, blocco del mirror-purge, webhook irraggiungibile, **ripristino completo end-to-end da perdita simulata di file — F24**, **backup cifrato → perdita → `--restore-from --decrypt` end-to-end — F25b**, **backup generazionale full → incrementale → differenziale — F34**, **ritenzione/rotazione delle generazioni per cicli — F35**, **comandi pre/post job — F39**, **installazione/rimozione reale di una voce Task Scheduler via `schtasks.exe` — F36**, **checkpoint e resume — F31**, **due job dello stesso batch `[[jobs]]` che condividono la stessa `dest` ottengono manifest generazioni e cache indipendenti — D12**, **le righe di log di ogni job in un batch `[[jobs]]`, incluse quelle emesse dentro `spawn_blocking` come l'invocazione di robocopy, sono taggate con il nome del job che le ha prodotte — D13**, **nessun file temporaneo residuo dopo la scrittura atomica del manifest generazioni/cache fast-verify — D14**, **un fallimento di copia in `--backup-type` restituisce l'exit code 1 (non 2) e scrive comunque un report — D15**). `--install-service`/`--uninstall-service` su entrambi i binari (`robocopy_ingest`, F37, e `notify-server`, F41) sono coperti solo da unit/black-box test che verificano il fallimento pulito senza elevazione e i conflitti clap — il vero round trip contro il Service Control Manager richiederebbe elevazione ad Amministratore reale e non è automatizzato, stesso limite dichiarato di `--vss-snapshot` (F30). Con `cargo test --features notify-server` (**341 test** totali) si aggiungono i test unitari sul router axum (su socket TCP reale) e test end-to-end che eseguono i binari `notify-server` e `robocopy_ingest` realmente compilati l'uno contro l'altro. `--install-service`/`--uninstall-service` su entrambi i binari (F37, F41) sono coperti solo dal fallimento pulito senza elevazione e dai conflitti clap — il vero round trip `CreateService`/`StartService`/`DeleteService` contro il Service Control Manager richiede elevazione ad Amministratore reale e **non è automatizzato**, stesso limite dichiarato per `--vss-snapshot` (F30); vedi `CLAUDE.md` e `ROADMAP.md` (righe F37/F41) per il dettaglio.
+Nonostante `robocopy.exe` sia un binario esclusivamente Windows, l'intera suite di **326 test** (`cargo test` di base) viene eseguita ed è al 100% passante sia su Windows che su Linux (le due piattaforme coperte da `.github/workflows/ci.yml` — affiancato da `.github/workflows/security-audit.yml`, che esegue `rustsec/audit-check` contro il database advisory RustSec ad ogni modifica di `Cargo.toml`/`Cargo.lock` più un cron settimanale; macOS non fa parte della matrice CI, anche se nulla nel codice lo esclude a priori) grazie al trait `CommandRunner` ed al mock `ScriptedRunner` che simula perfettamente gli exit code ed i flussi stdout di Robocopy. Su Windows, i test aggiuntivi eseguono `robocopy.exe` realmente (dry-run, cifratura AES-256-GCM end-to-end, blocco del mirror-purge, webhook irraggiungibile, **ripristino completo end-to-end da perdita simulata di file — F24**, **backup cifrato → perdita → `--restore-from --decrypt` end-to-end — F25b**, **backup generazionale full → incrementale → differenziale — F34**, **ritenzione/rotazione delle generazioni per cicli — F35**, **comandi pre/post job — F39**, **installazione/rimozione reale di una voce Task Scheduler via `schtasks.exe` — F36**, **checkpoint e resume — F31**, **due job dello stesso batch `[[jobs]]` che condividono la stessa `dest` ottengono manifest generazioni e cache indipendenti — D12**, **le righe di log di ogni job in un batch `[[jobs]]`, incluse quelle emesse dentro `spawn_blocking` come l'invocazione di robocopy, sono taggate con il nome del job che le ha prodotte — D13**, **nessun file temporaneo residuo dopo la scrittura atomica del manifest generazioni/cache fast-verify — D14**, **un fallimento di copia in `--backup-type` restituisce l'exit code 1 (non 2) e scrive comunque un report — D15**). `--install-service`/`--uninstall-service` su entrambi i binari (`robocopy_ingest`, F37, e `notify-server`, F41) sono coperti solo da unit/black-box test che verificano il fallimento pulito senza elevazione e i conflitti clap — il vero round trip contro il Service Control Manager richiederebbe elevazione ad Amministratore reale e non è automatizzato, stesso limite dichiarato di `--vss-snapshot` (F30). Con `cargo test --features notify-server` (**341 test** totali) si aggiungono i test unitari sul router axum (su socket TCP reale) e test end-to-end che eseguono i binari `notify-server` e `robocopy_ingest` realmente compilati l'uno contro l'altro. `--install-service`/`--uninstall-service` su entrambi i binari (F37, F41) sono coperti solo dal fallimento pulito senza elevazione e dai conflitti clap — il vero round trip `CreateService`/`StartService`/`DeleteService` contro il Service Control Manager richiede elevazione ad Amministratore reale e **non è automatizzato**, stesso limite dichiarato per `--vss-snapshot` (F30); vedi `CLAUDE.md` e `ROADMAP.md` (righe F37/F41) per il dettaglio.
 
 ---
 
