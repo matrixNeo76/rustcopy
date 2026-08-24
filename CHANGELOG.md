@@ -10,13 +10,52 @@ generated:
 
 # Changelog
 
-All notable changes to this project are documented here. Format loosely follows
-[Keep a Changelog](https://keepachangelog.com/en/1.1.0/); version numbers match `Cargo.toml`.
+All notable changes to this project are documented here.
+
+The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
+and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
+Version numbers match `Cargo.toml`.
 
 For full technical detail behind any entry, see `ANALYSIS.md` (defect list, `D<N>`) and
 `ROADMAP.md` (feature list, `F<N>`) — this file is a linear, user-facing summary of both.
 
 ## [Unreleased]
+
+### Added
+- `.github/workflows/security-audit.yml`: runs `rustsec/audit-check` against the RustSec advisory database on any push/PR to `main` touching `Cargo.toml`/`Cargo.lock`, plus a weekly cron so a disclosure against an already-merged dependency doesn't go unnoticed until the next bump.
+- `docs/cli-reference.md` and `docs/installation.md`: the complete CLI flag table, exit codes,
+  per-feature behaviour, installation requirements and notify-server setup, moved out of the
+  README so each has a home of its own. Both tracked by the OKF documentation bundle.
+- Project logo as a README header image (`images/rustcopy.jpg`).
+- Added `LICENSE` (MIT), `SECURITY.md`, `.editorconfig`, `.github/workflows/ci.yml` (test on
+  Windows + Linux, `cargo fmt --check`, `cargo clippy -D warnings`), `.github/dependabot.yml`.
+- Filled in `Cargo.toml` metadata (`repository`, `homepage`, `keywords`, `categories`, `readme`,
+  corrected `description`).
+- Tagged the release history retroactively: `v0.2.0`, `v5.1.0`, `v5.4.0`, `v5.4.1`, `v5.4.2`,
+  `v6.0.0`.
+- `cargo fmt --all` applied across the whole tree (mechanical, no behavior change) so the new CI's
+  `fmt --check` starts green.
+
+### Changed
+- README restructured as a landing page: 29.5 KB down to 7.1 KB. The CLI flag table alone had
+  grown to 41.9% of the file, so a first-time visitor met `--keep-generations` before learning
+  what the tool does. Reference material now lives in `docs/`, linked from a documentation index.
+  No content was dropped, only relocated.
+- CI pins `okf` to an exact version (0.2.2) instead of installing the latest. The docs gate
+  compares generated indexes byte-for-byte, so an unpinned install let an upstream release fail an
+  unrelated pull request — which is exactly what happened when 0.2.2 changed how `&` is escaped.
+- **D10** reclassified from open defect to documented known limitation. Its actionable half was
+  done (graph regenerated, Rust-node reachability 5.7% -> 80.5%, root cause re-diagnosed); what
+  remains — LLM-based extraction not tracing indirect dispatch through `Box<dyn Trait>`, closures
+  and intermediate variables — has no fix, so listing it as open implied work that cannot succeed.
+  The standing prescription is unchanged: the graph is a navigation aid, never an anti-dead-code
+  gate. No defects are open now.
+- **Breaking (library API)**: `ScanSummary::files` is now `Arc<[ScannedFile]>` instead of
+  `Vec<ScannedFile>` (D21). Read-only uses are unaffected — it derefs to `&[ScannedFile]` — but
+  code that moved or mutated the `Vec`, or constructed a `ScanSummary` literal, needs updating
+  (`.into()` on construction, `Arc::clone` to share, `.to_vec()` if an owned copy is genuinely
+  wanted). Only the `robocopy_ingest` binaries consume this today; flagged here because the type
+  is `pub` and the next release carrying it should be semver-major.
 
 ### Fixed
 - **D13**: log lines emitted during a `[[jobs]]` multi-job batch (including those emitted inside
@@ -55,33 +94,6 @@ For full technical detail behind any entry, see `ANALYSIS.md` (defect list, `D<N
   respectively after.
 - **D21**: the scan inventory is shared rather than copied at each hop. `verify` alone had held
   four live copies of the whole file list; measured 580 MB before, 145 MB after.
-
-### Changed
-- **D10** reclassified from open defect to documented known limitation. Its actionable half was
-  done (graph regenerated, Rust-node reachability 5.7% -> 80.5%, root cause re-diagnosed); what
-  remains — LLM-based extraction not tracing indirect dispatch through `Box<dyn Trait>`, closures
-  and intermediate variables — has no fix, so listing it as open implied work that cannot succeed.
-  The standing prescription is unchanged: the graph is a navigation aid, never an anti-dead-code
-  gate. No defects are open now.
-- **Breaking (library API)**: `ScanSummary::files` is now `Arc<[ScannedFile]>` instead of
-  `Vec<ScannedFile>` (D21). Read-only uses are unaffected — it derefs to `&[ScannedFile]` — but
-  code that moved or mutated the `Vec`, or constructed a `ScanSummary` literal, needs updating
-  (`.into()` on construction, `Arc::clone` to share, `.to_vec()` if an owned copy is genuinely
-  wanted). Only the `robocopy_ingest` binaries consume this today; flagged here because the type
-  is `pub` and the next release carrying it should be semver-major.
-
-### Added
-- `.github/workflows/security-audit.yml`: runs `rustsec/audit-check` against the RustSec advisory database on any push/PR to `main` touching `Cargo.toml`/`Cargo.lock`, plus a weekly cron so a disclosure against an already-merged dependency doesn't go unnoticed until the next bump.
-
-### Repository
-- Added `LICENSE` (MIT), `SECURITY.md`, `.editorconfig`, `.github/workflows/ci.yml` (test on
-  Windows + Linux, `cargo fmt --check`, `cargo clippy -D warnings`), `.github/dependabot.yml`.
-- Filled in `Cargo.toml` metadata (`repository`, `homepage`, `keywords`, `categories`, `readme`,
-  corrected `description`).
-- Tagged the release history retroactively: `v0.2.0`, `v5.1.0`, `v5.4.0`, `v5.4.1`, `v5.4.2`,
-  `v6.0.0`.
-- `cargo fmt --all` applied across the whole tree (mechanical, no behavior change) so the new CI's
-  `fmt --check` starts green.
 
 ## [6.0.0] - 2026-08-05
 
@@ -139,3 +151,11 @@ For full technical detail behind any entry, see `ANALYSIS.md` (defect list, `D<N
 ## [0.2.0] - 2026-07-30
 
 Initial commit.
+
+[Unreleased]: https://github.com/matrixNeo76/rustcopy/compare/v6.0.0...HEAD
+[6.0.0]: https://github.com/matrixNeo76/rustcopy/compare/v5.4.2...v6.0.0
+[5.4.2]: https://github.com/matrixNeo76/rustcopy/compare/v5.4.1...v5.4.2
+[5.4.1]: https://github.com/matrixNeo76/rustcopy/compare/v5.4.0...v5.4.1
+[5.4.0]: https://github.com/matrixNeo76/rustcopy/compare/v5.1.0...v5.4.0
+[5.1.0]: https://github.com/matrixNeo76/rustcopy/compare/v0.2.0...v5.1.0
+[0.2.0]: https://github.com/matrixNeo76/rustcopy/releases/tag/v0.2.0
