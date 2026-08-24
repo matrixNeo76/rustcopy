@@ -25,6 +25,7 @@ cd "$(dirname "${BASH_SOURCE[0]}")/.."
 TRACKED_DOCS=(
   README.md ARCHITECTURE.md ANALYSIS.md ROADMAP.md CLAUDE.md AGENTS.md
   RUNBOOK.md CHANGELOG.md SECURITY.md NEXT_SESSION_PROMPT.md PIANO_MIGLIORAMENTI.md
+  docs/cli-reference.md docs/installation.md
   docs/archive/PIANO_NOTIFY_SERVER.md docs/archive/AGENT_HARNESS_PLAN.md
 )
 

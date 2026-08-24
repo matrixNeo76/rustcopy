@@ -18,10 +18,10 @@ okf_version: "0.2"
 * [CLAUDE.md — Claude Code \& AI Agent Prompt Instructions](CLAUDE.md) - Technical notes and hard constraints for AI agents working on this codebase.
 * [Piano di Miglioramento Consolidato — robocopy-ingest-cli](PIANO_MIGLIORAMENTI.md) - Piano operativo unico — lacune documentazione, economia di contesto, debito tecnico, launcher PowerShell, performance.
 * [Roadmap di Progetto — robocopy-ingest-cli](ROADMAP.md) - Milestone, elenco feature F1-F61, backlog, debito tecnico noto.
-* [robocopy-ingest-cli (rustcopy) — README](README.md) - Manuale utente — installazione, flag CLI, esempi d'uso, esecuzione dei test.
+* [robocopy-ingest-cli (rustcopy) — README](README.md) - Panoramica del progetto — cosa fa, come si installa, primi comandi e indice della documentazione.
 * [Runbook Operativo — robocopy-ingest-cli](RUNBOOK.md) - Guide operative pratiche, esempi reali, benchmark SMB/NAS.
 * [Security Policy](SECURITY.md) - How to report vulnerabilities, and the security scope of this project.
 
 # Subdirectories
 
-* [docs](docs/index.md) - Contains 2 entries: Piano di Implementazione — AgentHarnesses (agentharnesses.io), Piano di Implementazione — Notify Server (axum).
+* [docs](docs/index.md) - Contains 3 entries: archive, Riferimento CLI — robocopy-ingest-cli, Installazione e distribuzione — robocopy-ingest-cli.
