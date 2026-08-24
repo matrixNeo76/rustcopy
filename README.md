@@ -26,7 +26,8 @@ generazioni, cifratura, scheduling e notifiche. Progettato per volumi da 50 GB a
 milioni di file.
 
 ```console
-$ rustcopy --source C:\dati --dest E:\backup\dati --verify-integrity --hash-algo blake3
+$ rustcopy --source C:\dati --dest E:\backup\dati --verify-integrity --hash-algo blake3 `
+    --report-path E:\backup\report.json --log-path E:\backup\ingest.log
 
 Inventory: 8 file(s) matching *, 2.50 MB
 
@@ -97,7 +98,8 @@ rustcopy --source "C:\dati" --dest "E:\backup" --verify-integrity --hash-algo bl
 # Simulazione: mostra cosa farebbe, senza scrivere nulla
 rustcopy --source "C:\dati" --dest "E:\backup" --dry-run
 
-# Backup a generazioni, conservando gli ultimi 3 cicli
+# Backup a generazioni: il primo run dev'essere full, poi si incrementa
+rustcopy --source "C:\dati" --dest "E:\backup" --backup-type full
 rustcopy --source "C:\dati" --dest "E:\backup" --backup-type incremental --keep-generations 3 --force-purge
 ```
 

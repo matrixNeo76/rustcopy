@@ -91,12 +91,19 @@ enabled = false
 url = "https://hooks.slack.com/services/..."
 ```
 
-Collegare un backup al server:
+Collegare un backup al server (avviato **senza** token, sul solo loopback):
 ```powershell
 robocopy_ingest.exe --source D:\dati --dest \\SERVER\share `
   --verify-integrity --hash-algo blake3 `
   --webhook-url "http://127.0.0.1:3000/notify"
 ```
+
+> [!IMPORTANT]
+> **`--webhook-url` non può autenticarsi.** Il client invia solo `POST` + corpo JSON, senza header
+> (`src/notify.rs`): non esiste un flag CLI per il token. Se avvii il server con
+> `ROBOCOPY_NOTIFY_TOKEN` impostato, le notifiche di `robocopy_ingest` riceveranno **401**. Il token
+> serve per client che sanno inviare l'header (`curl`, script, altri tool); per l'uso con
+> `--webhook-url` lascia il server sul loopback senza token, come nell'esempio sopra.
 
 **Sicurezza**: `/notify` richiede `Authorization: Bearer <token>` quando `ROBOCOPY_NOTIFY_TOKEN` è
 impostato. Il server **si rifiuta di avviarsi** se il bind non è un indirizzo loopback (127.0.0.1 /
