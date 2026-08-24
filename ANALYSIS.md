@@ -250,11 +250,12 @@ di test Rust) per escludere artefatti di quoting della shell.
 
 ---
 
-### D2 — `--fast-verify` e `--ignore-transient-missing` sono no-op (MAI CENSITI) 🟡 PARZIALMENTE RISOLTO (F26a, 3 Agosto 2026)
+### D2 — `--fast-verify` e `--ignore-transient-missing` sono no-op (MAI CENSITI) ✅ RISOLTO (F26a + F28, 3 Agosto 2026)
 
-**Stato: `--ignore-transient-missing` chiuso e verificato. `--fast-verify` marcato esplicitamente
-`[NON IMPLEMENTATO]`** (vedi sotto per il perché). Il resto della sezione resta come diagnosi
-storica.
+**Stato: entrambi chiusi e verificati.** `--ignore-transient-missing` con F26a; `--fast-verify`
+poco dopo con **F28**, che ha cablato `cache.rs` in produzione come previsto. Il resto della
+sezione resta come diagnosi storica: descrive lo stato al 3 Agosto, quando `--fast-verify` era
+ancora marcato `[NON IMPLEMENTATO]` in attesa di F28 — vedi la nota di chiusura in fondo alla voce.
 
 **Gravità (storica): MEDIA.** L'audit originale aveva individuato 5 flag no-op. Ne mancavano
 **altri due**:
@@ -300,6 +301,16 @@ sicurezza dei dati che merita la propria review. Marcato esplicitamente `[NON IM
 `src/cli.rs`, con puntatore a F28, invece di lasciarlo un no-op non dichiarato.
 
 `cargo test`: 174 (era 164). `cargo test --features notify-server`: 187 (era 177).
+
+#### ✅ Chiusura della seconda metà (F28)
+
+`--fast-verify` **è stato poi implementato** da F28, che ha cablato `cache.rs` in produzione:
+`IngestCache` è ora consultata in `main.rs::verify`, il marcatore `[NON IMPLEMENTATO]` è stato
+rimosso da `src/cli.rs`, e il flag ha un help completo che dichiara anche il proprio limite di
+fiducia (si fida di size+mtime della **sorgente**, non ri-verifica i byte della destinazione).
+Vedi la riga **O2** in §3.2 e la riga F28 di `ROADMAP.md`. D2 è quindi chiuso per intero, non più
+parzialmente: questa voce restava l'unica del documento a dichiarare `--fast-verify` non
+implementato, in contraddizione con O2 poche sezioni più sotto.
 
 ---
 
@@ -524,9 +535,16 @@ Rimossi `CopyRequestBuilder`, `CopyRequest::builder()`, `IngestError::IntegrityF
 match arm in `is_transient()`), `report::seconds()`. **`IngestCache` non è stato rimosso**: F28
 (vedi sotto) l'ha reso il cuore di `--fast-verify`, quindi è passato da "scaffolding orfano" a
 codice di produzione con chiamanti reali — resta nella tabella storica sopra solo come nota, non
-è più vero che sia morto. `sync_to_cloud`/`register_windows_service` restano scaffolding dietro
-flag ancora `[NON IMPLEMENTATO]` (`--cloud-sync-target`/`--install-service`), non toccati da
-questo fix.
+è più vero che sia morto. `sync_to_cloud` resta scaffolding dietro un flag ancora
+`[NON IMPLEMENTATO]` (`--cloud-sync-target`), non toccato da questo fix.
+
+**Nota di aggiornamento (24 Agosto 2026)**: `register_windows_service` non esiste più e
+`--install-service` **non è più** `[NON IMPLEMENTATO]`. F37 (5 Agosto) ha sostituito quello
+scaffolding con integrazione reale al Service Control Manager via il crate `windows-service`, e F41
+l'ha generalizzata in funzioni parametriche sul nome (`install_named`/`uninstall_named`/
+`start_dispatcher`/`register_and_wait_for_stop`) condivise dai due binari. La frase originale
+descriveva correttamente lo stato al 3 Agosto; è rimasta al presente mentre il codice sotto
+cambiava.
 
 `cargo build` pulito (nessun warning `dead_code` residuo su questi simboli, che comunque il lint
 non avrebbe mai segnalato da solo — vedi sopra).
