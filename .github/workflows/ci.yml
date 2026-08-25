@@ -44,6 +44,8 @@ jobs:
       - name: Cache cargo registry and build artifacts
         uses: Swatinem/rust-cache@v2
 
+      # No --locked here, unlike every other cargo command below: `cargo fmt` does no
+      # dependency resolution and rejects the flag with "unexpected argument".
       - name: cargo fmt --check
         run: cargo fmt --all -- --check
 
@@ -74,12 +76,12 @@ jobs:
       - name: axum stays behind the notify-server feature (AGENTS.md rule 8)
         shell: bash
         run: |
-          if cargo tree | grep -qi axum; then
+          if cargo tree --locked | grep -qi axum; then
             echo "::error::axum reached the default build — it must stay behind --features notify-server"
-            cargo tree | grep -i axum
+            cargo tree --locked | grep -i axum
             exit 1
           fi
-          cargo tree --features notify-server | grep -qi axum             || { echo "::error::axum missing even with --features notify-server"; exit 1; }
+          cargo tree --locked --features notify-server | grep -qi axum    || { echo "::error::axum missing even with --features notify-server"; exit 1; }
 
   # Keeps Cargo.toml's rust-version honest. It was declared as 1.74 for months while nothing
   # ever tested it, and it was wrong by fourteen releases: the committed lockfile pulls
