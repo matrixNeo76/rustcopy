@@ -2,6 +2,10 @@
 **/*.rs.bk
 *.log
 .ingest_cache
+# Run-history index. Lives beside the report, so a run using the default --report-path drops it
+# in whatever directory it was launched from -- including this one.
+.rustcopy_history.jsonl
+.rustcopy_history.*.jsonl
 robocopy_ingest.log
 robocopy_ingest_report.json
 *.html

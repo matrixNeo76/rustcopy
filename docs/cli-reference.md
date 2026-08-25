@@ -66,6 +66,7 @@ completi e i comandi reali verificati sul campo vedi il [RUNBOOK](../RUNBOOK.md)
 | `--decrypt <KEY>` | *nessuno* | — | Decifra ogni file in destinazione dopo il trasferimento — il simmetrico di `--encrypt-aes256`, stesso formato `KEY`. Tipicamente usato con `--restore-from` per ripristinare un backup cifrato. Non combinabile con `--encrypt-aes256` nello stesso comando. |
 | `--install-service` | `false` | — | (Release 6.0.0, F37) Registra questo binario come servizio Windows reale (via Service Control Manager) ed esce senza eseguire un backup ora. Il servizio parte `OnDemand` e resta **inattivo** una volta avviato (risponde solo a Stop/Interrogate) — nessuna logica di backup gira al suo interno. Il servizio che *fa* davvero qualcosa è quello di `notify-server.exe` (F41, identità separata — vedi la nota nella sezione Scheduling). **Richiede Amministratore**. Non richiede `--source`/`--dest`. Incompatibile con `--uninstall-service`. |
 | `--uninstall-service` | `false` | — | (Release 6.0.0, F37) Rimuove il servizio Windows precedentemente installato ed esce. **Richiede Amministratore**. Non richiede `--source`/`--dest`. Incompatibile con `--install-service`. |
+| `--advise` | `false` | — | Analizza lo **storico delle run** e stampa suggerimenti deterministici (intervallo di schedulazione sicuro, costo della retention, `--threads`, anomalie, fallimenti di integrità ricorrenti), poi esce. Legge `.rustcopy_history.jsonl` dalla directory di `--report-path`, scritto automaticamente a fine di ogni run. **Non richiede `--source` né `--dest`**: ispeziona run passate e non copia nulla. Nessun modello linguistico e nessuna rete — è statistica sui report già prodotti, e ogni proposta mostra i numeri da cui deriva. Suggerisce e non applica mai: le operazioni distruttive restano dell'operatore. |
 | `--enable-dedup` | `false` | — | **[NON IMPLEMENTATO]** Accettato per compatibilità futura; nessuna cache di stato viene usata. |
 | `--dry-run` | `false` | `/L` | Simula le operazioni senza modificare o copiare file. |
 
@@ -96,6 +97,39 @@ completi e i comandi reali verificati sul campo vedi il [RUNBOOK](../RUNBOOK.md)
 ---
 
 ## 🔍 Comportamento dettagliato per funzionalità
+
+### Storico delle run e `--advise`
+
+Ogni run conclusa aggiunge **una riga** a `.rustcopy_history.jsonl`, un file NDJSON append-only che
+vive **accanto al report** (nella directory di `--report-path`), non dentro `--dest`.
+
+La posizione non è arbitraria. `.ingest_cache` (F28) e `.rustcopy_generations.json` (F34) stanno
+alla radice della destinazione, ma per questo file sarebbe stato un errore: scrivere in `--dest`
+a fine run ne cambia l'mtime, e robocopy se ne accorge alla run successiva. Misurato: con l'indice
+in `--dest`, una sincronizzazione ripetuta su un albero immutato passava da 2 a 3 elementi copiati.
+**Un file di statistiche non deve perturbare il trasferimento che misura.** Gli altri due se lo
+possono permettere perché sono opt-in; questo lo scrive ogni run.
+
+Un fallimento nella scrittura dell'indice **non fa mai fallire un backup riuscito**: viene solo
+registrato nei log, come già accade per `webhook_error` e `post_command_error`.
+
+Con `[[jobs]]` il nome file è namespacizzato per job (`.rustcopy_history.<job>.jsonl`), stessa
+disciplina di D12 per cache e manifest delle generazioni.
+
+`--advise` legge fino alle 1.000 run più recenti in streaming e produce rilievi con tre livelli di
+severità (`ATTENZIONE`, `PROPOSTA`, `INFO`). Due regole che il modulo si impone:
+
+1. **Nessun suggerimento senza i numeri.** Ogni voce riporta le misure da cui deriva, così è
+   contestabile nel merito e non solo nel verdetto.
+2. **Mai affermare più di quanto il campione sostenga.** Sotto le 3 run reali non esiste una
+   distribuzione, e la risposta onesta è "non ci sono ancora abbastanza dati".
+
+Il rilevamento di anomalie richiede **due condizioni insieme**: uno z-score modificato su MAD sopra
+3.5 *e* uno scostamento relativo dalla mediana di almeno il 25%. La seconda esiste perché la prima
+da sola produceva falsi allarmi reali — su run molto regolari, una differenza di 10 ms superava
+11 deviazioni. Un rilevatore che grida al lupo viene ignorato, e allora nasconde anche l'incidente
+vero.
+
 
 ### 🗂️ Generazioni di Backup (Full / Incrementale / Differenziale)
 

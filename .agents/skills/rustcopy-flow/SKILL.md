@@ -1,6 +1,6 @@
 ---
 name: rustcopy-flow
-version: 1.0.0
+version: 1.1.0
 category: compound
 tags: [rustcopy, robocopy, backup, restore, generations, retention, scheduling, windows-service, cli-wrapper, disaster-recovery]
 triggers:
@@ -13,10 +13,13 @@ triggers:
   - "restore rustcopy"
   - "installa uno schedule di backup"
   - "installa il servizio rustcopy"
+  - "quanto durano i backup"
+  - "diagnosi backup"
+  - "notifiche rustcopy"
 description: "Orchestratore a 2 livelli (compound + molecole) per invocare la CLI rustcopy (robocopy_ingest.exe) da qualunque agente/CLI di coding — Claude Code, OpenCode, ecc. Copre backup rapido/mirror, backup a generazioni con retention, restore da report, e automazione (Task Scheduler / servizio Windows). Nessuna dipendenza da tool MCP proprietari: solo Bash/PowerShell e il binario stesso, quindi portabile ovunque un agente possa eseguire shell."
 status: active
-last_improved: 2026-08-05
-improvement_log: "v1.0.0: Creata adattando la struttura compound+molecole di structured-memory-flow (craft-skills-flow) a rustcopy. Rimossa ogni dipendenza da MCP craft-memory: sub-agenti sono opzionali (usati solo se l'ambiente li offre), l'unico canale garantito e' l'esecuzione shell del binario."
+last_improved: 2026-08-25
+improvement_log: "v1.1.0 (25 Ago 2026): aggiunte Molecola 8 (Diagnose, storico via --advise) e Molecola 9 (Notify), piu' gli Scenari 5 e 6. Colma il gap rilevato in VALUTAZIONE_AI.md: fra scan/backup/verify/restore/notify, notify era l'unico agente specializzato senza molecola. | v1.0.0: Creata adattando la struttura compound+molecole di structured-memory-flow (craft-skills-flow) a rustcopy. Rimossa ogni dipendenza da MCP craft-memory: sub-agenti sono opzionali (usati solo se l'ambiente li offre), l'unico canale garantito e' l'esecuzione shell del binario."
 ---
 
 # Rustcopy Flow — Composto Orchestratore per la CLI rustcopy
@@ -49,7 +52,9 @@ rustcopy-flow (COMPOSTO)
   │     └── CHECKPOINT UMANO (piano confermato)
   ├── Molecola 3/4/5/6: esecuzione specifica dello scenario
   │     └── CHECKPOINT UMANO PRIMA di ogni operazione distruttiva
-  └── Molecola 7: 📊 Verify & Report — interpreta report JSON/exit code, riepiloga
+  ├── Molecola 7: 📊 Verify & Report — interpreta report JSON/exit code, riepiloga
+  ├── Molecola 8: 🔍 Diagnose — risponde a domande sullo storico (--advise), sola lettura
+  └── Molecola 9: 📣 Notify — configura e verifica il recapito delle notifiche
 ```
 
 ## Scenari
@@ -60,6 +65,8 @@ rustcopy-flow (COMPOSTO)
 | **2** | Backup a generazioni + retention | 0 → 1 → 2 → 4 → 7 | `--backup-type full\|incremental\|differential` (+ `--keep-generations`) |
 | **3** | Restore / disaster recovery | 0 → 5 → 7 | `--restore-from <report.json>`, opzionale `--decrypt` |
 | **4** | Automazione (schedule / servizio) | 0 → 6 | `--install-schedule`/`--uninstall-schedule`, `--install-service`/`--uninstall-service` — non esegue un backup ora, registra/rimuove l'automazione |
+| **5** | Diagnosi sullo storico (nessuna esecuzione) | 0 → 8 | L'utente chiede del **passato**: durate tipiche, quando è fallito, se una run è anomala, quanto spazio serve per N generazioni |
+| **6** | Notifiche (`--webhook-url`, `notify-server`) | 0 → 9 | Configurare o diagnosticare il recapito degli avvisi di fine backup |
 
 > Se l'utente non specifica lo scenario, chiediglielo esplicitamente prima di procedere (come da
 > "Selezione Scenario" sotto) — non indovinare tra "copia una volta" e "backup a generazioni":
@@ -73,6 +80,12 @@ richiesta:
 - "backup incrementale/differenziale", "storicizza le versioni", "tieni N backup" → Scenario 2
 - "ripristina", "restore", "ho perso dei file", "recovery" → Scenario 3
 - "ogni notte", "pianifica", "servizio Windows", "automatizza" → Scenario 4
+- "quanto dura di solito", "quando è fallito", "è andata bene?", "perché è lento" → Scenario 5
+- "avvisami", "notifica", "webhook", "non mi è arrivato l'avviso" → Scenario 6
+
+> Distinzione utile fra 4 e 5: lo Scenario 4 **installa** un'automazione, lo Scenario 5 **osserva**
+> quello che è già successo. Un verbo al passato o una domanda ("quanto", "quando", "perché")
+> indica quasi sempre il 5.
 
 ---
 
@@ -136,6 +149,26 @@ questo stesso binario. Non esegue un backup adesso.
 **File:** `molecules/molecule-7-verify-report.md`
 **Scopo:** interpretare l'exit code e il report JSON/HTML prodotto, riepilogare in italiano
 all'utente cosa è successo (file copiati, eventuali mismatch, generazioni ruotate, ecc.).
+
+## Molecola 8: 🔍 Diagnose (Scenario 5)
+
+**File:** `molecules/molecule-8-diagnose.md`
+**Scopo:** rispondere a domande sullo **storico** dei backup interrogando l'indice delle run
+(`.rustcopy_history.jsonl`, accanto ai report) tramite `robocopy_ingest --advise`: durate tipiche,
+intervallo di schedulazione sicuro, costo della retention, anomalie, fallimenti di integrità
+ricorrenti. I suggerimenti sono **deterministici e senza modelli linguistici** — statistica sulle
+run passate, con le evidenze numeriche sempre mostrate.
+**Checkpoint:** nessuno (sola lettura) — ma se emerge un'azione, questa molecola la **propone**
+e si ferma: eseguirla è dell'utente, e passa dalla molecola competente coi suoi checkpoint.
+
+## Molecola 9: 📣 Notify (Scenario 6)
+
+**File:** `molecules/molecule-9-notify.md`
+**Scopo:** configurare `--webhook-url` e, quando serve un fan-out multicanale, `notify-server`
+(binario **feature-gated**, non presente nel build di default); verificare il recapito end-to-end
+e distinguere un fallimento di consegna lato client da un problema di fan-out lato server.
+**Checkpoint:** ✅ OBBLIGATORIO prima di `notify-server --install-service` (richiede
+Amministratore e modifica lo stato della macchina).
 
 ---
 

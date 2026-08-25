@@ -2745,3 +2745,133 @@ dest = "{dest_beta}"
         );
     }
 }
+
+// ---------------------------------------------------------------------------------------------
+// Fase 0/1 of VALUTAZIONE_AI.md: run-history index and the deterministic advisor.
+//
+// Black-box, against the compiled binary. These exist because the unit tests in `history.rs` and
+// `advise.rs` cannot see the wiring: whether a real run actually appends a record, and whether
+// `--advise` really is exempt from `--source`. F24 shipped precisely because a function was tested
+// in isolation while its call site was broken.
+// ---------------------------------------------------------------------------------------------
+
+/// `--advise` inspects past runs; demanding `--source` would make it unusable for its own purpose.
+#[test]
+fn advise_runs_without_source_and_reports_an_empty_history_gracefully() {
+    let workdir = tempfile::tempdir().expect("workdir");
+    let report = workdir.path().join("ingest-report.json");
+
+    let output = run(&["--advise", "--report-path", report.to_str().unwrap()]);
+
+    assert!(
+        output.status.success(),
+        "--advise must exit 0 on an empty history, got {:?}\nstderr: {}",
+        output.status.code(),
+        stderr_of(&output)
+    );
+    let stdout = stdout_of(&output);
+    assert!(
+        stdout.contains("0 run in archivio"),
+        "expected the empty-history message, got:\n{stdout}"
+    );
+}
+
+/// `--advise` on its own must work: it needs neither `--source` nor `--dest`, and the default
+/// `--report-path` gives it somewhere to look. Requiring a transfer flag to inspect past runs
+/// would defeat the point of the flag.
+#[test]
+fn advise_needs_neither_source_nor_dest() {
+    let output = run(&["--advise"]);
+    assert!(
+        output.status.success(),
+        "--advise alone must not be a usage error; stderr: {}",
+        stderr_of(&output)
+    );
+    assert!(
+        stdout_of(&output).contains("run in archivio"),
+        "got:
+{}",
+        stdout_of(&output)
+    );
+}
+
+/// The wiring test: a real transfer must leave a record behind, and `--advise` must read it back.
+#[cfg(windows)]
+#[test]
+fn a_real_run_is_recorded_in_the_history_and_read_back_by_advise() {
+    let source = fixture_tree(&[("a.csv", 10), ("b.csv", 20)]);
+    let dest = tempfile::tempdir().expect("dest");
+    let workdir = tempfile::tempdir().expect("workdir");
+    let report = workdir.path().join("report.json");
+
+    let transfer = run(&[
+        "--source",
+        source.path().to_str().unwrap(),
+        "--dest",
+        dest.path().to_str().unwrap(),
+        "--report-path",
+        report.to_str().unwrap(),
+    ]);
+    assert!(
+        transfer.status.success(),
+        "the transfer itself must succeed: {}",
+        stderr_of(&transfer)
+    );
+
+    let history = workdir.path().join(".rustcopy_history.jsonl");
+    assert!(
+        history.exists(),
+        "a completed run must append to {}",
+        history.display()
+    );
+    assert!(
+        !dest.path().join(".rustcopy_history.jsonl").exists(),
+        "the index must never land inside --dest: it would change the destination's mtime and          perturb the next robocopy transfer (measured: a repeat sync went from 2 items to 3)"
+    );
+    let raw = std::fs::read_to_string(&history).expect("history is readable");
+    assert_eq!(
+        raw.lines().filter(|l| !l.trim().is_empty()).count(),
+        1,
+        "exactly one line per run"
+    );
+    assert!(
+        raw.contains("\"exit_code\":0"),
+        "the record must carry the run's real exit code, got:\n{raw}"
+    );
+
+    let advice = run(&["--advise", "--report-path", report.to_str().unwrap()]);
+    assert!(advice.status.success());
+    assert!(
+        stdout_of(&advice).contains("1 run in archivio"),
+        "advise must read back what the run wrote, got:\n{}",
+        stdout_of(&advice)
+    );
+}
+
+/// A failed history append must never turn a good backup into a failed one: the index is a
+/// statistics file, and AGENTS.md rule 11's non-fatal pattern applies. Simulated by making the
+/// destination's history path un-writable as a directory of the same name.
+#[cfg(windows)]
+#[test]
+fn a_broken_history_index_does_not_fail_an_otherwise_successful_run() {
+    let source = fixture_tree(&[("a.csv", 10)]);
+    let dest = tempfile::tempdir().expect("dest");
+    let workdir = tempfile::tempdir().expect("workdir");
+    // A directory where the file should go: the append cannot possibly succeed.
+    std::fs::create_dir_all(workdir.path().join(".rustcopy_history.jsonl")).expect("blocker");
+
+    let output = run(&[
+        "--source",
+        source.path().to_str().unwrap(),
+        "--dest",
+        dest.path().to_str().unwrap(),
+        "--report-path",
+        workdir.path().join("report.json").to_str().unwrap(),
+    ]);
+
+    assert!(
+        output.status.success(),
+        "the backup moved and verified data; a statistics file must not change that. stderr:\n{}",
+        stderr_of(&output)
+    );
+}
