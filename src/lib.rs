@@ -150,6 +150,55 @@ pub fn atomic_write(path: &Path, contents: &[u8]) -> std::io::Result<()> {
 
 #[cfg(test)]
 mod tests {
+
+    /// The filter guards a restore path, so its claim about namespaced names needs proving rather
+    /// than asserting: `namespaced_path` inserts the job name *before* the extension, which for a
+    /// dotfile with no extension (`.ingest_cache`) appends instead. Both shapes must be caught.
+    #[test]
+    fn rustcopy_metadata_is_recognised_including_its_per_job_namespaced_forms() {
+        use std::ffi::OsStr;
+
+        for name in [
+            ".ingest_cache",
+            ".rustcopy_generations.json",
+            ".rustcopy_history.jsonl",
+        ] {
+            assert!(
+                is_rustcopy_metadata(OsStr::new(name)),
+                "{name} must be recognised"
+            );
+            // Exactly what `namespaced_path` would produce for a `[[jobs]]` entry.
+            let namespaced = namespaced_path(Path::new(name), "nightly");
+            let namespaced = namespaced.file_name().unwrap();
+            assert!(
+                is_rustcopy_metadata(namespaced),
+                "the namespaced form {namespaced:?} of {name} must be recognised too"
+            );
+        }
+    }
+
+    /// The filter must not swallow a user's own files. A backup that silently skipped real data
+    /// would be a far worse defect than the restore failure this filter exists to prevent.
+    #[test]
+    fn user_files_are_never_mistaken_for_rustcopy_metadata() {
+        use std::ffi::OsStr;
+
+        for name in [
+            "ingest_cache",            // no leading dot
+            ".ingest_cache_notes.txt", // shares the prefix, is not the file
+            ".rustcopy_history.txt",   // right prefix, wrong extension
+            ".rustcopy_generations.txt",
+            "rustcopy_history.jsonl",
+            "report.json",
+            "a.csv",
+            ".gitignore",
+        ] {
+            assert!(
+                !is_rustcopy_metadata(OsStr::new(name)),
+                "{name} is user data and must be backed up"
+            );
+        }
+    }
     use super::*;
 
     #[test]
