@@ -137,7 +137,17 @@ cmd_check() {
         echo "::error file=${f}::Broken relative link: ${target} (does not resolve from ${dir}/)"
         status=1
       fi
-    done < <(grep -o '](\([^)h#][^)]*\))' "$f" 2>/dev/null | sed 's/](\(.*\))/\1/; s/#.*//' | sort -u)
+    done < <(
+      # Destination only: strip an optional "title", drop in-page anchors, then keep just the
+      # relative paths. Excluding by leading letter (the old `[^)h#]`) silently skipped any real
+      # relative target starting with h -- howto/, helpers/ -- so filter by URI scheme instead.
+      grep -o ']([^)]*)' "$f" 2>/dev/null \
+        | sed 's/^](//; s/)$//' \
+        | sed 's/[[:space:]]\+["'"'"'].*$//' \
+        | sed 's/#.*//' \
+        | grep -v '^[a-zA-Z][a-zA-Z0-9+.-]*:' \
+        | sort -u
+    )
   done
   [[ $status -eq 0 ]] && echo "ok"
 
@@ -166,7 +176,21 @@ cmd_check() {
       echo "::error file=src/cli.rs::${flag} exists in cli.rs but is documented in no tracked .md"
       status=1
     fi
-  done < <(grep -A1 '#\[arg(long' src/cli.rs | grep -o 'pub [a-z_0-9]*' | sed 's/pub //' | sort -u)
+  done < <(
+    # `#[arg(...)]` frequently spans several lines (--source, --dest and --report-path all do),
+    # so a fixed -A window misses the field that follows. Track the attribute block instead and
+    # take the first `pub <field>` after it closes.
+    awk '
+      /#\[arg\(/            { inattr = 1; islong = 0 }
+      inattr && /long/      { islong = 1 }
+      inattr && /\)\]/      { inattr = 0; pending = islong; next }
+      pending && /pub [a-z_0-9]+/ {
+        match($0, /pub [a-z_0-9]+/)
+        print substr($0, RSTART + 4, RLENGTH - 4)
+        pending = 0
+      }
+    ' src/cli.rs | sort -u
+  )
   [[ $status -eq 0 ]] && echo "ok"
 
   # 5d. Scripts and example configs referenced by the docs actually exist.
@@ -195,7 +219,12 @@ cmd_check() {
       [[ -n "$ln" ]] || continue
       echo "::error file=${f},line=${ln}::Unquoted subgraph title containing ',' or '&' — use: subgraph Id [\"Title\"]"
       status=1
-    done < <(grep -n '^[[:space:]]*subgraph [^["]*[,&]' "$f" 2>/dev/null)
+    done < <(
+      # Two shapes are invalid: a bare title with ',' or '&' before any bracket, and a bracketed
+      # title left unquoted (`subgraph Cache [Primary, secondary]`). The first pattern alone let
+      # the second through.
+      grep -nE '^[[:space:]]*subgraph [^["]*[,&]|^[[:space:]]*subgraph [^[]*\[[^"]*[,&]' "$f" 2>/dev/null
+    )
     if awk '/^```mermaid/{m=1;next} /^```/{m=0} m' "$f" 2>/dev/null | grep -q '\\"'; then
       echo "::error file=${f}::Mermaid label contains an escaped quote — use the #quot; entity instead"
       status=1
