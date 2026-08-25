@@ -124,6 +124,32 @@ async fn run(mut args: Args) -> Result<u8> {
         return Ok(0);
     }
 
+    // Fase 1 of VALUTAZIONE_AI.md: read-only analysis of this destination's run history. Placed
+    // with the other meta-operations above rather than inside execute(): like them it needs no
+    // --source, takes no lock, spawns no child process and copies nothing. It cannot fail a
+    // backup because it never runs alongside one.
+    if args.advise {
+        // Keyed off --report-path, because that is where the index lives (see
+        // `RunHistory::path_for`): pass the same --report-path the runs used. With the default
+        // report path, plain `--advise` finds the history in the current directory.
+        let report_path = args.report_path.clone();
+        let job_name = args.job_name.clone();
+        let history = robocopy_ingest::history::RunHistory::load_recent(
+            &report_path,
+            job_name.as_deref(),
+            robocopy_ingest::history::DEFAULT_HISTORY_WINDOW,
+        )
+        .with_context(|| {
+            format!(
+                "cannot read the run history beside {}",
+                report_path.display()
+            )
+        })?;
+        let advice = robocopy_ingest::advise::analyse(&history);
+        print!("{}", robocopy_ingest::advise::render(&advice, &history));
+        return Ok(0);
+    }
+
     if let Some(restore_report) = args.restore_from.clone() {
         args = robocopy_ingest::restore::build_restore_args(&args, &restore_report, None)?;
     } else if let Some(checkpoint_path) = args.resume_from.clone() {
@@ -724,11 +750,57 @@ async fn execute(args: &Args, child_pid: Arc<AtomicU32>) -> Result<RunOutcome> {
         0
     };
 
+    record_run_history(&report, exit_code, args).await;
+
     Ok(RunOutcome {
         exit_code,
         summary: report.human_summary(),
         report_path: args.report_path.clone(),
     })
+}
+
+/// Fase 0 of `VALUTAZIONE_AI.md` (closes the write half of ROADMAP F50): append one line
+/// describing this run to `<dest>/.rustcopy_history.jsonl`, so `--advise` has a sample to reason
+/// over instead of a directory of unrelated JSON files.
+///
+/// Called after `exit_code` has been computed, never before: the exit code is the single most
+/// informative field in the record, and `main.rs` deliberately computes it in exactly one place
+/// (AGENTS.md rule 12 makes it a contract with schedulers) rather than letting a second site
+/// re-derive it.
+///
+/// **A failure here is never fatal.** The history is a statistics file; a backup that actually
+/// moved and verified data has succeeded whether or not its run was indexed. Mirrors the
+/// `webhook_error`/`post_command_error` non-fatal pattern (AGENTS.md rule 11) — logged, not
+/// propagated. Through `spawn_blocking_with_span` like every other blocking file operation in this
+/// file (D13).
+async fn record_run_history(report: &IngestReport, exit_code: u8, args: &Args) {
+    let report_path = args.report_path.clone();
+    let record = robocopy_ingest::history::RunRecord::from_report(
+        report,
+        exit_code,
+        Some(&args.report_path),
+    )
+    .with_job(args.job_name.as_deref())
+    .with_backup_type(
+        args.backup_type
+            .map(|kind| format!("{kind:?}").to_lowercase()),
+    );
+    let job_name = args.job_name.clone();
+
+    let result = spawn_blocking_with_span(move || {
+        robocopy_ingest::history::RunHistory::append(&report_path, job_name.as_deref(), &record)
+    })
+    .await;
+
+    match result {
+        Ok(Ok(())) => tracing::debug!("run recorded in the history index"),
+        Ok(Err(error)) => {
+            tracing::warn!(error = %error, "could not record this run in the history index")
+        }
+        Err(error) => {
+            tracing::warn!(error = %error, "the history-index task panicked")
+        }
+    }
 }
 
 /// F34: run one backup generation (full, incremental, or differential) instead of the plain sync
@@ -978,12 +1050,15 @@ async fn execute_generation_backup(
         .with_context(|| format!("cannot write the report to {}", args.report_path.display()))?;
     tracing::info!(path = %args.report_path.display(), "report written");
 
+    let exit_code = if copy_error.is_some() {
+        EXIT_INGESTION_PROBLEM
+    } else {
+        0
+    };
+    record_run_history(&report, exit_code, args).await;
+
     Ok(RunOutcome {
-        exit_code: if copy_error.is_some() {
-            EXIT_INGESTION_PROBLEM
-        } else {
-            0
-        },
+        exit_code,
         summary: report.human_summary(),
         report_path: args.report_path.clone(),
     })

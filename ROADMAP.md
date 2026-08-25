@@ -278,7 +278,7 @@ ma senza effetto).
 | **F47** | Controlli interattivi: pausa / riprendi / salta file | 🟠 P1 | Parità TeraCopy | Difficile con robocopy come motore (processo esterno non pilotabile a runtime): potrebbe richiedere di usare il motore di copia nativo invece di robocopy per i job interattivi. **Da prototipare prima di impegnarsi.** |
 | **F48** | Scelta utente sull'errore per-file | 🟡 P2 | Parità TeraCopy | Stessa dipendenza architetturale di F47. |
 | **F49** | Coda di job gestibile | 🟡 P2 | Parità TeraCopy | Dipende da F33 (concetto di job). |
-| **F50** | Cronologia trasferimenti navigabile | 🟢 P3 | Parità TeraCopy | I report JSON esistono già: serve un indice consultabile, non nuovi dati. |
+| **F50** | Cronologia trasferimenti navigabile | 🟡 **parzialmente chiuso 25 Ago 2026** | Parità TeraCopy | L'**indice** è fatto (`src/history.rs`, Fase 0 di `VALUTAZIONE_AI.md`): una riga NDJSON per run conclusa, accanto al report — **mai** dentro `--dest`, vedi `AGENTS.md` regola 16 per la misura che lo impone. Interrogabile via `--advise` (statistica deterministica) e via la Molecola 8 di `rustcopy-flow`. **Resta aperta la parte "navigabile"**: non esiste una UI di navigazione della cronologia — dipende da F53/F59 (GUI Tauri). Chi vuole navigarla oggi legge il JSONL o usa `--advise`. |
 | **F51** | Shell extension per Explorer ("Copia con rustcopy") | 🟢 P3 | Parità TeraCopy | **Deliverable separato**: DLL COM registrata nel sistema (fattibile in Rust con `windows-rs`, ma è un binario di natura diversa, con installer e registrazione COM). Il costo più alto dell'intera roadmap. |
 
 ---

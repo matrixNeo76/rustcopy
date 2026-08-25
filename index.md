@@ -21,6 +21,7 @@ okf_version: "0.2"
 * [robocopy-ingest-cli (rustcopy) — README](README.md) - Panoramica del progetto — cosa fa, come si installa, primi comandi e indice della documentazione.
 * [Runbook Operativo — robocopy-ingest-cli](RUNBOOK.md) - Guide operative pratiche, esempi reali, benchmark SMB/NAS.
 * [Security Policy](SECURITY.md) - How to report vulnerabilities, and the security scope of this project.
+* [Valutazione — Funzionalità AI e Orchestrazione Multi-Agente in rustcopy](VALUTAZIONE_AI.md) - Analisi di fattibilità per pianificazione autonoma, monitoraggio con azioni correttive, diagnosi in linguaggio naturale, orchestrazione multi-agente e memoria a context graph.
 
 # Subdirectories
 

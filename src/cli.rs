@@ -91,7 +91,8 @@ pub struct Args {
             "config",
             "uninstall_schedule",
             "install_service",
-            "uninstall_service"
+            "uninstall_service",
+            "advise"
         ]
     )]
     pub source: Option<PathBuf>,
@@ -107,7 +108,8 @@ pub struct Args {
             "config",
             "uninstall_schedule",
             "install_service",
-            "uninstall_service"
+            "uninstall_service",
+            "advise"
         ]
     )]
     pub dest: Option<PathBuf>,
@@ -425,6 +427,20 @@ pub struct Args {
     #[arg(long, default_value_t = false, conflicts_with = "install_service")]
     pub uninstall_service: bool,
 
+    /// Analyse this destination's run history and print deterministic suggestions (schedule
+    /// interval, retention cost, thread count, anomalies, recurring integrity failures).
+    ///
+    /// Reads `.rustcopy_history.jsonl` from the `--report-path` directory, written automatically
+    /// at the end of every run. Needs neither `--source` nor `--dest`: it inspects past runs and
+    /// copies nothing. Pass the same `--report-path` your runs use.
+    /// Involves no language model and no network — see `src/advise.rs`.
+    #[arg(
+        long,
+        default_value_t = false,
+        conflicts_with_all = ["restore_from", "resume_from", "install_service", "uninstall_service"]
+    )]
+    pub advise: bool,
+
     // ── F33 internal: multi-job cache/manifest namespacing (D12) ─────────────
     /// Internal-only, never a real CLI flag (`#[arg(skip)]`, no `--job-name`): set by
     /// `main.rs::run_jobs` to the current job's name so the fast-verify cache and the
@@ -583,6 +599,9 @@ impl Args {
             || self.uninstall_schedule.is_some()
             || self.install_service
             || self.uninstall_service
+            // --advise reads a history file and prints; none of the transfer-shaped checks below
+            // (thread range, source exists, dest writable) describe anything it does.
+            || self.advise
         {
             return Ok(());
         }

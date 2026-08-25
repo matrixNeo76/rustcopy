@@ -14,6 +14,7 @@
 //! * [`scan`] source inventory and directory sizing;
 //! * [`testkit`] test doubles shared by unit and integration tests.
 
+pub mod advise;
 pub mod cache;
 pub mod checkpoint;
 pub mod cli;
@@ -24,6 +25,7 @@ pub mod engine;
 pub mod errors;
 pub mod exit_code;
 pub mod generations;
+pub mod history;
 pub mod hooks;
 pub mod html_report;
 pub mod integrity;
@@ -82,6 +84,31 @@ pub fn resolve_report_path_timestamp(path: &Path, now: DateTime<Utc>) -> PathBuf
 /// (`generations::GenerationManifest::path_for`). E.g. `report.json` + `photos` ->
 /// `report.photos.json`; `.ingest_cache` + `photos` -> `.ingest_cache.photos` (a leading-dot file
 /// with no other dots has no extension, so the name is appended rather than inserted).
+/// True when `file_name` is one of rustcopy's own bookkeeping files rather than backed-up content.
+///
+/// These live at the destination root (`<dest>/.ingest_cache` F28, `.rustcopy_generations.json`
+/// F34, `.rustcopy_history.jsonl` Fase 0) and must never be inventoried as if they were user data.
+///
+/// Why this matters, concretely: `--restore-from` reverses source and destination, so a previous
+/// run's **destination** becomes the next run's **source**. Without this filter, restoring a backup
+/// copies rustcopy's bookkeeping into the restore target alongside the real files — and with
+/// `--decrypt` in the mix it then fails outright, because those files were never encrypted and have
+/// no `RCE1` header. Caught by `cli_smoke::encrypted_backup_restores_and_decrypts_end_to_end` when
+/// the history index was added; the same latent defect already applied to `.ingest_cache` and
+/// `.rustcopy_generations.json`, it simply had no test reaching it.
+///
+/// Matching is by exact file name, including the per-job namespaced variants F33/D12 produce
+/// (`.rustcopy_history.nightly.jsonl`), which is why this checks stem prefixes rather than equality.
+pub fn is_rustcopy_metadata(file_name: &std::ffi::OsStr) -> bool {
+    let Some(name) = file_name.to_str() else {
+        return false;
+    };
+    name == ".ingest_cache"
+        || name.starts_with(".ingest_cache.")
+        || (name.starts_with(".rustcopy_generations") && name.ends_with(".json"))
+        || (name.starts_with(".rustcopy_history") && name.ends_with(".jsonl"))
+}
+
 pub fn namespaced_path(path: &Path, name: &str) -> PathBuf {
     let stem = path
         .file_stem()
@@ -123,6 +150,55 @@ pub fn atomic_write(path: &Path, contents: &[u8]) -> std::io::Result<()> {
 
 #[cfg(test)]
 mod tests {
+
+    /// The filter guards a restore path, so its claim about namespaced names needs proving rather
+    /// than asserting: `namespaced_path` inserts the job name *before* the extension, which for a
+    /// dotfile with no extension (`.ingest_cache`) appends instead. Both shapes must be caught.
+    #[test]
+    fn rustcopy_metadata_is_recognised_including_its_per_job_namespaced_forms() {
+        use std::ffi::OsStr;
+
+        for name in [
+            ".ingest_cache",
+            ".rustcopy_generations.json",
+            ".rustcopy_history.jsonl",
+        ] {
+            assert!(
+                is_rustcopy_metadata(OsStr::new(name)),
+                "{name} must be recognised"
+            );
+            // Exactly what `namespaced_path` would produce for a `[[jobs]]` entry.
+            let namespaced = namespaced_path(Path::new(name), "nightly");
+            let namespaced = namespaced.file_name().unwrap();
+            assert!(
+                is_rustcopy_metadata(namespaced),
+                "the namespaced form {namespaced:?} of {name} must be recognised too"
+            );
+        }
+    }
+
+    /// The filter must not swallow a user's own files. A backup that silently skipped real data
+    /// would be a far worse defect than the restore failure this filter exists to prevent.
+    #[test]
+    fn user_files_are_never_mistaken_for_rustcopy_metadata() {
+        use std::ffi::OsStr;
+
+        for name in [
+            "ingest_cache",            // no leading dot
+            ".ingest_cache_notes.txt", // shares the prefix, is not the file
+            ".rustcopy_history.txt",   // right prefix, wrong extension
+            ".rustcopy_generations.txt",
+            "rustcopy_history.jsonl",
+            "report.json",
+            "a.csv",
+            ".gitignore",
+        ] {
+            assert!(
+                !is_rustcopy_metadata(OsStr::new(name)),
+                "{name} is user data and must be backed up"
+            );
+        }
+    }
     use super::*;
 
     #[test]

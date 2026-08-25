@@ -22,6 +22,19 @@ For full technical detail behind any entry, see `ANALYSIS.md` (defect list, `D<N
 ## [Unreleased]
 
 ### Added
+- `--advise`: analyses this job's run history and prints deterministic suggestions — a safe repeat
+  interval derived from observed durations, what retaining N generations would cost, which
+  `--threads` value has actually performed best, runs that stand out, and recurring integrity
+  failures. Needs neither `--source` nor `--dest`, involves no language model and no network, and
+  every suggestion shows the measurements behind it. It suggests and never applies: destructive
+  operations stay with the operator.
+- A run-history index: every completed run appends one NDJSON line to `.rustcopy_history.jsonl`,
+  written **beside the report** (in the `--report-path` directory), never inside `--dest` —
+  writing into the destination changes its mtime and perturbs the next robocopy transfer. Namespaced
+  per job under `[[jobs]]`. A failure to write it never fails an otherwise successful backup.
+- `rustcopy-flow` skill v1.1.0: two new molecules — *Diagnose* (answers questions about past runs)
+  and *Notify* (sets up and troubleshoots `--webhook-url` / `notify-server`).
+
 - `.github/workflows/security-audit.yml`: runs `rustsec/audit-check` against the RustSec advisory database on any push/PR to `main` touching `Cargo.toml`/`Cargo.lock`, plus a weekly cron so a disclosure against an already-merged dependency doesn't go unnoticed until the next bump.
 - `docs/cli-reference.md` and `docs/installation.md`: the complete CLI flag table, exit codes,
   per-feature behaviour, installation requirements and notify-server setup, moved out of the
@@ -58,6 +71,11 @@ For full technical detail behind any entry, see `ANALYSIS.md` (defect list, `D<N
   is `pub` and the next release carrying it should be semver-major.
 
 ### Fixed
+- Restoring a backup no longer copies rustcopy's own bookkeeping files into the restore target.
+  `--restore-from` reverses source and destination, so a previous run's destination becomes the
+  next run's source; `.ingest_cache` and `.rustcopy_generations.json` were being inventoried as if
+  they were backed-up content, and a restore combined with `--decrypt` failed outright on them
+  (`missing RCE1 header`) because they were never encrypted.
 - **D13**: log lines emitted during a `[[jobs]]` multi-job batch (including those emitted inside
   `tokio::task::spawn_blocking`, notably the robocopy invocation itself) are now tagged with the
   owning job's name, via a `tracing` span propagated through a new `spawn_blocking_with_span`

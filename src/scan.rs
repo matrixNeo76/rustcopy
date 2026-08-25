@@ -215,6 +215,11 @@ pub fn scan(
         if is_excluded(entry.file_name(), &file_matchers) {
             continue;
         }
+        // rustcopy's own bookkeeping is never backed-up content. See
+        // `crate::is_rustcopy_metadata` for the restore+decrypt failure this prevents.
+        if crate::is_rustcopy_metadata(entry.file_name()) {
+            continue;
+        }
 
         // F1.4: match against the relative path, not just the file name.
         let relative_path = entry
@@ -323,6 +328,11 @@ pub fn inventory(
             continue;
         }
         if is_excluded(entry.file_name(), &file_matchers) {
+            continue;
+        }
+        // rustcopy's own bookkeeping is never backed-up content. See
+        // `crate::is_rustcopy_metadata` for the restore+decrypt failure this prevents.
+        if crate::is_rustcopy_metadata(entry.file_name()) {
             continue;
         }
 
