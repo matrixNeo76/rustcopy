@@ -172,7 +172,7 @@ fn now_unix_secs() -> u64 {
 /// `exclude_files` — accepted by the CLI, applied to the real `robocopy.exe` transfer, but never
 /// threaded into this scan, so `--verify-integrity` reported age-filtered files as spuriously
 /// `missing_in_dest` and `--backup-type` (which never goes through robocopy, see `AGENTS.md` rule
-/// 9) ignored the flags entirely. See [`fails_age_filter`] for the exact semantics.
+/// 9) ignored the flags entirely. See `fails_age_filter` for the exact semantics.
 pub fn scan(
     root: &Path,
     pattern: &str,

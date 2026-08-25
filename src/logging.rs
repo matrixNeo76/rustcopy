@@ -1,7 +1,7 @@
 //! Asynchronous file logger.
 //!
 //! `tracing` events are formatted on the calling thread and then handed to a *bounded*
-//! `tokio::sync::mpsc` channel (capacity [`CHANNEL_CAPACITY`]) via `try_send`, so a burst of log
+//! `tokio::sync::mpsc` channel (capacity `CHANNEL_CAPACITY`) via `try_send`, so a burst of log
 //! lines can never grow without limit and OOM a 1TB+ transfer. A dedicated tokio task owns the
 //! log file and performs every write, so the copy loop and the progress bar never block on disk
 //! I/O. Because `try_send` is non-blocking, lines are dropped rather than buffered without bound
@@ -33,7 +33,7 @@ const CHANNEL_CAPACITY: usize = 10_000;
 pub const DEFAULT_FILTER: &str = "robocopy_ingest=info,warn";
 
 /// F27 (closes D9) / D18 (this threshold is now also enforced *during* the current run, not just
-/// against the previous one — see [`rotate_if_needed`] and the writer task in [`build`]; D9's own
+/// against the previous one — see `rotate_if_needed` and the writer task in `build`; D9's own
 /// fix explicitly documented this as "not live rotation", which D18 closes). ~20MB matches the
 /// field-observed ~19MB for 59,963 files at the old default DEBUG level (see `ANALYSIS.md` D9).
 pub const DEFAULT_MAX_LOG_BYTES: u64 = 20 * 1024 * 1024;

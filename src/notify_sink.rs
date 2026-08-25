@@ -25,7 +25,7 @@ pub struct NotifyError {
 ///
 /// Modelled on [`crate::engine::robocopy::CommandRunner`] and [`crate::progress::ProgressSink`]:
 /// production code depends on `dyn NotificationSink`, so tests can substitute a scripted double
-/// (see [`ScriptedSink`] below) instead of hitting a real network endpoint.
+/// (see `ScriptedSink` below) instead of hitting a real network endpoint.
 #[async_trait]
 pub trait NotificationSink: Send + Sync {
     /// Stable identifier used in logs and in [`NotifyError`].

@@ -2,7 +2,9 @@
 name = "robocopy_ingest"
 version = "6.0.0"
 edition = "2021"
-rust-version = "1.74"
+# Verified in CI by the `msrv` job, not asserted: 1.74 was declared here for months
+# while the dependency tree had long since moved past it (time@0.3.54 requires 1.88).
+rust-version = "1.88"
 description = "Windows-native enterprise backup CLI wrapping robocopy.exe: integrity verification, AES-256-GCM encryption, VSS snapshots, full/incremental/differential generations, scheduling, and Windows Service integration"
 license = "MIT"
 repository = "https://github.com/matrixNeo76/rustcopy"
