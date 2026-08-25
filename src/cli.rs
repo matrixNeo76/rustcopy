@@ -133,7 +133,7 @@ pub struct Args {
     pub verify_integrity: bool,
 
     /// Selective integrity verification: skip re-hashing files whose size and modification time
-    /// still match the last verified-clean run, recorded in <dest>/.ingest_cache. Has no effect
+    /// still match the last verified-clean run, recorded in `<dest>/.ingest_cache`. Has no effect
     /// without --verify-integrity. Trust model note: this trusts the SOURCE file's identity
     /// (size+mtime), not a re-check of the destination's actual bytes — if a destination file were
     /// corrupted independently (e.g. silent disk bit rot) while its source counterpart stays

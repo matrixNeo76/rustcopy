@@ -42,6 +42,48 @@ jobs:
       - name: cargo test (notify-server feature)
         run: cargo test --all-targets --features notify-server
 
+      # Broken intra-doc links are invisible to clippy and to the test suite, and this crate
+      # leans on them heavily (17 in generations.rs alone). Adding this gate immediately
+      # surfaced 10 real defects, including a public doc pointing at a test-only type and a
+      # bare `<dest>` that rustdoc was parsing as an HTML tag.
+      - name: cargo doc (no broken intra-doc links)
+        env:
+          RUSTDOCFLAGS: -D warnings
+        run: cargo doc --no-deps --all-features
+
+      # AGENTS.md rule 8: axum must never reach the default build. The rule already existed
+      # but was enforced only by whoever remembered to run `cargo tree` before committing --
+      # a transitive dependency could pull axum into the backup binary unnoticed.
+      - name: axum stays behind the notify-server feature (AGENTS.md rule 8)
+        shell: bash
+        run: |
+          if cargo tree | grep -qi axum; then
+            echo "::error::axum reached the default build — it must stay behind --features notify-server"
+            cargo tree | grep -i axum
+            exit 1
+          fi
+          cargo tree --features notify-server | grep -qi axum             || { echo "::error::axum missing even with --features notify-server"; exit 1; }
+
+  # Keeps Cargo.toml's rust-version honest. It was declared as 1.74 for months while nothing
+  # ever tested it, and it was wrong by fourteen releases: the committed lockfile pulls
+  # time@0.3.54, which needs 1.88. Checked against --locked, so the gate tracks the lockfile
+  # the project actually ships rather than whatever resolves on the day.
+  msrv:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Install the declared MSRV toolchain
+        uses: dtolnay/rust-toolchain@1.88.0
+
+      - name: Cache cargo registry and build artifacts
+        uses: Swatinem/rust-cache@v2
+
+      - name: cargo check on MSRV (both feature sets)
+        run: |
+          cargo check --all-targets --locked
+          cargo check --all-targets --locked --features notify-server
+
   docs:
     runs-on: ubuntu-latest
     steps:

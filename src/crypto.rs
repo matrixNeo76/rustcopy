@@ -111,7 +111,7 @@ impl CryptoManager {
     }
 
     /// Decrypt a stream produced by [`Self::encrypt_stream`]. Bounds each chunk's allocation to
-    /// [`MAX_RECORD_CIPHERTEXT_LEN`], so a corrupted length prefix cannot force an unbounded
+    /// `MAX_RECORD_CIPHERTEXT_LEN`, so a corrupted length prefix cannot force an unbounded
     /// allocation.
     pub fn decrypt_stream<R: Read, W: Write>(
         &self,

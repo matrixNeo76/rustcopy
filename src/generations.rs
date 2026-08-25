@@ -137,7 +137,7 @@ impl GenerationIndex {
 
     /// Ids of the generations belonging to the cycles beyond the `keep_cycles` most recent ones.
     /// Same rotation semantics as [`GenerationManifest::generations_to_prune`] — both go through
-    /// [`cycle_ranges`], so the two can never disagree on what a cycle is.
+    /// `cycle_ranges`, so the two can never disagree on what a cycle is.
     pub fn generations_to_prune(&self, keep_cycles: usize) -> Vec<String> {
         let cycles = cycle_ranges(self.entries.iter().map(|entry| entry.backup_type));
         if cycles.len() <= keep_cycles {
@@ -391,7 +391,7 @@ impl GenerationManifest {
 
     /// D20: the most recent generation, read **without** materializing the rest of the history —
     /// the on-disk equivalent of [`Self::latest`], for the caller that only needs the incremental
-    /// backup's reference point. See [`Self::read_last_matching`] for the memory argument.
+    /// backup's reference point. See `Self::read_last_matching` for the memory argument.
     pub fn load_latest_generation(
         dest_root: &Path,
         job_name: Option<&str>,
@@ -401,7 +401,7 @@ impl GenerationManifest {
 
     /// D20: the most recent `Full` generation, read **without** materializing the rest of the
     /// history — the on-disk equivalent of [`Self::latest_full`], for the differential backup's
-    /// reference point. See [`Self::read_last_matching`] for the memory argument.
+    /// reference point. See `Self::read_last_matching` for the memory argument.
     pub fn load_latest_full_generation(
         dest_root: &Path,
         job_name: Option<&str>,
