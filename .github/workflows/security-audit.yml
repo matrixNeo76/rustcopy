@@ -29,6 +29,7 @@ jobs:
   # Same-repo pull requests get a write-capable GITHUB_TOKEN by default (only fork PRs are
   # downgraded to read-only automatically), so this isn't a theoretical distinction.
   audit-on-change:
+    timeout-minutes: 15
     if: github.event_name != 'schedule'
     runs-on: ubuntu-latest
     permissions:
@@ -44,6 +45,7 @@ jobs:
           token: ${{ secrets.GITHUB_TOKEN }}
 
   audit-scheduled:
+    timeout-minutes: 15
     if: github.event_name == 'schedule'
     runs-on: ubuntu-latest
     permissions:
