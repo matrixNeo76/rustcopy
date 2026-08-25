@@ -112,6 +112,97 @@ cmd_check() {
   done
   [[ $status -eq 0 ]] && echo "ok"
 
+  # 5. Documentation/code consistency. These check only facts with a *single source of truth* --
+  #    the filesystem, or src/cli.rs -- and only across TRACKED_DOCS, like every gate above.
+  #    Prose claims are deliberately out of scope: a prototype that grepped for sentences like
+  #    "flag X is [NOT IMPLEMENTED]" and cross-checked cli.rs produced three findings, all three
+  #    false positives (historical passages, and a correction reading "is no longer [NOT
+  #    IMPLEMENTED]"). Regex cannot tell an assertion from a negation or a quotation. That class
+  #    of drift is what the PR review bot is for; a gate people learn to ignore is worse than none.
+  #    Test counts are excluded for the same reason: PIANO_MIGLIORAMENTI.md legitimately records
+  #    past figures ("296/311 test, 19 Ago") that any naive equality check would flag.
+
+  # 5a. Relative links resolve *from the linking file's own directory*. A link written while a
+  #     doc lived in the repo root silently breaks when the doc moves under docs/ -- exactly what
+  #     happened to cli-reference.md's RUNBOOK link (24 Agosto 2026).
+  echo "== relative links resolve =="
+  local dir target
+  for f in "${TRACKED_DOCS[@]}" "${INDEX_FILES[@]}"; do
+    [[ -f "$f" ]] || continue
+    dir="$(dirname "$f")"
+    while read -r target; do
+      target="${target%$'\r'}"          # docs are CRLF here; a bare \r is invisible but non-empty
+      [[ -n "$target" ]] || continue
+      if [[ ! -e "$dir/$target" ]]; then
+        echo "::error file=${f}::Broken relative link: ${target} (does not resolve from ${dir}/)"
+        status=1
+      fi
+    done < <(grep -o '](\([^)h#][^)]*\))' "$f" 2>/dev/null | sed 's/](\(.*\))/\1/; s/#.*//' | sort -u)
+  done
+  [[ $status -eq 0 ]] && echo "ok"
+
+  # 5b. No absolute file:/// links. These point into whoever wrote them's own disk: invisible to
+  #     that author, broken for every other reader and in the rendered view on GitHub.
+  #     RUNBOOK.md carried five of them for weeks.
+  echo "== no absolute local links =="
+  for f in "${TRACKED_DOCS[@]}"; do
+    [[ -f "$f" ]] || continue
+    if grep -q "file:///" "$f" 2>/dev/null; then
+      echo "::error file=${f}::Contains an absolute file:/// link — use a repository-relative path"
+      status=1
+    fi
+  done
+  [[ $status -eq 0 ]] && echo "ok"
+
+  # 5c. Every CLI flag is documented somewhere in the bundle. Catches a flag added to cli.rs
+  #     without a matching line in the reference.
+  echo "== every CLI flag is documented =="
+  local field flag
+  while read -r field; do
+    field="${field%$'\r'}"
+    [[ -n "$field" ]] || continue
+    flag="--${field//_/-}"
+    if ! grep -l -- "$flag" "${TRACKED_DOCS[@]}" >/dev/null 2>&1; then
+      echo "::error file=src/cli.rs::${flag} exists in cli.rs but is documented in no tracked .md"
+      status=1
+    fi
+  done < <(grep -A1 '#\[arg(long' src/cli.rs | grep -o 'pub [a-z_0-9]*' | sed 's/pub //' | sort -u)
+  [[ $status -eq 0 ]] && echo "ok"
+
+  # 5d. Scripts and example configs referenced by the docs actually exist.
+  echo "== referenced scripts and examples exist =="
+  local ref
+  while read -r ref; do
+    ref="${ref%$'\r'}"
+    [[ -n "$ref" ]] || continue
+    if [[ ! -e "$ref" ]]; then
+      echo "::error::Documentation references ${ref}, which does not exist"
+      status=1
+    fi
+  done < <(grep -oh 'scripts/[a-z._-]*\.\(ps1\|sh\)\|examples/[a-z._-]*\.toml' "${TRACKED_DOCS[@]}" 2>/dev/null | sort -u)
+  [[ $status -eq 0 ]] && echo "ok"
+
+  # 5e. Mermaid: the two syntax errors that actually broke rendering on GitHub (23 Agosto 2026).
+  #     A `subgraph` title containing a comma or `&` must use the `Id ["Title"]` form, and labels
+  #     cannot carry backslash-escaped quotes. Deliberately a targeted lint rather than a full
+  #     parse: validating properly needs the mermaid npm package, and an unpinned install would
+  #     reintroduce the supply-chain problem this repo just pinned okf to avoid.
+  echo "== mermaid syntax =="
+  local ln
+  for f in "${TRACKED_DOCS[@]}"; do
+    [[ -f "$f" ]] || continue
+    while IFS=: read -r ln _; do
+      [[ -n "$ln" ]] || continue
+      echo "::error file=${f},line=${ln}::Unquoted subgraph title containing ',' or '&' — use: subgraph Id [\"Title\"]"
+      status=1
+    done < <(grep -n '^[[:space:]]*subgraph [^["]*[,&]' "$f" 2>/dev/null)
+    if awk '/^```mermaid/{m=1;next} /^```/{m=0} m' "$f" 2>/dev/null | grep -q '\\"'; then
+      echo "::error file=${f}::Mermaid label contains an escaped quote — use the #quot; entity instead"
+      status=1
+    fi
+  done
+  [[ $status -eq 0 ]] && echo "ok"
+
   return $status
 }
 
