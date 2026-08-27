@@ -46,7 +46,7 @@ Log file   : E:\backup\ingest.log
 > [!NOTE]
 > `rustcopy` è **solo una CLI**: non c'è interfaccia grafica né monitoraggio live in questa versione.
 > Il progresso si segue dalla progress bar a terminale; a run concluso restano il report JSON e la
-> dashboard HTML statica (`--html-report-path`). Un'app desktop è pianificata — milestone **8.0.0
+> dashboard HTML statica (`--html-report-path`). Un'app desktop è pianificata — milestone **7.0.0
 > (Tauri)** in [ROADMAP.md](ROADMAP.md) — ma non è implementata.
 
 ---

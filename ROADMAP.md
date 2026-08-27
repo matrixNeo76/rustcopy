@@ -16,9 +16,13 @@ generated:
 > zip/7z) e F40 (cloud/FTP/SFTP reale) sono stati **rimandati a un backlog non vincolato a una
 > milestone** (vedi sezione dedicata più sotto) — non erano bloccanti per il resto della milestone
 > e mancava un caso d'uso concreto per giustificarli ora (F40 in particolare è troppo generico
-> senza un target reale: quale provider/protocollo). Anche la milestone **7.0.0** (motore
-> controllabile) è stata rimandata al backlog (F46-F51) — cambia la natura del prodotto da CLI a
-> strumento interattivo, senza un bisogno concreto oggi. **Milestone 6.1.0 (Notifiche avanzate)
+> senza un target reale: quale provider/protocollo). Anche il **motore controllabile** è stato
+> rimandato al backlog — cambia la natura del prodotto da CLI a strumento interattivo, senza un
+> bisogno concreto oggi. **Rinumerazione del 27 Agosto 2026**: l'interfaccia grafica è ora la
+> **7.0.0** e il motore controllabile la **8.0.0** condizionale (ridotta a F47/F48/F58); F46, F49,
+> F50 e F51 sono passati al backlog indipendente. L'ordine precedente bloccava la GUI dietro un
+> lavoro a sua volta rimandato per assenza di bisogno, mentre otto delle nove voci della GUI non ne
+> dipendevano affatto — vedi [`PIANO_GUI_TAURI.md`](PIANO_GUI_TAURI.md) §6. **Milestone 6.1.0 (Notifiche avanzate)
 > chiusa** (5 Agosto 2026) con **F41** (notify-server come servizio Windows persistente, identità
 > separata da `robocopy_ingest`/F37): F42 (coda persistente/retry), F43 (Telegram), F44 (email),
 > F45 (priorità/tag) rimandati al backlog lo stesso giorno — un'analisi iniziale che li dava per
@@ -27,7 +31,7 @@ generated:
 > manca `chat_id` — né sostituisce SMTP reale, protocollo diverso da HTTP), quindi sono rimandati
 > per assenza di bisogno concreto, non perché già risolti.
 > | ✅ **Nessun difetto aperto** (D10, strumentazione grafo, riclassificato il 23 Agosto 2026 come limite noto dello strumento — vedi `ANALYSIS.md`) su 21 difetti totali documentati (D1-D21: i 10 dell'audit post-5.1.0 + D11, prescan/exclude_dirs, 5 Agosto 2026 + D12, manifest generazioni/cache non isolati per job in un batch `[[jobs]]`, 6 Agosto 2026 + D13, righe di log non attribuibili al job in un batch `[[jobs]]`, 6 Agosto 2026 + D14, scrittura non atomica del manifest generazioni/cache fast-verify, 6 Agosto 2026 + D15, incoerenza exit code/report fra le pipeline plain-sync e `--backup-type`, 6 Agosto 2026 + D16, bug reale in `vss::remap_to_shadow` e test obsoleti/non platform-gated scoperti dalla prima CI su Linux, 6 Agosto 2026 + D17, prescan che ignorava `--min-age-days`/`--max-age-days` più la loro direzione invertita nel `--help`, 21 Agosto 2026 + D18, default di log a DEBUG e rotazione mai live, 22 Agosto 2026 + D19, `GenerationManifest::save` riscriveva l'intera cronologia ad ogni run, ora NDJSON append-only, 23 Agosto 2026 + D20, il manifest generazioni veniva caricato interamente in RAM anche da chi non lo usava (580 MB misurati su un profilo reale), ora letture streaming e metadati-only, 23 Agosto 2026 + D21, l'inventario di scan veniva duplicato ad ogni passaggio invece che condiviso (580 MB contro 145 misurati in `verify`), ora `Arc<[ScannedFile]>`, 23 Agosto 2026); O1-O7 delle opportunità di miglioramento tutte implementate — vedi `ANALYSIS.md` Parte 3
-> | 🎯 **Analisi di parità** vs TeraCopy / Cobian / ntfy nella sezione dedicata: le milestone 6.0.0, 6.1.0 (chiusa), 7.0.0 (rimandata) e 8.0.0 ne derivano.
+> | 🎯 **Analisi di parità** vs TeraCopy / Cobian / ntfy nella sezione dedicata: le milestone 6.0.0, 6.1.0 (chiusa), 7.0.0 (interfaccia grafica) e 8.0.0 (motore controllabile, condizionale) ne derivano.
 >
 > **Nota sulla numerazione**: i numeri di versione seguono le milestone funzionali, **non** una
 > sequenza rigida. La 5.4.0 (notify-server) è stata rilasciata prima della 5.2.0/5.3.0 (correttezza
@@ -76,16 +80,16 @@ gantt
     F41 Notify-server come servizio                   :done, f41, 2026-08-05, 1d
     F42-F45 Rimandati al backlog il 2026-08-05        :f42, 2026-08-05, 1d
 
-    section 7.0.0 Motore controllabile - RIMANDATA (backlog)
-    F46-F51 Rimandati al backlog il 2026-08-05        :f46, 2026-08-05, 1d
-
-    section 8.0.0 Interfaccia grafica (Tauri)
+    section 7.0.0 Interfaccia grafica (Tauri)
     F52 Ristrutturazione in workspace                 :f52, 2026-11-24, 3d
     F53 Scheletro Tauri e comandi IPC                 :f53, 2026-11-27, 5d
     F56 Gestione credenziali (Credential Manager)     :crit, f56, 2026-12-02, 4d
     F54-F55 Sezioni Job e Settings                    :f54, 2026-12-06, 8d
-    F57-F59 Ruoli, progresso live, cronologia         :f57, 2026-12-14, 8d
-    F60 Installer, bundle e firma                     :f60, 2026-12-22, 4d
+    F57 e F59 Ruoli e cronologia navigabile           :f57, 2026-12-14, 6d
+    F60 Installer, bundle e firma                     :f60, 2026-12-20, 4d
+
+    section 8.0.0 Motore controllabile - CONDIZIONALE
+    F47-F48 e F58 Non pianificati, due condizioni     :f47, 2026-08-05, 1d
 ```
 
 ---
@@ -137,7 +141,7 @@ eseguono il binario compilato reale.
 | **F29a** | xxHash3 come terzo algoritmo | `[x] Completato` | O6 | Aggiunta la dipendenza `xxhash-rust` (MIT, pure Rust). `--hash-algo xxh3`, documentato come non-crittografico (solo rilevamento corruzione) sia nel flag che nel codice. Verificato con test di rilevamento corruzione e un test black-box end-to-end sul binario compilato. |
 | **F29b** | Exit code dedicato per integrità | `[x] Completato` | O7 | Nuovo `EXIT_INTEGRITY_FAILED = 4`, distinto da `1` (trasferimento fallito). `run()` in `main.rs` restituisce ora l'exit code (`u8`) direttamente invece di un `bool`. Verificato con due test black-box distinti: uno che produce exit 1 (file bloccato, il trasferimento fallisce) e uno che produce exit 4 (trasferimento riuscito, verifica fallita). |
 | **F29c** | Rimozione codice morto | `[x] Completato` | D8 | Rimossi `CopyRequestBuilder`, `CopyRequest::builder()`, `IngestError::IntegrityFailed`, `report::seconds()` — zero chiamanti. `IngestCache` **non** rimosso: F28 l'ha reso codice di produzione, non più orfano. |
-| **F29d** | **Installer Windows per la CLI attuale** | `[x] Completato` | Richiesta diretta | `installer/rustcopy.iss` (Inno Setup): impacchetta `robocopy_ingest.exe` + `notify-server.exe`, rileva il Visual C++ Redistributable mancante, offre l'aggiunta al PATH, genera un uninstaller. **Testato realmente**: ciclo installazione silenziosa → verifica PATH → disinstallazione → PATH ripristinato, tutto verde. Non sostituisce **F60** (bundler Tauri per la futura GUI 8.0.0): impacchetta la CLI così com'è, non un prerequisito né un'alternativa a quella milestone. |
+| **F29d** | **Installer Windows per la CLI attuale** | `[x] Completato` | Richiesta diretta | `installer/rustcopy.iss` (Inno Setup): impacchetta `robocopy_ingest.exe` + `notify-server.exe`, rileva il Visual C++ Redistributable mancante, offre l'aggiunta al PATH, genera un uninstaller. **Testato realmente**: ciclo installazione silenziosa → verifica PATH → disinstallazione → PATH ripristinato, tutto verde. Non sostituisce **F60** (bundler Tauri per la futura GUI 7.0.0): impacchetta la CLI così com'è, non un prerequisito né un'alternativa a quella milestone. |
 
 `cargo test`: 195 (era 174). `cargo test --features notify-server`: 208 (era 187).
 
@@ -226,7 +230,7 @@ ma senza effetto).
 ## 🗄️ Backlog non vincolato a una milestone
 
 > Task rimandati per chiudere una milestone senza esserne bloccanti (F32/F38/F40 da 6.0.0 il 5
-> Agosto 2026; F42-F45 da 6.1.0 lo stesso giorno; F46-F51/milestone 7.0.0 intera). A nessuno
+> Agosto 2026; F42-F45 da 6.1.0 lo stesso giorno; F46/F49/F50/F51, scorporati dalla vecchia milestone 7.0.0 nella rinumerazione del 27 Agosto 2026 — F47/F48/F58 sono invece confluiti nella nuova 8.0.0 condizionale). A nessuno
 > corrisponde oggi un caso d'uso concreto da parte dell'utente. Restano idee valide, da riprendere
 > quando emerge un bisogno reale — non vanno implementati "a vuoto" solo perché elencati qui.
 
@@ -235,7 +239,10 @@ ma senza effetto).
 | **F32** | Endpoint metriche Prometheus | O8 | Ha senso solo con qualcosa di continuativo da monitorare. Con solo Task Scheduler (F36, nessun processo persistente) e un servizio Windows ancora inattivo (F37), manca oggi un target concreto da esporre. | Quando F41 (notify-server persistente) o un futuro comportamento reale del servizio (oltre F37) danno al processo qualcosa di continuativo da misurare. |
 | **F38** | Compressione degli archivi (zip/7z) | Parità Cobian | Aggiunge complessità reale (interazione con `--verify-integrity` e con la cifratura, F25) per un beneficio non ovvio senza un caso d'uso specifico. | Quando un utente ha un bisogno concreto di ridurre lo spazio occupato dalle generazioni di backup. |
 | **F40** | Cloud/FTP/SFTP reale | Parità Cobian | Scritto in modo troppo generico ("cloud/FTP/SFTP") per essere implementabile senza sapere quale provider/protocollo serve davvero. | Quando emerge un target concreto (es. un bucket S3 specifico, un server SFTP aziendale) — a quel punto va riscritto come task mirato, non come mock generico. Alternativa più economica da valutare per primo: documentare `rclone` come backend esterno invece di reimplementarlo. |
-| **F46-F51** | Intera **Milestone 7.0.0 — Motore controllabile** (vedi sezione dedicata più sotto) | Parità TeraCopy | Cambia la natura del prodotto (da CLI a strumento interattivo). F47/F48 sono esplicitamente "da prototipare prima di impegnarsi" nella loro stessa descrizione — `robocopy.exe` è un processo esterno non pilotabile a runtime, quindi pausa/ripresa/skip per-file richiederebbero probabilmente un motore di copia nativo alternativo, non solo lavoro di interfaccia. F51 (shell extension COM) è il task più costoso dell'intera roadmap. Nessun segnale di un bisogno concreto oggi (uso attuale: backup schedulati/batch, non un tool interattivo drag-and-drop). Discusso e rimandato con l'utente il 5 Agosto 2026. | Quando emerge un bisogno concreto di interattività (GUI, pausa/ripresa manuale) — a quel punto va prototipato prima F47 (il nodo architetturale: motore di copia pilotabile) prima di impegnarsi sul resto della milestone. |
+| **F46** | Modalità "sposta" (elimina sorgente dopo verifica) | Parità TeraCopy | Non ha nulla a che vedere con l'interattività: copia → verifica → elimina, e i primi due passi esistono già. Stava nella vecchia 7.0.0 per sola vicinanza tematica. | Quando serve una modalità "sposta". Il candidato a costo più basso fra questi. |
+| **F49** | Coda di job gestibile | Parità TeraCopy | Dipende da **F33** (concetto di job), che è chiusa. Nessuna dipendenza dal motore pilotabile. | Quando emerge il bisogno di accodare più job in sequenza. |
+| **F50** | Cronologia trasferimenti navigabile | Parità TeraCopy | **Metà già chiusa** (25 Ago 2026): l'indice `.rustcopy_history.jsonl` esiste ed è interrogabile via `--advise`. La metà "navigabile" è **F59**, dentro la milestone 7.0.0. | Si chiude con F59. Nessun lavoro autonomo residuo. |
+| **F51** | Shell extension per Explorer ("Copia con rustcopy") | Parità TeraCopy | **Deliverable separato**, lo è sempre stato: DLL COM registrata nel sistema, con installer e registrazione COM. Il costo più alto della roadmap. | Solo dopo che esiste una GUI da lanciare, e solo se richiesta. |
 | **F42** | Coda persistente + retry di consegna | Parità ntfy | Nessun bisogno concreto segnalato oggi. **Nota**: a differenza di F43/F44 sotto, qui l'argomento "il prossimo run pianificato ne genera un'altra" regge solo per le notifiche di *successo* — per un **fallimento**, se la notifica si perde per un blip di rete l'operatore non lo scopre finché non controlla a mano `webhook_error` nel report JSON, esattamente il caso che una notifica proattiva dovrebbe evitare. Rimandato per assenza di richiesta concreta, non perché il gap sia trascurabile. | Quando un fallimento di consegna passato inosservato causa un problema reale, o quando l'utente lo richiede esplicitamente. |
 | **F43** | `TelegramSink` | Debito 5.4.0 | **Analisi iniziale errata da correggere**: si era ipotizzato che `GenericWebhookSink` (`src/notify_sink.rs`) coprisse già questo caso puntando l'URL all'API Bot di Telegram — falso. `GenericWebhookSink::deliver` fa POST del solo `WebhookPayload` con forma JSON fissa (`schema_version`, `text`, `report_summary`, ...): non contiene `chat_id`, campo **obbligatorio** per `sendMessage`, e non c'è modo di iniettarlo via config oggi. Un tentativo così fallirebbe con 400 Bad Request. Per supportare davvero Telegram servirebbe generalizzare `GenericWebhookSink` (header configurabili + corpo templatizzabile) oppure scrivere il sink dedicato come originariamente previsto — in entrambi i casi lavoro reale, non "già fatto". | Quando emerge un bisogno concreto di notifiche Telegram, valutando in quel momento se conviene generalizzare `GenericWebhookSink` o scrivere `TelegramSink` dedicato. |
 | **F44** | `EmailSink` (SMTP) | Parità Cobian | **Analisi iniziale errata da correggere**: stesso equivoco di F43, ma più netto — la ROADMAP descrive esplicitamente **SMTP reale** (crate `lettre`), un protocollo diverso da HTTP. Un webhook non può sostituire SMTP per definizione, indipendentemente dal formato JSON. Se l'obiettivo fosse invece un'API REST di terze parti (SendGrid/Mailgun), servirebbe comunque un corpo diverso (`personalizations`/`content`) e un header `Authorization: Bearer <key>` che `GenericWebhookSink` non supporta oggi. | Quando emerge un bisogno concreto di notifiche email — a quel punto va chiarito con l'utente se serve SMTP reale (ambienti enterprise con relay interno) o un'API REST di terze parti, perché cambia l'implementazione. |
@@ -257,52 +264,38 @@ ma senza effetto).
 
 ---
 
-## 🖱️ Milestone 7.0.0 — Motore controllabile (parità TeraCopy)
+## 🖥️ Milestone 7.0.0 — Interfaccia grafica (Tauri)
 
-> 🗄️ **Rimandata al backlog il 5 Agosto 2026** (vedi `## 🗄️ Backlog non vincolato a una
-> milestone` sopra, riga F46-F51, per la motivazione) — non c'è un bisogno concreto di
-> interattività oggi. La descrizione qui sotto resta come riferimento per quando (e se) verrà
-> ripresa.
+> ⚠️ **Una UI moltiplica la superficie di ciò che c'è sotto.** Il prerequisito storico di questa
+> milestone era la chiusura integrale della 5.2.0 (correttezza): **soddisfatto** — i 3 difetti P0
+> (D1/D3/D4) e i 4 P1 (F26a-d) sono tutti chiusi dal 3 Agosto 2026.
 >
-> ⚠️ Questa milestone cambia la natura del prodotto: da CLI a strumento interattivo. Va affrontata
-> solo dopo che 5.2.0 (correttezza) e 6.0.0 (backup core) sono chiuse.
+> 🔢 **Rinumerata il 27 Agosto 2026** (era 8.0.0). Verificate una per una, otto delle nove voci
+> originarie non avevano alcuna dipendenza dal "motore controllabile": F54 dipende da F33/F34
+> (chiuse), F55 da F39 (chiusa), F59 da F50 (indice chiuso). **Solo F58** dipendeva da F47, ed è
+> stata spostata insieme ad esso nella nuova 8.0.0. Trattare l'intera milestone come bloccata
+> produceva uno stallo non voluto: la GUI era ferma dietro un lavoro a sua volta rimandato in
+> backlog *per assenza di bisogno*. Analisi completa in [`PIANO_GUI_TAURI.md`](PIANO_GUI_TAURI.md) §6.
 >
-> È il **lavoro di libreria** che rende possibile la UI della milestone 8.0.0: pausa, ripresa e skip
-> per-file non sono un problema di interfaccia ma di motore, perché `robocopy.exe` è un processo
-> esterno non pilotabile a runtime. Va fatta **prima** della GUI, altrimenti si ottiene una finestra
-> con pulsanti collegati a nulla.
+> 🔴 **Prerequisito reale: F52** (ristrutturazione in workspace Cargo). Nient'altro.
 
-| ID | Task | Priorità | Origine | Descrizione |
-|---|---|---|---|---|
-| **F46** | Modalità "sposta" (elimina sorgente dopo verifica) | 🟡 P2 | Parità TeraCopy | Sicura solo *dopo* la verifica di integrità: la sequenza copia → verifica → elimina è già tutta presente, manca solo l'ultimo passo. Il candidato a costo più basso di questa milestone. |
-| **F47** | Controlli interattivi: pausa / riprendi / salta file | 🟠 P1 | Parità TeraCopy | Difficile con robocopy come motore (processo esterno non pilotabile a runtime): potrebbe richiedere di usare il motore di copia nativo invece di robocopy per i job interattivi. **Da prototipare prima di impegnarsi.** |
-| **F48** | Scelta utente sull'errore per-file | 🟡 P2 | Parità TeraCopy | Stessa dipendenza architetturale di F47. |
-| **F49** | Coda di job gestibile | 🟡 P2 | Parità TeraCopy | Dipende da F33 (concetto di job). |
-| **F50** | Cronologia trasferimenti navigabile | 🟡 **parzialmente chiuso 25 Ago 2026** | Parità TeraCopy | L'**indice** è fatto (`src/history.rs`, Fase 0 di `VALUTAZIONE_AI.md`): una riga NDJSON per run conclusa, accanto al report — **mai** dentro `--dest`, vedi `AGENTS.md` regola 16 per la misura che lo impone. Interrogabile via `--advise` (statistica deterministica) e via la Molecola 8 di `rustcopy-flow`. **Resta aperta la parte "navigabile"**: non esiste una UI di navigazione della cronologia — dipende da F53/F59 (GUI Tauri). Chi vuole navigarla oggi legge il JSONL o usa `--advise`. |
-| **F51** | Shell extension per Explorer ("Copia con rustcopy") | 🟢 P3 | Parità TeraCopy | **Deliverable separato**: DLL COM registrata nel sistema (fattibile in Rust con `windows-rs`, ma è un binario di natura diversa, con installer e registrazione COM). Il costo più alto dell'intera roadmap. |
+### Relazione con la milestone 8.0.0 (motore controllabile)
 
----
+Le due milestone si toccano in **un solo punto**: i controlli interattivi.
 
-## 🖥️ Milestone 8.0.0 — Interfaccia grafica (Tauri)
+- **Questa milestone mette una faccia** su ciò che il motore già fa oggi: pianificare ed eseguire
+  job, consultare cronologia e report, gestire credenziali e impostazioni. Nulla di tutto ciò
+  richiede di pilotare la copia a runtime.
+- **La 8.0.0 rende il motore pilotabile** — pausa, ripresa e skip per-file — ed è condizionale
+  (vedi la sua sezione). Quando e se verrà fatta, **F58** aggiungerà i relativi controlli a questa
+  interfaccia.
 
-> ⚠️ **Fase finale della roadmap, e va mantenuta tale.** Una UI moltiplica la superficie di ciò che
-> c'è sotto. I 3 difetti P0 originari (**D1** restore irraggiungibile, **D3** cifratura in OOM,
-> **D4** nessuna decifratura) sono stati risolti (F24, F25a, F25b) — ma restano 4 difetti P1
-> aperti in 5.2.0 (F26a-d: flag muti, blocco del runtime su mirror safety, versionamento schema,
-> junction). Prerequisito non negoziabile: **5.2.0 chiusa per intero**, P1 inclusi.
+Finché la 8.0.0 non viene ripresa, la GUI semplicemente **non disegna** pulsanti di pausa e skip.
+L'avvertenza originaria ("una finestra con pulsanti collegati a nulla") resta valida ed è così che
+va rispettata: non disegnandoli, non rimandando l'intera interfaccia.
 
-### Relazione con la milestone 7.0.0
-
-7.0.0 e 8.0.0 si sovrappongono solo in apparenza. La divisione corretta è:
-
-- **7.0.0 rende il motore controllabile** (parte difficile): pausa/ripresa e skip per-file richiedono
-  di non usare `robocopy.exe` come processo esterno — un processo figlio non è pilotabile a runtime.
-  È lavoro di libreria, indipendente da qualunque UI.
-- **8.0.0 mette una faccia** su ciò che 7.0.0 ha reso possibile.
-
-Costruire la UI prima porterebbe a una finestra con pulsanti Pausa/Salta non collegati a nulla.
-L'unica parte di 7.0.0 che resta fuori dall'app Tauri è la shell extension (**F51**): una DLL COM che
-al massimo *lancia* l'app.
+L'unica voce che resta fuori dall'app Tauri è la shell extension (**F51**, oggi nel backlog
+indipendente): una DLL COM che al massimo *lancia* l'app.
 
 | ID | Task | Priorità | Descrizione |
 |---|---|---|---|
@@ -312,7 +305,6 @@ al massimo *lancia* l'app.
 | **F55** | Sezione **Settings**: variabili e script | 🟠 P1 | Frontend di **F39** (comandi pre/post job) e delle variabili di configurazione. **Vedi l'avviso di sicurezza sotto: non è una semplice pagina di form.** |
 | **F56** | **Gestione credenziali** | 🔴 P0 della milestone | Credenziali SMB/NAS, SMTP, token notify, chiavi di cifratura. **Non implementare uno storage proprio**: usare il Windows Credential Manager (DPAPI) tramite il crate `keyring`. Deve **estendere** la convenzione esistente (`env:`/`file:` di `crypto::resolve_key`), non sostituirla con un formato nuovo. Nessun segreto nei file TOML/JSON scritti dalla UI. |
 | **F57** | Ruoli admin / operatore | 🟡 P2 | **Vedi l'avviso di sicurezza sotto.** Utile come prevenzione degli errori, non come confine di sicurezza. |
-| **F58** | Progresso live e controlli interattivi | 🟠 P1 | Dipende da **F47**. Progress bar, pausa/riprendi/salta, esito per-file. |
 | **F59** | Cronologia e report navigabili | 🟡 P2 | Dipende da **F50**. I report JSON esistono già: serve l'indice e la navigazione, non nuovi dati. |
 | **F60** | Installer, bundle e firma del codice | 🟡 P2 | MSI/NSIS via il bundler Tauri. Su Windows un eseguibile non firmato che chiede privilegi genera avvisi SmartScreen: da mettere in conto se distribuito. |
 
@@ -335,6 +327,38 @@ al massimo *lancia* l'app.
 3. **La UI non deve diventare una nuova sede dei segreti.** Il repository ha già una convenzione
    funzionante (`env:NAME`, `file:PATH`, file `*.local.ps1` esclusi da git): F56 la estende al
    Credential Manager, non introduce un formato parallelo.
+
+---
+
+## 🖱️ Milestone 8.0.0 — Motore controllabile (condizionale)
+
+> 🗄️ **Condizionale, non pianificata.** Rimandata al backlog il 5 Agosto 2026 perché non esiste
+> un bisogno concreto di interattività. **Rinumerata da 7.0.0 a 8.0.0 il 27 Agosto 2026** e ridotta
+> al solo gruppo che condivide la dipendenza architetturale reale: **F47, F48 e F58**. F46, F49,
+> F50 e F51 non ne facevano parte per sostanza e sono passati al backlog indipendente.
+>
+> ⚠️ Cambia la natura del prodotto: da CLI a strumento interattivo. Richiede di **sostituire
+> `robocopy.exe`** con un motore nativo pilotabile — un processo figlio non è comandabile a runtime.
+>
+> 🎯 **Due condizioni di attivazione, entrambe necessarie** (stessa disciplina di F61 e delle Fasi
+> 3/4 di `VALUTAZIONE_AI.md`):
+>
+> 1. **Un bisogno concreto e nominabile** di pausa/skip per-file da un uso reale — non parità di
+>    funzionalità con un concorrente.
+> 2. **Una misura, prima dell'adozione**: il motore nativo va confrontato con `robocopy /MT` sul
+>    profilo reale da 1,34M file (`_ops_reports/full-profile-test.json`, **711,8 MB/s**). Se non
+>    regge quel numero, non si adotta. È il lavoro a maggior rischio prestazionale dell'intera
+>    roadmap, e questo cancello protegge la priorità dichiarata del progetto.
+>
+> Finché non valgono entrambe, il motore resta `robocopy.exe` e la GUI resta senza controlli
+> interattivi — cioè lo stato odierno, che funziona. Analisi in
+> [`PIANO_GUI_TAURI.md`](PIANO_GUI_TAURI.md) §6.
+
+| ID | Task | Priorità | Origine | Descrizione |
+|---|---|---|---|---|
+| **F47** | Controlli interattivi: pausa / riprendi / salta file | 🟠 P1 | Parità TeraCopy | Difficile con robocopy come motore (processo esterno non pilotabile a runtime): potrebbe richiedere di usare il motore di copia nativo invece di robocopy per i job interattivi. **Da prototipare prima di impegnarsi.** |
+| **F48** | Scelta utente sull'errore per-file | 🟡 P2 | Parità TeraCopy | Stessa dipendenza architetturale di F47. |
+| **F58** | Progresso live e controlli interattivi | 🟠 P1 | Dipende da **F47**. Progress bar, pausa/riprendi/salta, esito per-file. |
 
 ---
 
