@@ -87,10 +87,11 @@ gantt
     F54-F55 Sezioni Job e Settings                    :f54, 2026-12-06, 8d
     F57 e F59 Ruoli e cronologia navigabile           :f57, 2026-12-14, 6d
     F60 Installer, bundle e firma                     :f60, 2026-12-20, 4d
-
-    section 8.0.0 Motore controllabile - CONDIZIONALE
-    F47-F48 e F58 Non pianificati, due condizioni     :f47, 2026-08-05, 1d
 ```
+
+> La milestone **8.0.0 (motore controllabile)** non compare nel diagramma di proposito: è
+> **condizionale e non pianificata**, subordinata alle due condizioni scritte nella sua sezione.
+> Datarla la farebbe sembrare lavoro programmato.
 
 ---
 
@@ -358,7 +359,7 @@ indipendente): una DLL COM che al massimo *lancia* l'app.
 |---|---|---|---|---|
 | **F47** | Controlli interattivi: pausa / riprendi / salta file | 🟠 P1 | Parità TeraCopy | Difficile con robocopy come motore (processo esterno non pilotabile a runtime): potrebbe richiedere di usare il motore di copia nativo invece di robocopy per i job interattivi. **Da prototipare prima di impegnarsi.** |
 | **F48** | Scelta utente sull'errore per-file | 🟡 P2 | Parità TeraCopy | Stessa dipendenza architetturale di F47. |
-| **F58** | Progresso live e controlli interattivi | 🟠 P1 | Dipende da **F47**. Progress bar, pausa/riprendi/salta, esito per-file. |
+| **F58** | Progresso live e controlli interattivi | 🟠 P1 | Parità TeraCopy | Dipende da **F47**: senza un motore pilotabile, i controlli non hanno nulla a cui collegarsi. Progress bar, pausa/riprendi/salta, esito per-file. Era in 8.0.0 (ora 7.0.0) ed è stata spostata qui il 27 Agosto 2026, essendo l'unica voce della GUI con questa dipendenza. |
 
 ---
 

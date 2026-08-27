@@ -173,8 +173,16 @@ convenzione. La stessa cosa va fatta qui, e va aggiunta a `ci.yml` **insieme a F
 
 ```bash
 # La CLI non deve mai acquisire una dipendenza dalla GUI
-cargo tree --locked -p rustcopy-cli | grep -qi tauri && exit 1
+if cargo tree --locked -p rustcopy-cli | grep -qi tauri; then
+  echo "::error::tauri ha raggiunto il binario della CLI"
+  exit 1
+fi
 ```
+
+> ⚠️ **La forma `... | grep -qi tauri && exit 1` è sbagliata** e va evitata: quando `grep` non
+> trova nulla esce con stato 1, che diventa lo stato dell'intera lista `&&` — il gate fallirebbe
+> **proprio quando l'albero è conforme**. Usare `if`, come già fa il gate axum in `ci.yml`.
+> (Segnalato da CodeRabbit sulla PR di questo documento; la prima stesura conteneva l'errore.)
 
 È questo che rende la §2.1 una proprietà verificata a ogni commit invece di un'intenzione. È anche
 la risposta più solida alla domanda "e se un domani qualcuno collega le due cose?": la CI rifiuta.
@@ -184,7 +192,7 @@ la risposta più solida alla domanda "e se un domani qualcuno collega le due cos
 Tauri porta npm/vite, `tauri.conf.json`, icone e bundler. `notify-server` può restare un binario
 feature-gated perché è **puro Rust**; la GUI no.
 
-```
+```text
 crates/rustcopy-core   ← la lib attuale
 crates/rustcopy-cli    ← il binario di oggi
 crates/rustcopy-gui    ← nuovo, con la toolchain JS confinata qui
@@ -244,11 +252,16 @@ Quattro ragioni:
 
 ### 5.3 Distribuzione → **Tauri costruisce, Inno Setup distribuisce, GUI opzionale**
 
+> ⚠️ **Proposta alternativa a F60, non ancora decisa.** `ROADMAP.md` F60 prescrive tuttora
+> MSI/NSIS tramite il bundler Tauri, e resta la formulazione autorevole finché questa
+> raccomandazione non viene confermata. Se accolta, va aggiornata **anche** F60 — i due documenti
+> non devono divergere sul veicolo di distribuzione.
+
 Non un secondo installer. `installer/rustcopy.iss` esiste, è **completato e testato realmente**
 (ciclo installazione silenziosa → PATH → disinstallazione → PATH ripristinato). Il bundler Tauri
 produce l'eseguibile della GUI; Inno Setup lo impacchetta come **componente opzionale**.
 
-```
+```text
 [X] rustcopy CLI          (obbligatorio)
 [ ] Interfaccia grafica   (opzionale, deselezionata di default)
 ```
@@ -486,7 +499,9 @@ tray, multi-finestra, dialoghi di file, workflow da tastiera. Per quelle sono pi
 
 ## Riferimenti
 
-- [`ROADMAP.md`](ROADMAP.md) — milestone 8.0.0 (F52-F60) e i suoi avvisi di sicurezza; 7.0.0 (F46-F51)
+- [`ROADMAP.md`](ROADMAP.md) — milestone **7.0.0** interfaccia grafica (F52-F57, F59, F60) e i
+  suoi avvisi di sicurezza; **8.0.0** motore controllabile condizionale (F47, F48, F58); backlog
+  indipendente (F46, F49, F50, F51)
 - [`AGENTS.md`](AGENTS.md) — regole 8 (feature-gate, il modello del gate di §4.2), 12 (exit code), 16 (metadati fuori da `--dest`)
 - [`ANALYSIS.md`](ANALYSIS.md) — D14 (scrittura atomica), D18 (il costo del lavoro per-file), D20/D21 (disciplina di memoria)
 - [`ARCHITECTURE.md`](ARCHITECTURE.md) — struttura attuale del package singolo che F52 ristruttura
