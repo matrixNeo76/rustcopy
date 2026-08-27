@@ -96,7 +96,7 @@ jobs:
           persist-credentials: false
 
       - name: Install the declared MSRV toolchain
-        uses: dtolnay/rust-toolchain@1.88.0
+        uses: dtolnay/rust-toolchain@1.100.0
 
       - name: Cache cargo registry and build artifacts
         uses: Swatinem/rust-cache@v2
