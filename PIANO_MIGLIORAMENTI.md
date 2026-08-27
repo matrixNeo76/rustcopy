@@ -323,7 +323,7 @@ Contraddice una decisione architetturale già presa e documentata (`AGENTS.md` �
 
 ### Rimandato — OpenWorker e blueprint Tauri (Fasi 3-4 del piano 16 Ago)
 
-Corretti come sono: sperimentali, nessun rischio, priorità bassa, nessuna dipendenza introdotta nel codice di rustcopy. La Fase 4 (studio dei pattern di packaging/sidecar Tauri) alimenta la milestone 7.0.0 già in `ROADMAP.md` (F52-F60, rinumerata da 8.0.0 il 27 Agosto 2026) — va annotata lì quando prodotta, non duplicata qui.
+Corretti come sono: sperimentali, nessun rischio, priorità bassa, nessuna dipendenza introdotta nel codice di rustcopy. La Fase 4 (studio dei pattern di packaging/sidecar Tauri) alimenta la milestone 7.0.0 già in `ROADMAP.md` (F52-F57, F59, F60 — rinumerata da 8.0.0 il 27 Agosto 2026; F58 è passata alla 8.0.0 condizionale) — va annotata lì quando prodotta, non duplicata qui.
 
 ---
 
