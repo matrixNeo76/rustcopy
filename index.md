@@ -16,6 +16,7 @@ okf_version: "0.2"
 * [AGENTS.md — Developer \& AI Agent Guidelines](AGENTS.md) - Architectural rules, directory tree, and testing conventions for this codebase.
 * [Architettura di Sistema — robocopy-ingest-cli](ARCHITECTURE.md) - Diagrammi Mermaid, tabella moduli, pipeline di esecuzione, pattern trasversali (D13/D14).
 * [CLAUDE.md — Claude Code \& AI Agent Prompt Instructions](CLAUDE.md) - Technical notes and hard constraints for AI agents working on this codebase.
+* [Come procedere con la GUI Tauri — piano operativo e vincoli](PIANO_GUI_TAURI.md) - Percorso per la GUI Tauri (milestone 7.0.0): impatto misurato sulle prestazioni del motore di copia, tre decisioni con raccomandazione motivata, e il registro della rinumerazione 7.0.0/8.0.0 che ha rimosso uno stallo nella roadmap.
 * [Piano di Miglioramento Consolidato — robocopy-ingest-cli](PIANO_MIGLIORAMENTI.md) - Piano operativo unico — lacune documentazione, economia di contesto, debito tecnico, launcher PowerShell, performance.
 * [Roadmap di Progetto — robocopy-ingest-cli](ROADMAP.md) - Milestone, elenco feature F1-F61, backlog, debito tecnico noto.
 * [robocopy-ingest-cli (rustcopy) — README](README.md) - Panoramica del progetto — cosa fa, come si installa, primi comandi e indice della documentazione.

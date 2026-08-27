@@ -53,7 +53,7 @@ rustcopy-6.0.0-setup.exe /VERYSILENT /SUPPRESSMSGBOXES /NORESTART /TASKS="addtop
 ```
 
 L'installer impacchetta il tool **così com'è oggi** (CLI, nessuna GUI). Non va confuso con la
-milestone **8.0.0** in `../ROADMAP.md`, che pianifica un'app desktop Tauri con un proprio bundler:
+milestone **7.0.0** in `../ROADMAP.md`, che pianifica un'app desktop Tauri con un proprio bundler:
 sono due deliverable distinti, uno disponibile ora, l'altro pianificato.
 
 ---
