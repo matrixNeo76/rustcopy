@@ -1,0 +1,54 @@
+[package]
+name = "rustcopy-core"
+description = "Core library for rustcopy: scanning, integrity verification, AES-256-GCM encryption, VSS snapshots, backup generations, run history and reporting"
+readme = "../../README.md"
+keywords = ["robocopy", "backup", "windows", "disaster-recovery"]
+categories = ["filesystem"]
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+
+# The crate name stays `robocopy_ingest` even though the package is now `rustcopy-core`: every
+# `use robocopy_ingest::…` in the binaries and the tests keeps compiling unchanged. Renaming the
+# library was avoidable churn in a commit whose whole point is to change no behaviour.
+[lib]
+name = "robocopy_ingest"
+path = "src/lib.rs"
+
+[dependencies]
+anyhow.workspace = true
+thiserror.workspace = true
+clap.workspace = true
+tokio.workspace = true
+tracing.workspace = true
+tracing-subscriber.workspace = true
+indicatif.workspace = true
+sha2.workspace = true
+blake3.workspace = true
+xxhash-rust.workspace = true
+rayon.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+walkdir.workspace = true
+globset.workspace = true
+chrono.workspace = true
+tempfile.workspace = true
+toml.workspace = true
+num_cpus.workspace = true
+aes-gcm.workspace = true
+reqwest.workspace = true
+async-trait.workspace = true
+axum = { workspace = true, optional = true }
+
+[features]
+# AGENTS.md rule 8: axum must never reach the default build.
+notify-server = ["dep:axum"]
+
+[target.'cfg(windows)'.dependencies]
+windows-service.workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true
