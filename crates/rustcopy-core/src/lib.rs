@@ -25,6 +25,7 @@ pub mod engine;
 pub mod errors;
 pub mod exit_code;
 pub mod generations;
+pub mod gui_api;
 pub mod history;
 pub mod hooks;
 pub mod html_report;
