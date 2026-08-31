@@ -15,6 +15,20 @@ use crate::integrity::HashAlgorithm;
 /// `name` is only meaningful inside a `[[jobs]]` entry; it is ignored when it appears at the top
 /// level (harmless if present there, just unused).
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+/// # Flag CLI deliberatamente **assenti** da qui
+///
+/// `CLAUDE.md` prescrive che ogni flag CLI abbia il suo corrispettivo TOML. Sei fanno eccezione, e
+/// l'eccezione è voluta:
+///
+/// - `--log-level`, `--quiet`, `--log-max-bytes`, `--log-max-backups`: il subscriber di `tracing`
+///   si installa **una volta per processo** (`logging::init` usa `set_global_default`), e tutti i
+///   job di un batch condividono un solo file di log. Un'impostazione per-job varrebbe solo per il
+///   primo job e verrebbe ignorata per gli altri — silenziosamente, che è peggio dell'assenza.
+/// - `--enable-dedup`, `--cloud-sync-target`: no-op dichiarati (`AGENTS.md` regola 7). Dare loro
+///   una chiave TOML suggerirebbe che facciano qualcosa.
+///
+/// Se un flag nuovo non compare qui, verificare in quale delle due categorie ricade prima di
+/// concludere che è una svista.
 pub struct JobConfig {
     pub name: Option<String>,
     pub source: Option<PathBuf>,
@@ -24,6 +38,16 @@ pub struct JobConfig {
     pub retries: Option<u32>,
     pub retry_wait_seconds: Option<u64>,
     pub verify_integrity: Option<bool>,
+    /// F28. Per-job because two jobs can reasonably differ on whether re-hashing every run is
+    /// worth its cost.
+    pub fast_verify: Option<bool>,
+    /// F26a. Per-job because which files count as transient depends on what the job backs up.
+    pub ignore_transient_missing: Option<bool>,
+    /// F26d (`/XJ`). Per-job because whether junctions are content or loops depends on the tree.
+    pub exclude_junctions: Option<bool>,
+    /// Namespaced per job by `run_jobs`, exactly like `report_path` — without that, two jobs would
+    /// overwrite each other's dashboard, which is the collision fixed in `merged_over`'s `name`.
+    pub html_report_path: Option<PathBuf>,
     pub hash_algo: Option<HashAlgorithm>,
     pub compare_baseline: Option<bool>,
     pub report_path: Option<PathBuf>,
@@ -60,7 +84,13 @@ impl JobConfig {
     /// uniform across all fields instead of special-casing lists as "extend".
     pub fn merged_over(&self, base: &JobConfig) -> JobConfig {
         JobConfig {
-            name: self.name.clone().or_else(|| base.name.clone()),
+            // `name` is the one field that does **not** inherit. It identifies a single job,
+            // and `run_jobs` uses it to namespace that job's cache, generation manifest and
+            // report path (D12). Inheriting a shared default would give every unnamed job the
+            // same identity, so they would silently share all three — the collision D12
+            // exists to prevent. Left as `None`, `run_jobs` falls back to `job1`, `job2`, …
+            // which is distinct by construction.
+            name: self.name.clone(),
             source: self.source.clone().or_else(|| base.source.clone()),
             dest: self.dest.clone().or_else(|| base.dest.clone()),
             pattern: self.pattern.clone().or_else(|| base.pattern.clone()),
@@ -68,6 +98,15 @@ impl JobConfig {
             retries: self.retries.or(base.retries),
             retry_wait_seconds: self.retry_wait_seconds.or(base.retry_wait_seconds),
             verify_integrity: self.verify_integrity.or(base.verify_integrity),
+            fast_verify: self.fast_verify.or(base.fast_verify),
+            ignore_transient_missing: self
+                .ignore_transient_missing
+                .or(base.ignore_transient_missing),
+            exclude_junctions: self.exclude_junctions.or(base.exclude_junctions),
+            html_report_path: self
+                .html_report_path
+                .clone()
+                .or_else(|| base.html_report_path.clone()),
             hash_algo: self.hash_algo.or(base.hash_algo),
             compare_baseline: self.compare_baseline.or(base.compare_baseline),
             report_path: self
@@ -260,5 +299,54 @@ mod tests {
             Some(vec![".git".to_string()]),
             "a field the job leaves unset still falls back to the shared default"
         );
+    }
+    /// `name` identifies **one job**. Inheriting it from the shared defaults gives every unnamed
+    /// job the same identity, and that identity is what namespaces the per-job files — so two
+    /// unnamed jobs would silently share one fast-verify cache, one generation manifest and one
+    /// report path. That is precisely the collision D12 exists to prevent, reintroduced through
+    /// the config layer instead of the path layer.
+    ///
+    /// Without a shared `name`, `run_jobs` falls back to `job1`, `job2`, … which is distinct by
+    /// construction.
+    #[test]
+    fn an_unnamed_job_does_not_inherit_the_shared_name() {
+        let defaults = JobConfig {
+            name: Some("nightly".to_string()),
+            pattern: Some("*.csv".to_string()),
+            ..JobConfig::default()
+        };
+        let first = JobConfig {
+            source: Some(PathBuf::from("D:/a")),
+            ..JobConfig::default()
+        };
+        let second = JobConfig {
+            source: Some(PathBuf::from("D:/b")),
+            ..JobConfig::default()
+        };
+
+        let a = first.merged_over(&defaults);
+        let b = second.merged_over(&defaults);
+
+        assert_eq!(a.name, None, "an unnamed job stays unnamed");
+        assert_eq!(b.name, None, "an unnamed job stays unnamed");
+        assert_eq!(
+            a.pattern.as_deref(),
+            Some("*.csv"),
+            "every other field still inherits: only `name` is exempt, because only `name` is an              identity rather than a setting"
+        );
+    }
+
+    /// A job that names itself keeps its own name, shared default or not.
+    #[test]
+    fn a_named_job_keeps_its_own_name() {
+        let defaults = JobConfig {
+            name: Some("nightly".to_string()),
+            ..JobConfig::default()
+        };
+        let job = JobConfig {
+            name: Some("photos".to_string()),
+            ..JobConfig::default()
+        };
+        assert_eq!(job.merged_over(&defaults).name.as_deref(), Some("photos"));
     }
 }

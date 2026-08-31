@@ -282,6 +282,15 @@ async fn run_jobs(base_args: Args, config: robocopy_ingest::config::IngestConfig
             job_args.report_path =
                 robocopy_ingest::namespaced_path(&job_args.report_path, &job_name);
         }
+        // Same treatment, same reason: an HTML dashboard inherited from the shared defaults would
+        // otherwise be written to one path by every job, so only the last one would survive. The
+        // `job.html_report_path.is_none()` check mirrors the one above -- namespace only what the
+        // job did not set for itself.
+        if job.html_report_path.is_none() {
+            if let Some(html) = &job_args.html_report_path {
+                job_args.html_report_path = Some(robocopy_ingest::namespaced_path(html, &job_name));
+            }
+        }
         // Cache (`.ingest_cache`) and the generations manifest (`.rustcopy_generations.json`) have
         // no user-facing config field to namespace explicitly, unlike report_path above — always
         // namespace them with the job name in a multi-job run, otherwise jobs sharing a `dest`

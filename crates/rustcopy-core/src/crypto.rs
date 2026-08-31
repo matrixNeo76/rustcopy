@@ -34,8 +34,8 @@ use std::fs::File;
 use std::io::{BufReader, BufWriter, ErrorKind, Read, Write};
 use std::path::{Path, PathBuf};
 
-use aes_gcm::aead::{Aead, KeyInit, OsRng};
-use aes_gcm::{AeadCore, Aes256Gcm, Key, Nonce};
+use aes_gcm::aead::{Aead, Generate, KeyInit};
+use aes_gcm::{Aes256Gcm, Key, Nonce};
 use sha2::{Digest, Sha256};
 
 use crate::errors::IngestError;
@@ -70,7 +70,9 @@ impl CryptoManager {
             ));
         }
         let digest = Sha256::digest(key.as_bytes());
-        let cipher = Aes256Gcm::new(Key::<Aes256Gcm>::from_slice(&digest));
+        let key = Key::<Aes256Gcm>::try_from(&digest[..])
+            .map_err(|_| IngestError::Crypto("derived key is not 32 bytes".into()))?;
+        let cipher = Aes256Gcm::new(&key);
         Ok(Self { cipher })
     }
 
@@ -93,7 +95,7 @@ impl CryptoManager {
                 break;
             }
 
-            let nonce = Aes256Gcm::generate_nonce(&mut OsRng);
+            let nonce = Nonce::generate();
             let ciphertext = self
                 .cipher
                 .encrypt(&nonce, &buf[..n])
@@ -160,10 +162,11 @@ impl CryptoManager {
                 .read_exact(&mut ciphertext)
                 .map_err(|e| IngestError::Crypto(format!("truncated record (ciphertext): {e}")))?;
 
-            let nonce = Nonce::from_slice(&nonce_buf);
+            let nonce = Nonce::try_from(&nonce_buf[..])
+                .map_err(|_| IngestError::Crypto("nonce is not 12 bytes".into()))?;
             let plaintext = self
                 .cipher
-                .decrypt(nonce, ciphertext.as_slice())
+                .decrypt(&nonce, ciphertext.as_slice())
                 .map_err(|e| IngestError::Crypto(format!("decryption failed (wrong key?): {e}")))?;
 
             output
@@ -253,6 +256,51 @@ pub fn resolve_key(value: &str) -> Result<String, IngestError> {
 
 #[cfg(test)]
 mod tests {
+
+    /// Pins the on-disk `RCE1` format against a byte-for-byte blob produced by an **older build**
+    /// (aes-gcm 0.10, before the 0.11 upgrade).
+    ///
+    /// This exists because nothing else checks it. Every other crypto test round-trips within one
+    /// build: encrypt then decrypt with the same code, which stays green even if a library upgrade
+    /// silently changes the bytes written to disk. For a backup tool that is the failure that
+    /// matters — old archives become unreadable, and the test suite says everything is fine.
+    ///
+    /// The blob below was produced by the pre-upgrade binary and verified by hand to decrypt
+    /// correctly under aes-gcm 0.11. If a future dependency bump breaks this test, **do not
+    /// regenerate the blob**: it means that release can no longer read backups written by earlier
+    /// ones, which is a migration problem, not a test problem.
+    #[test]
+    fn ciphertext_written_by_an_older_build_still_decrypts() {
+        // RCE1 || nonce(12) || len(4, LE) || ciphertext+tag
+        const BLOB_HEX: &str = "52434531835a79aa8b868692b4e649d73000000048d4c73a1a2019da2cf9d8d606673a127d19c6be520f86d2908296394c434868a7c4fce975aeacc139ed59c2815a4dd2";
+        const KEY: &str = "passphrase-di-prova";
+        const EXPECTED: &[u8] = b"contenuto segreto da preservare
+";
+
+        let blob: Vec<u8> = BLOB_HEX
+            .as_bytes()
+            .chunks(2)
+            .map(|pair| {
+                u8::from_str_radix(std::str::from_utf8(pair).expect("ascii"), 16).expect("hex")
+            })
+            .collect();
+        assert_eq!(
+            &blob[..4],
+            b"RCE1",
+            "the header is part of the pinned format"
+        );
+
+        let manager = CryptoManager::new(KEY).expect("key");
+        let mut out = Vec::new();
+        manager
+            .decrypt_stream(&mut blob.as_slice(), &mut out)
+            .expect("a blob written by an older build must still decrypt");
+
+        assert_eq!(
+            out, EXPECTED,
+            "the recovered plaintext must be byte-identical to what was encrypted"
+        );
+    }
     use super::*;
     use std::io::Cursor;
 
