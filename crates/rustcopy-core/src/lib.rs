@@ -77,13 +77,6 @@ pub fn resolve_report_path_timestamp(path: &Path, now: DateTime<Utc>) -> PathBuf
     PathBuf::from(rendered.replace(REPORT_PATH_TIMESTAMP_PLACEHOLDER, &timestamp))
 }
 
-/// Inserts `.{name}` before a path's extension (or at the end, if there is none). Shared by every
-/// place that needs to give one job in a `[[jobs]]` batch (F33) its own file next to a `dest` it
-/// shares with other jobs — the report path (`main.rs::run_jobs`), the fast-verify cache
-/// (`cache::default_cache_path`), and the backup-generations manifest
-/// (`generations::GenerationManifest::path_for`). E.g. `report.json` + `photos` ->
-/// `report.photos.json`; `.ingest_cache` + `photos` -> `.ingest_cache.photos` (a leading-dot file
-/// with no other dots has no extension, so the name is appended rather than inserted).
 /// True when `file_name` is one of rustcopy's own bookkeeping files rather than backed-up content.
 ///
 /// These live at the destination root (`<dest>/.ingest_cache` F28, `.rustcopy_generations.json`
@@ -109,6 +102,13 @@ pub fn is_rustcopy_metadata(file_name: &std::ffi::OsStr) -> bool {
         || (name.starts_with(".rustcopy_history") && name.ends_with(".jsonl"))
 }
 
+/// Inserts `.{name}` before a path's extension (or at the end, if there is none). Shared by every
+/// place that needs to give one job in a `[[jobs]]` batch (F33) its own file next to a `dest` it
+/// shares with other jobs — the report path (`main.rs::run_jobs`), the fast-verify cache
+/// (`cache::default_cache_path`), and the backup-generations manifest
+/// (`generations::GenerationManifest::path_for`). E.g. `report.json` + `photos` ->
+/// `report.photos.json`; `.ingest_cache` + `photos` -> `.ingest_cache.photos` (a leading-dot file
+/// with no other dots has no extension, so the name is appended rather than inserted).
 pub fn namespaced_path(path: &Path, name: &str) -> PathBuf {
     let stem = path
         .file_stem()
@@ -302,19 +302,36 @@ mod tests {
     /// The property this whole function exists for: an in-progress write must never be visible at
     /// the real path — a reader (or a crash) mid-write only ever sees either the old complete file
     /// or the new complete file, never a partial one.
+    ///
+    /// The first version of this test asserted that an abandoned temp file leaves the real path
+    /// untouched, but never called `atomic_write` at all: it would have passed with the function
+    /// deleted. It now drives the real function and checks both halves of the property.
     #[test]
     fn atomic_write_never_leaves_a_partially_written_file_at_the_real_path() {
         let dir = tempfile::tempdir().expect("tempdir");
         let path = dir.path().join("manifest.json");
         std::fs::write(&path, "original content").expect("seed");
 
-        // Simulate a crash mid-write: write directly to the temp path the way atomic_write does
-        // internally, but stop short of the rename that publishes it.
+        // A temp file abandoned by an earlier interrupted write must not be mistaken for content,
+        // and must not stop a later write from succeeding.
         let tmp_path = dir.path().join("manifest.json.rustcopy-tmp");
         std::fs::write(&tmp_path, "truncated garbage from an interrupted write").expect("seed tmp");
+        assert_eq!(
+            std::fs::read(&path).expect("read"),
+            b"original content",
+            "an abandoned temp file must never be visible at the real path"
+        );
 
-        // The real path must still hold the last known-good content, untouched by the abandoned
-        // temp file.
-        assert_eq!(std::fs::read(&path).expect("read"), b"original content");
+        atomic_write(&path, b"new complete content").expect("atomic_write succeeds");
+
+        assert_eq!(
+            std::fs::read(&path).expect("read"),
+            b"new complete content",
+            "after the rename the real path holds the new content in full"
+        );
+        assert!(
+            !tmp_path.exists(),
+            "the publish renames the temp file away; leaving one behind would accumulate garbage              next to every file written this way"
+        );
     }
 }
