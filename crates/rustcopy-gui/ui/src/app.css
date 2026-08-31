@@ -1,0 +1,8 @@
+@import "tailwindcss";
+
+/* An operator console, not a product page: high density, no decoration. Palette taken from the
+   `data-dense-dashboard` style in ui-ux-pro-max, which is the one calibrated for "operational
+   dashboards" rather than for landing pages. */
+:root {
+  color-scheme: light dark;
+}

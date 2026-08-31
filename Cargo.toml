@@ -8,7 +8,7 @@
 # commit restructures, it does not rename anything a user or a script can see.
 [workspace]
 resolver = "2"
-members = ["crates/rustcopy-core", "crates/rustcopy-cli"]
+members = ["crates/rustcopy-core", "crates/rustcopy-cli", "crates/rustcopy-gui"]
 
 # Single definition of every dependency version, inherited by the members with
 # `workspace = true`. Without this, two members could drift onto different versions of the same

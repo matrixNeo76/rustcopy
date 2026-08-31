@@ -13,9 +13,10 @@ verified:
 
 # Come procedere con la GUI Tauri
 
-> **Stato**: le correzioni alla roadmap descritte in §3 e §6 sono **applicate**. Le raccomandazioni
-> di §5 (stack, ambito v1, distribuzione) sono **in attesa di conferma** e nessuna riga di codice
-> della GUI è stata scritta. Verificato contro il repo al 27 Agosto 2026.
+> **Stato**: §3 e §6 applicate. **Stack e ambito v1 confermati il 31 Agosto 2026** (Svelte +
+> Tailwind, sola lettura) e realizzati: `crates/rustcopy-gui` esiste, F53 è chiusa. **Resta aperta
+> la sola §5.3** (distribuzione): `ROADMAP` F60 prescrive ancora MSI/NSIS via bundler Tauri, e
+> quella resta la formulazione autorevole. Verificato contro il repo al 31 Agosto 2026.
 >
 > **Per un LLM che raccoglie questo lavoro**: la rinumerazione descritta in §6 **è stata applicata**
 > a `ROADMAP.md` il 27 Agosto 2026 — la GUI è la milestone **7.0.0**, il motore controllabile la
@@ -234,6 +235,10 @@ Tre ragioni, nell'ordine dei tuoi criteri:
 `ui-ux-pro-max` copre sia `svelte.csv` sia `html-tailwind.csv`, quindi la scelta non perde supporto
 di design (§10).
 
+> ✅ **Confermato e misurato il 31 Agosto 2026.** Il frontend realizzato porta **52 pacchetti npm,
+> zero vulnerabilità**, e produce 41 KB di JS più 8 KB di CSS. Era il criterio dichiarato — la
+> superficie della catena di fornitura — ed è l'unico su cui la scelta si giocava davvero.
+
 ### 5.2 Ambito v1 → **console in sola lettura**
 
 Nessun percorso di scrittura: mostra job configurati, avanzamento in sola lettura, cronologia
@@ -385,7 +390,7 @@ Ogni passo ha valore autonomo: fermarsi dopo il 3 lascia comunque qualcosa di us
 | 1 | **F52** workspace Cargo + il gate CI di §4.2 | Alto, isolato | `rustcopy-core` separato da `rustcopy-cli`; nessuna funzionalità nuova |
 | 2 | Sistema visivo (§10): palette con token, tipografia, spaziatura, densità, stati | Basso | Riutilizzabile anche per il report HTML esistente |
 | 3a | **`gui_api`** — superficie di sola lettura nel core (fatto 31 Ago 2026) | Basso | Testabile e utile già senza GUI; indipendente dallo stack |
-| 3b | **F53** scheletro Tauri sopra `gui_api` | Medio | Console di consultazione utile da sola |
+| 3b | ~~**F53** scheletro Tauri sopra `gui_api`~~ ✅ **fatto 31 Ago 2026** | Medio | Console di consultazione utile da sola |
 | 4 | **F54 + F59** job e cronologia navigabile (chiude la metà aperta di F50) | Medio | — |
 | 5 | **F56** credenziali (🔴 P0) — **prima** di F55 | Medio | — |
 | 6 | **F55 + F57** settings e ruoli | Medio | — |
