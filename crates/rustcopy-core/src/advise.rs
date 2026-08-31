@@ -219,18 +219,27 @@ fn schedule_advice(transfers: &[&RunRecord]) -> Vec<Advice> {
             format!("Peggiore osservata: {}", format_duration(worst)),
             "Il margine del 50% sulla peggiore evita che una run parta mentre la precedente sta ancora copiando."
                 .to_string(),
-            // Non suggerire una spec che --install-schedule rifiuterebbe: `hourly@N` vale solo
-            // per N in 1..=23 (limite di schtasks.exe, verificato sul binario reale). Oltre, la
-            // forma oraria non esiste e va proposta quella giornaliera.
+            // Tre fasce, non due. Oltre le 23h la forma oraria non esiste (limite di
+            // schtasks.exe, verificato sul binario), ma proporre `daily@` al suo posto sarebbe
+            // altrettanto sbagliato appena l'intervallo supera le 24h: un trigger giornaliero
+            // scatta ogni 24h, e Task Scheduler con la sua politica predefinita (IgnoreNew)
+            // **salta** l'attivazione mentre la run precedente è ancora in corso. L'operatore
+            // crederebbe di avere un backup al giorno e ne otterrebbe uno ogni due.
             {
                 let hours = (safe_interval / 3600.0).ceil().max(1.0) as u64;
                 if hours <= 23 {
                     format!(
                         "Es. --install-schedule 'hourly@{hours}' — la forma oraria regge fino a 23."
                     )
+                } else if hours <= 24 {
+                    "Es. --install-schedule 'daily@HH:MM' — 24h coprono l'intervallo necessario."
+                        .to_string()
                 } else {
                     format!(
-                        "Nessuna schedulazione oraria è adeguata: servono {} fra una run e                          l'altra, oltre il massimo di 23h. Usa 'daily@HH:MM'.",
+                        "Servono {} fra una run e l'altra: nessuna forma supportata li garantisce. \
+                         'daily@HH:MM' scatta ogni 24h e Windows salta l'attivazione mentre la run \
+                         precedente è in corso, quindi diventerebbe di fatto ogni 48h senza dirlo. \
+                         Valuta 'weekly@DAY@HH:MM', oppure perché una run duri così a lungo.",
                         format_duration(safe_interval)
                     )
                 }
@@ -1097,9 +1106,17 @@ mod tests {
                 "no concrete hourly spec may be offered above the 23h ceiling, got: {text}"
             );
         }
+        // Above 24h `daily@` is not an answer either: it fires every 24h and Windows skips the
+        // trigger while the previous run is still going (IgnoreNew, the default), so the operator
+        // would silently get one run every 48h. The advice must say so rather than hand over a
+        // spec that quietly under-delivers.
         assert!(
-            text.contains("daily@"),
-            "the daily form must be offered instead, got: {text}"
+            text.contains("nessuna forma supportata"),
+            "it must say no supported form covers the interval, got: {text}"
+        );
+        assert!(
+            text.contains("weekly@"),
+            "and point at the only form that would, got: {text}"
         );
     }
 
@@ -1123,5 +1140,27 @@ mod tests {
                 "out of range: {text}"
             );
         }
+    }
+    /// The middle band: an interval that fits in a day is exactly what `daily@` is for.
+    #[test]
+    fn a_daily_spec_is_offered_when_the_interval_fits_in_one_day() {
+        // The band is chosen by the *worst* run, not the median: safe_interval = worst * 1.5, and
+        // 16h exactly gives 24h, the top of the daily band. A worst of 16h06m would give 24h10m
+        // and belong to the band above -- which is what the first version of this fixture picked.
+        let history = history_of(vec![
+            record(56_000.0, 50.0, 8),
+            record(57_000.0, 50.0, 8),
+            record(57_600.0, 50.0, 8), // 16h exactly -> 24h
+        ]);
+        let schedule = analyse(&history)
+            .into_iter()
+            .find(|a| a.topic == Topic::Schedule && a.severity == Severity::Suggestion)
+            .expect("advice expected");
+        let text = schedule.evidence.join(" ");
+        assert!(text.contains("daily@"), "got: {text}");
+        assert!(
+            !text.contains("nessuna forma supportata"),
+            "24h does cover this interval, got: {text}"
+        );
     }
 }

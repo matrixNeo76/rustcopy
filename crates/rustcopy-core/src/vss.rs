@@ -84,12 +84,16 @@ pub fn remap_to_shadow(original: &Path, volume: &str, shadow: &ShadowCopy) -> Pa
     // path with the drive letter still embedded in it -- a path that cannot exist. Only the
     // two-byte volume prefix is compared this way; the rest keeps its original case, which on a
     // case-preserving filesystem it must.
-    let relative =
-        if text.len() >= volume.len() && text[..volume.len()].eq_ignore_ascii_case(volume) {
+    // `get`, not `[..]`: indexing panics when the byte offset lands inside a multibyte
+    // character, and `original` is arbitrary operator input. A source beginning with `€`, for
+    // instance, made `text[..2]` panic outright -- worse than the wrong path this replaced.
+    // `get` returns `None` there, which falls through to the same branch as a non-matching prefix.
+    let relative = match text.get(..volume.len()) {
+        Some(prefix) if prefix.eq_ignore_ascii_case(volume) => {
             text[volume.len()..].trim_start_matches(['\\', '/'])
-        } else {
-            text.as_ref()
-        };
+        }
+        _ => text.as_ref(),
+    };
     let mut result = shadow.device_path.clone();
     if !relative.is_empty() {
         if !result.ends_with('\\') {
@@ -241,5 +245,26 @@ Successfully created shadow copy for 'C:\\'
                 "the drive letter's case must not change the remapped path (source: {source})"
             );
         }
+    }
+    /// The case-insensitive fix originally compared `text[..volume.len()]`, which panics when that
+    /// byte offset lands inside a multibyte character. `original` is whatever the operator typed,
+    /// so a source beginning with a non-ASCII character crashed the process outright — strictly
+    /// worse than the wrong path the fix replaced. `get` returns `None` there instead.
+    #[test]
+    fn a_source_starting_with_a_multibyte_character_does_not_panic() {
+        let shadow = ShadowCopy {
+            shadow_id: "{id}".to_string(),
+            device_path: r"\?\GLOBALROOT\Device\HarddiskVolumeShadowCopy12".to_string(),
+        };
+
+        // Does not start with the volume, and its first character is 3 bytes wide.
+        let remapped = remap_to_shadow(Path::new("€data"), "C:", &shadow);
+
+        // No prefix matched, so the whole original is appended -- the documented fallback.
+        assert!(
+            remapped.to_string_lossy().ends_with("€data"),
+            "a non-matching prefix falls back to the original path, got {}",
+            remapped.display()
+        );
     }
 }
