@@ -61,6 +61,12 @@ pub struct JobSummary {
     /// can carry.
     pub mirror: bool,
     pub verify_integrity: bool,
+    /// Shown **beside** `verify_integrity`, never instead of it. `--fast-verify` skips files whose
+    /// source size and mtime are unchanged since the last clean run, so it trusts the source's
+    /// identity rather than re-reading the destination's bytes: independent corruption at the
+    /// destination is not caught on a run that skips that file. A UI rendering "verified: yes"
+    /// without this overstates the guarantee.
+    pub fast_verify: bool,
 }
 
 /// A page of per-file error paths, plus the total the page was taken from.
@@ -184,6 +190,7 @@ pub fn list_jobs(config_path: &Path) -> Result<Vec<JobSummary>, IngestError> {
             backup_type: d.backup_type.map(|k| format!("{k:?}").to_lowercase()),
             mirror: d.mirror.unwrap_or(false),
             verify_integrity: d.verify_integrity.unwrap_or(false),
+            fast_verify: d.fast_verify.unwrap_or(false),
         }]);
     }
 
@@ -207,21 +214,41 @@ pub fn list_jobs(config_path: &Path) -> Result<Vec<JobSummary>, IngestError> {
                     .map(|k| format!("{k:?}").to_lowercase()),
                 mirror: resolved.mirror.unwrap_or(false),
                 verify_integrity: resolved.verify_integrity.unwrap_or(false),
+                fast_verify: resolved.fast_verify.unwrap_or(false),
             }
         })
         .collect())
 }
 
-/// Reads a JSON report from disk and returns the first page of its error lists.
+/// Reads a JSON report from disk, taking `limit` error entries from `offset`.
+///
+/// The offset is a parameter and not a fixed `0` because otherwise the paging above would be
+/// unreachable: a UI could see that a run produced 5 000 failures and have no way to ask for the
+/// second hundred. Re-reading the file per page is deliberate — reports are read on demand, not in
+/// a loop, and holding a parsed report in memory between calls would be state this module does not
+/// want.
+pub fn read_report_page(
+    path: &Path,
+    offset: usize,
+    limit: usize,
+) -> Result<ReportView, IngestError> {
+    let report = parse_report(path)?;
+    Ok(ReportView::from_report(&report, offset, limit))
+}
+
+/// Reads a report and returns the first page of its error lists.
 pub fn read_report(path: &Path) -> Result<ReportView, IngestError> {
+    read_report_page(path, 0, DEFAULT_ERROR_PAGE)
+}
+
+fn parse_report(path: &Path) -> Result<IngestReport, IngestError> {
     let content = std::fs::read_to_string(path).map_err(|error| IngestError::io(path, error))?;
-    let report: IngestReport = serde_json::from_str(&content).map_err(|error| {
+    serde_json::from_str(&content).map_err(|error| {
         IngestError::io(
             path,
             std::io::Error::new(std::io::ErrorKind::InvalidData, error),
         )
-    })?;
-    Ok(ReportView::from_report(&report, 0, DEFAULT_ERROR_PAGE))
+    })
 }
 
 #[cfg(test)]
@@ -374,5 +401,56 @@ dest = \"E:/only\"
         let jobs = list_jobs(&path).expect("config parses");
         assert_eq!(jobs.len(), 1);
         assert_eq!(jobs[0].source.as_deref(), Some("D:/only"));
+    }
+    /// The paging must be reachable from the public entry point, not only from
+    /// `ReportView::from_report`. Without an offset parameter a UI could see that a run produced
+    /// thousands of failures and have no way to ask for anything past the first page.
+    #[test]
+    fn the_second_page_of_errors_is_reachable_from_disk() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let path = dir.path().join("report.json");
+        let report = report_with_errors(250);
+        std::fs::write(&path, serde_json::to_string(&report).expect("serialize")).expect("write");
+
+        let first = read_report(&path).expect("first page");
+        let second =
+            read_report_page(&path, DEFAULT_ERROR_PAGE, DEFAULT_ERROR_PAGE).expect("second page");
+
+        assert_eq!(first.missing_in_dest.entries.len(), DEFAULT_ERROR_PAGE);
+        assert_eq!(second.missing_in_dest.entries.len(), DEFAULT_ERROR_PAGE);
+        assert_ne!(
+            first.missing_in_dest.entries, second.missing_in_dest.entries,
+            "the second page must hold different entries, not repeat the first"
+        );
+        assert_eq!(second.missing_in_dest.offset, DEFAULT_ERROR_PAGE);
+        assert_eq!(
+            second.missing_in_dest.total, 250,
+            "the total stays the true one"
+        );
+    }
+
+    /// `fast_verify` must travel alongside `verify_integrity`: a job that verifies with fast-verify
+    /// on has a weaker guarantee than one without, and a UI showing only the first would overstate
+    /// it.
+    #[test]
+    fn fast_verify_is_surfaced_next_to_verify_integrity() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let path = dir.path().join("j.toml");
+        std::fs::write(
+            &path,
+            "source = \"D:/a\"
+dest = \"E:/a\"
+verify_integrity = true
+fast_verify = true
+",
+        )
+        .expect("write");
+
+        let jobs = list_jobs(&path).expect("parses");
+        assert!(jobs[0].verify_integrity);
+        assert!(
+            jobs[0].fast_verify,
+            "a UI must be able to tell a full verification from a fast one"
+        );
     }
 }
