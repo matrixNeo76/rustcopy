@@ -15,6 +15,20 @@ use crate::integrity::HashAlgorithm;
 /// `name` is only meaningful inside a `[[jobs]]` entry; it is ignored when it appears at the top
 /// level (harmless if present there, just unused).
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+/// # Flag CLI deliberatamente **assenti** da qui
+///
+/// `CLAUDE.md` prescrive che ogni flag CLI abbia il suo corrispettivo TOML. Sei fanno eccezione, e
+/// l'eccezione è voluta:
+///
+/// - `--log-level`, `--quiet`, `--log-max-bytes`, `--log-max-backups`: il subscriber di `tracing`
+///   si installa **una volta per processo** (`logging::init` usa `set_global_default`), e tutti i
+///   job di un batch condividono un solo file di log. Un'impostazione per-job varrebbe solo per il
+///   primo job e verrebbe ignorata per gli altri — silenziosamente, che è peggio dell'assenza.
+/// - `--enable-dedup`, `--cloud-sync-target`: no-op dichiarati (`AGENTS.md` regola 7). Dare loro
+///   una chiave TOML suggerirebbe che facciano qualcosa.
+///
+/// Se un flag nuovo non compare qui, verificare in quale delle due categorie ricade prima di
+/// concludere che è una svista.
 pub struct JobConfig {
     pub name: Option<String>,
     pub source: Option<PathBuf>,
@@ -24,6 +38,16 @@ pub struct JobConfig {
     pub retries: Option<u32>,
     pub retry_wait_seconds: Option<u64>,
     pub verify_integrity: Option<bool>,
+    /// F28. Per-job because two jobs can reasonably differ on whether re-hashing every run is
+    /// worth its cost.
+    pub fast_verify: Option<bool>,
+    /// F26a. Per-job because which files count as transient depends on what the job backs up.
+    pub ignore_transient_missing: Option<bool>,
+    /// F26d (`/XJ`). Per-job because whether junctions are content or loops depends on the tree.
+    pub exclude_junctions: Option<bool>,
+    /// Namespaced per job by `run_jobs`, exactly like `report_path` — without that, two jobs would
+    /// overwrite each other's dashboard, which is the collision fixed in `merged_over`'s `name`.
+    pub html_report_path: Option<PathBuf>,
     pub hash_algo: Option<HashAlgorithm>,
     pub compare_baseline: Option<bool>,
     pub report_path: Option<PathBuf>,
@@ -74,6 +98,15 @@ impl JobConfig {
             retries: self.retries.or(base.retries),
             retry_wait_seconds: self.retry_wait_seconds.or(base.retry_wait_seconds),
             verify_integrity: self.verify_integrity.or(base.verify_integrity),
+            fast_verify: self.fast_verify.or(base.fast_verify),
+            ignore_transient_missing: self
+                .ignore_transient_missing
+                .or(base.ignore_transient_missing),
+            exclude_junctions: self.exclude_junctions.or(base.exclude_junctions),
+            html_report_path: self
+                .html_report_path
+                .clone()
+                .or_else(|| base.html_report_path.clone()),
             hash_algo: self.hash_algo.or(base.hash_algo),
             compare_baseline: self.compare_baseline.or(base.compare_baseline),
             report_path: self

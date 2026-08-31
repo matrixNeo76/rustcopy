@@ -517,6 +517,18 @@ impl Args {
         if let Some(v) = job.verify_integrity {
             self.verify_integrity = v;
         }
+        if let Some(v) = job.fast_verify {
+            self.fast_verify = v;
+        }
+        if let Some(v) = job.ignore_transient_missing {
+            self.ignore_transient_missing = v;
+        }
+        if let Some(v) = job.exclude_junctions {
+            self.exclude_junctions = v;
+        }
+        if let Some(html) = &job.html_report_path {
+            self.html_report_path = Some(html.clone());
+        }
         if let Some(algo) = job.hash_algo {
             self.hash_algo = algo;
         }
