@@ -155,7 +155,9 @@ jobs:
 
   # PIANO_GUI_TAURI.md §8.6: the Rust dependencies have `cargo audit` in security-audit.yml; the
   # npm ones that arrived with the frontend need the equivalent. Kept in the ordinary CI rather
-  # than the audit workflow because it is fast and needs no advisory-database checkout.
+  # than the audit workflow because it is fast and needs no advisory-database checkout. Also
+  # builds the frontend: that is what caught `index.html` being swallowed by the blanket `*.html`
+  # ignore, which the local build could not see because the file was present there.
   gui-npm-audit:
     timeout-minutes: 10
     runs-on: ubuntu-latest

@@ -34,28 +34,44 @@ use std::path::PathBuf;
 
 use robocopy_ingest::gui_api::{self, JobSummary, ReportView};
 
+/// Runs a blocking library call off the IPC thread.
+///
+/// Every command below reads and parses files, and a synchronous `#[tauri::command]` runs on the
+/// thread that services IPC — so a report on a slow network share would freeze the window until it
+/// returned. This is the same discipline the CLI applies with `spawn_blocking_with_span` (D13):
+/// filesystem work never runs on the thread that has to stay responsive.
+async fn off_thread<T, F>(work: F) -> Result<T, String>
+where
+    F: FnOnce() -> Result<T, robocopy_ingest::errors::IngestError> + Send + 'static,
+    T: Send + 'static,
+{
+    tauri::async_runtime::spawn_blocking(work)
+        .await
+        .map_err(|error| format!("the task panicked: {error}"))?
+        .map_err(|error| error.to_string())
+}
+
 /// Lists the jobs a TOML config declares.
 ///
 /// Resolved exactly as `run_jobs` resolves them, including the positional `jobN` fallback for
 /// unnamed jobs — a UI that invented its own labels would disagree with the reports on disk.
 #[tauri::command]
-fn list_jobs(config_path: String) -> Result<Vec<JobSummary>, String> {
-    gui_api::list_jobs(&PathBuf::from(config_path)).map_err(|error| error.to_string())
+async fn list_jobs(config_path: String) -> Result<Vec<JobSummary>, String> {
+    off_thread(move || gui_api::list_jobs(&PathBuf::from(config_path))).await
 }
 
 /// Reads one JSON report, first page of its error lists.
 #[tauri::command]
-fn read_report(path: String) -> Result<ReportView, String> {
-    gui_api::read_report(&PathBuf::from(path)).map_err(|error| error.to_string())
+async fn read_report(path: String) -> Result<ReportView, String> {
+    off_thread(move || gui_api::read_report(&PathBuf::from(path))).await
 }
 
 /// Reads one JSON report, taking `limit` error entries from `offset`.
 ///
 /// `limit` is clamped by the library, not here: the boundary rule belongs where it is tested.
 #[tauri::command]
-fn read_report_page(path: String, offset: usize, limit: usize) -> Result<ReportView, String> {
-    gui_api::read_report_page(&PathBuf::from(path), offset, limit)
-        .map_err(|error| error.to_string())
+async fn read_report_page(path: String, offset: usize, limit: usize) -> Result<ReportView, String> {
+    off_thread(move || gui_api::read_report_page(&PathBuf::from(path), offset, limit)).await
 }
 
 fn main() {
