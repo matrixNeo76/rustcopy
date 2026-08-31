@@ -211,6 +211,16 @@ fn run_notify_service_inner() -> Result<()> {
         let _ = async_stop_rx.await;
     }));
 
+    // `run_server` can return for its own reasons -- a bind failure, most plainly -- and not
+    // because SCM asked us to stop. In that case the `spawn_blocking` task above is still parked
+    // in `stop_rx.recv()`, which only returns on a Stop that will never come. Dropping the runtime
+    // waits for blocking tasks to finish, so the process would report `Stopped` to SCM and then
+    // hang forever: a service that looks stopped, holds its port, and cannot be restarted.
+    //
+    // A zero timeout detaches that task instead of waiting for it. Nothing is lost: its only job
+    // was to forward a stop signal we are no longer waiting for.
+    runtime.shutdown_timeout(std::time::Duration::from_secs(0));
+
     status_handle.report_stopped();
     result
 }
