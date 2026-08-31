@@ -384,7 +384,8 @@ Ogni passo ha valore autonomo: fermarsi dopo il 3 lascia comunque qualcosa di us
 | 0 | Correggere il riquadro obsoleto (§3) | Minimo | La ROADMAP smette di contraddirsi |
 | 1 | **F52** workspace Cargo + il gate CI di §4.2 | Alto, isolato | `rustcopy-core` separato da `rustcopy-cli`; nessuna funzionalità nuova |
 | 2 | Sistema visivo (§10): palette con token, tipografia, spaziatura, densità, stati | Basso | Riutilizzabile anche per il report HTML esistente |
-| 3 | **F53** scheletro Tauri, **sola lettura** | Medio | Console di consultazione utile da sola |
+| 3a | **`gui_api`** — superficie di sola lettura nel core (fatto 31 Ago 2026) | Basso | Testabile e utile già senza GUI; indipendente dallo stack |
+| 3b | **F53** scheletro Tauri sopra `gui_api` | Medio | Console di consultazione utile da sola |
 | 4 | **F54 + F59** job e cronologia navigabile (chiude la metà aperta di F50) | Medio | — |
 | 5 | **F56** credenziali (🔴 P0) — **prima** di F55 | Medio | — |
 | 6 | **F55 + F57** settings e ruoli | Medio | — |
@@ -395,6 +396,39 @@ a scriverli in chiaro nel file di configurazione.
 
 **F58 non compare più in questa sequenza**: con la rinumerazione di §6.4 passa alla nuova 8.0.0
 condizionale, insieme a F47 e F48. La GUI si completa senza di esso.
+
+---
+
+## 7bis. Cosa è già pronto per il Passo 3
+
+`crates/rustcopy-core/src/gui_api.rs` (31 Agosto 2026) è la superficie di sola lettura su cui i
+comandi Tauri saranno **involucri sottili**: un `#[tauri::command]` chiama una funzione lì e
+restituisce ciò che ottiene. È la §4.1 resa meccanica invece che dichiarativa — se il giudizio sta
+in Rust ed è testato, al frontend non resta nulla da decidere.
+
+**Non dipende dallo stack**, quindi è stata costruita prima che la §5.1 fosse confermata: nulla lì
+conosce Tauri, e la scelta fra Svelte e React non la cambia.
+
+Contiene `JobSummary`/`list_jobs` (elenco dei job configurati, con `--mirror` reso visibile per
+job perché è l'impostazione più distruttiva che un job può portare) e `ReportView`/`read_report`.
+
+### La regola di confine, verificata su una misura
+
+`ScanSummary` è già al sicuro **per costruzione**: contiene `Arc<[ScannedFile]>` e **non** deriva
+`Serialize`, quindi un inventario da 1,34M file non *può* essere serializzato verso una WebView
+(D21). `IntegrityCheck` invece sì, e le sue tre liste per-file sono limitate solo da
+`MAX_REPORTED_ERRORS` = 10.000 ciascuna: **fino a 30.000 stringhe in un solo messaggio IPC**.
+
+`ReportView` restituisce quindi una **pagina** più il totale reale, mai la lista intera — ed è un
+test, non un commento. `truncated_at_source` distingue "10.000 errori" da "almeno 10.000", perché
+una UI che scrive il primo quando vale il secondo mente arrotondando.
+
+### Cosa è deliberatamente fuori
+
+Il progresso live. `ThroughputProgress` espone già contatori pollabili dietro atomici lock-free, e
+la §2.3 richiede che la UI **campioni** su un proprio timer invece di essere notificata per file.
+Avvolgerlo qui inviterebbe un'API a eventi, che è esattamente la forma che D18 ha dimostrato
+rovinosa a questa scala.
 
 ---
 
