@@ -50,16 +50,16 @@ jobs:
         run: cargo fmt --all -- --check
 
       - name: cargo clippy (default features)
-        run: cargo clippy --locked --workspace --all-targets -- -D warnings
+        run: cargo clippy --locked --workspace --exclude rustcopy-gui --all-targets -- -D warnings
 
       - name: cargo clippy (notify-server feature)
-        run: cargo clippy --locked --workspace --all-targets --features rustcopy-cli/notify-server -- -D warnings
+        run: cargo clippy --locked --workspace --exclude rustcopy-gui --all-targets --features rustcopy-cli/notify-server -- -D warnings
 
       - name: cargo test (default features)
-        run: cargo test --locked --workspace --all-targets
+        run: cargo test --locked --workspace --exclude rustcopy-gui --all-targets
 
       - name: cargo test (notify-server feature)
-        run: cargo test --locked --workspace --all-targets --features rustcopy-cli/notify-server
+        run: cargo test --locked --workspace --exclude rustcopy-gui --all-targets --features rustcopy-cli/notify-server
 
       # Broken intra-doc links are invisible to clippy and to the test suite, and this crate
       # leans on them heavily (17 in generations.rs alone). Adding this gate immediately
@@ -124,8 +124,63 @@ jobs:
 
       - name: cargo check on MSRV (both feature sets)
         run: |
-          cargo check --workspace --all-targets --locked
-          cargo check --workspace --all-targets --locked --features rustcopy-cli/notify-server
+          cargo check --workspace --exclude rustcopy-gui --all-targets --locked
+          cargo check --workspace --exclude rustcopy-gui --all-targets --locked --features rustcopy-cli/notify-server
+
+  # F53: the GUI is Windows-native and depends on Tauri, which needs webkit2gtk system libraries
+  # on Linux — so it is excluded from the cross-platform jobs above and checked here instead. That
+  # is not a gap: the product ships on Windows, and building the console on a platform it never
+  # runs on would prove nothing while making every other job slower.
+  #
+  # `cargo check` needs no frontend build: verified that tauri-build succeeds with `ui/dist`
+  # absent, so this job needs no Node at all. A release bundle does need it, but that is F60.
+  gui:
+    timeout-minutes: 25
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache cargo registry and build artifacts
+        uses: Swatinem/rust-cache@v2
+
+      - name: cargo check (GUI crate)
+        run: cargo check --locked -p rustcopy-gui --all-targets
+
+      - name: cargo clippy (GUI crate)
+        run: cargo clippy --locked -p rustcopy-gui --all-targets -- -D warnings
+
+  # PIANO_GUI_TAURI.md §8.6: the Rust dependencies have `cargo audit` in security-audit.yml; the
+  # npm ones that arrived with the frontend need the equivalent. Kept in the ordinary CI rather
+  # than the audit workflow because it is fast and needs no advisory-database checkout.
+  gui-npm-audit:
+    timeout-minutes: 10
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: crates/rustcopy-gui/ui/package-lock.json
+
+      - name: npm ci
+        working-directory: crates/rustcopy-gui/ui
+        run: npm ci
+
+      - name: npm audit
+        working-directory: crates/rustcopy-gui/ui
+        run: npm audit --audit-level=moderate
+
+      - name: the frontend builds
+        working-directory: crates/rustcopy-gui/ui
+        run: npm run build
 
   docs:
     timeout-minutes: 15

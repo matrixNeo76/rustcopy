@@ -27,3 +27,9 @@ scripts/profiles.json
 examples/*.local.toml
 installer-output/
 installer/Output/
+
+# GUI (F53): toolchain JS confinata in crates/rustcopy-gui/ui.
+crates/rustcopy-gui/ui/node_modules/
+crates/rustcopy-gui/ui/dist/
+# Rigenerati da tauri-build a ogni compilazione.
+crates/rustcopy-gui/gen/schemas/

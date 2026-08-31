@@ -1,0 +1,25 @@
+[package]
+name = "rustcopy-gui"
+description = "Read-only desktop console for rustcopy (milestone 7.0.0, F53)"
+# Not published: it is an application, and it carries an npm/vite toolchain that has no place on
+# crates.io.
+publish = false
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+rustcopy-core = { path = "../rustcopy-core" }
+tauri = { version = "2", features = [] }
+serde.workspace = true
+serde_json.workspace = true
+
+[[bin]]
+name = "rustcopy-gui"
+path = "src/main.rs"
