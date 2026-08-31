@@ -46,40 +46,45 @@ Welcome to `robocopy-ingest-cli` (`rustcopy`). This document serves as the prima
 ## 2. Directory Structure & Module Responsibilities
 
 ```text
-src/
-├── main.rs          # Application entrypoint & signal handling (Ctrl+C).
-├── lib.rs           # Library root exporting public modules.
-├── cli.rs           # Clap argument parsing, validation, and TOML merging.
-├── config.rs        # TOML configuration file parser (IngestConfig + JobConfig).
-├── scan.rs          # Pre-scan inventory walking & directory sizing.
-├── integrity.rs     # Rayon parallel hashing (BLAKE3, SHA-256, xxHash3) & OOM cap.
-├── logging.rs       # Non-blocking bounded file logging subscriber with rotation.
-├── report.rs        # JSON report generator with HostMetadata & PhaseTiming.
-├── html_report.rs   # Standalone HTML5/SVG interactive dashboard generator.
-├── notify.rs        # Async HTTP Webhook POST notification client.
-├── notify_sink.rs   # NotificationSink trait + LogSink/NtfySink/GenericWebhookSink (always compiled).
-├── notify_server.rs # axum Router for the notify-server binary (feature "notify-server" only).
-├── bin/
-│   └── notify_server.rs  # notify-server binary entrypoint (feature "notify-server" only); own Windows service identity (F41).
-├── restore.rs       # Disaster Recovery reverse restore engine.
-├── checkpoint.rs    # Interrupted-run checkpoint save/resume (--resume-from).
-├── generations.rs   # Backup generation manifest (.rustcopy_generations.json), diffing & retention (F35).
-├── vss.rs           # Volume Shadow Copy snapshot creation/cleanup (vssadmin).
-├── cache.rs         # Incremental state cache (.ingest_cache) — used by --fast-verify.
-├── cloud.rs         # Cloud provider sync abstraction (stub, NOT IMPLEMENTED).
-├── hooks.rs         # Pre/post job command execution (--pre-command/--post-command, F39).
-├── schedule.rs      # Windows Task Scheduler integration (--install-schedule/--uninstall-schedule, F36).
-├── service.rs       # Generic Windows Service SCM integration (F37/F41), shared by robocopy_ingest (idle) and notify-server (hosts axum).
-├── crypto.rs        # Zero-Trust AES-256 streaming encryption manager.
-├── exit_code.rs     # Robocopy bitmask exit code decoder & status rules.
-├── errors.rs        # IngestError enum & retry classification.
-├── oem_codec.rs     # CP850 decode table + GetOEMCP() runtime check.
-├── progress.rs      # Monotonic throughput progress bar.
-├── testkit.rs       # ScriptedRunner & test doubles for cross-platform mocks.
-└── engine/
-    ├── mod.rs       # CopyEngine trait & CopyRequest / CopyOutcome definitions.
-    ├── robocopy.rs  # Windows Robocopy process builder & parser.
-    └── naive.rs     # Cross-platform baseline single-thread copy + selective copy for generations.
+crates/
+├── rustcopy-core/          # package `rustcopy-core`, library `robocopy_ingest` (name unchanged, rule 17)
+│   └── src/
+│       ├── lib.rs           # Library root; also atomic_write, namespaced_path, is_rustcopy_metadata.
+│       ├── cli.rs           # Clap argument parsing, validation, and TOML merging.
+│       ├── config.rs        # TOML configuration file parser (IngestConfig + JobConfig).
+│       ├── scan.rs          # Pre-scan inventory walking & directory sizing.
+│       ├── integrity.rs     # Rayon parallel hashing (BLAKE3, SHA-256, xxHash3) & OOM cap.
+│       ├── logging.rs       # Non-blocking bounded file logging subscriber with rotation.
+│       ├── report.rs        # JSON report generator with HostMetadata & PhaseTiming.
+│       ├── html_report.rs   # Standalone HTML5/SVG interactive dashboard generator.
+│       ├── history.rs       # Append-only NDJSON index of completed runs (.rustcopy_history.jsonl).
+│       ├── advise.rs        # Deterministic suggestions over that history (--advise); no model, no network.
+│       ├── notify.rs        # Async HTTP Webhook POST notification client.
+│       ├── notify_sink.rs   # NotificationSink trait + LogSink/NtfySink/GenericWebhookSink (always compiled).
+│       ├── notify_server.rs # axum Router for the notify-server binary (feature "notify-server" only).
+│       ├── restore.rs       # Disaster Recovery reverse restore engine.
+│       ├── checkpoint.rs    # Interrupted-run checkpoint save/resume (--resume-from).
+│       ├── generations.rs   # Backup generation manifest (.rustcopy_generations.json), diffing & retention (F35).
+│       ├── vss.rs           # Volume Shadow Copy snapshot creation/cleanup (vssadmin).
+│       ├── cache.rs         # Incremental state cache (.ingest_cache) — used by --fast-verify.
+│       ├── cloud.rs         # Cloud provider sync abstraction (stub, NOT IMPLEMENTED).
+│       ├── hooks.rs         # Pre/post job command execution (--pre-command/--post-command, F39).
+│       ├── schedule.rs      # Windows Task Scheduler integration (--install-schedule/--uninstall-schedule, F36).
+│       ├── service.rs       # Generic Windows Service SCM integration (F37/F41), shared by both binaries.
+│       ├── crypto.rs        # Zero-Trust AES-256-GCM streaming encryption manager (RCE1 container).
+│       ├── exit_code.rs     # Robocopy bitmask exit code decoder & status rules.
+│       ├── errors.rs        # IngestError enum & retry classification.
+│       ├── oem_codec.rs     # CP850 decode table + GetOEMCP() runtime check.
+│       ├── progress.rs      # Monotonic throughput progress bar.
+│       ├── testkit.rs       # ScriptedRunner & test doubles for cross-platform mocks.
+│       └── engine/
+│           ├── mod.rs       # CopyEngine trait & CopyRequest / CopyOutcome definitions.
+│           ├── robocopy.rs  # Windows Robocopy process builder & parser.
+│           └── naive.rs     # Cross-platform baseline single-thread copy + selective copy for generations.
+└── rustcopy-cli/           # package `rustcopy-cli`; binary names unchanged (rule 17)
+    └── src/
+        ├── main.rs              # `robocopy_ingest` entrypoint, orchestration & signal handling (Ctrl+C).
+        └── notify_server_bin.rs # `notify-server` entrypoint (feature "notify-server"); own Windows service identity (F41).
 ```
 
 ---
