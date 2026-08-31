@@ -42,11 +42,11 @@ aes-gcm.workspace = true
 reqwest.workspace = true
 async-trait.workspace = true
 axum = { workspace = true, optional = true }
-subtle.workspace = true
+subtle = { workspace = true, optional = true }
 
 [features]
 # AGENTS.md rule 8: axum must never reach the default build.
-notify-server = ["dep:axum"]
+notify-server = ["dep:axum", "dep:subtle"]
 
 [target.'cfg(windows)'.dependencies]
 windows-service.workspace = true
