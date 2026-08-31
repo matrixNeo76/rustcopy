@@ -56,7 +56,25 @@ fn is_authorized(state: &AppState, headers: &HeaderMap) -> bool {
         .get(header::AUTHORIZATION)
         .and_then(|value| value.to_str().ok())
         .map(|value| value.strip_prefix("Bearer ").unwrap_or(value))
-        .is_some_and(|presented| presented == expected)
+        .is_some_and(|presented| constant_time_eq(presented.as_bytes(), expected.as_bytes()))
+}
+
+/// Compares two byte strings without leaking their common prefix length through timing.
+///
+/// `==` on `str` short-circuits at the first differing byte, so an attacker who can measure
+/// response time can recover a token one byte at a time. That matters here specifically because
+/// the token is what allows a **non-loopback** bind at all (see `validate_bind`): without a token
+/// the server refuses to listen outside loopback, so the token is the only thing standing between
+/// a network-reachable endpoint and anyone who can reach it.
+///
+/// `subtle::ConstantTimeEq` rather than a hand-rolled XOR loop: the compiler is free to optimise
+/// a naive accumulator back into an early exit, and that crate exists to prevent exactly that. It
+/// was already in the dependency tree via aes-gcm and rustls, so this costs no new crate.
+///
+/// Lengths are compared first, and non-constant-time: the length of a token is not the secret.
+fn constant_time_eq(a: &[u8], b: &[u8]) -> bool {
+    use subtle::ConstantTimeEq;
+    a.len() == b.len() && a.ct_eq(b).into()
 }
 
 async fn notify_handler(

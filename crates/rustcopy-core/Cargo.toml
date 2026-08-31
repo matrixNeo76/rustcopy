@@ -42,6 +42,7 @@ aes-gcm.workspace = true
 reqwest.workspace = true
 async-trait.workspace = true
 axum = { workspace = true, optional = true }
+subtle.workspace = true
 
 [features]
 # AGENTS.md rule 8: axum must never reach the default build.
