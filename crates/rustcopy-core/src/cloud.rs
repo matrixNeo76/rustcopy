@@ -28,8 +28,15 @@ pub fn sync_to_cloud(request: &CloudSyncRequest) -> Result<u64, String> {
         "initiating direct cloud sync"
     );
 
-    // Mock cloud transfer implementation for cross-platform simulation
-    Ok(100)
+    // Deliberately an error, not a fake success. `--cloud-sync-target` is a declared no-op
+    // (AGENTS.md rule 7) and this function has no production caller, so nothing regresses -- but
+    // returning `Ok(100)` meant the one thing a future caller must never be told: that a backup
+    // reached the cloud when no object exists at the target. A stub that refuses is safe to wire
+    // up by accident; a stub that lies is not.
+    Err(format!(
+        "cloud sync is not implemented: nothing was uploaded to {:?}/{}.          --cloud-sync-target is accepted for forward compatibility only.",
+        request.provider, request.bucket_or_container
+    ))
 }
 
 #[cfg(test)]
@@ -47,8 +54,29 @@ mod tests {
             target_prefix: "2026-07/",
         };
 
-        let result = sync_to_cloud(&req);
-        assert!(result.is_ok());
-        assert_eq!(result.expect("transferred"), 100);
+        // Construction is what this test is about; the call is checked below.
+        assert_eq!(req.bucket_or_container, "my-backup-bucket");
+        assert_eq!(req.target_prefix, "2026-07/");
+    }
+
+    /// The stub must never report success. A caller that wires this up and believes `Ok` would
+    /// mark a cloud backup complete with nothing at the target — the failure mode a backup tool
+    /// can least afford.
+    #[test]
+    fn the_unimplemented_stub_reports_failure_rather_than_a_fake_byte_count() {
+        let path = PathBuf::from("D:/landing");
+        let req = CloudSyncRequest {
+            provider: CloudProvider::AwsS3,
+            bucket_or_container: "my-backup-bucket",
+            source_path: &path,
+            target_prefix: "2026-07/",
+        };
+
+        let error =
+            sync_to_cloud(&req).expect_err("a stub that uploads nothing must not return Ok");
+        assert!(
+            error.contains("not implemented"),
+            "the error must say why, got: {error}"
+        );
     }
 }
