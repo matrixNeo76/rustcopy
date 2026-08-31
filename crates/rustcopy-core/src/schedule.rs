@@ -30,6 +30,10 @@ pub enum ScheduleSpec {
 const WEEKDAY_CODES: [&str; 7] = ["MON", "TUE", "WED", "THU", "FRI", "SAT", "SUN"];
 
 /// Parses `--install-schedule`'s value. See `ScheduleSpec` for the accepted shapes.
+/// `schtasks.exe /SC HOURLY /MO N` accepts 1..=23. Verified empirically against the real binary,
+/// not read from documentation: `/MO 23` is accepted, `/MO 24` and above are refused.
+const MAX_HOURLY_INTERVAL: u32 = 23;
+
 pub fn parse_schedule_spec(spec: &str) -> Result<ScheduleSpec, IngestError> {
     let invalid = || IngestError::InvalidScheduleSpec(spec.to_string());
 
@@ -40,8 +44,14 @@ pub fn parse_schedule_spec(spec: &str) -> Result<ScheduleSpec, IngestError> {
         }),
         "hourly" => {
             let n: u32 = rest.parse().map_err(|_| invalid())?;
-            if n == 0 {
-                return Err(invalid());
+            // `schtasks.exe /SC HOURLY /MO N` accepts 1..=23 and nothing above -- verified against
+            // the real binary, which answers `/MO 24` with "valore non valido per l'opzione /MO".
+            // Rejecting here turns a failure the operator would only meet at install time, with
+            // schtasks' own opaque message, into one that names the flag and the range.
+            if !(1..=MAX_HOURLY_INTERVAL).contains(&n) {
+                return Err(IngestError::InvalidScheduleSpec(format!(
+                    "hourly@{n}: the interval must be between 1 and {MAX_HOURLY_INTERVAL} hours                      (schtasks.exe rejects anything above {MAX_HOURLY_INTERVAL}). For longer                      gaps use daily@HH:MM."
+                )));
             }
             Ok(ScheduleSpec::Hourly { every_n_hours: n })
         }
@@ -388,5 +398,26 @@ mod tests {
         let args = vec!["--source".to_string(), "C:\\data".to_string()];
         let command = build_task_run_command(exe, &args);
         assert_eq!(command, "C:\\rustcopy.exe --source C:\\data");
+    }
+    /// The boundary is not a guess: `schtasks.exe /SC HOURLY /MO 23` is accepted and `/MO 24` is
+    /// refused with "valore non valido per l'opzione /MO", checked against the real binary. Before
+    /// this, an out-of-range interval parsed fine here and failed only at install time, with
+    /// schtasks' message rather than one naming the flag.
+    #[test]
+    fn hourly_accepts_the_schtasks_range_and_rejects_what_it_would_refuse() {
+        for n in [1u32, 12, 23] {
+            assert!(
+                parse_schedule_spec(&format!("hourly@{n}")).is_ok(),
+                "hourly@{n} is inside the range schtasks accepts"
+            );
+        }
+        for n in [0u32, 24, 25, 100] {
+            let error = parse_schedule_spec(&format!("hourly@{n}"))
+                .expect_err("outside the range schtasks accepts");
+            assert!(
+                format!("{error}").contains("hourly") || format!("{error}").contains("spec"),
+                "the message must point at the spec, got: {error}"
+            );
+        }
     }
 }
