@@ -60,7 +60,13 @@ impl JobConfig {
     /// uniform across all fields instead of special-casing lists as "extend".
     pub fn merged_over(&self, base: &JobConfig) -> JobConfig {
         JobConfig {
-            name: self.name.clone().or_else(|| base.name.clone()),
+            // `name` is the one field that does **not** inherit. It identifies a single job,
+            // and `run_jobs` uses it to namespace that job's cache, generation manifest and
+            // report path (D12). Inheriting a shared default would give every unnamed job the
+            // same identity, so they would silently share all three — the collision D12
+            // exists to prevent. Left as `None`, `run_jobs` falls back to `job1`, `job2`, …
+            // which is distinct by construction.
+            name: self.name.clone(),
             source: self.source.clone().or_else(|| base.source.clone()),
             dest: self.dest.clone().or_else(|| base.dest.clone()),
             pattern: self.pattern.clone().or_else(|| base.pattern.clone()),
@@ -260,5 +266,54 @@ mod tests {
             Some(vec![".git".to_string()]),
             "a field the job leaves unset still falls back to the shared default"
         );
+    }
+    /// `name` identifies **one job**. Inheriting it from the shared defaults gives every unnamed
+    /// job the same identity, and that identity is what namespaces the per-job files — so two
+    /// unnamed jobs would silently share one fast-verify cache, one generation manifest and one
+    /// report path. That is precisely the collision D12 exists to prevent, reintroduced through
+    /// the config layer instead of the path layer.
+    ///
+    /// Without a shared `name`, `run_jobs` falls back to `job1`, `job2`, … which is distinct by
+    /// construction.
+    #[test]
+    fn an_unnamed_job_does_not_inherit_the_shared_name() {
+        let defaults = JobConfig {
+            name: Some("nightly".to_string()),
+            pattern: Some("*.csv".to_string()),
+            ..JobConfig::default()
+        };
+        let first = JobConfig {
+            source: Some(PathBuf::from("D:/a")),
+            ..JobConfig::default()
+        };
+        let second = JobConfig {
+            source: Some(PathBuf::from("D:/b")),
+            ..JobConfig::default()
+        };
+
+        let a = first.merged_over(&defaults);
+        let b = second.merged_over(&defaults);
+
+        assert_eq!(a.name, None, "an unnamed job stays unnamed");
+        assert_eq!(b.name, None, "an unnamed job stays unnamed");
+        assert_eq!(
+            a.pattern.as_deref(),
+            Some("*.csv"),
+            "every other field still inherits: only `name` is exempt, because only `name` is an              identity rather than a setting"
+        );
+    }
+
+    /// A job that names itself keeps its own name, shared default or not.
+    #[test]
+    fn a_named_job_keeps_its_own_name() {
+        let defaults = JobConfig {
+            name: Some("nightly".to_string()),
+            ..JobConfig::default()
+        };
+        let job = JobConfig {
+            name: Some("photos".to_string()),
+            ..JobConfig::default()
+        };
+        assert_eq!(job.merged_over(&defaults).name.as_deref(), Some("photos"));
     }
 }
