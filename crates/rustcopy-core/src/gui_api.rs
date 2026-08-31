@@ -46,6 +46,15 @@ use crate::report::IngestReport;
 /// alongside so the UI can say "12 of 10 000" without receiving 10 000.
 pub const DEFAULT_ERROR_PAGE: usize = 100;
 
+/// Hard ceiling on a page, whatever the caller asks for.
+///
+/// Making `limit` a parameter was necessary — without it the paging here was unreachable — but it
+/// handed the boundary rule to the caller: `read_report_page(path, 0, usize::MAX)` would return
+/// every stored path from all three lists, up to 30 000 strings in one IPC response, which is
+/// precisely what this module exists to prevent. The limit is clamped instead of rejected: a UI
+/// asking for more than this is not doing anything wrong, it simply cannot have it in one message.
+pub const MAX_ERROR_PAGE: usize = 1_000;
+
 /// One backup job as configured, for a list view. Carries no run state.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct JobSummary {
@@ -87,7 +96,7 @@ impl ErrorPage {
         let entries = all
             .iter()
             .skip(offset)
-            .take(limit)
+            .take(limit.min(MAX_ERROR_PAGE))
             .cloned()
             .collect::<Vec<_>>();
         Self {
@@ -452,5 +461,34 @@ fast_verify = true
             jobs[0].fast_verify,
             "a UI must be able to tell a full verification from a fast one"
         );
+    }
+    /// `limit` is caller-controlled, so it needs a ceiling: without one,
+    /// `read_report_page(path, 0, usize::MAX)` would return every stored path from all three
+    /// lists — up to 30 000 strings in one IPC response, defeating the whole point of paging. The
+    /// parameter was added to make paging reachable; this stops it from also making paging
+    /// optional.
+    #[test]
+    fn an_oversized_page_limit_is_clamped() {
+        let report = report_with_errors(5_000);
+
+        let view = ReportView::from_report(&report, 0, usize::MAX);
+
+        assert_eq!(
+            view.missing_in_dest.entries.len(),
+            MAX_ERROR_PAGE,
+            "a caller asking for everything still gets at most one capped page"
+        );
+        assert_eq!(
+            view.missing_in_dest.total, 5_000,
+            "and is still told how many there really are"
+        );
+    }
+
+    /// Below the ceiling the caller's limit is honoured exactly, so the clamp cannot be mistaken
+    /// for a fixed page size.
+    #[test]
+    fn a_limit_below_the_ceiling_is_used_as_given() {
+        let view = ReportView::from_report(&report_with_errors(5_000), 0, 7);
+        assert_eq!(view.missing_in_dest.entries.len(), 7);
     }
 }
