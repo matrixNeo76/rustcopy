@@ -12,7 +12,7 @@ updates:
       interval: "weekly"
     ignore:
       # `dtolnay/rust-toolchain` is pinned by *Rust toolchain version*, not by action version:
-      # the `@1.88.0` in ci.yml's msrv job means "install Rust 1.88.0", and 1.88 is exactly the
+      # the `@1.89.0` in ci.yml's msrv job means "install Rust 1.89.0", and 1.89 is exactly the
       # `rust-version` declared in Cargo.toml. Dependabot reads that tag as an action version and
       # proposes bumping it (it opened #41 to move it to 1.100.0). Merging such a PR would make
       # the msrv job install a modern toolchain and check against that instead -- the job would

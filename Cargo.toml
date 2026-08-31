@@ -44,7 +44,10 @@ version = "6.0.0"
 edition = "2021"
 # Verified in CI by the `msrv` job, not asserted: 1.74 was declared here for months
 # while the dependency tree had long since moved past it (time@0.3.54 requires 1.88).
-rust-version = "1.88"
+# Raised to 1.89 on 31 Agosto 2026 by the aes-gcm 0.11 upgrade, which pulls aes@0.9.3 --
+# the msrv job caught it, which is the whole reason that job exists. Change this only
+# together with the toolchain pin in ci.yml's msrv job; they are one decision.
+rust-version = "1.89"
 license = "MIT"
 repository = "https://github.com/matrixNeo76/rustcopy"
 homepage = "https://github.com/matrixNeo76/rustcopy"
