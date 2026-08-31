@@ -78,10 +78,18 @@ pub fn volume_of(path: &Path) -> Result<String, IngestError> {
 /// silently produced a wrong (mixed `/`/`\`) path when this ran on Linux for the first time.
 pub fn remap_to_shadow(original: &Path, volume: &str, shadow: &ShadowCopy) -> PathBuf {
     let text = original.to_string_lossy();
-    let relative = text
-        .strip_prefix(volume)
-        .map(|rest| rest.trim_start_matches(['\\', '/']))
-        .unwrap_or(text.as_ref());
+    // Case-insensitively, because `volume_of` upper-cases the drive letter it returns while
+    // `original` keeps whatever the operator typed. A case-sensitive `strip_prefix` therefore
+    // missed on a lower-cased drive, fell through to the fallback below, and produced a device
+    // path with the drive letter still embedded in it -- a path that cannot exist. Only the
+    // two-byte volume prefix is compared this way; the rest keeps its original case, which on a
+    // case-preserving filesystem it must.
+    let relative =
+        if text.len() >= volume.len() && text[..volume.len()].eq_ignore_ascii_case(volume) {
+            text[volume.len()..].trim_start_matches(['\\', '/'])
+        } else {
+            text.as_ref()
+        };
     let mut result = shadow.device_path.clone();
     if !relative.is_empty() {
         if !result.ends_with('\\') {
@@ -207,5 +215,31 @@ Successfully created shadow copy for 'C:\\'
             remapped,
             PathBuf::from(r"\\?\GLOBALROOT\Device\HarddiskVolumeShadowCopy12")
         );
+    }
+    /// `volume_of` upper-cases the drive letter, but `remap_to_shadow` stripped the prefix with a
+    /// case-sensitive comparison — so a source typed as `c:\data` never matched the `C:` it had
+    /// just derived, fell through to the fallback, and produced
+    /// `\\?\GLOBALROOT\Device\…\c:\data`: a path that cannot exist.
+    ///
+    /// Reachable from `main.rs`, which calls both with the same source, so `--vss-snapshot`
+    /// against a lower-cased drive letter silently pointed at nothing.
+    #[test]
+    fn remap_matches_the_volume_prefix_regardless_of_drive_letter_case() {
+        let shadow = ShadowCopy {
+            shadow_id: "{id}".to_string(),
+            device_path: r"\?\GLOBALROOT\Device\HarddiskVolumeShadowCopy12".to_string(),
+        };
+        let expected =
+            PathBuf::from(r"\?\GLOBALROOT\Device\HarddiskVolumeShadowCopy12\data\source");
+
+        for source in [r"C:\data\source", r"c:\data\source"] {
+            let volume = volume_of(Path::new(source)).expect("drive letter");
+            assert_eq!(volume, "C:", "volume_of always upper-cases");
+            assert_eq!(
+                remap_to_shadow(Path::new(source), &volume, &shadow),
+                expected,
+                "the drive letter's case must not change the remapped path (source: {source})"
+            );
+        }
     }
 }

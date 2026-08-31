@@ -219,11 +219,22 @@ fn schedule_advice(transfers: &[&RunRecord]) -> Vec<Advice> {
             format!("Peggiore osservata: {}", format_duration(worst)),
             "Il margine del 50% sulla peggiore evita che una run parta mentre la precedente sta ancora copiando."
                 .to_string(),
-            format!(
-                "Es. --install-schedule 'hourly@{}' è sicuro solo se {} < 1h.",
-                (safe_interval / 3600.0).ceil().max(1.0) as u64,
-                format_duration(safe_interval)
-            ),
+            // Non suggerire una spec che --install-schedule rifiuterebbe: `hourly@N` vale solo
+            // per N in 1..=23 (limite di schtasks.exe, verificato sul binario reale). Oltre, la
+            // forma oraria non esiste e va proposta quella giornaliera.
+            {
+                let hours = (safe_interval / 3600.0).ceil().max(1.0) as u64;
+                if hours <= 23 {
+                    format!(
+                        "Es. --install-schedule 'hourly@{hours}' — la forma oraria regge fino a 23."
+                    )
+                } else {
+                    format!(
+                        "Nessuna schedulazione oraria è adeguata: servono {} fra una run e                          l'altra, oltre il massimo di 23h. Usa 'daily@HH:MM'.",
+                        format_duration(safe_interval)
+                    )
+                }
+            },
         ],
     )]
 }
@@ -1061,5 +1072,56 @@ mod tests {
             text.contains("suggerisce e non applica"),
             "the advise-never-act boundary must be stated in the output itself"
         );
+    }
+    /// `--advise` must not hand the operator a command that `--install-schedule` will refuse.
+    /// A job slow enough to need more than 23h between runs has no valid `hourly@N`.
+    #[test]
+    fn no_hourly_spec_is_suggested_beyond_what_schtasks_accepts() {
+        // ~20h runs: safe_interval is 1.5x that, so well past the 23h ceiling.
+        let history = history_of(vec![
+            record(70_000.0, 50.0, 8),
+            record(72_000.0, 50.0, 8),
+            record(74_000.0, 50.0, 8),
+        ]);
+        let schedule = analyse(&history)
+            .into_iter()
+            .find(|a| a.topic == Topic::Schedule && a.severity == Severity::Suggestion)
+            .expect("three runs is enough to advise");
+
+        let text = schedule.evidence.join(" ");
+        // The message may *mention* the hourly form to say it does not apply; what it must never
+        // do is hand over a concrete `hourly@N` that --install-schedule would reject.
+        for n in 1..=200 {
+            assert!(
+                !text.contains(&format!("hourly@{n}")),
+                "no concrete hourly spec may be offered above the 23h ceiling, got: {text}"
+            );
+        }
+        assert!(
+            text.contains("daily@"),
+            "the daily form must be offered instead, got: {text}"
+        );
+    }
+
+    /// And below the ceiling the hourly suggestion is still made, with a value schtasks accepts.
+    #[test]
+    fn an_hourly_spec_is_still_suggested_inside_the_range() {
+        let history = history_of(vec![
+            record(3_600.0, 50.0, 8),
+            record(3_700.0, 50.0, 8),
+            record(3_800.0, 50.0, 8),
+        ]);
+        let schedule = analyse(&history)
+            .into_iter()
+            .find(|a| a.topic == Topic::Schedule && a.severity == Severity::Suggestion)
+            .expect("advice expected");
+        let text = schedule.evidence.join(" ");
+        assert!(text.contains("hourly@"), "got: {text}");
+        for n in 24..=48 {
+            assert!(
+                !text.contains(&format!("hourly@{n}")),
+                "out of range: {text}"
+            );
+        }
     }
 }

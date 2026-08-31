@@ -71,11 +71,17 @@ pub fn decode_robocopy_output(bytes: &[u8]) -> String {
     match active_oem_code_page() {
         Some(cp) if cp == CP850_CODE_PAGE => decode_cp850(bytes),
         Some(cp) => {
-            tracing::warn!(
-                code_page = cp,
-                "active OEM code page is not CP850; decoding as CP850 anyway may mis-render \
-                 accented characters (only CP850 has a built-in table)"
-            );
+            // Once per process, as the doc above already promised. This runs per chunk of
+            // robocopy output, so an unconditional warn! meant one line per chunk: the same
+            // per-item work in the hot path that made D18's debug logging 356 MB on a real run.
+            static WARNED: std::sync::Once = std::sync::Once::new();
+            WARNED.call_once(|| {
+                tracing::warn!(
+                    code_page = cp,
+                    "active OEM code page is not CP850; decoding as CP850 anyway may mis-render \
+                     accented characters (only CP850 has a built-in table)"
+                );
+            });
             decode_cp850(bytes)
         }
         None => decode_cp850(bytes),

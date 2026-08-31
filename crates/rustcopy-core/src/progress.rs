@@ -192,7 +192,15 @@ pub fn throughput_mbps(bytes: u64, elapsed: Duration) -> f64 {
 
 /// Speedup of `baseline` over `candidate`; `None` when it cannot be computed.
 pub fn speedup_factor(candidate_seconds: f64, baseline_seconds: f64) -> Option<f64> {
-    if candidate_seconds <= 0.0 || !baseline_seconds.is_finite() || baseline_seconds <= 0.0 {
+    // Both sides need the finiteness check, not just the baseline: `NaN <= 0.0` is false, so a
+    // NaN candidate slipped through the asymmetric guard and came back out as `Some(NaN)`,
+    // and an infinite one produced a `Some(0.0)` speedup. Neither is a number a report should
+    // carry.
+    if !candidate_seconds.is_finite()
+        || candidate_seconds <= 0.0
+        || !baseline_seconds.is_finite()
+        || baseline_seconds <= 0.0
+    {
         return None;
     }
     Some(baseline_seconds / candidate_seconds)
@@ -260,5 +268,25 @@ mod tests {
              {bytes}/{total_bytes} @ {binary_bytes_per_sec} ETA {eta} {msg}",
         )
         .is_ok());
+    }
+    /// The guard was asymmetric: it checked the baseline for finiteness and not the candidate. A
+    /// NaN candidate then passed, because `NaN <= 0.0` is false, and the function returned
+    /// `Some(NaN)`; an infinite one returned `Some(0.0)`, a speedup that reads as "no gain".
+    #[test]
+    fn speedup_rejects_non_finite_input_on_both_sides() {
+        for bad in [f64::NAN, f64::INFINITY, f64::NEG_INFINITY] {
+            assert_eq!(
+                speedup_factor(bad, 10.0),
+                None,
+                "a non-finite candidate ({bad}) has no meaningful speedup"
+            );
+            assert_eq!(
+                speedup_factor(10.0, bad),
+                None,
+                "a non-finite baseline ({bad}) has no meaningful speedup"
+            );
+        }
+        // The ordinary case still works.
+        assert_eq!(speedup_factor(2.0, 10.0), Some(5.0));
     }
 }
