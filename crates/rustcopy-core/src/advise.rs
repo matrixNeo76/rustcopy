@@ -219,11 +219,31 @@ fn schedule_advice(transfers: &[&RunRecord]) -> Vec<Advice> {
             format!("Peggiore osservata: {}", format_duration(worst)),
             "Il margine del 50% sulla peggiore evita che una run parta mentre la precedente sta ancora copiando."
                 .to_string(),
-            format!(
-                "Es. --install-schedule 'hourly@{}' è sicuro solo se {} < 1h.",
-                (safe_interval / 3600.0).ceil().max(1.0) as u64,
-                format_duration(safe_interval)
-            ),
+            // Tre fasce, non due. Oltre le 23h la forma oraria non esiste (limite di
+            // schtasks.exe, verificato sul binario), ma proporre `daily@` al suo posto sarebbe
+            // altrettanto sbagliato appena l'intervallo supera le 24h: un trigger giornaliero
+            // scatta ogni 24h, e Task Scheduler con la sua politica predefinita (IgnoreNew)
+            // **salta** l'attivazione mentre la run precedente è ancora in corso. L'operatore
+            // crederebbe di avere un backup al giorno e ne otterrebbe uno ogni due.
+            {
+                let hours = (safe_interval / 3600.0).ceil().max(1.0) as u64;
+                if hours <= 23 {
+                    format!(
+                        "Es. --install-schedule 'hourly@{hours}' — la forma oraria regge fino a 23."
+                    )
+                } else if hours <= 24 {
+                    "Es. --install-schedule 'daily@HH:MM' — 24h coprono l'intervallo necessario."
+                        .to_string()
+                } else {
+                    format!(
+                        "Servono {} fra una run e l'altra: nessuna forma supportata li garantisce. \
+                         'daily@HH:MM' scatta ogni 24h e Windows salta l'attivazione mentre la run \
+                         precedente è in corso, quindi diventerebbe di fatto ogni 48h senza dirlo. \
+                         Valuta 'weekly@DAY@HH:MM', oppure perché una run duri così a lungo.",
+                        format_duration(safe_interval)
+                    )
+                }
+            },
         ],
     )]
 }
@@ -1060,6 +1080,87 @@ mod tests {
         assert!(
             text.contains("suggerisce e non applica"),
             "the advise-never-act boundary must be stated in the output itself"
+        );
+    }
+    /// `--advise` must not hand the operator a command that `--install-schedule` will refuse.
+    /// A job slow enough to need more than 23h between runs has no valid `hourly@N`.
+    #[test]
+    fn no_hourly_spec_is_suggested_beyond_what_schtasks_accepts() {
+        // ~20h runs: safe_interval is 1.5x that, so well past the 23h ceiling.
+        let history = history_of(vec![
+            record(70_000.0, 50.0, 8),
+            record(72_000.0, 50.0, 8),
+            record(74_000.0, 50.0, 8),
+        ]);
+        let schedule = analyse(&history)
+            .into_iter()
+            .find(|a| a.topic == Topic::Schedule && a.severity == Severity::Suggestion)
+            .expect("three runs is enough to advise");
+
+        let text = schedule.evidence.join(" ");
+        // The message may *mention* the hourly form to say it does not apply; what it must never
+        // do is hand over a concrete `hourly@N` that --install-schedule would reject.
+        for n in 1..=200 {
+            assert!(
+                !text.contains(&format!("hourly@{n}")),
+                "no concrete hourly spec may be offered above the 23h ceiling, got: {text}"
+            );
+        }
+        // Above 24h `daily@` is not an answer either: it fires every 24h and Windows skips the
+        // trigger while the previous run is still going (IgnoreNew, the default), so the operator
+        // would silently get one run every 48h. The advice must say so rather than hand over a
+        // spec that quietly under-delivers.
+        assert!(
+            text.contains("nessuna forma supportata"),
+            "it must say no supported form covers the interval, got: {text}"
+        );
+        assert!(
+            text.contains("weekly@"),
+            "and point at the only form that would, got: {text}"
+        );
+    }
+
+    /// And below the ceiling the hourly suggestion is still made, with a value schtasks accepts.
+    #[test]
+    fn an_hourly_spec_is_still_suggested_inside_the_range() {
+        let history = history_of(vec![
+            record(3_600.0, 50.0, 8),
+            record(3_700.0, 50.0, 8),
+            record(3_800.0, 50.0, 8),
+        ]);
+        let schedule = analyse(&history)
+            .into_iter()
+            .find(|a| a.topic == Topic::Schedule && a.severity == Severity::Suggestion)
+            .expect("advice expected");
+        let text = schedule.evidence.join(" ");
+        assert!(text.contains("hourly@"), "got: {text}");
+        for n in 24..=48 {
+            assert!(
+                !text.contains(&format!("hourly@{n}")),
+                "out of range: {text}"
+            );
+        }
+    }
+    /// The middle band: an interval that fits in a day is exactly what `daily@` is for.
+    #[test]
+    fn a_daily_spec_is_offered_when_the_interval_fits_in_one_day() {
+        // The band is chosen by the *worst* run, not the median: safe_interval = worst * 1.5, and
+        // 16h exactly gives 24h, the top of the daily band. A worst of 16h06m would give 24h10m
+        // and belong to the band above -- which is what the first version of this fixture picked.
+        let history = history_of(vec![
+            record(56_000.0, 50.0, 8),
+            record(57_000.0, 50.0, 8),
+            record(57_600.0, 50.0, 8), // 16h exactly -> 24h
+        ]);
+        let schedule = analyse(&history)
+            .into_iter()
+            .find(|a| a.topic == Topic::Schedule && a.severity == Severity::Suggestion)
+            .expect("advice expected");
+        let text = schedule.evidence.join(" ");
+        assert!(text.contains("daily@"), "got: {text}");
+        assert!(
+            !text.contains("nessuna forma supportata"),
+            "24h does cover this interval, got: {text}"
         );
     }
 }

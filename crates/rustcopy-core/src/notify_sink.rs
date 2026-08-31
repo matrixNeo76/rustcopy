@@ -38,6 +38,52 @@ pub trait NotificationSink: Send + Sync {
     async fn deliver(&self, payload: &WebhookPayload) -> Result<(), NotifyError>;
 }
 
+/// Builds an HTTP client with `timeout` applied, logging rather than discarding a builder failure.
+///
+/// `Client::builder().timeout(t).build().unwrap_or_default()` looked harmless and was not:
+/// `Client::default()` carries **no request timeout at all**, so a builder failure silently traded
+/// a bounded request for an unbounded one. Since `notify_server::notify_handler` awaits every sink
+/// before answering the original POST, one unreachable endpoint would then hold that request open
+/// indefinitely.
+///
+/// The fallback is kept — a sink that cannot be built at all would be worse — but the deadline no
+/// longer depends on it: [`NtfySink::deliver`] and [`GenericWebhookSink::deliver`] wrap the request
+/// in `tokio::time::timeout` regardless, so the bound holds on every path.
+fn build_client(timeout: Duration) -> reqwest::Client {
+    reqwest::Client::builder()
+        .timeout(timeout)
+        .build()
+        .unwrap_or_else(|error| {
+            tracing::warn!(
+                %error,
+                "could not build an HTTP client carrying the configured timeout; the deadline is                  enforced at the call site instead"
+            );
+            reqwest::Client::default()
+        })
+}
+
+/// Bounds `future` by `timeout`, turning an overrun into a `NotifyError` rather than a hang.
+///
+/// Applied by both HTTP sinks unconditionally. `reqwest`'s own timeout usually does the job, but
+/// it is not guaranteed to be present (see [`build_client`]), and the caller that matters here —
+/// `notify_server::notify_handler` — awaits every sink before it answers the original POST.
+async fn with_deadline<F>(
+    timeout: Duration,
+    sink: &'static str,
+    future: F,
+) -> Result<(), NotifyError>
+where
+    F: std::future::Future<Output = Result<(), NotifyError>>,
+{
+    match tokio::time::timeout(timeout, future).await {
+        Ok(result) => result,
+        Err(_) => Err(NotifyError {
+            sink,
+            message: format!("no response within {timeout:?}"),
+        }),
+    }
+}
+
 /// Always-available sink that logs the event via `tracing`. Useful on its own (a plain log line
 /// per backup run) and as a fallback when no other channel is configured.
 #[derive(Debug, Default)]
@@ -78,16 +124,17 @@ impl NotificationSink for LogSink {
 pub struct NtfySink {
     pub topic_url: String,
     client: reqwest::Client,
+    /// Enforced by `deliver` via `tokio::time::timeout`, not only by the client — see
+    /// [`build_client`] for why the client alone is not a guarantee.
+    timeout: Duration,
 }
 
 impl NtfySink {
     pub fn new(topic_url: impl Into<String>, timeout: Duration) -> Self {
         Self {
             topic_url: topic_url.into(),
-            client: reqwest::Client::builder()
-                .timeout(timeout)
-                .build()
-                .unwrap_or_default(),
+            client: build_client(timeout),
+            timeout,
         }
     }
 }
@@ -99,6 +146,12 @@ impl NotificationSink for NtfySink {
     }
 
     async fn deliver(&self, payload: &WebhookPayload) -> Result<(), NotifyError> {
+        with_deadline(self.timeout, "ntfy", self.send(payload)).await
+    }
+}
+
+impl NtfySink {
+    async fn send(&self, payload: &WebhookPayload) -> Result<(), NotifyError> {
         let body = format!("{}\n{}", payload.text, payload.report_summary);
         let response = self
             .client
@@ -127,16 +180,17 @@ impl NotificationSink for NtfySink {
 pub struct GenericWebhookSink {
     pub url: String,
     client: reqwest::Client,
+    /// Enforced by `deliver` via `tokio::time::timeout`, not only by the client — see
+    /// [`build_client`] for why the client alone is not a guarantee.
+    timeout: Duration,
 }
 
 impl GenericWebhookSink {
     pub fn new(url: impl Into<String>, timeout: Duration) -> Self {
         Self {
             url: url.into(),
-            client: reqwest::Client::builder()
-                .timeout(timeout)
-                .build()
-                .unwrap_or_default(),
+            client: build_client(timeout),
+            timeout,
         }
     }
 }
@@ -148,6 +202,12 @@ impl NotificationSink for GenericWebhookSink {
     }
 
     async fn deliver(&self, payload: &WebhookPayload) -> Result<(), NotifyError> {
+        with_deadline(self.timeout, "generic-webhook", self.send(payload)).await
+    }
+}
+
+impl GenericWebhookSink {
+    async fn send(&self, payload: &WebhookPayload) -> Result<(), NotifyError> {
         let response = self
             .client
             .post(&self.url)
@@ -410,5 +470,53 @@ mod tests {
         let config: NotifyServerConfig = toml::from_str(toml_str).expect("valid toml");
         assert_eq!(config.bind, Some("127.0.0.1:4000".to_string()));
         assert!(config.ntfy.expect("ntfy section").enabled);
+    }
+    /// The deadline must hold even when the future never resolves. Before this, a sink whose
+    /// client had lost its timeout (see `build_client`) would await forever, and
+    /// `notify_server::notify_handler` awaits every sink before answering the original POST — so
+    /// one unreachable endpoint held that request open indefinitely.
+    #[tokio::test]
+    async fn with_deadline_turns_a_hang_into_an_error() {
+        let never = async {
+            // Longer than any plausible test run; the deadline must fire first.
+            tokio::time::sleep(Duration::from_secs(3600)).await;
+            Ok(())
+        };
+
+        let started = std::time::Instant::now();
+        let result = with_deadline(Duration::from_millis(50), "ntfy", never).await;
+        let elapsed = started.elapsed();
+
+        let error = result.expect_err("a future that never resolves must not report success");
+        assert_eq!(error.sink, "ntfy");
+        assert!(
+            error.message.contains("no response within"),
+            "the error must say it timed out, got: {}",
+            error.message
+        );
+        assert!(
+            elapsed < Duration::from_secs(5),
+            "it must return at the deadline, not wait out the future; took {elapsed:?}"
+        );
+    }
+
+    /// A future that completes inside the deadline passes through untouched, error included.
+    #[tokio::test]
+    async fn with_deadline_does_not_interfere_with_a_prompt_result() {
+        let ok = with_deadline(Duration::from_secs(30), "ntfy", async { Ok(()) }).await;
+        assert!(ok.is_ok());
+
+        let failed = with_deadline(Duration::from_secs(30), "ntfy", async {
+            Err(NotifyError {
+                sink: "ntfy",
+                message: "endpoint returned 500".to_string(),
+            })
+        })
+        .await;
+        assert_eq!(
+            failed.expect_err("propagated").message,
+            "endpoint returned 500",
+            "the sink's own error must survive, not be replaced by a timeout"
+        );
     }
 }
