@@ -33,7 +33,7 @@ chrono = { version = "0.4", default-features = false, features = ["clock", "serd
 tempfile = "3"
 toml = "1.1"
 num_cpus = "1"
-aes-gcm = "0.10"
+aes-gcm = { version = "0.11", features = ["getrandom"] }
 reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "json"] }
 async-trait = "0.1"
 axum = { version = "0.8" }
@@ -44,7 +44,10 @@ version = "6.0.0"
 edition = "2021"
 # Verified in CI by the `msrv` job, not asserted: 1.74 was declared here for months
 # while the dependency tree had long since moved past it (time@0.3.54 requires 1.88).
-rust-version = "1.88"
+# Raised to 1.89 on 31 Agosto 2026 by the aes-gcm 0.11 upgrade, which pulls aes@0.9.3 --
+# the msrv job caught it, which is the whole reason that job exists. Change this only
+# together with the toolchain pin in ci.yml's msrv job; they are one decision.
+rust-version = "1.89"
 license = "MIT"
 repository = "https://github.com/matrixNeo76/rustcopy"
 homepage = "https://github.com/matrixNeo76/rustcopy"
