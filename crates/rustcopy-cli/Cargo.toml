@@ -1,0 +1,50 @@
+[package]
+name = "rustcopy-cli"
+description = "Windows-native enterprise backup CLI wrapping robocopy.exe: integrity verification, AES-256-GCM encryption, VSS snapshots, full/incremental/differential generations, scheduling, and Windows Service integration"
+readme = "../../README.md"
+keywords = ["robocopy", "backup", "windows", "cli", "disaster-recovery"]
+categories = ["command-line-utilities", "filesystem"]
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+
+[dependencies]
+rustcopy-core = { path = "../rustcopy-core" }
+anyhow.workspace = true
+clap.workspace = true
+tokio.workspace = true
+tracing.workspace = true
+serde_json.workspace = true
+chrono.workspace = true
+num_cpus.workspace = true
+# Runtime dependency, not a test one: `baseline_dir` uses it for --compare-baseline.
+tempfile.workspace = true
+# Used directly by the notify-server binary (its own subscriber init).
+tracing-subscriber.workspace = true
+
+# The notify-server binary registers its own Windows service identity (F41), so it needs the
+# SCM crate directly, not only through the core.
+[target.'cfg(windows)'.dependencies]
+windows-service.workspace = true
+
+[features]
+# Forwards to the core's gate: the axum-hosting Router lives there, the bin only drives it.
+notify-server = ["rustcopy-core/notify-server"]
+
+[[bin]]
+name = "robocopy_ingest"
+path = "src/main.rs"
+
+[[bin]]
+name = "notify-server"
+path = "src/notify_server_bin.rs"
+required-features = ["notify-server"]
+
+[dev-dependencies]
+tempfile.workspace = true
+serde_json.workspace = true
+reqwest.workspace = true
+tokio.workspace = true

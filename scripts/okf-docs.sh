@@ -115,7 +115,7 @@ cmd_check() {
   [[ $status -eq 0 ]] && echo "ok"
 
   # 5. Documentation/code consistency. These check only facts with a *single source of truth* --
-  #    the filesystem, or src/cli.rs -- and only across TRACKED_DOCS, like every gate above.
+  #    the filesystem, or crates/rustcopy-core/src/cli.rs -- and only across TRACKED_DOCS, like every gate above.
   #    Prose claims are deliberately out of scope: a prototype that grepped for sentences like
   #    "flag X is [NOT IMPLEMENTED]" and cross-checked cli.rs produced three findings, all three
   #    false positives (historical passages, and a correction reading "is no longer [NOT
@@ -175,7 +175,7 @@ cmd_check() {
     [[ -n "$field" ]] || continue
     flag="--${field//_/-}"
     if ! grep -l -- "$flag" "${TRACKED_DOCS[@]}" >/dev/null 2>&1; then
-      echo "::error file=src/cli.rs::${flag} exists in cli.rs but is documented in no tracked .md"
+      echo "::error file=crates/rustcopy-core/src/cli.rs::${flag} exists in cli.rs but is documented in no tracked .md"
       status=1
     fi
   done < <(
@@ -191,7 +191,7 @@ cmd_check() {
         print substr($0, RSTART + 4, RLENGTH - 4)
         pending = 0
       }
-    ' src/cli.rs | sort -u
+    ' crates/rustcopy-core/src/cli.rs | sort -u
   )
   [[ $status -eq 0 ]] && echo "ok"
 

@@ -50,16 +50,16 @@ jobs:
         run: cargo fmt --all -- --check
 
       - name: cargo clippy (default features)
-        run: cargo clippy --locked --all-targets -- -D warnings
+        run: cargo clippy --locked --workspace --all-targets -- -D warnings
 
       - name: cargo clippy (notify-server feature)
-        run: cargo clippy --locked --all-targets --features notify-server -- -D warnings
+        run: cargo clippy --locked --workspace --all-targets --features rustcopy-cli/notify-server -- -D warnings
 
       - name: cargo test (default features)
-        run: cargo test --locked --all-targets
+        run: cargo test --locked --workspace --all-targets
 
       - name: cargo test (notify-server feature)
-        run: cargo test --locked --all-targets --features notify-server
+        run: cargo test --locked --workspace --all-targets --features rustcopy-cli/notify-server
 
       # Broken intra-doc links are invisible to clippy and to the test suite, and this crate
       # leans on them heavily (17 in generations.rs alone). Adding this gate immediately
@@ -68,7 +68,13 @@ jobs:
       - name: cargo doc (no broken intra-doc links)
         env:
           RUSTDOCFLAGS: -D warnings
-        run: cargo doc --locked --no-deps --all-features
+        run: |
+          # Per package, not --workspace: the lib target `robocopy_ingest` (rustcopy-core) and the
+          # bin target of the same name (rustcopy-cli) write to the same doc path, so one run over
+          # both emits a cargo output-collision warning and one output overwrites the other
+          # (rust-lang/cargo#6313). Split, each is checked and neither clobbers the other.
+          cargo doc --locked -p rustcopy-core --no-deps --all-features
+          cargo doc --locked -p rustcopy-cli --no-deps --all-features
 
       # AGENTS.md rule 8: axum must never reach the default build. The rule already existed
       # but was enforced only by whoever remembered to run `cargo tree` before committing --
@@ -76,12 +82,27 @@ jobs:
       - name: axum stays behind the notify-server feature (AGENTS.md rule 8)
         shell: bash
         run: |
-          if cargo tree --locked | grep -qi axum; then
+          if cargo tree --locked -p rustcopy-cli | grep -qi axum; then
             echo "::error::axum reached the default build — it must stay behind --features notify-server"
-            cargo tree --locked | grep -i axum
+            cargo tree --locked -p rustcopy-cli | grep -i axum
             exit 1
           fi
-          cargo tree --locked --features notify-server | grep -qi axum    || { echo "::error::axum missing even with --features notify-server"; exit 1; }
+          cargo tree --locked -p rustcopy-cli --features rustcopy-cli/notify-server | grep -qi axum    || { echo "::error::axum missing even with --features notify-server"; exit 1; }
+
+      # F52: the GUI (milestone 7.0.0) will be a workspace member with an npm/vite toolchain. The
+      # CLI must never acquire a dependency on it -- that is what keeps a scheduled, unattended
+      # backup running exactly the same code whether or not the GUI is installed
+      # (PIANO_GUI_TAURI.md §2.1). Same shape as the axum gate above: `if`, never
+      # `... | grep -q … && exit 1`, which returns 1 when grep finds nothing and would fail the
+      # job precisely when the tree is clean.
+      - name: the CLI never depends on the GUI toolchain (PIANO_GUI_TAURI.md §4.2)
+        shell: bash
+        run: |
+          if cargo tree --locked -p rustcopy-cli | grep -qiE 'tauri|wry|tao'; then
+            echo "::error::a GUI dependency reached the CLI binary -- it must stay in rustcopy-gui"
+            cargo tree --locked -p rustcopy-cli | grep -iE 'tauri|wry|tao'
+            exit 1
+          fi
 
   # Keeps Cargo.toml's rust-version honest. It was declared as 1.74 for months while nothing
   # ever tested it, and it was wrong by fourteen releases: the committed lockfile pulls
@@ -103,8 +124,8 @@ jobs:
 
       - name: cargo check on MSRV (both feature sets)
         run: |
-          cargo check --all-targets --locked
-          cargo check --all-targets --locked --features notify-server
+          cargo check --workspace --all-targets --locked
+          cargo check --workspace --all-targets --locked --features rustcopy-cli/notify-server
 
   docs:
     timeout-minutes: 15

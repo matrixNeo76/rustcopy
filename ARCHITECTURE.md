@@ -13,7 +13,41 @@ verified:
 
 # Architettura di Sistema — robocopy-ingest-cli (v6.0.0)
 
-Questo documento descrive in dettaglio l'**architettura interna, la pipeline di esecuzione, i pattern di progettazione ed i meccanismi di sicurezza e performance** implementati nel crate `robocopy_ingest`.
+Questo documento descrive in dettaglio l'**architettura interna, la pipeline di esecuzione, i pattern di progettazione ed i meccanismi di sicurezza e performance** implementati nella libreria `robocopy_ingest`.
+
+---
+
+## 0. Struttura del workspace (F52)
+
+Dal 27 Agosto 2026 il repository è un **workspace Cargo** con due membri, non più un package singolo.
+Il motivo è la milestone 7.0.0 (GUI Tauri): Tauri porta con sé una toolchain JS — npm/vite,
+`tauri.conf.json`, icone, bundler — che non deve entrare nel crate della CLI. `notify-server` può
+restare un binario feature-gated perché è puro Rust; una GUI no.
+
+| Membro | Contiene | Produce |
+|---|---|---|
+| `crates/rustcopy-core` | Tutta la logica: scansione, motori di copia, integrità, crypto, VSS, generazioni, storico, report | La libreria **`robocopy_ingest`** |
+| `crates/rustcopy-cli` | Solo gli entry point e la loro orchestrazione | I binari **`robocopy_ingest`** e **`notify-server`** |
+
+**Il nome della libreria e quelli dei binari non sono cambiati.** Il package si chiama
+`rustcopy-core` ma la sua `[lib]` resta `robocopy_ingest`, quindi ogni `use robocopy_ingest::…`
+continua a valere; i binari mantengono i nomi che installer e script già usano. La
+ristrutturazione non ha rinominato nulla di visibile a un utente o a uno script.
+
+Due invarianti sono presidiate da altrettanti gate in `ci.yml`, entrambi nella forma `if … then …
+fi` (mai `… | grep -q … && exit 1`, che fallisce quando l'albero è **pulito**):
+
+- `cargo tree --locked -p rustcopy-cli | grep -qi axum` deve essere vuoto senza la feature
+  `notify-server` (`AGENTS.md` regola 8).
+- `cargo tree --locked -p rustcopy-cli | grep -qiE 'tauri|wry|tao'` deve essere sempre vuoto: la
+  CLI non acquisisce mai una dipendenza dalla GUI, ed è ciò che garantisce che un backup
+  schedulato esegua lo stesso codice con o senza GUI installata.
+
+> **Nota sui percorsi negli altri documenti.** `ANALYSIS.md`, `ROADMAP.md`, `CLAUDE.md` e
+> `AGENTS.md` citano i moduli come `src/nome.rs` in racconti di lavori passati. I nomi dei moduli
+> non sono cambiati: `src/logging.rs` è oggi `crates/rustcopy-core/src/logging.rs`, e `src/main.rs`
+> è `crates/rustcopy-cli/src/main.rs`. Quei riferimenti non sono stati riscritti di proposito —
+> sono registrazioni di eventi passati, non descrizioni della struttura attuale, che è questa.
 
 ---
 
@@ -21,54 +55,54 @@ Questo documento descrive in dettaglio l'**architettura interna, la pipeline di 
 
 ```mermaid
 graph TD
-    User(["Utente / Script CLI / TOML Config"]) -->|Args / Flags| CLI["src/cli.rs - Clap Parser & Validazione"]
-    CLI --> Main["src/main.rs - Orchestratore Principale"]
+    User(["Utente / Script CLI / TOML Config"]) -->|Args / Flags| CLI["crates/rustcopy-core/src/cli.rs - Clap Parser & Validazione"]
+    CLI --> Main["crates/rustcopy-cli/src/main.rs - Orchestratore Principale"]
 
     subgraph PipelineEngine ["Motore di ingestion"]
-        Main -->|1. Prescan| Scan["src/scan.rs - Scansione Walkdir & Sizing"]
-        Main -->|2. Backup Engine| RobocopyEngine["src/engine/robocopy.rs - Process Streaming Engine"]
+        Main -->|1. Prescan| Scan["crates/rustcopy-core/src/scan.rs - Scansione Walkdir & Sizing"]
+        Main -->|2. Backup Engine| RobocopyEngine["crates/rustcopy-core/src/engine/robocopy.rs - Process Streaming Engine"]
         RobocopyEngine -->|Invoca| Exec["robocopy.exe - Native Windows Binary"]
         Exec -->|"Stdout+Stderr Stream OEM"| Dec["Decodifica CP850 dedicata (oem_codec.rs) & Zero-Alloc Parsing"]
     end
 
     subgraph IntegritySecurity ["Integrità e sicurezza"]
-        Main -->|3. Integrity Check| RayonVerify["src/integrity.rs - Rayon Parallel Hashing"]
+        Main -->|3. Integrity Check| RayonVerify["crates/rustcopy-core/src/integrity.rs - Rayon Parallel Hashing"]
         RayonVerify -->|"SHA-256 / BLAKE3 / xxHash3"| Hash["Motore di Hashing"]
-        Main -->|4. Zero-Trust Crypto| Crypto["src/crypto.rs - AES-256-GCM su file destinazione"]
+        Main -->|4. Zero-Trust Crypto| Crypto["crates/rustcopy-core/src/crypto.rs - AES-256-GCM su file destinazione"]
     end
 
     subgraph MonitoringLogging ["Monitoraggio, logging e report"]
-        Main -->|Async Logging| Log["src/logging.rs - Bounded Channel Logger 10k MSGs"]
-        Main -->|Report Output| JSONReport["src/report.rs - JSON Report & Host Metadata"]
-        Main -->|HTML Dashboard| HTMLReport["src/html_report.rs - Standalone Dashboard HTML"]
-        Main -->|HTTP Webhook| Notify["src/notify.rs - Async HTTP Webhook Dispatcher"]
+        Main -->|Async Logging| Log["crates/rustcopy-core/src/logging.rs - Bounded Channel Logger 10k MSGs"]
+        Main -->|Report Output| JSONReport["crates/rustcopy-core/src/report.rs - JSON Report & Host Metadata"]
+        Main -->|HTML Dashboard| HTMLReport["crates/rustcopy-core/src/html_report.rs - Standalone Dashboard HTML"]
+        Main -->|HTTP Webhook| Notify["crates/rustcopy-core/src/notify.rs - Async HTTP Webhook Dispatcher"]
     end
 
     subgraph NotifyServerBox ["Binario separato, feature notify-server"]
-        Main -->|"POST /notify"| NotifyServer["src/bin/notify_server.rs + src/notify_server.rs - axum Router"]
-        NotifyServer -->|dispatch| Sinks["src/notify_sink.rs - LogSink / NtfySink / GenericWebhookSink"]
-        NotifyServer -->|"--install-service / --uninstall-service"| NotifyServiceMod["src/service.rs (generico) - servizio Windows dedicato #quot;RustcopyNotifyServer#quot; (F41)"]
+        Main -->|"POST /notify"| NotifyServer["src/bin/notify_server.rs + crates/rustcopy-core/src/notify_server.rs - axum Router"]
+        NotifyServer -->|dispatch| Sinks["crates/rustcopy-core/src/notify_sink.rs - LogSink / NtfySink / GenericWebhookSink"]
+        NotifyServer -->|"--install-service / --uninstall-service"| NotifyServiceMod["crates/rustcopy-core/src/service.rs (generico) - servizio Windows dedicato #quot;RustcopyNotifyServer#quot; (F41)"]
     end
 
     subgraph DisasterRecovery ["Disaster recovery e continuità"]
-        Main -->|"--restore-from"| Restore["src/restore.rs - Reverse Restore Engine"]
-        Main -->|"--resume-from"| Checkpoint["src/checkpoint.rs - Checkpoint & Resume"]
+        Main -->|"--restore-from"| Restore["crates/rustcopy-core/src/restore.rs - Reverse Restore Engine"]
+        Main -->|"--resume-from"| Checkpoint["crates/rustcopy-core/src/checkpoint.rs - Checkpoint & Resume"]
     end
 
     subgraph BackupEnterprise ["Release 6.0.0"]
-        Main -->|"--vss-snapshot"| VSS["src/vss.rs - Volume Shadow Copy (vssadmin)"]
-        Main -->|"--backup-type"| Generations["src/generations.rs - Generazioni Full/Incrementale/Differenziale + Retention per cicli (F35)"]
-        Generations -->|copia selettiva| NaiveEngine["src/engine/naive.rs - copy_selected"]
-        Main -->|"--pre-command / --post-command"| Hooks["src/hooks.rs - Comandi pre/post job (F39)"]
-        Main -->|"--install-schedule / --uninstall-schedule"| Schedule["src/schedule.rs - Task Scheduler via schtasks.exe (F36)"]
-        Main -->|"--install-service / --uninstall-service"| ServiceMod["src/service.rs - Windows Service SCM, servizio idle #quot;RustcopyIngestService#quot; (F37)"]
+        Main -->|"--vss-snapshot"| VSS["crates/rustcopy-core/src/vss.rs - Volume Shadow Copy (vssadmin)"]
+        Main -->|"--backup-type"| Generations["crates/rustcopy-core/src/generations.rs - Generazioni Full/Incrementale/Differenziale + Retention per cicli (F35)"]
+        Generations -->|copia selettiva| NaiveEngine["crates/rustcopy-core/src/engine/naive.rs - copy_selected"]
+        Main -->|"--pre-command / --post-command"| Hooks["crates/rustcopy-core/src/hooks.rs - Comandi pre/post job (F39)"]
+        Main -->|"--install-schedule / --uninstall-schedule"| Schedule["crates/rustcopy-core/src/schedule.rs - Task Scheduler via schtasks.exe (F36)"]
+        Main -->|"--install-service / --uninstall-service"| ServiceMod["crates/rustcopy-core/src/service.rs - Windows Service SCM, servizio idle #quot;RustcopyIngestService#quot; (F37)"]
     end
 
     subgraph Stubs ["Scaffolding (non implementato)"]
-        T["src/cloud.rs - Cloud Sync"]
+        T["crates/rustcopy-core/src/cloud.rs - Cloud Sync"]
     end
 
-    A2["src/cache.rs - State Cache (.ingest_cache)"]
+    A2["crates/rustcopy-core/src/cache.rs - State Cache (.ingest_cache)"]
     Main -->|"--fast-verify"| A2
 ```
 
@@ -78,35 +112,35 @@ graph TD
 
 | Modulo Sorgente | Responsabilità Architetturale | Tecnica / Pattern Utilizzato |
 |---|---|---|
-| `src/main.rs` | Orchestrazione asincrona e gestione dei segnali. | `tokio::select!` per cattura `Ctrl+C`; termina solo il PID del child `robocopy.exe` tracciato (non `taskkill /IM`); esegue `check_mirror_safety` (diff reale dest vs source) prima del trasferimento; scrive checkpoint su interruzione. |
-| `src/cli.rs` | Definition, parsing e validazione delle opzioni CLI. | Struct `clap` derivata con default `*`, flag `--force-purge` e merge automatico dai profili TOML. `--source`/`--dest` sono `Option<PathBuf>` con `required_unless_present = "restore_from"` (fix F24); accessor `Args::source()`/`Args::dest()` restituiscono `&Path`. |
-| `src/config.rs` | Caricamento e parsing delle configurazioni riutilizzabili. | Deserializzazione TOML tramite `serde`. Supporta `[[jobs]]` (array di `JobConfig`) con ereditarietà dai default di primo livello del file (`JobConfig::merged_over`). |
-| `src/engine/mod.rs` | Astrazione del motore di copia. | Trait `CopyEngine` per disaccoppiare Robocopy dalla copia Naive; `run_with_retries` con backoff esponenziale su exit code transienti. |
-| `src/engine/robocopy.rs` | Wrapper ad altissime prestazioni per `robocopy.exe`. | Streaming `read_until` binario, buffer riutilizzato, decodifica OEM via `src/oem_codec.rs`, stdout e stderr entrambi drenati (su thread separati) invece di scartare stderr, PID del child pubblicato per il kill mirato su Ctrl+C. |
-| `src/engine/naive.rs` | Motore di copia baseline e copia selettiva per generazioni. | Copia ricorsiva single-thread con buffer 64 KiB. `copy_selected` accetta un elenco esplicito di file per le copie incrementali (generazioni), usato al posto di robocopy perché robocopy non accetta liste arbitrarie di percorsi. |
-| `src/oem_codec.rs` | Decodifica OEM/CP850. | Tabella CP850 hardcoded (0x80-0xFF) più controllo a runtime di `GetOEMCP()`; `encoding_rs` non implementa le code page DOS single-byte, quindi non viene usato per questo scopo. |
-| `src/integrity.rs` | Verifica di corrispondenza sorgente/destinazione. | Parallelizzazione multi-core con **Rayon** (`par_iter`), pre-check taglia file, **BLAKE3 / SHA-256 / xxHash3** e cap errore a 10k per OOM guard. Supporta `--fast-verify` via `IngestCache`. |
-| `src/logging.rs` | Logging asincrono su file per-file. | Canale asincrono `bounded_channel(10_000)` con strategia non bloccante (`try_send`); le righe scartate vengono contate. `--log-level`/`--quiet` per il filtro (default `info`, non più `debug`, D18), `--log-max-bytes`/`--log-max-backups` per la rotazione — sia all'avvio sia durante il run stesso (D18). |
-| `src/report.rs` | Generazione dello schema JSON completo. | Serializzazione `serde_json`, conteggio temporizzazioni di fase (`PhaseTiming`), metadati host (`HostMetadata`), `SCHEMA_VERSION = 2`. |
-| `src/html_report.rs` | Dashboard visiva HTML standalone. | Template HTML5 autonomo con CSS incorporato; ogni valore interpolato passa da `escape_html`. |
-| `src/notify.rs` | Invio notifiche Webhook di completamento. | `WebhookPayload` (con `schema_version`, `BackupStatus` tipizzato) inviato via `reqwest`+`rustls` a `--webhook-url`. Timeout 10s, errori reali propagati. |
-| `src/notify_sink.rs` | Canali di notifica per il notify-server. | Trait `NotificationSink` (stesso pattern di `CommandRunner`/`CopyEngine`); `LogSink`/`NtfySink`/`GenericWebhookSink`; config TOML (`NotifyServerConfig`). Sempre compilato (nessuna dipendenza da axum), testabile con un doppio scriptato. |
-| `src/notify_server.rs` + `src/bin/notify_server.rs` | Server HTTP di ricezione notifiche, con identità di servizio Windows propria. | Router axum (`GET /health`, `POST /notify`), autenticazione a token via header, bind loopback forzato senza token, `DefaultBodyLimit`, graceful shutdown (`serve_until_shutdown`/`serve_until_shutdown_or`). Feature-gated (`notify-server`): axum non entra nelle dipendenze del binario di backup. `--install-service`/`--uninstall-service` (F41) registrano `"RustcopyNotifyServer"` — servizio Windows **separato** da quello (idle) di `robocopy_ingest`. Il corpo del servizio ricostruisce `Args` dall'argv reale, esegue axum in un `tokio::runtime::Runtime` costruito sul thread del dispatcher SCM, e collega lo `Stop` di SCM allo shutdown graceful via `spawn_blocking` → `tokio::sync::oneshot`. |
-| `src/restore.rs` | Disaster Recovery e Ripristino guidato. | `build_restore_args` clona gli `Args` **realmente parsati per questa invocazione** (non li ricostruisce da zero) e sovrascrive solo i campi che devono provenire dal report. |
-| `src/checkpoint.rs` | Checkpoint di esecuzione e ripresa. | Scritto su `Ctrl+C` da `run()`. `--resume-from` ricostruisce l'invocazione interrotta con la stessa disciplina di `build_restore_args` (clone degli Args reali, non `try_parse_from`). Sfrutta lo skip automatico di robocopy per i file già a destinazione (niente `/Z`). |
-| `src/generations.rs` | Backup a generazioni Full/Incrementale/Differenziale + retention. | Ogni run scrive in `<dest>/<timestamp>_<tipo>/` e registra l'inventario completo della sorgente in `<dest>/.rustcopy_generations.json` (`GenerationManifest`). `changed_since` diffa size+mtime; `incremental` confronta contro `latest()`, `differential` contro `latest_full()`. `cycles()`/`generations_to_prune()`/`retain_generations()` (F35) implementano `--keep-generations`: rotazione per **ciclo** (un `full` + i suoi `incremental`/`differential` successivi), mai per singola generazione, per non orfanare una catena. **D12**: `GenerationManifest::path_for`/`load_or_default`/`save` accettano un `job_name: Option<&str>` — namespacizzato via `robocopy_ingest::namespaced_path` in un batch `[[jobs]]` (F33) così due job che condividono la stessa `dest` non mescolino le loro cronologie di generazioni in un unico manifest. **D19**: il formato su disco è NDJSON (una riga compatta per generazione); `append_generation` registra una nuova generazione con un append O(1) invece di riscrivere tutto, `save` resta per il solo pruning. **D20**: `load_latest_generation`/`load_latest_full_generation` leggono in streaming la sola generazione di riferimento, e `GenerationIndex` carica la cronologia senza gli inventari `files` per la retention — 580 MB → 145 MB (riferimento) e ~0 MB (retention) sul profilo reale da 1,34M file; `--backup-type full` non legge più nulla. `cycles()` e `GenerationIndex::generations_to_prune()` condividono un'unica `cycle_ranges()`. |
-| `src/hooks.rs` | Comandi pre/post job (F39). | `run_pre_command`/`run_post_command` via `cmd /C` (Windows) / `sh -c` (altrove). Un `--pre-command` fallito abortisce il job **prima** di copiare qualunque cosa; un `--post-command` fallito viene solo loggato/registrato in `IngestReport.post_command_error`, senza far fallire un backup già riuscito. |
-| `src/schedule.rs` | Scheduler leggero via Task Scheduler (F36). | Shella a `schtasks.exe` invece di un processo scheduler interno — stesso pattern di `vss.rs`/`vssadmin.exe`. `parse_schedule_spec` accetta `daily@HH:MM`/`hourly@N`/`weekly@DAY,...@HH:MM`. Il comando pianificato (`/TR`) è costruito dall'argv **reale** dell'invocazione (`strip_schedule_flags` toglie solo i flag di scheduling), non da una ricostruzione sintetica di `Args`. |
-| `src/vss.rs` | Snapshot Volume Shadow Copy. | Shell-out a `vssadmin create/delete shadow`. `VssGuard` (RAII `Drop` sincrono) garantisce la pulizia anche su `Ctrl+C`. Il device path della shadow copy viene usato come `effective_source` senza mutare `Args`. Richiede Amministratore. |
-| `src/cache.rs` | Cache di stato incrementale per `--fast-verify`. | `IngestCache` keyed su size+mtime **sorgente**, persistita in `<dest>/.ingest_cache`. Un file che fallisce la verifica non viene mai messo in cache. **D12**: `default_cache_path` accetta un `job_name: Option<&str>` — namespacizzato per lo stesso motivo del manifest generazioni. `--enable-dedup` (deduplica a livello di trasferimento) **non è implementato**. |
-| `src/cloud.rs` | **[NON IMPLEMENTATO]** Sincronizzazione Cloud diretta. | `sync_to_cloud` è un mock che ritorna sempre `Ok(100)`; `--cloud-sync-target` non ha effetto. |
-| `src/service.rs` | Integrazione **generica** e riutilizzabile al Service Control Manager di Windows (F37/F41). | `windows-service` crate (dipendenza `[target.'cfg(windows)'.dependencies]`). Espone `install_named`/`uninstall_named`/`start_dispatcher`/`register_and_wait_for_stop`/`ServiceStatusHandle`, parametrizzati per nome/display-name — nessuna dipendenza da axum. Usato da **due** identità di servizio indipendenti: `robocopy_ingest` (`"RustcopyIngestService"`, F37, resta **inattivo** — risponde solo a Stop/Interrogate, `install()`/`uninstall()`/`run_service_dispatcher()` restano wrapper a zero argomenti) e `notify-server` (`"RustcopyNotifyServer"`, F41, esegue davvero axum). Entrambi i `main()` non sono più `#[tokio::main]`: controllano l'argv grezzo per il marker interno `--run-as-service` prima di costruire il runtime tokio, perché `service_dispatcher::start` blocca il thread OS chiamante. |
-| `src/crypto.rs` | Cifratura/decifratura Zero-Trust. | **AES-256-GCM a blocchi da 1 MiB**, nonce fresco per blocco, header `RCE1` + record length-prefixed, file temporaneo sibling + rename atomico. `--decrypt <KEY>` è il simmetrico di `--encrypt-aes256`. |
-| `src/exit_code.rs` | Decodifica bitmask exit code robocopy. | Interpreta i codici di uscita di robocopy; `EXIT_INTEGRITY_FAILED = 4` distingue fallimento di integrità da fallimento di trasferimento. |
-| `src/errors.rs` | Enum `IngestError` con classificazione retry. | Errori tipizzati con `is_retryable()` per il backoff automatico. |
-| `src/progress.rs` | Progress bar monotonica con throughput. | Observer pattern per aggiornamenti in tempo reale dalla pipeline di trasferimento. |
-| `src/testkit.rs` | `ScriptedRunner` e test doubles cross-platform. | Implementa `CommandRunner` con output predefiniti per testare parser, retry e progress senza `robocopy.exe`. |
-| `src/lib.rs` | Radice del crate e helper trasversali. | Espone i moduli pubblici e ospita le funzioni condivise che non appartengono a un modulo specifico: `atomic_write` (scrittura temp-file + rename, D14), `namespaced_path` (namespacing per job in un batch `[[jobs]]`, D12) e `resolve_report_path_timestamp` (placeholder `{timestamp}` in `--report-path`, P1). |
+| `crates/rustcopy-cli/src/main.rs` | Orchestrazione asincrona e gestione dei segnali. | `tokio::select!` per cattura `Ctrl+C`; termina solo il PID del child `robocopy.exe` tracciato (non `taskkill /IM`); esegue `check_mirror_safety` (diff reale dest vs source) prima del trasferimento; scrive checkpoint su interruzione. |
+| `crates/rustcopy-core/src/cli.rs` | Definition, parsing e validazione delle opzioni CLI. | Struct `clap` derivata con default `*`, flag `--force-purge` e merge automatico dai profili TOML. `--source`/`--dest` sono `Option<PathBuf>` con `required_unless_present = "restore_from"` (fix F24); accessor `Args::source()`/`Args::dest()` restituiscono `&Path`. |
+| `crates/rustcopy-core/src/config.rs` | Caricamento e parsing delle configurazioni riutilizzabili. | Deserializzazione TOML tramite `serde`. Supporta `[[jobs]]` (array di `JobConfig`) con ereditarietà dai default di primo livello del file (`JobConfig::merged_over`). |
+| `crates/rustcopy-core/src/engine/mod.rs` | Astrazione del motore di copia. | Trait `CopyEngine` per disaccoppiare Robocopy dalla copia Naive; `run_with_retries` con backoff esponenziale su exit code transienti. |
+| `crates/rustcopy-core/src/engine/robocopy.rs` | Wrapper ad altissime prestazioni per `robocopy.exe`. | Streaming `read_until` binario, buffer riutilizzato, decodifica OEM via `crates/rustcopy-core/src/oem_codec.rs`, stdout e stderr entrambi drenati (su thread separati) invece di scartare stderr, PID del child pubblicato per il kill mirato su Ctrl+C. |
+| `crates/rustcopy-core/src/engine/naive.rs` | Motore di copia baseline e copia selettiva per generazioni. | Copia ricorsiva single-thread con buffer 64 KiB. `copy_selected` accetta un elenco esplicito di file per le copie incrementali (generazioni), usato al posto di robocopy perché robocopy non accetta liste arbitrarie di percorsi. |
+| `crates/rustcopy-core/src/oem_codec.rs` | Decodifica OEM/CP850. | Tabella CP850 hardcoded (0x80-0xFF) più controllo a runtime di `GetOEMCP()`; `encoding_rs` non implementa le code page DOS single-byte, quindi non viene usato per questo scopo. |
+| `crates/rustcopy-core/src/integrity.rs` | Verifica di corrispondenza sorgente/destinazione. | Parallelizzazione multi-core con **Rayon** (`par_iter`), pre-check taglia file, **BLAKE3 / SHA-256 / xxHash3** e cap errore a 10k per OOM guard. Supporta `--fast-verify` via `IngestCache`. |
+| `crates/rustcopy-core/src/logging.rs` | Logging asincrono su file per-file. | Canale asincrono `bounded_channel(10_000)` con strategia non bloccante (`try_send`); le righe scartate vengono contate. `--log-level`/`--quiet` per il filtro (default `info`, non più `debug`, D18), `--log-max-bytes`/`--log-max-backups` per la rotazione — sia all'avvio sia durante il run stesso (D18). |
+| `crates/rustcopy-core/src/report.rs` | Generazione dello schema JSON completo. | Serializzazione `serde_json`, conteggio temporizzazioni di fase (`PhaseTiming`), metadati host (`HostMetadata`), `SCHEMA_VERSION = 2`. |
+| `crates/rustcopy-core/src/html_report.rs` | Dashboard visiva HTML standalone. | Template HTML5 autonomo con CSS incorporato; ogni valore interpolato passa da `escape_html`. |
+| `crates/rustcopy-core/src/notify.rs` | Invio notifiche Webhook di completamento. | `WebhookPayload` (con `schema_version`, `BackupStatus` tipizzato) inviato via `reqwest`+`rustls` a `--webhook-url`. Timeout 10s, errori reali propagati. |
+| `crates/rustcopy-core/src/notify_sink.rs` | Canali di notifica per il notify-server. | Trait `NotificationSink` (stesso pattern di `CommandRunner`/`CopyEngine`); `LogSink`/`NtfySink`/`GenericWebhookSink`; config TOML (`NotifyServerConfig`). Sempre compilato (nessuna dipendenza da axum), testabile con un doppio scriptato. |
+| `crates/rustcopy-core/src/notify_server.rs` + `src/bin/notify_server.rs` | Server HTTP di ricezione notifiche, con identità di servizio Windows propria. | Router axum (`GET /health`, `POST /notify`), autenticazione a token via header, bind loopback forzato senza token, `DefaultBodyLimit`, graceful shutdown (`serve_until_shutdown`/`serve_until_shutdown_or`). Feature-gated (`notify-server`): axum non entra nelle dipendenze del binario di backup. `--install-service`/`--uninstall-service` (F41) registrano `"RustcopyNotifyServer"` — servizio Windows **separato** da quello (idle) di `robocopy_ingest`. Il corpo del servizio ricostruisce `Args` dall'argv reale, esegue axum in un `tokio::runtime::Runtime` costruito sul thread del dispatcher SCM, e collega lo `Stop` di SCM allo shutdown graceful via `spawn_blocking` → `tokio::sync::oneshot`. |
+| `crates/rustcopy-core/src/restore.rs` | Disaster Recovery e Ripristino guidato. | `build_restore_args` clona gli `Args` **realmente parsati per questa invocazione** (non li ricostruisce da zero) e sovrascrive solo i campi che devono provenire dal report. |
+| `crates/rustcopy-core/src/checkpoint.rs` | Checkpoint di esecuzione e ripresa. | Scritto su `Ctrl+C` da `run()`. `--resume-from` ricostruisce l'invocazione interrotta con la stessa disciplina di `build_restore_args` (clone degli Args reali, non `try_parse_from`). Sfrutta lo skip automatico di robocopy per i file già a destinazione (niente `/Z`). |
+| `crates/rustcopy-core/src/generations.rs` | Backup a generazioni Full/Incrementale/Differenziale + retention. | Ogni run scrive in `<dest>/<timestamp>_<tipo>/` e registra l'inventario completo della sorgente in `<dest>/.rustcopy_generations.json` (`GenerationManifest`). `changed_since` diffa size+mtime; `incremental` confronta contro `latest()`, `differential` contro `latest_full()`. `cycles()`/`generations_to_prune()`/`retain_generations()` (F35) implementano `--keep-generations`: rotazione per **ciclo** (un `full` + i suoi `incremental`/`differential` successivi), mai per singola generazione, per non orfanare una catena. **D12**: `GenerationManifest::path_for`/`load_or_default`/`save` accettano un `job_name: Option<&str>` — namespacizzato via `robocopy_ingest::namespaced_path` in un batch `[[jobs]]` (F33) così due job che condividono la stessa `dest` non mescolino le loro cronologie di generazioni in un unico manifest. **D19**: il formato su disco è NDJSON (una riga compatta per generazione); `append_generation` registra una nuova generazione con un append O(1) invece di riscrivere tutto, `save` resta per il solo pruning. **D20**: `load_latest_generation`/`load_latest_full_generation` leggono in streaming la sola generazione di riferimento, e `GenerationIndex` carica la cronologia senza gli inventari `files` per la retention — 580 MB → 145 MB (riferimento) e ~0 MB (retention) sul profilo reale da 1,34M file; `--backup-type full` non legge più nulla. `cycles()` e `GenerationIndex::generations_to_prune()` condividono un'unica `cycle_ranges()`. |
+| `crates/rustcopy-core/src/hooks.rs` | Comandi pre/post job (F39). | `run_pre_command`/`run_post_command` via `cmd /C` (Windows) / `sh -c` (altrove). Un `--pre-command` fallito abortisce il job **prima** di copiare qualunque cosa; un `--post-command` fallito viene solo loggato/registrato in `IngestReport.post_command_error`, senza far fallire un backup già riuscito. |
+| `crates/rustcopy-core/src/schedule.rs` | Scheduler leggero via Task Scheduler (F36). | Shella a `schtasks.exe` invece di un processo scheduler interno — stesso pattern di `vss.rs`/`vssadmin.exe`. `parse_schedule_spec` accetta `daily@HH:MM`/`hourly@N`/`weekly@DAY,...@HH:MM`. Il comando pianificato (`/TR`) è costruito dall'argv **reale** dell'invocazione (`strip_schedule_flags` toglie solo i flag di scheduling), non da una ricostruzione sintetica di `Args`. |
+| `crates/rustcopy-core/src/vss.rs` | Snapshot Volume Shadow Copy. | Shell-out a `vssadmin create/delete shadow`. `VssGuard` (RAII `Drop` sincrono) garantisce la pulizia anche su `Ctrl+C`. Il device path della shadow copy viene usato come `effective_source` senza mutare `Args`. Richiede Amministratore. |
+| `crates/rustcopy-core/src/cache.rs` | Cache di stato incrementale per `--fast-verify`. | `IngestCache` keyed su size+mtime **sorgente**, persistita in `<dest>/.ingest_cache`. Un file che fallisce la verifica non viene mai messo in cache. **D12**: `default_cache_path` accetta un `job_name: Option<&str>` — namespacizzato per lo stesso motivo del manifest generazioni. `--enable-dedup` (deduplica a livello di trasferimento) **non è implementato**. |
+| `crates/rustcopy-core/src/cloud.rs` | **[NON IMPLEMENTATO]** Sincronizzazione Cloud diretta. | `sync_to_cloud` è un mock che ritorna sempre `Ok(100)`; `--cloud-sync-target` non ha effetto. |
+| `crates/rustcopy-core/src/service.rs` | Integrazione **generica** e riutilizzabile al Service Control Manager di Windows (F37/F41). | `windows-service` crate (dipendenza `[target.'cfg(windows)'.dependencies]`). Espone `install_named`/`uninstall_named`/`start_dispatcher`/`register_and_wait_for_stop`/`ServiceStatusHandle`, parametrizzati per nome/display-name — nessuna dipendenza da axum. Usato da **due** identità di servizio indipendenti: `robocopy_ingest` (`"RustcopyIngestService"`, F37, resta **inattivo** — risponde solo a Stop/Interrogate, `install()`/`uninstall()`/`run_service_dispatcher()` restano wrapper a zero argomenti) e `notify-server` (`"RustcopyNotifyServer"`, F41, esegue davvero axum). Entrambi i `main()` non sono più `#[tokio::main]`: controllano l'argv grezzo per il marker interno `--run-as-service` prima di costruire il runtime tokio, perché `service_dispatcher::start` blocca il thread OS chiamante. |
+| `crates/rustcopy-core/src/crypto.rs` | Cifratura/decifratura Zero-Trust. | **AES-256-GCM a blocchi da 1 MiB**, nonce fresco per blocco, header `RCE1` + record length-prefixed, file temporaneo sibling + rename atomico. `--decrypt <KEY>` è il simmetrico di `--encrypt-aes256`. |
+| `crates/rustcopy-core/src/exit_code.rs` | Decodifica bitmask exit code robocopy. | Interpreta i codici di uscita di robocopy; `EXIT_INTEGRITY_FAILED = 4` distingue fallimento di integrità da fallimento di trasferimento. |
+| `crates/rustcopy-core/src/errors.rs` | Enum `IngestError` con classificazione retry. | Errori tipizzati con `is_retryable()` per il backoff automatico. |
+| `crates/rustcopy-core/src/progress.rs` | Progress bar monotonica con throughput. | Observer pattern per aggiornamenti in tempo reale dalla pipeline di trasferimento. |
+| `crates/rustcopy-core/src/testkit.rs` | `ScriptedRunner` e test doubles cross-platform. | Implementa `CommandRunner` con output predefiniti per testare parser, retry e progress senza `robocopy.exe`. |
+| `crates/rustcopy-core/src/lib.rs` | Radice del crate e helper trasversali. | Espone i moduli pubblici e ospita le funzioni condivise che non appartengono a un modulo specifico: `atomic_write` (scrittura temp-file + rename, D14), `namespaced_path` (namespacing per job in un batch `[[jobs]]`, D12) e `resolve_report_path_timestamp` (placeholder `{timestamp}` in `--report-path`, P1). |
 
 ---
 
@@ -117,7 +151,7 @@ sequenceDiagram
     autonumber
     participant CLI as CLI / Main
     participant VSS as VSS Snapshot
-    participant Prescan as Prescan (src/scan.rs)
+    participant Prescan as Prescan (crates/rustcopy-core/src/scan.rs)
     participant Engine as Robocopy Engine
     participant Verify as Integrity Check (Rayon)
     participant Output as Logger & Webhook & HTML
