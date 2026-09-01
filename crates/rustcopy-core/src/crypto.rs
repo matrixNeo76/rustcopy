@@ -557,13 +557,9 @@ mod tests {
     /// `file:` spec that worked before this change has to work after it, unchanged.
     #[test]
     fn the_existing_key_forms_still_resolve_after_adding_keyring() {
-        // SAFETY: single-threaded test, variable is read back immediately below.
-        unsafe { std::env::set_var("RUSTCOPY_F56_ENV_PROBE", "from-env") };
-        assert_eq!(
-            resolve_key("env:RUSTCOPY_F56_ENV_PROBE").expect("env form"),
-            "from-env"
-        );
-
+        // No `set_var` here. libtest runs tests on parallel threads, so mutating the process
+        // environment is not safe, and the "single-threaded test" claim this once carried was
+        // simply untrue. The `env:` form has `resolve_key_reads_from_env` above, which covers it.
         let dir = tempfile::tempdir().expect("tempdir");
         let path = dir.path().join("key.txt");
         std::fs::write(

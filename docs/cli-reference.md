@@ -66,7 +66,7 @@ completi e i comandi reali verificati sul campo vedi il [RUNBOOK](../RUNBOOK.md)
 | `--decrypt <KEY>` | *nessuno* | — | Decifra ogni file in destinazione dopo il trasferimento — il simmetrico di `--encrypt-aes256`, stesso formato `KEY`. Tipicamente usato con `--restore-from` per ripristinare un backup cifrato. Non combinabile con `--encrypt-aes256` nello stesso comando. |
 | `--install-service` | `false` | — | (Release 6.0.0, F37) Registra questo binario come servizio Windows reale (via Service Control Manager) ed esce senza eseguire un backup ora. Il servizio parte `OnDemand` e resta **inattivo** una volta avviato (risponde solo a Stop/Interrogate) — nessuna logica di backup gira al suo interno. Il servizio che *fa* davvero qualcosa è quello di `notify-server.exe` (F41, identità separata — vedi la nota nella sezione Scheduling). **Richiede Amministratore**. Non richiede `--source`/`--dest`. Incompatibile con `--uninstall-service`. |
 | `--uninstall-service` | `false` | — | (Release 6.0.0, F37) Rimuove il servizio Windows precedentemente installato ed esce. **Richiede Amministratore**. Non richiede `--source`/`--dest`. Incompatibile con `--install-service`. |
-| `--set-credential <NAME>` | *nessuno* | — | (F56) Memorizza un segreto nel **Windows Credential Manager** con questo nome, poi esce. Il segreto è letto da **stdin**, mai dalla riga di comando: un argomento sarebbe visibile nella process list, che è esattamente l'esposizione da cui mette in guardia la forma letterale di `--encrypt-aes256`. Uso: `echo <segreto> \| robocopy_ingest --set-credential nas-key`. Non richiede `--source`/`--dest`. **Solo Windows.** |
+| `--set-credential <NAME>` | *nessuno* | — | (F56) Memorizza un segreto nel **Windows Credential Manager** con questo nome, poi esce. Il segreto è letto da **stdin**, mai dalla riga di comando: un argomento sarebbe visibile nella process list, che è esattamente l'esposizione da cui mette in guardia la forma letterale di `--encrypt-aes256`. Uso: `echo my-secret \| robocopy_ingest --set-credential nas-key`. Non richiede `--source`/`--dest`. **Solo Windows.** |
 | `--delete-credential <NAME>` | *nessuno* | — | (F56) Rimuove un segreto memorizzato con `--set-credential`, poi esce. **Solo Windows.** Incompatibile con `--set-credential`. |
 | `--advise` | `false` | — | Analizza lo **storico delle run** e stampa suggerimenti deterministici (intervallo di schedulazione sicuro, costo della retention, `--threads`, anomalie, fallimenti di integrità ricorrenti), poi esce. Legge `.rustcopy_history.jsonl` dalla directory di `--report-path`, scritto automaticamente a fine di ogni run. **Non richiede `--source` né `--dest`**: ispeziona run passate e non copia nulla. Nessun modello linguistico e nessuna rete — è statistica sui report già prodotti, e ogni proposta mostra i numeri da cui deriva. Suggerisce e non applica mai: le operazioni distruttive restano dell'operatore. |
 | `--enable-dedup` | `false` | — | **[NON IMPLEMENTATO]** Accettato per compatibilità futura; nessuna cache di stato viene usata. |
@@ -119,7 +119,7 @@ funzionare intatta.
 Per popolare il Credential Manager:
 
 ```text
-echo <segreto> | robocopy_ingest --set-credential nas-key
+echo my-secret | robocopy_ingest --set-credential nas-key
 robocopy_ingest --source ... --dest ... --encrypt-aes256 keyring:nas-key
 robocopy_ingest --delete-credential nas-key
 ```

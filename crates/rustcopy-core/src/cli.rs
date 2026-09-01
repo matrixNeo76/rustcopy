@@ -454,11 +454,39 @@ pub struct Args {
     ///   echo my-secret | robocopy_ingest --set-credential nas-key
     ///
     /// Requires neither `--source` nor `--dest`.
-    #[arg(long, value_name = "NAME")]
+    #[arg(
+        long,
+        value_name = "NAME",
+        // Every meta-operation returns early from `run()`, so combining two would silently run
+        // whichever branch comes first and ignore the other. Rejecting the combination at parse
+        // time says so instead of quietly picking one.
+        conflicts_with_all = [
+            "delete_credential",
+            "advise",
+            "install_schedule",
+            "uninstall_schedule",
+            "install_service",
+            "uninstall_service",
+            "restore_from",
+            "resume_from"
+        ]
+    )]
     pub set_credential: Option<String>,
 
     /// Remove a secret previously stored with `--set-credential`, then exit.
-    #[arg(long, value_name = "NAME", conflicts_with = "set_credential")]
+    #[arg(
+        long,
+        value_name = "NAME",
+        conflicts_with_all = [
+            "advise",
+            "install_schedule",
+            "uninstall_schedule",
+            "install_service",
+            "uninstall_service",
+            "restore_from",
+            "resume_from"
+        ]
+    )]
     pub delete_credential: Option<String>,
 
     // ── F33 internal: multi-job cache/manifest namespacing (D12) ─────────────

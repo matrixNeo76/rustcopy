@@ -141,7 +141,11 @@ async fn run(mut args: Args) -> Result<u8> {
             std::io::stdin()
                 .read_to_string(&mut secret)
                 .context("cannot read the secret from stdin")?;
-            let secret = secret.trim_end();
+            // Only the terminal line ending, not every trailing space: a passphrase may legally
+            // end in whitespace, and silently altering a secret is the worst shape this bug could
+            // take -- it would surface as a decryption failure later, far from the cause.
+            let secret = secret.strip_suffix('\n').unwrap_or(&secret);
+            let secret = secret.strip_suffix('\r').unwrap_or(secret);
             if secret.is_empty() {
                 anyhow::bail!(
                     "no secret on stdin. Pipe it in:  echo <secret> | robocopy_ingest --set-credential {name}"
