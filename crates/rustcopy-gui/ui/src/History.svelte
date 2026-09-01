@@ -4,6 +4,10 @@
   // Read-only, like the rest of this version: this pane opens files the CLI already wrote and
   // renders them. It never asks the engine to do anything.
   let reportPath = $state("");
+  // A `[[jobs]]` entry keeps its own namespaced index (`.rustcopy_history.<job>.jsonl`, D12), so a
+  // hardcoded `null` here would silently show an empty history for every named job. Left blank for
+  // single-job configs, where the index has no job suffix.
+  let jobName = $state("");
   let history = $state(null);
   let advice = $state([]);
   let error = $state(null);
@@ -26,8 +30,10 @@
     try {
       // Two calls rather than one combined view: the history is what happened, the advice is a
       // reading of it. Keeping them apart means a parse problem in one does not blank the other.
-      history = await invoke("read_history", { reportPath, jobName: null, limit: 100 });
-      advice = await invoke("read_advice", { reportPath, jobName: null });
+      // Empty means "the un-suffixed index", which is what a single-job run writes.
+      const job = jobName.trim() === "" ? null : jobName.trim();
+      history = await invoke("read_history", { reportPath, jobName: job, limit: 100 });
+      advice = await invoke("read_advice", { reportPath, jobName: job });
     } catch (e) {
       error = String(e);
       history = null;
@@ -65,6 +71,13 @@
       class="flex-1 rounded border border-slate-300 px-2 py-1 text-sm dark:border-slate-700 dark:bg-slate-900"
       placeholder="Percorso di un report JSON (lo storico sta lì accanto)"
       bind:value={reportPath}
+    />
+    <label class="sr-only" for="job-name">Nome del job, se il file usa [[jobs]]</label>
+    <input
+      id="job-name"
+      class="w-48 rounded border border-slate-300 px-2 py-1 text-sm dark:border-slate-700 dark:bg-slate-900"
+      placeholder="Job (vuoto = singolo)"
+      bind:value={jobName}
     />
     <button
       class="rounded bg-blue-600 px-3 py-1 text-sm text-white disabled:opacity-50"
@@ -121,7 +134,16 @@
       Run ({history.runs.length}{history.runs.length === history.limit_applied ? ", le più recenti" : ""})
     </h2>
     {#if history.runs.length === 0}
-      <p class="mt-1 text-sm text-slate-500">Nessuna run registrata per questo percorso.</p>
+      <p class="mt-1 text-sm text-slate-500">
+        Nessuna run registrata
+        {#if jobName.trim() !== ""}
+          per il job «{jobName.trim()}»: l'indice di un job nominato è
+          <code>.rustcopy_history.{jobName.trim()}.jsonl</code>, accanto al report.
+        {:else}
+          per questo percorso. Se il file di configurazione usa <code>[[jobs]]</code>, indica il nome del job:
+          ogni job ha un indice separato.
+        {/if}
+      </p>
     {:else}
       <table class="mt-1 w-full text-left text-xs">
         <thead class="border-b border-slate-300 dark:border-slate-700">

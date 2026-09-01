@@ -215,7 +215,10 @@ pub fn read_history(
     job_name: Option<&str>,
     limit: usize,
 ) -> Result<HistoryView, IngestError> {
-    let limit = limit.min(MAX_HISTORY_PAGE);
+    // `clamp`, not `min`: `RunHistory::load_recent` treats a limit of zero as **unbounded** — a
+    // documented behaviour with a test of its own — so capping only the upper end left a caller
+    // able to pass 0 and receive the entire index. The ceiling needed a floor.
+    let limit = limit.clamp(1, MAX_HISTORY_PAGE);
     let history = RunHistory::load_recent(report_path, job_name, limit)?;
     Ok(HistoryView {
         runs: history.records().to_vec(),
@@ -621,5 +624,25 @@ fast_verify = true
         let json = serde_json::to_string(&advice).expect("Advice must serialize");
         let back: Vec<crate::advise::Advice> = serde_json::from_str(&json).expect("round-trip");
         assert_eq!(back, advice);
+    }
+    /// A zero limit must not mean "everything". `RunHistory::load_recent` documents zero as
+    /// unbounded, so the upper-bound-only clamp this replaced let a caller ask for the whole index
+    /// by asking for nothing — the ceiling had a hole in its floor.
+    #[test]
+    fn a_zero_history_limit_does_not_mean_unlimited() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let report = history_at(dir.path(), 20);
+
+        let view = read_history(&report, None, 0).expect("reads");
+
+        assert_eq!(
+            view.limit_applied, 1,
+            "zero is raised to the smallest real window"
+        );
+        assert_eq!(
+            view.runs.len(),
+            1,
+            "and returns that window, not the whole index"
+        );
     }
 }
