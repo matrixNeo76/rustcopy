@@ -92,7 +92,9 @@ pub struct Args {
             "uninstall_schedule",
             "install_service",
             "uninstall_service",
-            "advise"
+            "advise",
+            "set_credential",
+            "delete_credential"
         ]
     )]
     pub source: Option<PathBuf>,
@@ -109,7 +111,9 @@ pub struct Args {
             "uninstall_schedule",
             "install_service",
             "uninstall_service",
-            "advise"
+            "advise",
+            "set_credential",
+            "delete_credential"
         ]
     )]
     pub dest: Option<PathBuf>,
@@ -441,6 +445,22 @@ pub struct Args {
     )]
     pub advise: bool,
 
+    /// Store a secret in the Windows Credential Manager under this name, then exit.
+    ///
+    /// The secret itself is read from **stdin**, never from the command line: an argument would be
+    /// visible in the process list, which is the exact exposure `--encrypt-aes256 <literal>` warns
+    /// about. Reference it afterwards as `keyring:NAME` wherever a key is accepted.
+    ///
+    ///   echo my-secret | robocopy_ingest --set-credential nas-key
+    ///
+    /// Requires neither `--source` nor `--dest`.
+    #[arg(long, value_name = "NAME")]
+    pub set_credential: Option<String>,
+
+    /// Remove a secret previously stored with `--set-credential`, then exit.
+    #[arg(long, value_name = "NAME", conflicts_with = "set_credential")]
+    pub delete_credential: Option<String>,
+
     // ── F33 internal: multi-job cache/manifest namespacing (D12) ─────────────
     /// Internal-only, never a real CLI flag (`#[arg(skip)]`, no `--job-name`): set by
     /// `main.rs::run_jobs` to the current job's name so the fast-verify cache and the
@@ -614,6 +634,9 @@ impl Args {
             // --advise reads a history file and prints; none of the transfer-shaped checks below
             // (thread range, source exists, dest writable) describe anything it does.
             || self.advise
+            // Credential management touches no path: none of the transfer checks below apply.
+            || self.set_credential.is_some()
+            || self.delete_credential.is_some()
         {
             return Ok(());
         }

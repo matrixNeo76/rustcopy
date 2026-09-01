@@ -50,6 +50,7 @@ notify-server = ["dep:axum", "dep:subtle"]
 
 [target.'cfg(windows)'.dependencies]
 windows-service.workspace = true
+keyring.workspace = true
 
 [dev-dependencies]
 tempfile.workspace = true

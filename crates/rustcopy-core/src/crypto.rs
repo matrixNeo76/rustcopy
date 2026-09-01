@@ -231,15 +231,66 @@ fn sibling_tmp_path(path: &Path) -> PathBuf {
     path.with_file_name(tmp_name)
 }
 
-/// Resolve the key material for `--encrypt-aes256`/`--decrypt <VALUE>`.
+/// Service name under which secrets are stored in the Windows Credential Manager.
 ///
-/// `VALUE` may be:
-/// * `env:NAME`  — read the key from environment variable `NAME`;
-/// * `file:PATH` — read the key from the first line of the file at `PATH`;
-/// * anything else is treated as a literal passphrase (discouraged: it is visible in the
-///   process list / shell history on most systems).
+/// Stable on purpose: changing it would orphan every credential an operator has already stored,
+/// and the failure would show up as "key not found" on a scheduled run at 03:00.
+pub const CREDENTIAL_SERVICE: &str = "rustcopy";
+
+/// Reads a secret from the Windows Credential Manager (DPAPI).
+///
+/// Separate from [`resolve_key`] so the GUI and the `--set-credential` path can share it.
+#[cfg(windows)]
+pub fn read_credential(name: &str) -> Result<String, IngestError> {
+    keyring::Entry::new(CREDENTIAL_SERVICE, name)
+        .and_then(|entry| entry.get_password())
+        .map_err(|error| {
+            IngestError::Crypto(format!(
+                "cannot read credential {name:?} from the Windows Credential Manager: {error}.                  Store it first with --set-credential {name}"
+            ))
+        })
+}
+
+/// Stores a secret in the Windows Credential Manager, replacing any existing value.
+#[cfg(windows)]
+pub fn write_credential(name: &str, secret: &str) -> Result<(), IngestError> {
+    keyring::Entry::new(CREDENTIAL_SERVICE, name)
+        .and_then(|entry| entry.set_password(secret))
+        .map_err(|error| IngestError::Crypto(format!("cannot store credential {name:?}: {error}")))
+}
+
+/// Removes a secret from the Windows Credential Manager.
+#[cfg(windows)]
+pub fn delete_credential(name: &str) -> Result<(), IngestError> {
+    keyring::Entry::new(CREDENTIAL_SERVICE, name)
+        .and_then(|entry| entry.delete_credential())
+        .map_err(|error| IngestError::Crypto(format!("cannot delete credential {name:?}: {error}")))
+}
+
+#[cfg(not(windows))]
+pub fn read_credential(name: &str) -> Result<String, IngestError> {
+    Err(IngestError::Crypto(format!(
+        "keyring:{name} needs the Windows Credential Manager, which this platform does not have.          Use env:NAME or file:PATH instead."
+    )))
+}
+
+/// Resolves a key specification to the secret itself.
+///
+/// Four forms, and the order below is the order they are tried:
+///
+/// - `keyring:NAME` — the Windows Credential Manager (F56). The secret never appears in a file, in
+///   the process list, or in an environment variable a child process inherits.
+/// - `env:NAME` — an environment variable.
+/// - `file:PATH` — the first line of a file.
+/// - anything else — the literal secret, which is **visible in the process list** and warned about.
+///
+/// F56 **extends** this convention rather than replacing it: existing `env:`/`file:` specs in
+/// configs and scheduled tasks keep working untouched, which matters because a scheduled task's
+/// command line was captured at install time and cannot be migrated by editing a config file.
 pub fn resolve_key(value: &str) -> Result<String, IngestError> {
-    if let Some(name) = value.strip_prefix("env:") {
+    if let Some(name) = value.strip_prefix("keyring:") {
+        read_credential(name)
+    } else if let Some(name) = value.strip_prefix("env:") {
         std::env::var(name)
             .map_err(|_| IngestError::Crypto(format!("environment variable {name} is not set")))
     } else if let Some(path) = value.strip_prefix("file:") {
@@ -500,5 +551,72 @@ mod tests {
     #[test]
     fn resolve_key_treats_plain_value_as_literal() {
         assert_eq!(resolve_key("literal").expect("resolve"), "literal");
+    }
+    /// F56 **extends** the convention; it must not disturb it. A scheduled task's command line was
+    /// captured at install time (F36) and cannot be migrated by editing a config, so an `env:` or
+    /// `file:` spec that worked before this change has to work after it, unchanged.
+    #[test]
+    fn the_existing_key_forms_still_resolve_after_adding_keyring() {
+        // SAFETY: single-threaded test, variable is read back immediately below.
+        unsafe { std::env::set_var("RUSTCOPY_F56_ENV_PROBE", "from-env") };
+        assert_eq!(
+            resolve_key("env:RUSTCOPY_F56_ENV_PROBE").expect("env form"),
+            "from-env"
+        );
+
+        let dir = tempfile::tempdir().expect("tempdir");
+        let path = dir.path().join("key.txt");
+        std::fs::write(
+            &path,
+            "from-file
+ignored second line
+",
+        )
+        .expect("write");
+        assert_eq!(
+            resolve_key(&format!("file:{}", path.display())).expect("file form"),
+            "from-file"
+        );
+
+        assert_eq!(resolve_key("literal").expect("literal form"), "literal");
+    }
+
+    /// A `keyring:` spec that names nothing stored must fail with a message that says what to do,
+    /// not just that something went wrong. This is the error an operator meets at 03:00 when a
+    /// scheduled job cannot find its key.
+    #[cfg(windows)]
+    #[test]
+    fn a_missing_credential_explains_how_to_store_it() {
+        let name = format!("rustcopy-absent-{}", std::process::id());
+        let error = resolve_key(&format!("keyring:{name}")).expect_err("nothing is stored");
+        let text = format!("{error}");
+        assert!(
+            text.contains(&name),
+            "the message must name the credential: {text}"
+        );
+        assert!(
+            text.contains("--set-credential"),
+            "and say how to fix it: {text}"
+        );
+    }
+
+    /// The full round trip against the real Windows Credential Manager: store, read back, delete,
+    /// and confirm it is gone. Uses a process-unique name so concurrent runs cannot collide, and
+    /// cleans up even when an assertion fails.
+    #[cfg(windows)]
+    #[test]
+    fn a_credential_round_trips_through_the_windows_credential_manager() {
+        let name = format!("rustcopy-test-{}", std::process::id());
+        write_credential(&name, "top-secret").expect("store");
+
+        let read_back = resolve_key(&format!("keyring:{name}"));
+        let deleted = delete_credential(&name);
+
+        assert_eq!(read_back.expect("read back"), "top-secret");
+        deleted.expect("delete");
+        assert!(
+            resolve_key(&format!("keyring:{name}")).is_err(),
+            "a deleted credential must no longer resolve"
+        );
     }
 }

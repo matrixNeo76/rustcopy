@@ -41,6 +41,10 @@ axum = { version = "0.8" }
 # aes-gcm and rustls, so declaring it directly adds no crate to the build.
 subtle = "2"
 windows-service = "0.8"
+# F56: Windows Credential Manager (DPAPI) for `keyring:NAME` secrets. Only the native Windows
+# backend: the Linux one needs a running secret-service over D-Bus, which CI has not got and
+# which this Windows-native product does not need.
+keyring = { version = "3", default-features = false, features = ["windows-native"] }
 
 [workspace.package]
 version = "6.0.0"
