@@ -51,7 +51,7 @@ const MIN_RELATIVE_DEVIATION: f64 = 0.25;
 const MIN_BYTES_FOR_THROUGHPUT: u64 = 10 * 1024 * 1024;
 
 /// What a piece of advice is about.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub enum Topic {
     Schedule,
     Retention,
@@ -75,7 +75,9 @@ impl Topic {
 }
 
 /// How much attention an item deserves. Deliberately not an error type: nothing here fails a run.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, serde::Serialize, serde::Deserialize,
+)]
 pub enum Severity {
     /// Context, not a recommendation.
     Info,
@@ -96,7 +98,7 @@ impl Severity {
 }
 
 /// One suggestion, with the numbers that produced it.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct Advice {
     pub topic: Topic,
     pub severity: Severity,

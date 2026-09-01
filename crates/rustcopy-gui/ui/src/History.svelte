@@ -1,0 +1,182 @@
+<script>
+  import { invoke } from "@tauri-apps/api/core";
+
+  // Read-only, like the rest of this version: this pane opens files the CLI already wrote and
+  // renders them. It never asks the engine to do anything.
+  let reportPath = $state("");
+  // A `[[jobs]]` entry keeps its own namespaced index (`.rustcopy_history.<job>.jsonl`, D12), so a
+  // hardcoded `null` here would silently show an empty history for every named job. Left blank for
+  // single-job configs, where the index has no job suffix.
+  let jobName = $state("");
+  let history = $state(null);
+  let advice = $state([]);
+  let error = $state(null);
+  let loading = $state(false);
+
+  const SEVERITY_ORDER = { ATTENZIONE: 0, PROPOSTA: 1, INFO: 2 };
+
+  // The severities come from the library as an enum; the labels shown here are the same ones
+  // `--advise` prints, so the console and the CLI cannot disagree about how loud a finding is.
+  const SEVERITY_LABEL = { Warning: "ATTENZIONE", Suggestion: "PROPOSTA", Info: "INFO" };
+  const SEVERITY_CLASS = {
+    Warning: "bg-red-100 text-red-900 dark:bg-red-950 dark:text-red-200",
+    Suggestion: "bg-blue-100 text-blue-900 dark:bg-blue-950 dark:text-blue-200",
+    Info: "bg-slate-100 text-slate-700 dark:bg-slate-800 dark:text-slate-300",
+  };
+
+  async function load() {
+    error = null;
+    loading = true;
+    try {
+      // Two calls rather than one combined view: the history is what happened, the advice is a
+      // reading of it. Keeping them apart means a parse problem in one does not blank the other.
+      // Empty means "the un-suffixed index", which is what a single-job run writes.
+      const job = jobName.trim() === "" ? null : jobName.trim();
+      history = await invoke("read_history", { reportPath, jobName: job, limit: 100 });
+      advice = await invoke("read_advice", { reportPath, jobName: job });
+    } catch (e) {
+      error = String(e);
+      history = null;
+      advice = [];
+    } finally {
+      loading = false;
+    }
+  }
+
+  function duration(seconds) {
+    if (seconds < 10) return `${seconds.toFixed(2)}s`;
+    const total = Math.round(seconds);
+    const h = Math.floor(total / 3600);
+    const m = Math.floor((total % 3600) / 60);
+    return h > 0 ? `${h}h ${String(m).padStart(2, "0")}m` : `${m}m ${String(total % 60).padStart(2, "0")}s`;
+  }
+
+  // Exit codes are a contract with schedulers (AGENTS.md rule 12), so the console shows what each
+  // one means rather than colouring "non-zero" red. A 4 is not a failed copy.
+  const EXIT_MEANING = {
+    0: "riuscito",
+    1: "trasferimento fallito",
+    2: "errore d'uso",
+    3: "purge mirror annullata",
+    4: "copiato, verifica fallita",
+    5: "purge retention annullata",
+  };
+</script>
+
+<section class="p-4">
+  <div class="flex gap-2">
+    <label class="sr-only" for="report-path">Percorso del report JSON</label>
+    <input
+      id="report-path"
+      class="flex-1 rounded border border-slate-300 px-2 py-1 text-sm dark:border-slate-700 dark:bg-slate-900"
+      placeholder="Percorso di un report JSON (lo storico sta lì accanto)"
+      bind:value={reportPath}
+    />
+    <label class="sr-only" for="job-name">Nome del job, se il file usa [[jobs]]</label>
+    <input
+      id="job-name"
+      class="w-48 rounded border border-slate-300 px-2 py-1 text-sm dark:border-slate-700 dark:bg-slate-900"
+      placeholder="Job (vuoto = singolo)"
+      bind:value={jobName}
+    />
+    <button
+      class="rounded bg-blue-600 px-3 py-1 text-sm text-white disabled:opacity-50"
+      onclick={load}
+      disabled={loading || reportPath.length === 0}
+    >
+      {loading ? "Lettura…" : "Apri storico"}
+    </button>
+  </div>
+
+  {#if error}
+    <p
+      class="mt-3 rounded border border-red-300 bg-red-50 px-2 py-1 text-sm text-red-800
+             dark:border-red-800 dark:bg-red-950 dark:text-red-200"
+      role="alert"
+    >
+      {error}
+    </p>
+  {/if}
+
+  {#if history}
+    {#if history.skipped_lines > 0}
+      <!-- Never hidden: a partially readable index means the advice below rests on less data than
+           the operator would assume. -->
+      <p class="mt-3 rounded border border-amber-300 bg-amber-50 px-2 py-1 text-xs text-amber-900
+                dark:border-amber-800 dark:bg-amber-950 dark:text-amber-200">
+        {history.skipped_lines} righe dell'indice non sono leggibili e sono state ignorate: i dati qui
+        sotto si basano su un campione incompleto. I backup già eseguiti non sono compromessi.
+      </p>
+    {/if}
+
+    {#if advice.length > 0}
+      <h2 class="mt-4 text-xs font-semibold uppercase tracking-wide text-slate-500">Analisi</h2>
+      <ul class="mt-1 space-y-1">
+        {#each [...advice].sort((a, b) => SEVERITY_ORDER[SEVERITY_LABEL[a.severity]] - SEVERITY_ORDER[SEVERITY_LABEL[b.severity]]) as item}
+          <li class="rounded border border-slate-200 p-2 dark:border-slate-800">
+            <span class="rounded px-1 text-[10px] font-semibold {SEVERITY_CLASS[item.severity]}">
+              {SEVERITY_LABEL[item.severity]}
+            </span>
+            <span class="ml-1 text-sm">{item.headline}</span>
+            {#if item.evidence.length > 0}
+              <!-- The numbers travel with the claim, exactly as `--advise` prints them: advice
+                   without its evidence is not reviewable. -->
+              <ul class="mt-1 ml-3 list-disc text-xs text-slate-600 dark:text-slate-400">
+                {#each item.evidence as line}<li>{line}</li>{/each}
+              </ul>
+            {/if}
+          </li>
+        {/each}
+      </ul>
+    {/if}
+
+    <h2 class="mt-4 text-xs font-semibold uppercase tracking-wide text-slate-500">
+      Run ({history.runs.length}{history.runs.length === history.limit_applied ? ", le più recenti" : ""})
+    </h2>
+    {#if history.runs.length === 0}
+      <p class="mt-1 text-sm text-slate-500">
+        Nessuna run registrata
+        {#if jobName.trim() !== ""}
+          per il job «{jobName.trim()}»: l'indice di un job nominato è
+          <code>.rustcopy_history.{jobName.trim()}.jsonl</code>, accanto al report.
+        {:else}
+          per questo percorso. Se il file di configurazione usa <code>[[jobs]]</code>, indica il nome del job:
+          ogni job ha un indice separato.
+        {/if}
+      </p>
+    {:else}
+      <table class="mt-1 w-full text-left text-xs">
+        <thead class="border-b border-slate-300 dark:border-slate-700">
+          <tr>
+            <th class="py-1 pr-3 font-medium">Quando</th>
+            <th class="py-1 pr-3 font-medium">Esito</th>
+            <th class="py-1 pr-3 font-medium">File</th>
+            <th class="py-1 pr-3 font-medium">Durata</th>
+            <th class="py-1 pr-3 font-medium">Throughput</th>
+          </tr>
+        </thead>
+        <tbody>
+          {#each [...history.runs].reverse() as run}
+            <tr class="border-b border-slate-200 dark:border-slate-800">
+              <td class="py-1 pr-3 font-mono">{new Date(run.timestamp).toLocaleString("it-IT")}</td>
+              <td class="py-1 pr-3">
+                <span
+                  class="rounded px-1 text-[10px] font-semibold
+                         {run.exit_code === 0
+                           ? 'bg-emerald-100 text-emerald-900 dark:bg-emerald-950 dark:text-emerald-200'
+                           : 'bg-red-100 text-red-900 dark:bg-red-950 dark:text-red-200'}"
+                >{run.exit_code} — {EXIT_MEANING[run.exit_code] ?? "sconosciuto"}</span>
+                {#if run.dry_run}
+                  <span class="ml-1 text-[10px] text-slate-500">dry-run</span>
+                {/if}
+              </td>
+              <td class="py-1 pr-3">{run.files_copied} / {run.total_files}</td>
+              <td class="py-1 pr-3">{duration(run.elapsed_seconds)}</td>
+              <td class="py-1 pr-3">{run.throughput_mbps.toFixed(1)} MB/s</td>
+            </tr>
+          {/each}
+        </tbody>
+      </table>
+    {/if}
+  {/if}
+</section>

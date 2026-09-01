@@ -32,7 +32,8 @@
 
 use std::path::PathBuf;
 
-use robocopy_ingest::gui_api::{self, JobSummary, ReportView};
+use robocopy_ingest::advise::Advice;
+use robocopy_ingest::gui_api::{self, HistoryView, JobSummary, ReportView};
 
 /// Runs a blocking library call off the IPC thread.
 ///
@@ -74,12 +75,39 @@ async fn read_report_page(path: String, offset: usize, limit: usize) -> Result<R
     off_thread(move || gui_api::read_report_page(&PathBuf::from(path), offset, limit)).await
 }
 
+/// Reads the run history stored beside `report_path`.
+///
+/// `limit` is clamped by the library, like the error pages: the boundary rule belongs where it is
+/// tested, not in three separate command wrappers.
+#[tauri::command]
+async fn read_history(
+    report_path: String,
+    job_name: Option<String>,
+    limit: usize,
+) -> Result<HistoryView, String> {
+    off_thread(move || {
+        gui_api::read_history(&PathBuf::from(report_path), job_name.as_deref(), limit)
+    })
+    .await
+}
+
+/// Runs the deterministic advisor over that history.
+///
+/// No language model and no network: the suggestions are statistics over past runs, computed and
+/// tested in `advise`. This command only carries them across.
+#[tauri::command]
+async fn read_advice(report_path: String, job_name: Option<String>) -> Result<Vec<Advice>, String> {
+    off_thread(move || gui_api::read_advice(&PathBuf::from(report_path), job_name.as_deref())).await
+}
+
 fn main() {
     tauri::Builder::default()
         .invoke_handler(tauri::generate_handler![
             list_jobs,
             read_report,
-            read_report_page
+            read_report_page,
+            read_history,
+            read_advice
         ])
         .run(tauri::generate_context!())
         .expect("error while running the rustcopy console");
