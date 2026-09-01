@@ -1,5 +1,8 @@
 <script>
   import { invoke } from "@tauri-apps/api/core";
+  import History from "./History.svelte";
+
+  let tab = $state("jobs");
 
   // Read-only by design: this version has no write path at all, so it cannot damage a backup.
   // See PIANO_GUI_TAURI.md §5.2.
@@ -30,7 +33,27 @@
     <p class="text-xs text-slate-500 dark:text-slate-400">
       Sola lettura: questa versione mostra la configurazione e lo storico, non esegue e non modifica nulla.
     </p>
+    <nav class="mt-2 flex gap-1" aria-label="Sezioni">
+      <button
+        class="rounded px-2 py-0.5 text-xs {tab === 'jobs'
+          ? 'bg-slate-200 font-semibold dark:bg-slate-800'
+          : 'text-slate-500'}"
+        onclick={() => (tab = "jobs")}
+        aria-current={tab === "jobs" ? "page" : undefined}
+      >Job</button>
+      <button
+        class="rounded px-2 py-0.5 text-xs {tab === 'history'
+          ? 'bg-slate-200 font-semibold dark:bg-slate-800'
+          : 'text-slate-500'}"
+        onclick={() => (tab = "history")}
+        aria-current={tab === "history" ? "page" : undefined}
+      >Storico</button>
+    </nav>
   </header>
+
+  {#if tab === "history"}
+    <History />
+  {:else}
 
   <section class="p-4">
     <div class="flex gap-2">
@@ -106,4 +129,5 @@
       </table>
     {/if}
   </section>
+  {/if}
 </main>

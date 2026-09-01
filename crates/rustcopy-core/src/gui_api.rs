@@ -38,6 +38,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::config::IngestConfig;
 use crate::errors::IngestError;
+use crate::history::{RunHistory, RunRecord, DEFAULT_HISTORY_WINDOW};
 use crate::report::IngestReport;
 
 /// How many per-file error entries [`ReportView`] returns in one page by default.
@@ -54,6 +55,13 @@ pub const DEFAULT_ERROR_PAGE: usize = 100;
 /// precisely what this module exists to prevent. The limit is clamped instead of rejected: a UI
 /// asking for more than this is not doing anything wrong, it simply cannot have it in one message.
 pub const MAX_ERROR_PAGE: usize = 1_000;
+
+/// Hard ceiling on how many runs one history call returns.
+///
+/// Same reasoning as [`MAX_ERROR_PAGE`], applied before the mistake rather than after it: the
+/// caller picks a window and the library decides what it can actually have in one message. A
+/// `RunRecord` is a few hundred bytes, so this is a generous bound and still a bound.
+pub const MAX_HISTORY_PAGE: usize = 500;
 
 /// One backup job as configured, for a list view. Carries no run state.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -181,6 +189,52 @@ impl ReportView {
             copy_error: report.copy_error.clone(),
         }
     }
+}
+
+/// A window of completed runs, newest last, with what the reader could not parse.
+///
+/// Holds [`RunRecord`]s, which are per-run aggregates — never per-file data. That is what makes
+/// this safe to send whole: the inventory is not reachable from here, and the integrity error
+/// lists live in [`ReportView`], where they are paged.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct HistoryView {
+    pub runs: Vec<RunRecord>,
+    /// Lines the index reader could not parse. Surfaced rather than hidden so a UI can say the
+    /// sample is incomplete instead of quietly showing less than the operator believes.
+    pub skipped_lines: usize,
+    /// The ceiling actually applied, so a UI can tell "these are all of them" from "these are the
+    /// most recent 500".
+    pub limit_applied: usize,
+}
+
+/// Reads the run history that lives beside `report_path`.
+///
+/// `job_name` selects the per-job index (F33/D12 namespace it); `None` is the single-job file.
+pub fn read_history(
+    report_path: &Path,
+    job_name: Option<&str>,
+    limit: usize,
+) -> Result<HistoryView, IngestError> {
+    let limit = limit.min(MAX_HISTORY_PAGE);
+    let history = RunHistory::load_recent(report_path, job_name, limit)?;
+    Ok(HistoryView {
+        runs: history.records().to_vec(),
+        skipped_lines: history.skipped_lines(),
+        limit_applied: limit,
+    })
+}
+
+/// Runs the deterministic advisor over that same history.
+///
+/// The judgement stays here rather than in any UI: `advise::analyse` is where the thresholds, the
+/// minimum sample sizes and the two-gate anomaly rule are tested. A frontend that re-derived any
+/// of that would be a second, silently diverging definition.
+pub fn read_advice(
+    report_path: &Path,
+    job_name: Option<&str>,
+) -> Result<Vec<crate::advise::Advice>, IngestError> {
+    let history = RunHistory::load_recent(report_path, job_name, DEFAULT_HISTORY_WINDOW)?;
+    Ok(crate::advise::analyse(&history))
 }
 
 /// Lists the jobs a config file declares, resolved the same way `run_jobs` resolves them.
@@ -490,5 +544,82 @@ fast_verify = true
     fn a_limit_below_the_ceiling_is_used_as_given() {
         let view = ReportView::from_report(&report_with_errors(5_000), 0, 7);
         assert_eq!(view.missing_in_dest.entries.len(), 7);
+    }
+    fn history_at(dir: &std::path::Path, runs: usize) -> std::path::PathBuf {
+        let report = dir.join("report.json");
+        for i in 0..runs {
+            let mut rec: crate::history::RunRecord = serde_json::from_str(
+                r#"{"timestamp":"2026-08-31T00:00:00Z","source":"D:/s","dest":"E:/d","exit_code":0,
+                    "total_files":1,"total_bytes":2,"files_copied":1,"bytes_copied":2,
+                    "elapsed_seconds":1.0,"throughput_mbps":1.0,"inventory_seconds":0.5,
+                    "transfer_seconds":0.5,"threads":4,"logical_cpus":4,"dry_run":false}"#,
+            )
+            .expect("fixture");
+            rec.elapsed_seconds = i as f64 + 1.0;
+            RunHistory::append(&report, None, &rec).expect("append");
+        }
+        report
+    }
+
+    /// The history window is bounded the same way the error pages are — decided up front this
+    /// time, rather than after a review pointed out that a caller could ask for everything.
+    #[test]
+    fn an_oversized_history_window_is_clamped() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let report = history_at(dir.path(), 20);
+
+        let view = read_history(&report, None, usize::MAX).expect("reads");
+
+        assert_eq!(
+            view.limit_applied, MAX_HISTORY_PAGE,
+            "the ceiling is reported, not hidden"
+        );
+        assert_eq!(
+            view.runs.len(),
+            20,
+            "and everything below it still comes back"
+        );
+    }
+
+    /// A window smaller than the history keeps the most recent runs, not the oldest — a console
+    /// showing "the last 5" must not show the first 5.
+    #[test]
+    fn a_small_window_keeps_the_most_recent_runs() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let report = history_at(dir.path(), 10);
+
+        let view = read_history(&report, None, 3).expect("reads");
+
+        assert_eq!(view.runs.len(), 3);
+        let seen: Vec<f64> = view.runs.iter().map(|r| r.elapsed_seconds).collect();
+        assert_eq!(seen, vec![8.0, 9.0, 10.0]);
+    }
+
+    /// A missing index is an empty history, not an error: a job that has never run is a normal
+    /// state and a console must render it as one.
+    #[test]
+    fn a_job_that_has_never_run_yields_an_empty_history() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let view = read_history(&dir.path().join("report.json"), None, 50).expect("reads");
+        assert!(view.runs.is_empty());
+        assert_eq!(view.skipped_lines, 0);
+    }
+
+    /// The advice must cross the IPC boundary, which means it has to serialize — a fact only
+    /// discovered at the boundary otherwise.
+    #[test]
+    fn advice_serializes_for_the_ipc_boundary() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let report = history_at(dir.path(), 6);
+
+        let advice = read_advice(&report, None).expect("analyses");
+        assert!(
+            !advice.is_empty(),
+            "six runs produce at least one observation"
+        );
+
+        let json = serde_json::to_string(&advice).expect("Advice must serialize");
+        let back: Vec<crate::advise::Advice> = serde_json::from_str(&json).expect("round-trip");
+        assert_eq!(back, advice);
     }
 }
