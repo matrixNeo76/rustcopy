@@ -128,6 +128,55 @@ async fn run(mut args: Args) -> Result<u8> {
     // with the other meta-operations above rather than inside execute(): like them it needs no
     // --source, takes no lock, spawns no child process and copies nothing. It cannot fail a
     // backup because it never runs alongside one.
+    // F56: credential management, intercepted with the other meta-operations. Touches no path,
+    // copies nothing, and exits — so none of the transfer machinery below is involved.
+    if let Some(name) = args.set_credential.clone() {
+        #[cfg(windows)]
+        {
+            use std::io::Read;
+            // From stdin, never from an argument: a secret on the command line is visible in the
+            // process list to any user on the machine, which is precisely the exposure the literal
+            // form of --encrypt-aes256 warns about.
+            let mut secret = String::new();
+            std::io::stdin()
+                .read_to_string(&mut secret)
+                .context("cannot read the secret from stdin")?;
+            // Only the terminal line ending, not every trailing space: a passphrase may legally
+            // end in whitespace, and silently altering a secret is the worst shape this bug could
+            // take -- it would surface as a decryption failure later, far from the cause.
+            let secret = secret.strip_suffix('\n').unwrap_or(&secret);
+            let secret = secret.strip_suffix('\r').unwrap_or(secret);
+            if secret.is_empty() {
+                anyhow::bail!(
+                    "no secret on stdin. Pipe it in:  echo <secret> | robocopy_ingest --set-credential {name}"
+                );
+            }
+            robocopy_ingest::crypto::write_credential(&name, secret)?;
+            println!("stored credential '{name}'. Use it as: keyring:{name}");
+            return Ok(0);
+        }
+        #[cfg(not(windows))]
+        {
+            let _ = name;
+            anyhow::bail!(
+                "--set-credential needs the Windows Credential Manager, which this platform does                  not have. Use env:NAME or file:PATH instead."
+            );
+        }
+    }
+    if let Some(name) = args.delete_credential.clone() {
+        #[cfg(windows)]
+        {
+            robocopy_ingest::crypto::delete_credential(&name)?;
+            println!("removed credential '{name}'");
+            return Ok(0);
+        }
+        #[cfg(not(windows))]
+        {
+            let _ = name;
+            anyhow::bail!("--delete-credential needs the Windows Credential Manager.");
+        }
+    }
+
     if args.advise {
         // Keyed off --report-path, because that is where the index lives (see
         // `RunHistory::path_for`): pass the same --report-path the runs used. With the default

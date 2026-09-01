@@ -66,6 +66,8 @@ completi e i comandi reali verificati sul campo vedi il [RUNBOOK](../RUNBOOK.md)
 | `--decrypt <KEY>` | *nessuno* | — | Decifra ogni file in destinazione dopo il trasferimento — il simmetrico di `--encrypt-aes256`, stesso formato `KEY`. Tipicamente usato con `--restore-from` per ripristinare un backup cifrato. Non combinabile con `--encrypt-aes256` nello stesso comando. |
 | `--install-service` | `false` | — | (Release 6.0.0, F37) Registra questo binario come servizio Windows reale (via Service Control Manager) ed esce senza eseguire un backup ora. Il servizio parte `OnDemand` e resta **inattivo** una volta avviato (risponde solo a Stop/Interrogate) — nessuna logica di backup gira al suo interno. Il servizio che *fa* davvero qualcosa è quello di `notify-server.exe` (F41, identità separata — vedi la nota nella sezione Scheduling). **Richiede Amministratore**. Non richiede `--source`/`--dest`. Incompatibile con `--uninstall-service`. |
 | `--uninstall-service` | `false` | — | (Release 6.0.0, F37) Rimuove il servizio Windows precedentemente installato ed esce. **Richiede Amministratore**. Non richiede `--source`/`--dest`. Incompatibile con `--install-service`. |
+| `--set-credential <NAME>` | *nessuno* | — | (F56) Memorizza un segreto nel **Windows Credential Manager** con questo nome, poi esce. Il segreto è letto da **stdin**, mai dalla riga di comando: un argomento sarebbe visibile nella process list, che è esattamente l'esposizione da cui mette in guardia la forma letterale di `--encrypt-aes256`. Uso: `echo my-secret \| robocopy_ingest --set-credential nas-key`. Non richiede `--source`/`--dest`. **Solo Windows.** |
+| `--delete-credential <NAME>` | *nessuno* | — | (F56) Rimuove un segreto memorizzato con `--set-credential`, poi esce. **Solo Windows.** Incompatibile con `--set-credential`. |
 | `--advise` | `false` | — | Analizza lo **storico delle run** e stampa suggerimenti deterministici (intervallo di schedulazione sicuro, costo della retention, `--threads`, anomalie, fallimenti di integrità ricorrenti), poi esce. Legge `.rustcopy_history.jsonl` dalla directory di `--report-path`, scritto automaticamente a fine di ogni run. **Non richiede `--source` né `--dest`**: ispeziona run passate e non copia nulla. Nessun modello linguistico e nessuna rete — è statistica sui report già prodotti, e ogni proposta mostra i numeri da cui deriva. Suggerisce e non applica mai: le operazioni distruttive restano dell'operatore. |
 | `--enable-dedup` | `false` | — | **[NON IMPLEMENTATO]** Accettato per compatibilità futura; nessuna cache di stato viene usata. |
 | `--dry-run` | `false` | `/L` | Simula le operazioni senza modificare o copiare file. |
@@ -97,6 +99,38 @@ completi e i comandi reali verificati sul campo vedi il [RUNBOOK](../RUNBOOK.md)
 ---
 
 ## 🔍 Comportamento dettagliato per funzionalità
+
+### Credenziali e `keyring:` (F56)
+
+`--encrypt-aes256` e `--decrypt` accettano quattro forme di `KEY`, provate in quest'ordine:
+
+| Forma | Dove sta il segreto |
+|---|---|
+| `keyring:NOME` | **Windows Credential Manager** (DPAPI). Mai in un file, mai nella process list, mai in una variabile d'ambiente che un processo figlio eredita |
+| `env:NOME` | Variabile d'ambiente |
+| `file:PERCORSO` | Prima riga del file |
+| qualunque altra cosa | Il segreto letterale — **visibile nella process list**, e infatti segnalato con un warning |
+
+F56 **estende** la convenzione, non la sostituisce. È una distinzione operativa, non stilistica: il
+comando di un'attività pianificata (F36) viene catturato all'installazione e non si migra
+modificando un file di configurazione, quindi ogni spec `env:`/`file:` già installata continua a
+funzionare intatta.
+
+Per popolare il Credential Manager:
+
+```text
+echo my-secret | robocopy_ingest --set-credential nas-key
+robocopy_ingest --source ... --dest ... --encrypt-aes256 keyring:nas-key
+robocopy_ingest --delete-credential nas-key
+```
+
+Il nome del servizio sotto cui i segreti sono registrati è `rustcopy` ed è **stabile di proposito**:
+cambiarlo orfanerebbe ogni credenziale già memorizzata, e il fallimento si manifesterebbe come
+"chiave non trovata" su una run pianificata alle 3 di notte.
+
+Su piattaforme diverse da Windows la forma `keyring:` fallisce con un messaggio che indica `env:` o
+`file:` come alternative — il crate `keyring` è dichiarato solo per Windows, perché il backend Linux
+richiede un secret-service su D-Bus che né la CI né questo prodotto Windows-native hanno.
 
 ### Storico delle run e `--advise`
 
