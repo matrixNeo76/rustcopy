@@ -32,13 +32,14 @@
 //! would invite a per-event API, which is precisely the shape D18 showed to be ruinous at this
 //! scale (~3 800 files/second on the real profile).
 
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
 
-use crate::config::IngestConfig;
+use crate::config::{IngestConfig, JobConfig};
 use crate::errors::IngestError;
 use crate::history::{RunHistory, RunRecord, DEFAULT_HISTORY_WINDOW};
+use crate::integrity::HashAlgorithm;
 use crate::report::IngestReport;
 
 /// How many per-file error entries [`ReportView`] returns in one page by default.
@@ -315,6 +316,500 @@ fn parse_report(path: &Path) -> Result<IngestReport, IngestError> {
             std::io::Error::new(std::io::ErrorKind::InvalidData, error),
         )
     })
+}
+
+/// Where a setting's effective value was written.
+///
+/// A `[[jobs]]` file has two places a value can come from and one place it can be absent from
+/// both, and to an operator asking "why is *this* job mirroring?" the three are not
+/// interchangeable. The TOML does not make it obvious — [`JobConfig::merged_over`] resolves the
+/// value and the result carries no trace of where it came from — which is exactly what a settings
+/// view can show that reading the file cannot.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum SettingOrigin {
+    /// Written by this `[[jobs]]` entry itself.
+    Job,
+    /// Not written by the job: inherited from the file's top-level defaults.
+    Inherited,
+    /// Written nowhere in the file; the value shown is rustcopy's own default.
+    Default,
+}
+
+/// One resolved setting, ready to render.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct SettingEntry {
+    /// The TOML key — which is also the CLI flag, with `_` for `-`. Deliberately not translated:
+    /// it is the string an operator greps for in the file, and a localised label would break that.
+    pub key: String,
+    /// The effective value, already rendered — and already cut short when `redacted` is set.
+    pub value: String,
+    pub origin: SettingOrigin,
+    /// True when `value` is **not** the stored value, only enough of it to be recognised.
+    pub redacted: bool,
+    /// Why this setting deserves a second look, when it does. A judgement about backup semantics,
+    /// so it is made here and not in the frontend (`PIANO_GUI_TAURI.md` §4.1).
+    pub caution: Option<String>,
+}
+
+impl SettingEntry {
+    /// Builds one entry from the job's own value and the value it would inherit.
+    ///
+    /// Taking both — rather than the already-merged value — is the whole point: the merged value
+    /// alone cannot say whether the job asked for it.
+    fn resolve<T>(
+        key: &str,
+        own: Option<&T>,
+        inherited: Option<&T>,
+        default: &str,
+        render: impl Fn(&T) -> String,
+    ) -> Self {
+        let (value, origin) = match (own, inherited) {
+            (Some(value), _) => (render(value), SettingOrigin::Job),
+            (None, Some(value)) => (render(value), SettingOrigin::Inherited),
+            (None, None) => (default.to_string(), SettingOrigin::Default),
+        };
+        Self {
+            key: key.to_string(),
+            value,
+            origin,
+            redacted: false,
+            caution: None,
+        }
+    }
+
+    fn caution_when(mut self, condition: bool, message: &str) -> Self {
+        if condition {
+            self.caution = Some(message.to_string());
+        }
+        self
+    }
+
+    /// Marks the value as cut short — conditionally, because an unset field has nothing to cut.
+    /// Claiming otherwise would push the frontend into deciding when the flag means anything,
+    /// which is the one thing this module exists to prevent.
+    fn redacted_when(mut self, condition: bool) -> Self {
+        self.redacted = condition;
+        self
+    }
+}
+
+/// A titled group of settings, so the frontend does not decide what belongs with what.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct SettingGroup {
+    pub title: String,
+    pub entries: Vec<SettingEntry>,
+}
+
+/// Every setting of one job, grouped and resolved.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct JobSettings {
+    /// The same label [`list_jobs`] gives the job, for the same reason: it must match the reports
+    /// on disk.
+    pub name: String,
+    pub groups: Vec<SettingGroup>,
+}
+
+/// Cuts a URL down to scheme and host.
+///
+/// A webhook URL **is** the credential: whoever holds a Slack or Teams endpoint can post to that
+/// channel, and the secret lives in the path or the query string. Where notifications go is
+/// operational information an operator needs; the rest is not, and a settings pane is a window
+/// that gets screenshotted and screen-shared. Showing it whole would make the UI a new home for
+/// secrets, which ROADMAP's third security warning exists to prevent.
+///
+/// Cuts at the first `/`, `?` or `#` after the scheme — a query string alone can carry the token
+/// (`https://host?token=…`), so stopping at the path would not be enough.
+fn redact_endpoint(url: &str) -> String {
+    let after_scheme = url.find("://").map(|idx| idx + 3).unwrap_or(0);
+    match url[after_scheme..].find(['/', '?', '#']) {
+        Some(offset) => format!("{}/…", &url[..after_scheme + offset]),
+        // No path and no query: there is nothing here that is not the host.
+        None => url.to_string(),
+    }
+}
+
+fn settings_for(job: &JobConfig, base: &JobConfig, name: String) -> JobSettings {
+    let resolved = job.merged_over(base);
+    let flag = |value: Option<bool>| value.unwrap_or(false);
+    // Renderers for the two field types that are not a plain `to_string`. Closures rather than
+    // free functions because they have to match the stored `Option<T>` exactly: a `&Path`/`&[_]`
+    // signature would be the tidier shape and would not fit `Option<&PathBuf>`/`Option<&Vec<_>>`.
+    let render_path = |value: &PathBuf| value.display().to_string();
+    let render_list = |value: &Vec<String>| {
+        if value.is_empty() {
+            "(nessuno)".to_string()
+        } else {
+            value.join(", ")
+        }
+    };
+
+    let selection = SettingGroup {
+        title: "Cosa viene copiato".to_string(),
+        entries: vec![
+            SettingEntry::resolve(
+                "source",
+                job.source.as_ref(),
+                base.source.as_ref(),
+                "—",
+                render_path,
+            ),
+            SettingEntry::resolve(
+                "dest",
+                job.dest.as_ref(),
+                base.dest.as_ref(),
+                "—",
+                render_path,
+            ),
+            SettingEntry::resolve(
+                "pattern",
+                job.pattern.as_ref(),
+                base.pattern.as_ref(),
+                "*",
+                |value| value.clone(),
+            ),
+            SettingEntry::resolve(
+                "exclude_files",
+                job.exclude_files.as_ref(),
+                base.exclude_files.as_ref(),
+                "(nessuno)",
+                render_list,
+            ),
+            SettingEntry::resolve(
+                "exclude_dirs",
+                job.exclude_dirs.as_ref(),
+                base.exclude_dirs.as_ref(),
+                "(nessuno)",
+                render_list,
+            ),
+            SettingEntry::resolve(
+                "min_age_days",
+                job.min_age_days.as_ref(),
+                base.min_age_days.as_ref(),
+                "—",
+                |value| value.to_string(),
+            )
+            .caution_when(
+                resolved.min_age_days.is_some(),
+                "Esclude i file modificati da meno giorni di così.",
+            ),
+            SettingEntry::resolve(
+                "max_age_days",
+                job.max_age_days.as_ref(),
+                base.max_age_days.as_ref(),
+                "—",
+                |value| value.to_string(),
+            )
+            .caution_when(
+                resolved.max_age_days.is_some(),
+                "Esclude i file modificati da più giorni di così.",
+            ),
+            SettingEntry::resolve(
+                "exclude_junctions",
+                job.exclude_junctions.as_ref(),
+                base.exclude_junctions.as_ref(),
+                "false",
+                |value| value.to_string(),
+            )
+            .caution_when(
+                !flag(resolved.exclude_junctions),
+                "Le giunzioni vengono seguite: un collegamento a un altro albero viene copiato come se ne fosse contenuto.",
+            ),
+        ],
+    };
+
+    let execution = SettingGroup {
+        title: "Come viene copiato".to_string(),
+        entries: vec![
+            SettingEntry::resolve(
+                "mirror",
+                job.mirror.as_ref(),
+                base.mirror.as_ref(),
+                "false",
+                |value| value.to_string(),
+            )
+            .caution_when(
+                flag(resolved.mirror),
+                "Cancella in destinazione i file che non esistono più nella sorgente. È l'impostazione più distruttiva che un job possa avere.",
+            ),
+            SettingEntry::resolve(
+                "dry_run",
+                job.dry_run.as_ref(),
+                base.dry_run.as_ref(),
+                "false",
+                |value| value.to_string(),
+            )
+            .caution_when(
+                flag(resolved.dry_run),
+                "Simulazione: nessun file viene copiato davvero.",
+            ),
+            SettingEntry::resolve(
+                "threads",
+                job.threads.as_ref(),
+                base.threads.as_ref(),
+                "(automatico)",
+                |value| value.to_string(),
+            ),
+            SettingEntry::resolve(
+                "retries",
+                job.retries.as_ref(),
+                base.retries.as_ref(),
+                "3",
+                |value| value.to_string(),
+            ),
+            SettingEntry::resolve(
+                "retry_wait_seconds",
+                job.retry_wait_seconds.as_ref(),
+                base.retry_wait_seconds.as_ref(),
+                "5",
+                |value| value.to_string(),
+            ),
+            SettingEntry::resolve(
+                "bandwidth_limit_mbps",
+                job.bandwidth_limit_mbps.as_ref(),
+                base.bandwidth_limit_mbps.as_ref(),
+                "(illimitata)",
+                |value| value.to_string(),
+            ),
+            SettingEntry::resolve(
+                "no_prescan",
+                job.no_prescan.as_ref(),
+                base.no_prescan.as_ref(),
+                "false",
+                |value| value.to_string(),
+            )
+            .caution_when(
+                flag(resolved.no_prescan) && flag(resolved.mirror),
+                "Senza prescan, --mirror non può verificare cosa cancellerebbe: richiede sempre --force-purge.",
+            ),
+            SettingEntry::resolve(
+                "long_paths",
+                job.long_paths.as_ref(),
+                base.long_paths.as_ref(),
+                "false",
+                |value| value.to_string(),
+            ),
+            SettingEntry::resolve(
+                "preserve_timestamps",
+                job.preserve_timestamps.as_ref(),
+                base.preserve_timestamps.as_ref(),
+                "false",
+                |value| value.to_string(),
+            ),
+            SettingEntry::resolve(
+                "preserve_acl",
+                job.preserve_acl.as_ref(),
+                base.preserve_acl.as_ref(),
+                "false",
+                |value| value.to_string(),
+            ),
+        ],
+    };
+
+    let verification = SettingGroup {
+        title: "Verifica".to_string(),
+        entries: vec![
+            SettingEntry::resolve(
+                "verify_integrity",
+                job.verify_integrity.as_ref(),
+                base.verify_integrity.as_ref(),
+                "false",
+                |value| value.to_string(),
+            )
+            .caution_when(
+                !flag(resolved.verify_integrity),
+                "Nessuna verifica: il report dice cosa robocopy dichiara di aver copiato, non un confronto dei byte.",
+            ),
+            SettingEntry::resolve(
+                "fast_verify",
+                job.fast_verify.as_ref(),
+                base.fast_verify.as_ref(),
+                "false",
+                |value| value.to_string(),
+            )
+            .caution_when(
+                flag(resolved.fast_verify),
+                "Salta i file la cui sorgente è immutata dall'ultima verifica riuscita: si fida dell'identità della sorgente invece di rileggere i byte in destinazione, quindi una corruzione nata in destinazione può sfuggire.",
+            ),
+            SettingEntry::resolve(
+                "hash_algo",
+                job.hash_algo.as_ref(),
+                base.hash_algo.as_ref(),
+                "sha256",
+                |value| format!("{value:?}").to_lowercase(),
+            )
+            .caution_when(
+                matches!(resolved.hash_algo, Some(HashAlgorithm::Xxh3)),
+                "xxh3 non è crittografico: rileva la corruzione, non la manomissione.",
+            ),
+            SettingEntry::resolve(
+                "ignore_transient_missing",
+                job.ignore_transient_missing.as_ref(),
+                base.ignore_transient_missing.as_ref(),
+                "false",
+                |value| value.to_string(),
+            )
+            .caution_when(
+                flag(resolved.ignore_transient_missing),
+                "I file mancanti riconosciuti come transitori (.log, .tmp, .git/objects) non vengono segnalati.",
+            ),
+            SettingEntry::resolve(
+                "compare_baseline",
+                job.compare_baseline.as_ref(),
+                base.compare_baseline.as_ref(),
+                "false",
+                |value| value.to_string(),
+            ),
+        ],
+    };
+
+    let generations = SettingGroup {
+        title: "Generazioni e retention".to_string(),
+        entries: vec![
+            SettingEntry::resolve(
+                "backup_type",
+                job.backup_type.as_ref(),
+                base.backup_type.as_ref(),
+                "(copia semplice)",
+                |value| format!("{value:?}").to_lowercase(),
+            ),
+            SettingEntry::resolve(
+                "keep_generations",
+                job.keep_generations.as_ref(),
+                base.keep_generations.as_ref(),
+                "(tutte)",
+                |value| value.to_string(),
+            )
+            .caution_when(
+                resolved.keep_generations.is_some(),
+                "I cicli più vecchi vengono eliminati a fine run. La rotazione è per ciclo e non per singola generazione, per non orfanare un incrementale che dipende da un full.",
+            ),
+        ],
+    };
+
+    let outputs = SettingGroup {
+        title: "Cosa viene scritto".to_string(),
+        entries: vec![
+            SettingEntry::resolve(
+                "report_path",
+                job.report_path.as_ref(),
+                base.report_path.as_ref(),
+                "ingest-report.json",
+                render_path,
+            ),
+            SettingEntry::resolve(
+                "log_path",
+                job.log_path.as_ref(),
+                base.log_path.as_ref(),
+                "ingest.log",
+                render_path,
+            ),
+            SettingEntry::resolve(
+                "html_report_path",
+                job.html_report_path.as_ref(),
+                base.html_report_path.as_ref(),
+                "—",
+                render_path,
+            ),
+        ],
+    };
+
+    let hooks = SettingGroup {
+        title: "Notifiche e comandi".to_string(),
+        entries: vec![
+            SettingEntry::resolve(
+                "webhook_url",
+                job.webhook_url.as_ref(),
+                base.webhook_url.as_ref(),
+                "—",
+                |value| redact_endpoint(value),
+            )
+            .redacted_when(resolved.webhook_url.is_some())
+            .caution_when(
+                resolved.webhook_url.is_some(),
+                "L'URL di un webhook vale come credenziale: qui è troncato di proposito a schema e host.",
+            ),
+            SettingEntry::resolve(
+                "pre_command",
+                job.pre_command.as_ref(),
+                base.pre_command.as_ref(),
+                "—",
+                |value| value.clone(),
+            )
+            .caution_when(
+                resolved.pre_command.is_some(),
+                "Eseguito prima del backup con i privilegi di chi lancia la run — se la run parte dal servizio, quelli dell'account del servizio. Un'uscita diversa da zero annulla il job.",
+            ),
+            SettingEntry::resolve(
+                "post_command",
+                job.post_command.as_ref(),
+                base.post_command.as_ref(),
+                "—",
+                |value| value.clone(),
+            )
+            .caution_when(
+                resolved.post_command.is_some(),
+                "Eseguito a backup concluso, con gli stessi privilegi. Un fallimento viene registrato nel report ma non fa fallire il job.",
+            ),
+        ],
+    };
+
+    JobSettings {
+        name,
+        groups: vec![
+            selection,
+            execution,
+            verification,
+            generations,
+            outputs,
+            hooks,
+        ],
+    }
+}
+
+/// Reads a TOML config and returns every job's settings, resolved and grouped.
+///
+/// Read-only like the rest of this module: it opens the file the CLI already reads and renders it.
+/// What it adds over opening the TOML in an editor is the two things the file does not state —
+/// which value actually wins for each job ([`SettingOrigin`]), and which settings carry a
+/// consequence worth knowing about ([`SettingEntry::caution`]).
+///
+/// # What this deliberately does not hide
+///
+/// `pre_command`/`post_command` are shown verbatim, because seeing exactly what a job executes is
+/// the entire reason to look at them. That means a secret typed inline into one — `sqlcmd -P …` —
+/// is displayed. Redaction cannot be done reliably on an arbitrary shell command, and a partially
+/// redacted command would be worse than none: it would read as safe to show while not being so.
+/// Secrets belong in `keyring:`/`env:`/`file:` (F56), not on a command line.
+pub fn read_settings(config_path: &Path) -> Result<Vec<JobSettings>, IngestError> {
+    let config = IngestConfig::load_from(config_path)?;
+    let jobs = config.jobs.clone().unwrap_or_default();
+
+    if jobs.is_empty() {
+        // Single-job file: there is no inheritance, so nothing can be `Inherited`. Resolving
+        // against an empty base states exactly that, instead of inventing a second layer.
+        let name = config
+            .defaults
+            .name
+            .clone()
+            .unwrap_or_else(|| "job1".to_string());
+        return Ok(vec![settings_for(
+            &config.defaults,
+            &JobConfig::default(),
+            name,
+        )]);
+    }
+
+    Ok(jobs
+        .iter()
+        .enumerate()
+        .map(|(idx, job)| {
+            let name = job
+                .name
+                .clone()
+                .unwrap_or_else(|| format!("job{}", idx + 1));
+            settings_for(job, &config.defaults, name)
+        })
+        .collect())
 }
 
 #[cfg(test)]
@@ -644,5 +1139,188 @@ fast_verify = true
             1,
             "and returns that window, not the whole index"
         );
+    }
+
+    /// A `[[jobs]]` file with one inherited setting, one overridden, and one written nowhere.
+    fn settings_fixture() -> (tempfile::TempDir, std::path::PathBuf) {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let path = dir.path().join("jobs.toml");
+        std::fs::write(
+            &path,
+            r#"
+source = "D:/src"
+dest = "E:/dst"
+verify_integrity = true
+webhook_url = "https://hooks.slack.com/services/T00000/B00000/xoxbSuperSecretToken"
+
+[[jobs]]
+name = "documenti"
+
+[[jobs]]
+name = "archivio"
+verify_integrity = false
+mirror = true
+pre_command = "net stop MSSQLSERVER"
+"#,
+        )
+        .expect("write");
+        (dir, path)
+    }
+
+    fn entry<'a>(settings: &'a JobSettings, key: &str) -> &'a SettingEntry {
+        settings
+            .groups
+            .iter()
+            .flat_map(|group| group.entries.iter())
+            .find(|entry| entry.key == key)
+            .unwrap_or_else(|| panic!("the view must carry {key}"))
+    }
+
+    /// The reason this view exists: the resolved value alone cannot say who asked for it, and an
+    /// operator looking at a job that mirrors needs to know whether *that job* said so or whether
+    /// it inherited it from the top of the file.
+    #[test]
+    fn a_setting_says_whether_the_job_asked_for_it_or_inherited_it() {
+        let (_dir, path) = settings_fixture();
+        let all = read_settings(&path).expect("reads");
+
+        let documenti = &all[0];
+        assert_eq!(entry(documenti, "verify_integrity").value, "true");
+        assert_eq!(
+            entry(documenti, "verify_integrity").origin,
+            SettingOrigin::Inherited,
+            "the job does not set it; it comes from the file's defaults"
+        );
+
+        let archivio = &all[1];
+        assert_eq!(entry(archivio, "verify_integrity").value, "false");
+        assert_eq!(
+            entry(archivio, "verify_integrity").origin,
+            SettingOrigin::Job,
+            "this job overrides the shared default"
+        );
+
+        assert_eq!(
+            entry(archivio, "long_paths").origin,
+            SettingOrigin::Default,
+            "written nowhere in the file"
+        );
+    }
+
+    /// A webhook URL is the credential — holding a Slack endpoint is enough to post to that
+    /// channel — and a settings pane is a window that gets screenshotted and screen-shared. The
+    /// host must survive, because where notifications go is what an operator came to check.
+    #[test]
+    fn a_webhook_url_reaches_the_view_without_its_secret() {
+        let (_dir, path) = settings_fixture();
+        let all = read_settings(&path).expect("reads");
+
+        let webhook = entry(&all[0], "webhook_url");
+        assert!(
+            !webhook.value.contains("xoxbSuperSecretToken"),
+            "the secret must not cross into the view, got {}",
+            webhook.value
+        );
+        assert!(
+            webhook.value.starts_with("https://hooks.slack.com"),
+            "but the destination must still be recognisable, got {}",
+            webhook.value
+        );
+        assert!(webhook.redacted, "and the view must admit it is cut short");
+    }
+
+    /// A token can live in the query string with no path at all, so cutting at the first `/` after
+    /// the scheme would have left it in place.
+    #[test]
+    fn redaction_cuts_a_query_string_too() {
+        assert_eq!(
+            redact_endpoint("https://notify.internal?token=secret"),
+            "https://notify.internal/…"
+        );
+        assert_eq!(
+            redact_endpoint("https://hooks.slack.com/services/T0/B0/zzz"),
+            "https://hooks.slack.com/…"
+        );
+        assert_eq!(
+            redact_endpoint("https://notify.internal"),
+            "https://notify.internal",
+            "a bare host holds no secret and is shown whole"
+        );
+    }
+
+    /// Cautions are judgements about backup semantics, so they belong here rather than in the
+    /// frontend — and they must track the *effective* value, not the presence of a key.
+    #[test]
+    fn the_destructive_setting_is_flagged_only_where_it_is_actually_on() {
+        let (_dir, path) = settings_fixture();
+        let all = read_settings(&path).expect("reads");
+
+        assert!(
+            entry(&all[0], "mirror").caution.is_none(),
+            "this job does not mirror"
+        );
+        let flagged = entry(&all[1], "mirror")
+            .caution
+            .as_ref()
+            .expect("a mirroring job must carry the warning");
+        assert!(flagged.contains("Cancella"));
+
+        assert!(
+            entry(&all[1], "pre_command").caution.is_some(),
+            "a configured hook must say whose privileges it runs with"
+        );
+    }
+
+    /// Seeing exactly what a job executes is the whole reason to look at a hook, so it is shown
+    /// verbatim. Stated as a test because it is a deliberate choice, not an oversight: an arbitrary
+    /// shell command cannot be redacted reliably, and a half-redacted one would read as safe.
+    #[test]
+    fn a_hook_command_is_shown_verbatim() {
+        let (_dir, path) = settings_fixture();
+        let all = read_settings(&path).expect("reads");
+        assert_eq!(entry(&all[1], "pre_command").value, "net stop MSSQLSERVER");
+        assert!(!entry(&all[1], "pre_command").redacted);
+    }
+
+    /// A file with no `[[jobs]]` has no second layer to inherit from, so claiming a value came
+    /// from one would be an invention.
+    #[test]
+    fn a_single_job_file_never_reports_an_inherited_value() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let path = dir.path().join("single.toml");
+        std::fs::write(
+            &path,
+            "source = \"D:/src\"\ndest = \"E:/dst\"\nmirror = true\n",
+        )
+        .expect("write");
+
+        let all = read_settings(&path).expect("reads");
+        assert_eq!(all.len(), 1);
+        assert_eq!(all[0].name, "job1", "the label `run_jobs` would use");
+        assert!(
+            all[0]
+                .groups
+                .iter()
+                .flat_map(|group| group.entries.iter())
+                .all(|entry| entry.origin != SettingOrigin::Inherited),
+            "nothing can be inherited when there is nothing to inherit from"
+        );
+        assert_eq!(entry(&all[0], "mirror").origin, SettingOrigin::Job);
+        assert!(
+            !entry(&all[0], "webhook_url").redacted,
+            "an unset field has nothing to cut short, and saying otherwise would leave the              frontend deciding when the flag means anything"
+        );
+    }
+
+    /// Same rule the rest of this module lives by: a view that does not serialize is discovered
+    /// only when the GUI finally tries to return it.
+    #[test]
+    fn the_settings_view_serializes_to_json() {
+        let (_dir, path) = settings_fixture();
+        let all = read_settings(&path).expect("reads");
+
+        let json = serde_json::to_string(&all).expect("JobSettings must serialize");
+        let back: Vec<JobSettings> = serde_json::from_str(&json).expect("and round-trip");
+        assert_eq!(back, all);
     }
 }

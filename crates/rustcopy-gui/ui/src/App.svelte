@@ -1,8 +1,17 @@
 <script>
   import { invoke } from "@tauri-apps/api/core";
   import History from "./History.svelte";
+  import Settings from "./Settings.svelte";
 
   let tab = $state("jobs");
+
+  // One list instead of three near-identical buttons: a fourth pane should not mean copying the
+  // same class expression again and getting one of the three states wrong.
+  const TABS = [
+    { id: "jobs", label: "Job" },
+    { id: "settings", label: "Impostazioni" },
+    { id: "history", label: "Storico" },
+  ];
 
   // Read-only by design: this version has no write path at all, so it cannot damage a backup.
   // See PIANO_GUI_TAURI.md §5.2.
@@ -34,25 +43,22 @@
       Sola lettura: questa versione mostra la configurazione e lo storico, non esegue e non modifica nulla.
     </p>
     <nav class="mt-2 flex gap-1" aria-label="Sezioni">
-      <button
-        class="rounded px-2 py-0.5 text-xs {tab === 'jobs'
-          ? 'bg-slate-200 font-semibold dark:bg-slate-800'
-          : 'text-slate-500'}"
-        onclick={() => (tab = "jobs")}
-        aria-current={tab === "jobs" ? "page" : undefined}
-      >Job</button>
-      <button
-        class="rounded px-2 py-0.5 text-xs {tab === 'history'
-          ? 'bg-slate-200 font-semibold dark:bg-slate-800'
-          : 'text-slate-500'}"
-        onclick={() => (tab = "history")}
-        aria-current={tab === "history" ? "page" : undefined}
-      >Storico</button>
+      {#each TABS as entry (entry.id)}
+        <button
+          class="rounded px-2 py-0.5 text-xs {tab === entry.id
+            ? 'bg-slate-200 font-semibold dark:bg-slate-800'
+            : 'text-slate-500'}"
+          onclick={() => (tab = entry.id)}
+          aria-current={tab === entry.id ? "page" : undefined}
+        >{entry.label}</button>
+      {/each}
     </nav>
   </header>
 
   {#if tab === "history"}
     <History />
+  {:else if tab === "settings"}
+    <Settings />
   {:else}
 
   <section class="p-4">
