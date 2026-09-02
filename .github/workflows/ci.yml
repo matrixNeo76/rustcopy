@@ -147,6 +147,21 @@ jobs:
       - name: Cache cargo registry and build artifacts
         uses: Swatinem/rust-cache@v2
 
+      # The frontend is now a build-time requirement, not a packaging step. `custom-protocol` is
+      # on by default (it is what makes a release build serve the embedded assets instead of the
+      # dev server), and tauri-build refuses to compile when `frontendDist` is missing. This job
+      # used to skip Node precisely because the check passed without it -- which is how it came to
+      # certify a configuration nobody ships. It now compiles what ships.
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: crates/rustcopy-gui/ui/package-lock.json
+
+      - name: Build the frontend the crate embeds
+        working-directory: crates/rustcopy-gui/ui
+        run: npm ci && npm run build
+
       - name: cargo check (GUI crate)
         run: cargo check --locked -p rustcopy-gui --all-targets
 
