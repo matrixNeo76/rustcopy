@@ -121,7 +121,15 @@
         {/each}
       </article>
     {/each}
-  {:else if !error && !loaded}
+  {:else if loaded && !error}
+    <!-- `read_settings` returns at least one entry for any file it can parse, so this branch is
+         currently unreachable. Kept because a pane that renders nothing gives an operator no way
+         to tell an empty result from an application that broke, and the guard costs three lines. -->
+    <EmptyState
+      title="Il file non descrive nessuna impostazione"
+      lines={["Un file senza [[jobs]] descrive comunque un job singolo nei campi di primo livello."]}
+    />
+  {:else if !error}
     <EmptyState
       title="Scegli un file di configurazione per vederne le impostazioni"
       lines={[

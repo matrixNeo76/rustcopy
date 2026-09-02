@@ -17,7 +17,6 @@
     { id: "help", label: "Aiuto", component: Help },
   ];
 
-  const Current = $derived(TABS.find((entry) => entry.id === tab)?.component ?? Jobs);
 </script>
 
 <main class="min-h-screen bg-slate-50 text-slate-900 dark:bg-slate-950 dark:text-slate-100">
@@ -40,5 +39,14 @@
     </nav>
   </header>
 
-  <Current />
+  <!-- Every pane stays mounted and inactive ones are hidden, rather than swapping in one
+       component. Rendering only the active tab destroys the others: loading a configuration in
+       Modifica, checking something under Aiuto and coming back lost every edit, silently. Hiding
+       costs one wrapper element and keeps the work. -->
+  {#each TABS as entry (entry.id)}
+    {@const Pane = entry.component}
+    <div class:hidden={tab !== entry.id}>
+      <Pane />
+    </div>
+  {/each}
 </main>

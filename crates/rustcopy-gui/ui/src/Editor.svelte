@@ -19,6 +19,11 @@
   // orphan its generation chain and start a fresh history under the new name. The editor offers
   // creation instead, which has no such consequence.
   let existingNames = $state(new Set());
+  // The configuration these drafts actually came from. Not `session.configPath`: that is shared,
+  // so opening a different file in another pane would silently retarget a write already in
+  // progress here -- A's jobs applied over B's configuration. The shared path is what made the
+  // console usable; this is the hole it opened, and the two have to be held apart.
+  let loadedFrom = $state("");
 
   // The whole draft is loaded, edited in part, and sent back whole. That is deliberate: a field
   // this form does not render still round-trips untouched, so rendering a subset can never drop a
@@ -30,16 +35,19 @@
   // refuses the same edit whatever this frontend sends.
   const mirrorLocked = $derived(draft ? !draft.mirror : true);
   const nameLocked = $derived(draft ? existingNames.has(draft.name) : true);
+  const stale = $derived(loadedFrom !== "" && loadedFrom !== session.configPath);
 
   async function load() {
     error = null;
     written = null;
     loading = true;
     try {
-      drafts = await invoke("read_job_drafts", { configPath: session.configPath });
+      const source = session.configPath;
+      drafts = await invoke("read_job_drafts", { configPath: source });
       existingNames = new Set(drafts.map((entry) => entry.name));
       selected = 0;
-      outPath = await invoke("suggest_proposal_path", { configPath: session.configPath });
+      outPath = await invoke("suggest_proposal_path", { configPath: source });
+      loadedFrom = source;
     } catch (e) {
       error = String(e);
       drafts = [];
@@ -80,7 +88,9 @@
     written = null;
     saving = true;
     try {
-      await invoke("write_proposal", { configPath: session.configPath, drafts, outPath });
+      // `loadedFrom`, never the shared path: the proposal must be built over the same file the
+      // drafts were read from.
+      await invoke("write_proposal", { configPath: loadedFrom, drafts, outPath });
       written = outPath;
     } catch (e) {
       error = String(e);
@@ -135,6 +145,18 @@
     >
       Proposta scritta in <code>{written}</code>. Il file di configurazione in uso <strong>non è stato
       toccato</strong>: la sostituzione la decidi tu.
+    </p>
+  {/if}
+
+  {#if stale}
+    <p
+      class="mt-3 rounded border border-amber-300 bg-amber-50 px-2 py-1 text-sm text-amber-900
+             dark:border-amber-800 dark:bg-amber-950 dark:text-amber-200"
+      role="status"
+    >
+      Le modifiche aperte qui vengono da <code>{loadedFrom}</code>, ma il file selezionato ora è un
+      altro. Scriverle sopra la configurazione corrente vi mescolerebbe job di due file diversi:
+      premi «Apri per modifica» per ricaricare, oppure rimetti il percorso precedente.
     </p>
   {/if}
 
@@ -301,7 +323,7 @@
       <button
         class="rounded bg-blue-600 px-3 py-1 text-sm text-white disabled:opacity-50"
         onclick={writeProposal}
-        disabled={saving || outPath.length === 0}
+        disabled={saving || stale || outPath.length === 0}
       >
         {saving ? "Scrittura…" : "Scrivi proposta"}
       </button>
