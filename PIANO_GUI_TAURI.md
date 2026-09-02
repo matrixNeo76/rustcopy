@@ -8,15 +8,19 @@ generated:
   at: 2026-08-27T00:00:00Z
 verified:
   by: process:claude-code
-  at: 2026-08-27T00:00:00Z
+  at: 2026-09-02T00:00:00Z
 ---
 
 # Come procedere con la GUI Tauri
 
-> **Stato**: §3 e §6 applicate. **Stack e ambito v1 confermati il 31 Agosto 2026** (Svelte +
-> Tailwind, sola lettura) e realizzati: `crates/rustcopy-gui` esiste, F53 è chiusa. **Resta aperta
-> la sola §5.3** (distribuzione): `ROADMAP` F60 prescrive ancora MSI/NSIS via bundler Tauri, e
-> quella resta la formulazione autorevole. Verificato contro il repo al 31 Agosto 2026.
+> **Stato al 2 Settembre 2026**: §3, §5 e §6 tutte applicate. Lo stack (Svelte + Tailwind) e
+> l'ambito v1 sono stati realizzati, e **§5.3 è stata accolta**: F60 impacchetta la console come
+> componente opzionale di `installer/rustcopy.iss`, non come secondo bundle. La ROADMAP è stata
+> aggiornata di conseguenza — i due documenti non divergono più sul veicolo di distribuzione.
+>
+> **L'ambito "sola lettura" della §5.2 è invece decaduto, di proposito**: F54 ha introdotto **un**
+> percorso di scrittura (proposte di configurazione in file nuovi). Vedi il riquadro in §5.2 e la
+> riga F54 della ROADMAP per le regole che ne limitano la portata.
 >
 > **Per un LLM che raccoglie questo lavoro**: la rinumerazione descritta in §6 **è stata applicata**
 > a `ROADMAP.md` il 27 Agosto 2026 — la GUI è la milestone **7.0.0**, il motore controllabile la
@@ -265,14 +269,19 @@ Quattro ragioni:
 
 ### 5.3 Distribuzione → **Tauri costruisce, Inno Setup distribuisce, GUI opzionale**
 
-> ⚠️ **Proposta alternativa a F60, non ancora decisa.** `ROADMAP.md` F60 prescrive tuttora
-> MSI/NSIS tramite il bundler Tauri, e resta la formulazione autorevole finché questa
-> raccomandazione non viene confermata. Se accolta, va aggiornata **anche** F60 — i due documenti
-> non devono divergere sul veicolo di distribuzione.
+> ✅ **Accolta e implementata il 2 Settembre 2026 (F60).** La riga F60 della ROADMAP è stata
+> riscritta di conseguenza: non più MSI/NSIS via bundler Tauri. La decisione poggia su una misura
+> presa prima di prenderla — la console pesa 8,9 MB contro un'installazione CLI da 13,7, perché
+> Tauri rende attraverso la WebView2 di sistema invece di impacchettare un motore browser.
 
 Non un secondo installer. `installer/rustcopy.iss` esiste, è **completato e testato realmente**
-(ciclo installazione silenziosa → PATH → disinstallazione → PATH ripristinato). Il bundler Tauri
-produce l'eseguibile della GUI; Inno Setup lo impacchetta come **componente opzionale**.
+(ciclo installazione silenziosa → PATH → disinstallazione → PATH ripristinato). Inno Setup
+impacchetta la console come **componente opzionale**.
+
+**Correzione rispetto alla formulazione originaria di questa sezione**: il bundler Tauri **non**
+viene usato nemmeno per costruire. `cargo build --release -p rustcopy-gui` produce l'eseguibile
+direttamente, e `bundle.active` resta `false` in `tauri.conf.json` — accenderlo genererebbe un
+MSI/NSIS separato per la sola console, cioè esattamente la separazione che questa sezione evita.
 
 ```text
 [X] rustcopy CLI          (obbligatorio)
@@ -286,10 +295,20 @@ Quattro ragioni:
    solo percorso di aggiornamento.
 3. **Una sola firma del codice.** Su Windows un eseguibile non firmato che chiede privilegi genera
    avvisi SmartScreen: un solo certificato e un solo passo di firma è meno da sbagliare.
-4. **Il default resta la CLI**, coerente con la §2.3 punto 3.
+4. **La CLI è sempre installata e non è deselezionabile** (`Flags: fixed`), perché è il componente
+   che deve funzionare non presidiato.
 
-Nessun conflitto con F60: la ROADMAP prevede il bundler Tauri per *costruire*, e qui viene usato per
-questo. Cambia solo il veicolo di distribuzione.
+   **Divergenza dichiarata rispetto alla formulazione originaria** («componente opzionale,
+   deselezionata di default»): nell'installer realizzato il tipo predefinito è **CLI + console**.
+   Il ragionamento della §2.3 punto 3 — un server non deve ritrovarsi una GUI — resta valido ma si
+   applica al percorso che i server usano davvero, cioè l'installazione silenziosa, dove chi
+   distribuisce sceglie esplicitamente (`/TYPE=cli`). Un'installazione interattiva è invece una
+   persona davanti allo schermo, per cui il default sensato è l'insieme completo. La console non
+   incide comunque sulle prestazioni di un backup: è un binario separato, e il gate di `ci.yml`
+   dimostra che la CLI non ne acquisisce dipendenze.
+
+F60 è stata riscritta per dire questo, quindi il conflitto potenziale non esiste più: nessuno dei
+due documenti prescrive più il bundler Tauri.
 
 ---
 

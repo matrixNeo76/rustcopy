@@ -47,6 +47,17 @@ Security-relevant areas of this codebase:
   A report that this trust boundary is being crossed in an unexpected way (e.g. by data that
   originates from the *source* tree being copied rather than from CLI/config) is in scope.
 
+- **`crates/rustcopy-gui`** (the desktop console) and **`src/gui_api.rs`**/**`src/job_editor.rs`**
+  — the console reads reports and configurations and has exactly one write path,
+  `job_editor::propose_config`, which writes a **new** file and refuses to overwrite. Its Tauri
+  capabilities grant `dialog:allow-open`/`dialog:allow-save` and nothing else: the frontend has no
+  filesystem permission of its own, and every read goes through a command backed by `gui_api`. A
+  report that the frontend can reach a file the commands do not expose, that the editor can write
+  outside the path the operator chose, or that a configured `webhook_url` reaches the interface
+  un-truncated (it is cut to scheme and host, because the URL *is* the credential) is in scope.
+  Note that roles are **not** planned as a security boundary here: anyone with a local session can
+  run `robocopy_ingest.exe` or edit the TOML directly, and `ROADMAP.md` says so.
+
 Out of scope: `robocopy.exe` itself (a Microsoft-owned binary this tool shells out to, not part of
 this codebase), and denial-of-service reports that require local Administrator/physical access to
 the host running the backup.

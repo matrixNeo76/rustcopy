@@ -1,7 +1,7 @@
 ---
 type: Log
 title: Analisi di Robustezza e Ottimizzazione Prestazioni
-description: Audit trail dei difetti D1-D21 e delle opportunità di miglioramento O1-O10.
+description: Audit trail dei difetti D1-D22 e delle opportunità di miglioramento O1-O10.
 status: stable
 generated:
   by: process:claude-code
@@ -171,7 +171,7 @@ Se l'applicazione Rust intercetta `Ctrl+C` e si arresta senza terminare il proce
 > **D20** (23 Agosto 2026) chiude la metà in lettura dello stesso costo: il manifest veniva
 > caricato per intero in RAM anche da chi non lo usava (580 MB misurati). **D21** (23 Agosto
 > 2026) elimina la duplicazione dell'inventario di scan, che `verify` teneva vivo in quattro
-> copie. Porta il totale storico a 21 (D1-D21). **Nessun difetto resta aperto**: D10, l'ultima
+> copie. Porta il totale storico a 22 (D1-D22, l'ultimo trovato dall'utente avviando la console installata — vedi la nota metodologica in D22). **Nessun difetto resta aperto**: D10, l'ultima
 > voce ancora segnata come tale, è stato riclassificato il 23 Agosto 2026 come *limite noto*
 > dello strumento di estrazione del grafo — la sua parte azionabile era già stata fatta, e ciò
 > che resta non ha un fix (vedi la sezione D10 per il razionale).
@@ -1279,6 +1279,66 @@ a prescindere da quanti handle esistono.
 **Limite dichiarato**: `ScanSummary` continua a materializzare l'intero inventario, ed è un costo
 consapevole, non un difetto — serve a chi lo riceve, e `--no-prescan` resta la via per non pagarlo.
 D21 elimina i *duplicati*, non il working set.
+
+---
+
+### D22 — La console installata caricava il **server di sviluppo**, non il proprio frontend ✅ RISOLTO (2 Set 2026)
+
+**Stato: chiuso e verificato.**
+
+**Gravità: ALTA.** Trovato **dall'utente**, avviando l'applicazione appena installata da F60. La
+finestra mostrava `ERR_CONNECTION_REFUSED` contro `localhost`. Nessun controllo automatico aveva
+visto niente.
+
+Due difetti che si nascondevano a vicenda.
+
+**(1) Tauri era in modalità dev dentro una build `--release`.** Tauri non decide dev-vs-produzione
+dal profilo cargo ma dalla feature `custom-protocol`; il suo build script calcola:
+
+```rust
+// tauri-2.11.5/build.rs
+let custom_protocol = has_feature("custom-protocol");
+let dev = !custom_protocol;
+```
+
+La CLI di Tauri aggiunge quel flag da sé durante `tauri build`. Questo progetto compila con `cargo`
+liscio, quindi non è mai stato attivo, e il build script emetteva `cargo:rustc-cfg=dev` anche in
+release: la WebView puntava su `devUrl`, cioè il server Vite, assente su qualunque macchina
+raggiunta da un installer.
+
+**(2) `frontendDist` puntava a un percorso inesistente.** Era `../ui/dist`, relativo alla cartella
+che contiene `tauri.conf.json` (`crates/rustcopy-gui/`), quindi risolveva a `crates/ui/dist`.
+Contraddiceva il `beforeBuildCommand` due righe sotto, che usa già `--prefix ui`. Il primo difetto
+mascherava il secondo: in modalità dev `frontendDist` non viene mai letto. Con `custom-protocol`
+attivo il percorso sbagliato diventa un errore di compilazione immediato — verificato rimettendolo:
+
+```
+error: proc macro panicked
+    = help: message: The `frontendDist` configuration is set to `"../ui/dist"` but this path doesn't exist
+```
+
+**Perché è passato.** `cargo build`, `clippy` e 422 test erano verdi su un binario che non poteva
+disegnare la propria interfaccia, perché **nessuno di loro apre la finestra**. La CI era anche
+peggio che silenziosa: il job `gui` passava *proprio perché* non costruiva il frontend, quindi
+certificava una configurazione che nessuno spedisce.
+
+**Rimedio.** Non un test in più ma un `compile_error!` in `crates/rustcopy-gui/src/main.rs`: una
+build `--release` senza `custom-protocol` **non compila**. Verificato in entrambi i versi. Il job
+`gui` della CI ora installa Node e costruisce `ui/dist` prima di `cargo check`, così verifica ciò
+che viene spedito.
+
+**Nota metodologica, la parte che vale oltre questo difetto.** Un falso negativo mio ha quasi
+chiuso la questione troppo presto: dopo la prima correzione avevo controllato che il processo non
+aprisse connessioni sulla porta 5173 e ne avevo dedotto che funzionasse. Una connessione rifiutata
+si chiude molto prima che un controllo a sei secondi la veda, e in quel momento l'app stava ancora
+mostrando la pagina d'errore. **Guardare la finestra** è ciò che ha chiuso la questione, entrambe
+le volte. Per una GUI non esiste sostituto: i controlli automatici del repo non ne aprono nessuna.
+
+**Difetti trovati nello stesso passo, usando l'applicazione invece di rileggere il diff**: le bozze
+dell'editor restavano legate al percorso *condiviso* invece che al file da cui erano state lette
+(scrivere dopo aver cambiato percorso senza ricaricare avrebbe mescolato job di due file), e il
+cambio scheda **distruggeva** ogni altro pannello, perdendo in silenzio le modifiche aperte.
+Entrambi introdotti dal passo di usabilità che doveva rendere la console utilizzabile.
 
 ---
 

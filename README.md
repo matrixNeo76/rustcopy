@@ -44,10 +44,14 @@ Log file   : E:\backup\ingest.log
 ```
 
 > [!NOTE]
-> `rustcopy` è **solo una CLI**: non c'è interfaccia grafica né monitoraggio live in questa versione.
-> Il progresso si segue dalla progress bar a terminale; a run concluso restano il report JSON e la
-> dashboard HTML statica (`--html-report-path`). Un'app desktop è pianificata — milestone **7.0.0
-> (Tauri)** in [ROADMAP.md](ROADMAP.md) — ma non è implementata.
+> I backup li esegue **solo la CLI**, e non c'è monitoraggio live: il progresso si segue dalla
+> progress bar a terminale; a run concluso restano il report JSON e la dashboard HTML statica
+> (`--html-report-path`).
+>
+> Dalla milestone **7.0.0** esiste anche una **console desktop** (Tauri, componente opzionale
+> dell'installer): mostra job, impostazioni risolte e storico, e prepara proposte di configurazione
+> in file nuovi. **Non esegue backup, non copia e non cancella nulla**, e non tocca mai la
+> configurazione in uso — vedi [ROADMAP.md](ROADMAP.md) e `PIANO_GUI_TAURI.md`.
 
 ---
 
@@ -143,8 +147,8 @@ I flag essenziali per l'uso quotidiano:
 ## 🧪 Sviluppo
 
 ```bash
-cargo test                          # 326 test (build di default)
-cargo test --features notify-server # 341 test (+ router axum e binari reali)
+cargo test --workspace --exclude rustcopy-gui                                   # 422 test
+cargo test --workspace --exclude rustcopy-gui --features rustcopy-cli/notify-server  # 437 test
 ```
 
 CI su Windows e Linux, `clippy -D warnings` e `cargo fmt --check` su entrambe le configurazioni di
