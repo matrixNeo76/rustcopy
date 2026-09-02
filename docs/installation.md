@@ -96,7 +96,7 @@ canali configurabili da un solo file TOML, invece di replicare la logica in ogni
 
 ```powershell
 # Build (il binario di backup normale NON include axum a meno di questa feature)
-cargo build --release --features notify-server
+cargo build --release -p rustcopy-cli --features notify-server
 
 # Avvio: senza token, resta sul solo loopback (nessuna esposizione di rete)
 .\target\release\notify-server.exe

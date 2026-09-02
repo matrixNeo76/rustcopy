@@ -72,7 +72,7 @@ Log file   : E:\backup\ingest.log
 
 ```powershell
 # Build dai sorgenti
-cargo build --release --features notify-server
+cargo build --release -p rustcopy-cli --features notify-server
 ```
 
 Due requisiti verificati sul binario compilato:
