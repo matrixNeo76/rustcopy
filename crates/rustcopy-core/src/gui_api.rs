@@ -418,13 +418,31 @@ pub struct JobSettings {
 /// secrets, which ROADMAP's third security warning exists to prevent.
 ///
 /// Cuts at the first `/`, `?` or `#` after the scheme — a query string alone can carry the token
-/// (`https://host?token=…`), so stopping at the path would not be enough.
+/// (`https://host?token=…`), so stopping at the path would not be enough — and drops the
+/// authority's `userinfo`, because `https://user:password@host` carries the credential *before*
+/// the host, where neither of those cuts would reach it.
 fn redact_endpoint(url: &str) -> String {
     let after_scheme = url.find("://").map(|idx| idx + 3).unwrap_or(0);
-    match url[after_scheme..].find(['/', '?', '#']) {
-        Some(offset) => format!("{}/…", &url[..after_scheme + offset]),
-        // No path and no query: there is nothing here that is not the host.
-        None => url.to_string(),
+    let (scheme, remainder) = url.split_at(after_scheme);
+
+    // Everything up to the first path/query/fragment separator is the authority.
+    let authority_end = remainder.find(['/', '?', '#']).unwrap_or(remainder.len());
+    let authority = &remainder[..authority_end];
+
+    // `user:password@host` puts a credential inside the authority itself, so keep only what
+    // follows the last `@`. Nothing here is a secret once the userinfo is gone: a hostname is the
+    // operational half an operator came to check.
+    let host = authority
+        .rsplit_once('@')
+        .map_or(authority, |(_userinfo, host)| host);
+
+    if authority_end == remainder.len() {
+        // No path and no query: there is no tail to stand in for, and appending an ellipsis would
+        // invent one. Whether anything was removed at all is the caller's question, answered by
+        // comparing this against the stored value.
+        format!("{scheme}{host}")
+    } else {
+        format!("{scheme}{host}/…")
     }
 }
 
@@ -723,7 +741,15 @@ fn settings_for(job: &JobConfig, base: &JobConfig, name: String) -> JobSettings 
                 "—",
                 |value| redact_endpoint(value),
             )
-            .redacted_when(resolved.webhook_url.is_some())
+            // Derived from whether rendering actually changed the URL, not from the field being
+            // set: a bare `https://host` comes back untouched, and labelling it "cut short" would
+            // be the flag lying in the other direction.
+            .redacted_when(
+                resolved
+                    .webhook_url
+                    .as_deref()
+                    .is_some_and(|url| redact_endpoint(url) != url),
+            )
             .caution_when(
                 resolved.webhook_url.is_some(),
                 "L'URL di un webhook vale come credenziale: qui è troncato di proposito a schema e host.",
@@ -1245,6 +1271,63 @@ pre_command = "net stop MSSQLSERVER"
             redact_endpoint("https://notify.internal"),
             "https://notify.internal",
             "a bare host holds no secret and is shown whole"
+        );
+    }
+
+    /// A credential can sit **before** the host, where neither the path cut nor the query cut
+    /// reaches it — and `https://user:password@host` has no path and no query at all, so the first
+    /// version of this function returned it whole. The hostname must still survive: it is the half
+    /// an operator opened the pane to check.
+    #[test]
+    fn redaction_drops_a_credential_carried_in_the_authority() {
+        assert_eq!(
+            redact_endpoint("https://user:password@notify.internal"),
+            "https://notify.internal"
+        );
+        assert_eq!(
+            redact_endpoint("https://token@notify.internal/hooks/abc"),
+            "https://notify.internal/…"
+        );
+    }
+
+    /// The flag has to track what rendering actually did. Set from "the field is present", it
+    /// claimed a bare `https://host` had been cut short — the same failure as claiming an unset
+    /// field had been, only in the other direction.
+    #[test]
+    fn a_url_that_survives_rendering_intact_is_not_marked_as_cut_short() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let path = dir.path().join("bare.toml");
+        std::fs::write(
+            &path,
+            "source = \"D:/src\"
+dest = \"E:/dst\"
+webhook_url = \"https://notify.internal\"
+",
+        )
+        .expect("write");
+
+        let all = read_settings(&path).expect("reads");
+        let webhook = entry(&all[0], "webhook_url");
+
+        assert_eq!(webhook.value, "https://notify.internal");
+        assert!(
+            !webhook.redacted,
+            "nothing was removed, so nothing may claim to have been"
+        );
+
+        let with_secret = dir.path().join("secret.toml");
+        std::fs::write(
+            &with_secret,
+            "source = \"D:/src\"
+dest = \"E:/dst\"
+webhook_url = \"https://u:p@notify.internal\"
+",
+        )
+        .expect("write");
+        let all = read_settings(&with_secret).expect("reads");
+        assert!(
+            entry(&all[0], "webhook_url").redacted,
+            "but a stripped userinfo must be declared, even with no path to cut"
         );
     }
 
