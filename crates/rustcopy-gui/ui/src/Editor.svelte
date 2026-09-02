@@ -1,9 +1,12 @@
 <script>
   import { invoke } from "@tauri-apps/api/core";
+  import { save } from "@tauri-apps/plugin-dialog";
+  import PathBar from "./PathBar.svelte";
+  import EmptyState from "./EmptyState.svelte";
+  import { session } from "./session.svelte.js";
 
   // The only pane that writes. It never writes in place: it produces a proposal in a new file and
   // the operator decides whether it replaces the running configuration.
-  let configPath = $state("");
   let drafts = $state([]);
   let selected = $state(0);
   let outPath = $state("");
@@ -16,6 +19,11 @@
   // orphan its generation chain and start a fresh history under the new name. The editor offers
   // creation instead, which has no such consequence.
   let existingNames = $state(new Set());
+  // The configuration these drafts actually came from. Not `session.configPath`: that is shared,
+  // so opening a different file in another pane would silently retarget a write already in
+  // progress here -- A's jobs applied over B's configuration. The shared path is what made the
+  // console usable; this is the hole it opened, and the two have to be held apart.
+  let loadedFrom = $state("");
 
   // The whole draft is loaded, edited in part, and sent back whole. That is deliberate: a field
   // this form does not render still round-trips untouched, so rendering a subset can never drop a
@@ -27,16 +35,19 @@
   // refuses the same edit whatever this frontend sends.
   const mirrorLocked = $derived(draft ? !draft.mirror : true);
   const nameLocked = $derived(draft ? existingNames.has(draft.name) : true);
+  const stale = $derived(loadedFrom !== "" && loadedFrom !== session.configPath);
 
   async function load() {
     error = null;
     written = null;
     loading = true;
     try {
-      drafts = await invoke("read_job_drafts", { configPath });
+      const source = session.configPath;
+      drafts = await invoke("read_job_drafts", { configPath: source });
       existingNames = new Set(drafts.map((entry) => entry.name));
       selected = 0;
-      outPath = await invoke("suggest_proposal_path", { configPath });
+      outPath = await invoke("suggest_proposal_path", { configPath: source });
+      loadedFrom = source;
     } catch (e) {
       error = String(e);
       drafts = [];
@@ -57,12 +68,29 @@
     selected = drafts.length - 1;
   }
 
-  async function save() {
+  async function pickTarget() {
+    // A save dialog offers to replace an existing file; the core refuses to. Rather than let the
+    // operator pick a target that is then rejected, an existing choice is reported here as the
+    // refusal it will be, in the same words.
+    const picked = await save({
+      defaultPath: outPath,
+      filters: [{ name: "Configurazione TOML", extensions: ["toml"] }],
+    });
+    if (typeof picked === "string" && picked.length > 0) {
+      outPath = picked;
+      written = null;
+      error = null;
+    }
+  }
+
+  async function writeProposal() {
     error = null;
     written = null;
     saving = true;
     try {
-      await invoke("write_proposal", { configPath, drafts, outPath });
+      // `loadedFrom`, never the shared path: the proposal must be built over the same file the
+      // drafts were read from.
+      await invoke("write_proposal", { configPath: loadedFrom, drafts, outPath });
       written = outPath;
     } catch (e) {
       error = String(e);
@@ -89,22 +117,15 @@
 </script>
 
 <section class="p-4">
-  <div class="flex gap-2">
-    <label class="sr-only" for="editor-config-path">Percorso del file di configurazione TOML</label>
-    <input
-      id="editor-config-path"
-      class="flex-1 rounded border border-slate-300 px-2 py-1 text-sm dark:border-slate-700 dark:bg-slate-900"
-      placeholder="Percorso di un file di configurazione TOML"
-      bind:value={configPath}
-    />
-    <button
-      class="rounded bg-blue-600 px-3 py-1 text-sm text-white disabled:opacity-50"
-      onclick={load}
-      disabled={loading || configPath.length === 0}
-    >
-      {loading ? "Lettura…" : "Apri per modifica"}
-    </button>
-  </div>
+  <PathBar
+    bind:value={session.configPath}
+    kind="config"
+    label="Percorso del file di configurazione TOML"
+    placeholder="Scegli un file di configurazione TOML"
+    action="Apri per modifica"
+    busy={loading}
+    onrun={load}
+  />
 
   {#if error}
     <p
@@ -124,6 +145,18 @@
     >
       Proposta scritta in <code>{written}</code>. Il file di configurazione in uso <strong>non è stato
       toccato</strong>: la sostituzione la decidi tu.
+    </p>
+  {/if}
+
+  {#if stale}
+    <p
+      class="mt-3 rounded border border-amber-300 bg-amber-50 px-2 py-1 text-sm text-amber-900
+             dark:border-amber-800 dark:bg-amber-950 dark:text-amber-200"
+      role="status"
+    >
+      Le modifiche aperte qui vengono da <code>{loadedFrom}</code>, ma il file selezionato ora è un
+      altro. Scriverle sopra la configurazione corrente vi mescolerebbe job di due file diversi:
+      premi «Apri per modifica» per ricaricare, oppure rimetti il percorso precedente.
     </p>
   {/if}
 
@@ -284,15 +317,30 @@
         bind:value={outPath}
       />
       <button
+        class="rounded border border-slate-300 px-2 py-1 text-sm dark:border-slate-700"
+        onclick={pickTarget}
+      >Sfoglia…</button>
+      <button
         class="rounded bg-blue-600 px-3 py-1 text-sm text-white disabled:opacity-50"
-        onclick={save}
-        disabled={saving || outPath.length === 0}
+        onclick={writeProposal}
+        disabled={saving || stale || outPath.length === 0}
       >
         {saving ? "Scrittura…" : "Scrivi proposta"}
       </button>
     </div>
     <p class="mt-1 text-[11px] text-slate-500">
-      Viene sempre creato un file nuovo. Se esiste già, la scrittura viene rifiutata.
+      Viene sempre creato un file nuovo. Se ne scegli uno esistente la scrittura viene rifiutata:
+      la sostituzione della configurazione in uso resta una tua decisione, non un effetto
+      collaterale di un salvataggio.
     </p>
+  {:else if !error}
+    <EmptyState
+      title="Scegli un file di configurazione per modificarne i job"
+      lines={[
+        "Questa è l'unica scheda che scrive, e scrive sempre altrove: produce una proposta in un file nuovo e non tocca la configurazione in uso.",
+        "Non può accendere il mirror né introdurre o abbassare la retention: un job che cancella va scritto a mano nel file. Può però spegnerli, perché ridurre una cancellazione non ha bisogno di cancelli.",
+        "Webhook e comandi pre/post non sono modificabili qui e restano invariati nella proposta.",
+      ]}
+    />
   {/if}
 </section>

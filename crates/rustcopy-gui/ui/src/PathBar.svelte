@@ -1,0 +1,101 @@
+<script>
+  import { open } from "@tauri-apps/plugin-dialog";
+  import { recent, remember } from "./session.svelte.js";
+
+  // One row: a native picker, the chosen path, the recent ones, and the action. Every pane used to
+  // hand-roll this and every pane got it slightly differently.
+  let {
+    value = $bindable(""),
+    kind = "config",
+    label = "Percorso",
+    placeholder = "",
+    action = "Apri",
+    busy = false,
+    onrun = () => {},
+  } = $props();
+
+  let showRecent = $state(false);
+  const recents = $derived(showRecent ? recent(kind) : []);
+
+  const FILTERS = {
+    config: [{ name: "Configurazione TOML", extensions: ["toml"] }],
+    report: [{ name: "Report JSON", extensions: ["json"] }],
+  };
+
+  async function browse() {
+    // A picker returns a path the operator selected; it reads no file and writes none. Choosing is
+    // strictly safer than typing, because a mistyped path is indistinguishable from a missing one.
+    const picked = await open({
+      multiple: false,
+      directory: false,
+      filters: FILTERS[kind] ?? FILTERS.config,
+    });
+    if (typeof picked === "string" && picked.length > 0) {
+      value = picked;
+      remember(kind, picked);
+      onrun();
+    }
+  }
+
+  function run() {
+    if (value.length === 0) return;
+    remember(kind, value);
+    onrun();
+  }
+
+  function choose(path) {
+    value = path;
+    showRecent = false;
+    remember(kind, path);
+    onrun();
+  }
+</script>
+
+<div class="relative">
+  <div class="flex gap-2">
+    <label class="sr-only" for="pathbar-{kind}">{label}</label>
+    <input
+      id="pathbar-{kind}"
+      class="flex-1 rounded border border-slate-300 px-2 py-1 text-sm dark:border-slate-700 dark:bg-slate-900"
+      {placeholder}
+      bind:value
+      onkeydown={(e) => e.key === "Enter" && run()}
+    />
+    <button
+      class="rounded border border-slate-300 px-2 py-1 text-sm dark:border-slate-700"
+      onclick={browse}
+      title="Scegli il file"
+    >Sfoglia…</button>
+    <button
+      class="rounded border border-slate-300 px-2 py-1 text-sm disabled:opacity-40 dark:border-slate-700"
+      onclick={() => (showRecent = !showRecent)}
+      disabled={recent(kind).length === 0}
+      title="File aperti di recente"
+      aria-expanded={showRecent}
+    >Recenti</button>
+    <button
+      class="rounded bg-blue-600 px-3 py-1 text-sm text-white disabled:opacity-50"
+      onclick={run}
+      disabled={busy || value.length === 0}
+    >
+      {busy ? "Lettura…" : action}
+    </button>
+  </div>
+
+  {#if showRecent && recents.length > 0}
+    <ul
+      class="absolute right-0 z-10 mt-1 w-full max-w-3xl rounded border border-slate-300 bg-white
+             p-1 shadow-lg dark:border-slate-700 dark:bg-slate-900"
+    >
+      {#each recents as path}
+        <li>
+          <button
+            class="w-full truncate rounded px-2 py-1 text-left font-mono text-xs
+                   hover:bg-slate-100 dark:hover:bg-slate-800"
+            onclick={() => choose(path)}
+          >{path}</button>
+        </li>
+      {/each}
+    </ul>
+  {/if}
+</div>

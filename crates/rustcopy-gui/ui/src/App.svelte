@@ -1,48 +1,30 @@
 <script>
-  import { invoke } from "@tauri-apps/api/core";
-  import History from "./History.svelte";
+  import Jobs from "./Jobs.svelte";
   import Settings from "./Settings.svelte";
   import Editor from "./Editor.svelte";
+  import History from "./History.svelte";
+  import Help from "./Help.svelte";
 
   let tab = $state("jobs");
 
-  // One list instead of three near-identical buttons: a fourth pane should not mean copying the
-  // same class expression again and getting one of the three states wrong.
+  // One list instead of five near-identical buttons: a sixth pane should not mean copying the
+  // same class expression again and getting one of the states wrong.
   const TABS = [
-    { id: "jobs", label: "Job" },
-    { id: "settings", label: "Impostazioni" },
-    { id: "editor", label: "Modifica" },
-    { id: "history", label: "Storico" },
+    { id: "jobs", label: "Job", component: Jobs },
+    { id: "settings", label: "Impostazioni", component: Settings },
+    { id: "editor", label: "Modifica", component: Editor },
+    { id: "history", label: "Storico", component: History },
+    { id: "help", label: "Aiuto", component: Help },
   ];
 
-  // Read-only by design: this version has no write path at all, so it cannot damage a backup.
-  // See PIANO_GUI_TAURI.md §5.2.
-  let configPath = $state("");
-  let jobs = $state([]);
-  let error = $state(null);
-  let loading = $state(false);
-
-  async function loadJobs() {
-    error = null;
-    loading = true;
-    try {
-      // The frontend does not decide: it asks the library and renders what comes back (§4.1).
-      // No judgement about mirroring, verification or outcomes is computed here.
-      jobs = await invoke("list_jobs", { configPath });
-    } catch (e) {
-      error = String(e);
-      jobs = [];
-    } finally {
-      loading = false;
-    }
-  }
 </script>
 
 <main class="min-h-screen bg-slate-50 text-slate-900 dark:bg-slate-950 dark:text-slate-100">
   <header class="border-b border-slate-200 px-4 py-3 dark:border-slate-800">
     <h1 class="text-sm font-semibold tracking-tight">rustcopy — console</h1>
     <p class="text-xs text-slate-500 dark:text-slate-400">
-      Non esegue backup. L’unica scrittura è una proposta di configurazione in un file nuovo: il file in uso non viene mai toccato.
+      Non esegue backup. L'unica scrittura è una proposta di configurazione in un file nuovo: il
+      file in uso non viene mai toccato.
     </p>
     <nav class="mt-2 flex gap-1" aria-label="Sezioni">
       {#each TABS as entry (entry.id)}
@@ -57,87 +39,14 @@
     </nav>
   </header>
 
-  {#if tab === "history"}
-    <History />
-  {:else if tab === "settings"}
-    <Settings />
-  {:else if tab === "editor"}
-    <Editor />
-  {:else}
-
-  <section class="p-4">
-    <div class="flex gap-2">
-      <!-- A placeholder is not a label: assistive technology needs a programmatic one. The visible
-           text stays in the placeholder so the dense layout is unchanged. -->
-      <label class="sr-only" for="config-path">Percorso del file di configurazione TOML</label>
-      <input
-        id="config-path"
-        class="flex-1 rounded border border-slate-300 px-2 py-1 text-sm dark:border-slate-700 dark:bg-slate-900"
-        placeholder="Percorso di un file di configurazione TOML"
-        bind:value={configPath}
-      />
-      <button
-        class="rounded bg-blue-600 px-3 py-1 text-sm text-white disabled:opacity-50"
-        onclick={loadJobs}
-        disabled={loading || configPath.length === 0}
-      >
-        {loading ? "Lettura…" : "Elenca job"}
-      </button>
+  <!-- Every pane stays mounted and inactive ones are hidden, rather than swapping in one
+       component. Rendering only the active tab destroys the others: loading a configuration in
+       Modifica, checking something under Aiuto and coming back lost every edit, silently. Hiding
+       costs one wrapper element and keeps the work. -->
+  {#each TABS as entry (entry.id)}
+    {@const Pane = entry.component}
+    <div class:hidden={tab !== entry.id}>
+      <Pane />
     </div>
-
-    {#if error}
-      <p
-        class="mt-3 rounded border border-red-300 bg-red-50 px-2 py-1 text-sm text-red-800
-               dark:border-red-800 dark:bg-red-950 dark:text-red-200"
-        role="alert"
-      >
-        {error}
-      </p>
-    {/if}
-
-    {#if jobs.length > 0}
-      <table class="mt-4 w-full text-left text-xs">
-        <thead class="border-b border-slate-300 dark:border-slate-700">
-          <tr>
-            <th class="py-1 pr-3 font-medium">Job</th>
-            <th class="py-1 pr-3 font-medium">Sorgente</th>
-            <th class="py-1 pr-3 font-medium">Destinazione</th>
-            <th class="py-1 pr-3 font-medium">Tipo</th>
-            <th class="py-1 pr-3 font-medium">Verifica</th>
-          </tr>
-        </thead>
-        <tbody>
-          {#each jobs as job (job.name)}
-            <tr class="border-b border-slate-200 dark:border-slate-800">
-              <td class="py-1 pr-3 font-mono">
-                {job.name}
-                <!-- `--mirror` deletes at the destination, so it must be visible as such and never
-                     rendered like an ordinary copy. -->
-                {#if job.mirror}
-                  <span
-                    class="ml-1 rounded bg-amber-200 px-1 text-[10px] font-semibold text-amber-900
-                           dark:bg-amber-900 dark:text-amber-100"
-                  >MIRROR — cancella in destinazione</span>
-                {/if}
-              </td>
-              <td class="py-1 pr-3 font-mono text-slate-600 dark:text-slate-400">{job.source ?? "—"}</td>
-              <td class="py-1 pr-3 font-mono text-slate-600 dark:text-slate-400">{job.dest ?? "—"}</td>
-              <td class="py-1 pr-3">{job.backup_type ?? "copia"}</td>
-              <td class="py-1 pr-3">
-                <!-- fast_verify travels beside verify_integrity, never instead of it: it skips files
-                     whose source is unchanged, so it is a weaker guarantee and saying only "yes"
-                     would overstate it. -->
-                {#if job.verify_integrity}
-                  {job.fast_verify ? "sì (fast)" : "sì"}
-                {:else}
-                  no
-                {/if}
-              </td>
-            </tr>
-          {/each}
-        </tbody>
-      </table>
-    {/if}
-  </section>
-  {/if}
+  {/each}
 </main>
