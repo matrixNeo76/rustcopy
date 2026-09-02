@@ -8,7 +8,7 @@ generated:
   at: 2026-08-06T00:00:00Z
 verified:
   by: process:github-actions-ci
-  at: 2026-08-06T00:00:00Z
+  at: 2026-09-02T00:00:00Z
 ---
 
 # Architettura di Sistema — robocopy-ingest-cli (v6.0.0)
@@ -24,10 +24,15 @@ Il motivo è la milestone 7.0.0 (GUI Tauri): Tauri porta con sé una toolchain J
 `tauri.conf.json`, icone, bundler — che non deve entrare nel crate della CLI. `notify-server` può
 restare un binario feature-gated perché è puro Rust; una GUI no.
 
+Dal 31 Agosto 2026 il terzo membro **esiste**: `crates/rustcopy-gui`, la console desktop (Tauri 2 +
+Svelte 5 + Tailwind 4). Non esegue backup e ha un solo percorso di scrittura, `job_editor`, che
+produce proposte di configurazione in file nuovi.
+
 | Membro | Contiene | Produce |
 |---|---|---|
 | `crates/rustcopy-core` | Tutta la logica: scansione, motori di copia, integrità, crypto, VSS, generazioni, storico, report | La libreria **`robocopy_ingest`** |
 | `crates/rustcopy-cli` | Solo gli entry point e la loro orchestrazione | I binari **`robocopy_ingest`** e **`notify-server`** |
+| `crates/rustcopy-gui` | La console desktop: comandi Tauri come involucri sottili su `gui_api`/`job_editor`, più il frontend Svelte in `ui/` | Il binario **`rustcopy-gui`**, componente opzionale dell'installer |
 
 **Il nome della libreria e quelli dei binari non sono cambiati.** Il package si chiama
 `rustcopy-core` ma la sua `[lib]` resta `robocopy_ingest`, quindi ogni `use robocopy_ingest::…`
@@ -222,7 +227,7 @@ Per garantire la stabilità su dataset da **milioni di file**:
 
 ## 5. Matrice di Cross-Platform & Mock Testability
 
-Nonostante `robocopy.exe` sia un binario esclusivamente Windows, l'intera suite di **326 test** (`cargo test` di base) viene eseguita ed è al 100% passante sia su Windows che su Linux (le due piattaforme coperte da `.github/workflows/ci.yml` — affiancato da `.github/workflows/security-audit.yml`, che esegue `rustsec/audit-check` contro il database advisory RustSec ad ogni modifica di `Cargo.toml`/`Cargo.lock` più un cron settimanale; macOS non fa parte della matrice CI, anche se nulla nel codice lo esclude a priori) grazie al trait `CommandRunner` ed al mock `ScriptedRunner` che simula perfettamente gli exit code ed i flussi stdout di Robocopy. Su Windows, i test aggiuntivi eseguono `robocopy.exe` realmente (dry-run, cifratura AES-256-GCM end-to-end, blocco del mirror-purge, webhook irraggiungibile, **ripristino completo end-to-end da perdita simulata di file — F24**, **backup cifrato → perdita → `--restore-from --decrypt` end-to-end — F25b**, **backup generazionale full → incrementale → differenziale — F34**, **ritenzione/rotazione delle generazioni per cicli — F35**, **comandi pre/post job — F39**, **installazione/rimozione reale di una voce Task Scheduler via `schtasks.exe` — F36**, **checkpoint e resume — F31**, **due job dello stesso batch `[[jobs]]` che condividono la stessa `dest` ottengono manifest generazioni e cache indipendenti — D12**, **le righe di log di ogni job in un batch `[[jobs]]`, incluse quelle emesse dentro `spawn_blocking` come l'invocazione di robocopy, sono taggate con il nome del job che le ha prodotte — D13**, **nessun file temporaneo residuo dopo la scrittura atomica del manifest generazioni/cache fast-verify — D14**, **un fallimento di copia in `--backup-type` restituisce l'exit code 1 (non 2) e scrive comunque un report — D15**). Con `cargo test --features notify-server` (**341 test** totali) si aggiungono i test unitari sul router axum (su socket TCP reale) e test end-to-end che eseguono i binari `notify-server` e `robocopy_ingest` realmente compilati l'uno contro l'altro. `--install-service`/`--uninstall-service` su entrambi i binari (F37, F41) sono coperti solo dal fallimento pulito senza elevazione e dai conflitti clap — il vero round trip `CreateService`/`StartService`/`DeleteService` contro il Service Control Manager richiede elevazione ad Amministratore reale e **non è automatizzato**, stesso limite dichiarato per `--vss-snapshot` (F30); vedi `CLAUDE.md` e `ROADMAP.md` (righe F37/F41) per il dettaglio.
+Nonostante `robocopy.exe` sia un binario esclusivamente Windows, l'intera suite di **422 test** (`cargo test --workspace --exclude rustcopy-gui`, la configurazione di base che gira in CI) viene eseguita ed è al 100% passante sia su Windows che su Linux (le due piattaforme coperte da `.github/workflows/ci.yml` — affiancato da `.github/workflows/security-audit.yml`, che esegue `rustsec/audit-check` contro il database advisory RustSec ad ogni modifica di `Cargo.toml`/`Cargo.lock` più un cron settimanale; macOS non fa parte della matrice CI, anche se nulla nel codice lo esclude a priori) grazie al trait `CommandRunner` ed al mock `ScriptedRunner` che simula perfettamente gli exit code ed i flussi stdout di Robocopy. Su Windows, i test aggiuntivi eseguono `robocopy.exe` realmente (dry-run, cifratura AES-256-GCM end-to-end, blocco del mirror-purge, webhook irraggiungibile, **ripristino completo end-to-end da perdita simulata di file — F24**, **backup cifrato → perdita → `--restore-from --decrypt` end-to-end — F25b**, **backup generazionale full → incrementale → differenziale — F34**, **ritenzione/rotazione delle generazioni per cicli — F35**, **comandi pre/post job — F39**, **installazione/rimozione reale di una voce Task Scheduler via `schtasks.exe` — F36**, **checkpoint e resume — F31**, **due job dello stesso batch `[[jobs]]` che condividono la stessa `dest` ottengono manifest generazioni e cache indipendenti — D12**, **le righe di log di ogni job in un batch `[[jobs]]`, incluse quelle emesse dentro `spawn_blocking` come l'invocazione di robocopy, sono taggate con il nome del job che le ha prodotte — D13**, **nessun file temporaneo residuo dopo la scrittura atomica del manifest generazioni/cache fast-verify — D14**, **un fallimento di copia in `--backup-type` restituisce l'exit code 1 (non 2) e scrive comunque un report — D15**). Con `cargo test --workspace --exclude rustcopy-gui --features rustcopy-cli/notify-server` (**437 test** totali) si aggiungono i test unitari sul router axum (su socket TCP reale) e test end-to-end che eseguono i binari `notify-server` e `robocopy_ingest` realmente compilati l'uno contro l'altro. `--install-service`/`--uninstall-service` su entrambi i binari (F37, F41) sono coperti solo dal fallimento pulito senza elevazione e dai conflitti clap — il vero round trip `CreateService`/`StartService`/`DeleteService` contro il Service Control Manager richiede elevazione ad Amministratore reale e **non è automatizzato**, stesso limite dichiarato per `--vss-snapshot` (F30); vedi `CLAUDE.md` e `ROADMAP.md` (righe F37/F41) per il dettaglio.
 
 ---
 

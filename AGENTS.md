@@ -39,7 +39,7 @@ Welcome to `robocopy-ingest-cli` (`rustcopy`). This document serves as the prima
 
 16. **rustcopy's own bookkeeping never lives inside `--dest`, and never counts as content**: the run-history index (`src/history.rs`) sits beside the **report**, not at the destination root, because writing into `<dest>` after a run changes that directory's mtime and robocopy acts on it during the *next* run — measured, a repeat sync over an unchanged tree went from copying 2 items to 3. `.ingest_cache` (F28) and `.rustcopy_generations.json` (F34) predate this and stay where they are only because they are opt-in; do not add a third. Separately, every one of these files must be excluded from scans via `robocopy_ingest::is_rustcopy_metadata` — `--restore-from` reverses source and destination, so yesterday's destination is today's source, and without the filter a restore copies rustcopy's own metadata into the restore target and then fails outright under `--decrypt` (`missing RCE1 header`). A statistics or bookkeeping file must never change, or fail, the transfer it describes.
 
-17. **The workspace boundary is what keeps the CLI fast, and it is enforced, not trusted (F52)**: `crates/rustcopy-core` holds every module and produces the library `robocopy_ingest`; `crates/rustcopy-cli` holds only the entry points and produces the binaries `robocopy_ingest` and `notify-server`. The **library and binary names are deliberately unchanged** from the single-package era, so every `use robocopy_ingest::…`, `installer/rustcopy.iss` and the PowerShell scripts keep working — do not "tidy" them to match the package names. The GUI (milestone 7.0.0) will be a third member with an npm/vite toolchain, and `ci.yml` carries a gate proving the CLI never acquires a dependency on it (`cargo tree --locked -p rustcopy-cli | grep -qiE 'tauri|wry|tao'`, empty). **Both that gate and rule 8's axum gate must use the `if … then … fi` form**: `… | grep -q … && exit 1` returns 1 when grep finds nothing, so it fails the job precisely when the dependency graph is clean — a real defect caught in review, not a hypothetical. `cargo doc` runs per package rather than `--workspace`, because the lib target and the bin target share the name `robocopy_ingest` and collide on one output path (rust-lang/cargo#6313).
+17. **The workspace boundary is what keeps the CLI fast, and it is enforced, not trusted (F52)**: `crates/rustcopy-core` holds every module and produces the library `robocopy_ingest`; `crates/rustcopy-cli` holds only the entry points and produces the binaries `robocopy_ingest` and `notify-server`. The **library and binary names are deliberately unchanged** from the single-package era, so every `use robocopy_ingest::…`, `installer/rustcopy.iss` and the PowerShell scripts keep working — do not "tidy" them to match the package names. The GUI (milestone 7.0.0) **is** the third member, with an npm/vite toolchain, and `ci.yml` carries a gate proving the CLI never acquires a dependency on it (`cargo tree --locked -p rustcopy-cli | grep -qiE 'tauri|wry|tao'`, empty). **Both that gate and rule 8's axum gate must use the `if … then … fi` form**: `… | grep -q … && exit 1` returns 1 when grep finds nothing, so it fails the job precisely when the dependency graph is clean — a real defect caught in review, not a hypothetical. `cargo doc` runs per package rather than `--workspace`, because the lib target and the bin target share the name `robocopy_ingest` and collide on one output path (rust-lang/cargo#6313).
 
 ---
 
@@ -81,18 +81,24 @@ crates/
 │           ├── mod.rs       # CopyEngine trait & CopyRequest / CopyOutcome definitions.
 │           ├── robocopy.rs  # Windows Robocopy process builder & parser.
 │           └── naive.rs     # Cross-platform baseline single-thread copy + selective copy for generations.
-└── rustcopy-cli/           # package `rustcopy-cli`; binary names unchanged (rule 17)
-    └── src/
-        ├── main.rs              # `robocopy_ingest` entrypoint, orchestration & signal handling (Ctrl+C).
-        └── notify_server_bin.rs # `notify-server` entrypoint (feature "notify-server"); own Windows service identity (F41).
+├── rustcopy-cli/           # package `rustcopy-cli`; binary names unchanged (rule 17)
+│   └── src/
+│       ├── main.rs              # `robocopy_ingest` entrypoint, orchestration & signal handling (Ctrl+C).
+│       └── notify_server_bin.rs # `notify-server` entrypoint (feature "notify-server"); own Windows service identity (F41).
+└── rustcopy-gui/           # package `rustcopy-gui`; the desktop console (milestone 7.0.0)
+    ├── src/main.rs         # Tauri commands: thin wrappers over `gui_api`/`job_editor`, no backup logic
+    ├── capabilities/       # Tauri permissions: dialog open/save only, no filesystem access
+    ├── tauri.conf.json     # `custom-protocol` decides dev-vs-production, not the cargo profile (D22)
+    └── ui/                 # Svelte 5 + Tailwind 4 frontend; `ui/dist` is embedded at build time
 ```
 
 ---
 
 ## 3. Mandatory Testing Guidelines
 
-- **Never declare success without running `cargo test`** (and `cargo test --features notify-server` if you touched `src/notify_server.rs`, `src/notify_sink.rs`, or `crates/rustcopy-cli/src/notify_server_bin.rs`).
-- All **326 unit and integration tests** (default build) MUST pass before committing changes. With `--features notify-server`, **341** must pass.
+- **Never declare success without running `cargo test --workspace --exclude rustcopy-gui --locked --all-targets`** (and the same with `--features rustcopy-cli/notify-server` if you touched `notify_server.rs`, `notify_sink.rs`, or `crates/rustcopy-cli/src/notify_server_bin.rs`). These are the commands `ci.yml` runs.
+- **A green test run says nothing about the GUI.** No test in this repository opens a window; D22 shipped a console that could not render its own interface with every check passing. Anything touching `crates/rustcopy-gui` has to be verified by building it and looking at it.
+- All **422 unit and integration tests** (default build) MUST pass before committing changes. With `--features rustcopy-cli/notify-server`, **437** must pass. Exclude the GUI crate from the workspace run (`--exclude rustcopy-gui`), exactly as CI does; it has its own job.
 - Cross-Platform Constraint: Unit tests inside `src/engine/robocopy.rs`, `src/integrity.rs`, `src/notify.rs`, `src/notify_sink.rs`, etc. MUST pass on Linux and macOS using `ScriptedRunner`/scripted test doubles.
 
 ### Test Commands:

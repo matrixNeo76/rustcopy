@@ -22,6 +22,54 @@ For full technical detail behind any entry, see `ANALYSIS.md` (defect list, `D<N
 ## [Unreleased]
 
 ### Added
+- **A desktop console** (milestone 7.0.0), shipped as an **optional component** of the installer.
+  It reads what rustcopy already wrote and prepares configuration proposals. It does not run
+  backups, and it never copies, deletes, schedules or installs. Five panes: the jobs a TOML
+  describes, every resolved setting, an editor, the run history with its deterministic analysis,
+  and a help page.
+  - *Settings* shows the two things the TOML does not state: which layer supplied the value that
+    wins for each job, and which settings carry a consequence — `mirror` deletes, `dry_run` copies
+    nothing, `fast_verify` trusts the source, `xxh3` is not cryptographic, `keep_generations`
+    prunes. A configured `webhook_url` is cut to scheme and host before it crosses the IPC
+    boundary: a webhook URL *is* the credential, and a settings pane ends up in screenshots.
+  - *Editor* is the only write path in the application, and it writes a **new** file: the running
+    configuration is never touched, and the substitution stays with the operator. One rule governs
+    it — the editor may narrow risk, never widen it. `mirror` cannot go off → on (it can be turned
+    off), retention cannot be introduced or lowered, the prescan cannot be removed from a mirroring
+    job, and omitting a job never deletes it. `webhook_url`, `pre_command` and `post_command` are
+    outside the form and copied verbatim.
+  - Native file pickers, one shared path across panes, recent files, and empty states that say what
+    each pane needs.
+- `keyring:NAME` as a fourth form for `--encrypt-aes256`/`--decrypt` keys, reading the **Windows
+  Credential Manager**, plus `--set-credential` (secret read from **stdin**, never an argument,
+  which would be visible in the process list) and `--delete-credential`. `env:`/`file:`/literal are
+  unchanged: a scheduled task's command is captured at install time and cannot be migrated by
+  editing a file.
+- `scripts/check-versions.sh` and a CI job behind it: four files declare the release version and no
+  build step held them together. The installer script's own header had admitted the drift without
+  preventing it.
+
+### Changed
+- The installer is now a **single** setup with the console as an optional component, rather than a
+  second bundle produced by Tauri's bundler. Measured before deciding: the console is 8.9 MB
+  against a 13.7 MB CLI install, because Tauri renders through the system WebView2 instead of
+  shipping a browser engine. Two installers would have meant two version streams and two
+  SmartScreen reputations for 8.9 MB. WebView2 is detected and reported — only when the console is
+  selected — without blocking setup.
+
+### Fixed
+- The installed console loaded the **dev server** instead of its own frontend, showing
+  `ERR_CONNECTION_REFUSED` on any machine without Vite running — which is every machine an
+  installer reaches. Tauri decides dev-vs-production from the `custom-protocol` feature, not from
+  the cargo profile, and `frontendDist` pointed at a path that did not exist; the first defect
+  hid the second. Reported by a user launching the application: `cargo build`, `clippy` and 422
+  tests were all green on that binary, because none of them opens a window. A `compile_error!` now
+  makes a release build without `custom-protocol` fail to compile, and CI builds the frontend so it
+  checks what ships. See `ANALYSIS.md` D22.
+- Editor drafts stayed bound to the shared configuration path rather than the file they were read
+  from, so changing the path without reloading and then writing would have mixed jobs from two
+  files. Switching tabs also destroyed every other pane, silently discarding open edits.
+
 - `--advise`: analyses this job's run history and prints deterministic suggestions — a safe repeat
   interval derived from observed durations, what retaining N generations would cost, which
   `--threads` value has actually performed best, runs that stand out, and recurring integrity
