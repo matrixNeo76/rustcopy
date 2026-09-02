@@ -184,6 +184,20 @@ jobs:
         working-directory: crates/rustcopy-gui/ui
         run: npm run build
 
+  # F60: four files declare the release version and no build step keeps them together. Its own
+  # job rather than a step inside `docs`: it needs no Rust toolchain and no okf install, so it
+  # reports in seconds instead of waiting behind a cargo cache restore.
+  versions:
+    timeout-minutes: 5
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+
+      - name: Check that every version declaration agrees
+        run: bash scripts/check-versions.sh
+
   docs:
     timeout-minutes: 15
     runs-on: ubuntu-latest

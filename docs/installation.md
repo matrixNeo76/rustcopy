@@ -33,13 +33,29 @@ binario compilato:
 
 Per una distribuzione più comoda di un semplice copia-incolla, il repo include uno script Inno
 Setup (`installer/rustcopy.iss`) che genera un vero `setup.exe` con disinstaller, opzione di
-aggiunta al PATH di sistema e verifica automatica del Visual C++ Redistributable:
+aggiunta al PATH di sistema e verifica automatica del Visual C++ Redistributable.
+
+Da F60 l'installer è **uno solo** e la console grafica è un **componente opzionale**:
+
+| Tipo di installazione | Cosa installa |
+|---|---|
+| **CLI e console grafica** | `robocopy_ingest.exe`, `notify-server.exe`, `rustcopy-gui.exe` |
+| **Solo CLI** | `robocopy_ingest.exe`, `notify-server.exe` |
+| **Scelta manuale** | La CLI è obbligatoria, la console si spunta |
+
+La console è opzionale di proposito: un server che esegue solo backup pianificati non ha alcun
+uso per una finestra desktop, e la CLI è il componente che deve continuare a funzionare non
+presidiato.
 
 ```powershell
-# 1. Build dei binari (dalla root del repo)
-cargo build --release --features notify-server
+# 1. Frontend della console (solo se la impacchetti)
+npm --prefix crates/rustcopy-gui/ui ci
+npm --prefix crates/rustcopy-gui/ui run build
 
-# 2. Compilazione dell'installer (richiede Inno Setup 6: winget install JRSoftware.InnoSetup)
+# 2. Build dei binari (dalla root del repo)
+cargo build --release --workspace --features rustcopy-cli/notify-server
+
+# 3. Compilazione dell'installer (richiede Inno Setup 6: winget install JRSoftware.InnoSetup)
 & "$env:LOCALAPPDATA\Programs\Inno Setup 6\ISCC.exe" installer\rustcopy.iss
 # Output: installer-output\rustcopy-<versione>-setup.exe
 ```
@@ -50,11 +66,23 @@ del PATH di sistema, disinstallazione con ripristino del PATH — ciclo completo
 ```powershell
 # Installazione silenziosa (utile per deploy automatizzati)
 rustcopy-6.0.0-setup.exe /VERYSILENT /SUPPRESSMSGBOXES /NORESTART /TASKS="addtopath"
+
+# Solo CLI, senza console grafica
+rustcopy-6.0.0-setup.exe /VERYSILENT /SUPPRESSMSGBOXES /NORESTART /TYPE=cli /TASKS="addtopath"
 ```
 
-L'installer impacchetta il tool **così com'è oggi** (CLI, nessuna GUI). Non va confuso con la
-milestone **7.0.0** in `../ROADMAP.md`, che pianifica un'app desktop Tauri con un proprio bundler:
-sono due deliverable distinti, uno disponibile ora, l'altro pianificato.
+#### WebView2
+
+La console rende l'interfaccia attraverso il runtime **WebView2** di sistema invece di
+impacchettare un motore browser — è il motivo per cui pesa 8,9 MB invece di ~150. Quel runtime
+è presente su Windows 11 e arriva alla maggior parte delle installazioni Windows 10 aggiornate,
+ma può mancare su immagini LTSC o offline. L'installer lo rileva e **avvisa** — solo se hai
+scelto la console — senza bloccare il setup e senza impacchettare un secondo installer, come già
+fa per il Visual C++ Redistributable. Senza WebView2 la CLI funziona comunque: è solo la finestra
+della console che non si aprirebbe.
+
+Il bundler di Tauri resta **disattivato** (`bundle.active: false`): produrrebbe un secondo
+MSI/NSIS per la sola console, cioè esattamente la separazione che questo installer evita.
 
 ---
 

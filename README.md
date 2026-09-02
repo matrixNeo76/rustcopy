@@ -82,7 +82,8 @@ Due requisiti verificati sul binario compilato:
 - **`robocopy.exe` di sistema**, presente su ogni Windows da Vista in poi: non serve installarlo,
   ma il tool non lo include.
 
-Il repo include anche uno script **Inno Setup** (`installer/rustcopy.iss`) che genera un vero
+Il repo include anche uno script **Inno Setup** (`installer/rustcopy.iss`) — un installer unico
+in cui la console grafica è un componente opzionale (F60) — che genera un vero
 `setup.exe` con disinstaller, aggiunta al PATH e deploy silenzioso — istruzioni complete in
 **[Installazione e distribuzione](docs/installation.md)**, che copre anche il **notify-server**
 per le notifiche multi-canale.
