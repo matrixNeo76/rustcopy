@@ -23,8 +23,13 @@ dest   = "examples/demo-out/copia"
 # Il pattern predefinito è `*`; qui è esplicito perché la demo serve anche a leggersi.
 pattern = "*"
 
-# Esclude il `.tmp` presente in demo-data, così il conteggio dei file copiati (4 su 5) mostra
-# che l'esclusione ha davvero agito invece di essere una riga di configurazione decorativa.
+# Esclude il `.tmp` presente in demo-data: dopo la run, `documenti/bozza.tmp` non compare in
+# destinazione, ed è così che si vede che l'esclusione ha agito invece di essere una riga di
+# configurazione decorativa.
+#
+# Non conto i file qui di proposito: robocopy conta anche le directory che crea, mentre
+# l'inventario conta solo i file, quindi il report può dire "6 / 4" per questa demo. Promettere
+# un numero fisso in un commento vorrebbe dire far sembrare un errore un dato corretto.
 exclude_files = ["*.tmp"]
 
 # Riverifica i byte a destinazione confrontando gli hash: su cinque file costa nulla, e fa sì

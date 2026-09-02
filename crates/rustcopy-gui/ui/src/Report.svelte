@@ -160,7 +160,10 @@
 
       {#each LISTS as [key, title]}
         {@const page = report[key]}
-        {#if page.total > 0}
+        <!-- On `entries`, not `total`: the three lists have different lengths and share one
+             offset, so past the end of the shortest one a `total > 0` test still renders its
+             header and prints a range like "mostrati 201-200". -->
+        {#if page.entries.length > 0}
           <h3 class="mt-3 text-xs font-semibold">
             {title}
             <span class="ml-1 font-normal text-slate-500">
