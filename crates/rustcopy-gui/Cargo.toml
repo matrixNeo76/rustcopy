@@ -27,6 +27,10 @@ tauri-build = { version = "2", features = [] }
 [dependencies]
 rustcopy-core = { path = "../rustcopy-core" }
 tauri = { version = "2", features = [] }
+# Native file/folder pickers. Not a loosening of the read-only boundary: a picker returns a
+# path the operator chose and writes nothing. It removes mistyped paths, which is the failure
+# mode a text box invites.
+tauri-plugin-dialog = "2"
 serde.workspace = true
 serde_json.workspace = true
 

@@ -1,0 +1,7 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "default",
+  "description": "Native file pickers for the main window. Nothing here grants filesystem read or write: the dialog plugin returns the path a person selected, and every read still goes through a command backed by robocopy_ingest::gui_api.",
+  "windows": ["main"],
+  "permissions": ["core:default", "dialog:allow-open", "dialog:allow-save"]
+}

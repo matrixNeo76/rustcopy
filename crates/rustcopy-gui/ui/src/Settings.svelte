@@ -1,12 +1,15 @@
 <script>
   import { invoke } from "@tauri-apps/api/core";
+  import PathBar from "./PathBar.svelte";
+  import EmptyState from "./EmptyState.svelte";
+  import { session } from "./session.svelte.js";
 
   // Read-only, like every other pane in this version: it renders the TOML the CLI already reads
   // and changes nothing. F55's write surface is a separate, still-undecided step.
-  let configPath = $state("");
   let jobs = $state([]);
   let error = $state(null);
   let loading = $state(false);
+  let loaded = $state(false);
   // Most settings sit at their default and say nothing interesting. Hiding them by default keeps
   // the pane readable; the toggle is there because "what is this job actually set to" is a
   // legitimate question too.
@@ -29,7 +32,8 @@
     error = null;
     loading = true;
     try {
-      jobs = await invoke("read_settings", { configPath });
+      jobs = await invoke("read_settings", { configPath: session.configPath });
+      loaded = true;
     } catch (e) {
       error = String(e);
       jobs = [];
@@ -48,22 +52,15 @@
 </script>
 
 <section class="p-4">
-  <div class="flex gap-2">
-    <label class="sr-only" for="settings-config-path">Percorso del file di configurazione TOML</label>
-    <input
-      id="settings-config-path"
-      class="flex-1 rounded border border-slate-300 px-2 py-1 text-sm dark:border-slate-700 dark:bg-slate-900"
-      placeholder="Percorso di un file di configurazione TOML"
-      bind:value={configPath}
-    />
-    <button
-      class="rounded bg-blue-600 px-3 py-1 text-sm text-white disabled:opacity-50"
-      onclick={load}
-      disabled={loading || configPath.length === 0}
-    >
-      {loading ? "Lettura…" : "Apri impostazioni"}
-    </button>
-  </div>
+  <PathBar
+    bind:value={session.configPath}
+    kind="config"
+    label="Percorso del file di configurazione TOML"
+    placeholder="Scegli un file di configurazione TOML"
+    action="Apri impostazioni"
+    busy={loading}
+    onrun={load}
+  />
 
   {#if error}
     <p
@@ -124,5 +121,13 @@
         {/each}
       </article>
     {/each}
+  {:else if !error && !loaded}
+    <EmptyState
+      title="Scegli un file di configurazione per vederne le impostazioni"
+      lines={[
+        "Questa scheda mostra le due cose che il TOML non dice: da quale strato viene il valore che vince per ciascun job, e quali impostazioni portano una conseguenza — cancellano, saltano controlli, eliminano generazioni.",
+        "L'URL di un webhook viene troncato a schema e host di proposito: vale come credenziale e questa finestra finisce negli screenshot.",
+      ]}
+    />
   {/if}
 </section>

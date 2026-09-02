@@ -170,6 +170,10 @@ async fn write_proposal(
 
 fn main() {
     tauri::Builder::default()
+        // Native pickers. The plugin reads nothing and writes nothing on its own: it returns the
+        // path a person selected, which is strictly less error-prone than the text box it
+        // replaces.
+        .plugin(tauri_plugin_dialog::init())
         .invoke_handler(tauri::generate_handler![
             list_jobs,
             read_settings,

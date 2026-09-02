@@ -15,7 +15,8 @@
         "title": "rustcopy — console",
         "width": 1100,
         "height": 700,
-        "resizable": true
+        "resizable": true,
+        "label": "main"
       }
     ],
     "security": {
