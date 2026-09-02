@@ -35,6 +35,20 @@
 // and panics stay visible while developing.
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
+// Tauri reads dev-vs-production from the `custom-protocol` feature, not from the cargo profile:
+// its own build script computes `dev = !custom-protocol`. A release build without it points the
+// WebView at `devUrl` and ships an application that shows ERR_CONNECTION_REFUSED wherever the
+// Vite dev server is not running -- which is every machine an installer reaches.
+//
+// That shipped once (2 Set 2026, F60): `cargo build`, `clippy` and 422 tests all passed on a
+// binary that could not render its own interface, because none of them opens the window. This
+// turns the mistake into a build failure instead of a defect discovered by a user, which is the
+// only guard that does not depend on someone remembering to look.
+#[cfg(all(not(debug_assertions), not(feature = "custom-protocol")))]
+compile_error!(
+    "a release build without the `custom-protocol` feature loads devUrl instead of the embedded frontend; build with default features"
+);
+
 use std::path::PathBuf;
 
 use robocopy_ingest::advise::Advice;

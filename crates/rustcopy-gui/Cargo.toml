@@ -11,6 +11,16 @@ license.workspace = true
 repository.workspace = true
 homepage.workspace = true
 
+# Tauri decides dev-vs-production from this feature, not from the cargo profile: its own build
+# script computes `dev = !custom-protocol` (tauri-2.11.5/build.rs). Without it a `--release` build
+# still points the WebView at `devUrl` and ships an application that shows ERR_CONNECTION_REFUSED
+# on any machine where the Vite dev server is not running -- which is every machine an installer
+# reaches. The Tauri CLI adds this flag itself during `tauri build`; this project builds with plain
+# cargo, so it has to be declared here.
+[features]
+default = ["custom-protocol"]
+custom-protocol = ["tauri/custom-protocol"]
+
 [build-dependencies]
 tauri-build = { version = "2", features = [] }
 

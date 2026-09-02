@@ -4,7 +4,7 @@
   "version": "6.0.0",
   "identifier": "io.github.matrixneo76.rustcopy",
   "build": {
-    "frontendDist": "../ui/dist",
+    "frontendDist": "ui/dist",
     "devUrl": "http://localhost:5173",
     "beforeDevCommand": "npm --prefix ui run dev",
     "beforeBuildCommand": "npm --prefix ui run build"
