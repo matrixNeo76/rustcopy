@@ -415,7 +415,15 @@ in Rust ed è testato, al frontend non resta nulla da decidere.
 conosce Tauri, e la scelta fra Svelte e React non la cambia.
 
 Contiene `JobSummary`/`list_jobs` (elenco dei job configurati, con `--mirror` reso visibile per
-job perché è l'impostazione più distruttiva che un job può portare) e `ReportView`/`read_report`.
+job perché è l'impostazione più distruttiva che un job può portare), `ReportView`/`read_report`,
+`HistoryView`/`read_history` e `read_advice` (F59) e `JobSettings`/`read_settings` (F55).
+
+Quest'ultima mostra ciò che il TOML non dice: da quale strato viene il valore che vince per quel
+job (`SettingOrigin`) e quali impostazioni portano una conseguenza (`caution`). Entrambi sono
+giudizi di semantica del backup, quindi stanno qui e non nel frontend. `webhook_url` è troncato
+a schema e host prima di attraversare il confine — l'URL di un webhook *è* la credenziale, e una
+pagina impostazioni finisce negli screenshot; `pre_command`/`post_command` no, perché vedere cosa
+un job esegue è l'intera ragione per guardarli.
 
 ### La regola di confine, verificata su una misura
 

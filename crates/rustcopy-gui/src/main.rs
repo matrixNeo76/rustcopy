@@ -33,7 +33,7 @@
 use std::path::PathBuf;
 
 use robocopy_ingest::advise::Advice;
-use robocopy_ingest::gui_api::{self, HistoryView, JobSummary, ReportView};
+use robocopy_ingest::gui_api::{self, HistoryView, JobSettings, JobSummary, ReportView};
 
 /// Runs a blocking library call off the IPC thread.
 ///
@@ -59,6 +59,16 @@ where
 #[tauri::command]
 async fn list_jobs(config_path: String) -> Result<Vec<JobSummary>, String> {
     off_thread(move || gui_api::list_jobs(&PathBuf::from(config_path))).await
+}
+
+/// Reads every job's settings from a TOML config, resolved and grouped.
+///
+/// Read-only like the rest: it renders the file the CLI already reads. Which value wins for a job
+/// and which settings carry a consequence are decided in the library, where they are tested — this
+/// command only carries the result across (F55).
+#[tauri::command]
+async fn read_settings(config_path: String) -> Result<Vec<JobSettings>, String> {
+    off_thread(move || gui_api::read_settings(&PathBuf::from(config_path))).await
 }
 
 /// Reads one JSON report, first page of its error lists.
@@ -104,6 +114,7 @@ fn main() {
     tauri::Builder::default()
         .invoke_handler(tauri::generate_handler![
             list_jobs,
+            read_settings,
             read_report,
             read_report_page,
             read_history,
