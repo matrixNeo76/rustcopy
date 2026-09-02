@@ -57,7 +57,15 @@ use crate::integrity::HashAlgorithm;
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct JobDraft {
     /// The job this edits, by the same label [`crate::gui_api::list_jobs`] shows — its own name,
-    /// or the positional `jobN` fallback. A name matching no stored job creates a new one.
+    /// or the positional `jobN` fallback.
+    ///
+    /// A name matching no stored job **creates** one; it does not rename an existing job, and the
+    /// editor deliberately offers no rename. A job's name is its identity: `run_jobs` namespaces
+    /// that job's report, `.ingest_cache` and generation manifest by it (D12). Renaming would
+    /// therefore orphan the generation chain — the next incremental would find no reference
+    /// generation — and start a fresh history under the new name, with the old files left behind.
+    /// That is not something an edit box can do safely, so the frontend keeps this field read-only
+    /// for a job that already exists.
     pub name: String,
     pub source: String,
     pub dest: String,
@@ -135,20 +143,61 @@ pub fn draft_from(job: &JobConfig, name: &str) -> JobDraft {
     }
 }
 
+/// Pins a boolean only when it is a real change.
+///
+/// A `[[jobs]]` entry inherits every field it does not set. Writing every field back at job level
+/// would flatten that inheritance — and, worse, write the *draft's* idea of a field the job never
+/// had. See [`apply_draft`] for the measurement that made this necessary.
+fn pin_bool(own: Option<bool>, inherited: Option<bool>, value: bool) -> Option<bool> {
+    if own.is_some() || value != inherited.unwrap_or(false) {
+        Some(value)
+    } else {
+        None
+    }
+}
+
+/// [`pin_bool`] for the optional fields.
+fn pin<T: PartialEq>(own: Option<&T>, inherited: Option<&T>, value: Option<T>) -> Option<T> {
+    if own.is_some() || value.as_ref() != inherited {
+        value
+    } else {
+        None
+    }
+}
+
 /// Applies a draft over the stored job, enforcing the rules above.
 ///
-/// `stored` is `None` for a job the file does not have yet. Every field this module does not own
-/// is copied from `stored` untouched — that copy is rule 4, and it is why an unowned field cannot
-/// be lost by editing.
-pub fn apply_draft(stored: Option<&JobConfig>, draft: &JobDraft) -> Result<JobConfig, IngestError> {
-    let base = stored.cloned().unwrap_or_default();
-    let was_mirroring = base.mirror.unwrap_or(false);
+/// `own` is what this `[[jobs]]` entry itself sets, `None` for a job the file does not have yet.
+/// `inherited` is the file's top-level defaults, which is the layer that makes this function
+/// harder than it looks.
+///
+/// # Why inheritance has to be preserved rather than flattened
+///
+/// The first version of this function wrote every owned field back at job level. Measured on a
+/// two-line config (`verify_integrity = true` at the top, one job overriding only `retries`),
+/// changing that job's retry count produced `source = ""` **and** `verify_integrity = false` in the
+/// proposal: an empty source that breaks the job outright, and integrity checking silently switched
+/// off. That is precisely the failure this module's header argues against — a semantic change
+/// nobody is looking for, arriving under an unrelated edit — reproduced by the module that argues
+/// against it.
+///
+/// So a field is written at job level only when the job already pinned it, or when the draft's
+/// value genuinely differs from what the job would inherit. Everything else keeps inheriting.
+pub fn apply_draft(
+    own: Option<&JobConfig>,
+    inherited: &JobConfig,
+    draft: &JobDraft,
+) -> Result<JobConfig, IngestError> {
+    let base = own.cloned().unwrap_or_default();
+    // The rules below are about what the job *effectively* does, so they read the merged view: a
+    // job inheriting `mirror = true` is a mirroring job even though its own entry says nothing.
+    let effective = base.merged_over(inherited);
 
-    if draft.mirror && !was_mirroring {
+    if draft.mirror && !effective.mirror.unwrap_or(false) {
         return Err(IngestError::EditorCannotEnableMirror(draft.name.clone()));
     }
 
-    match (base.keep_generations, draft.keep_generations) {
+    match (effective.keep_generations, draft.keep_generations) {
         (None, Some(_)) => {
             return Err(IngestError::EditorCannotIntroduceRetention(
                 draft.name.clone(),
@@ -164,54 +213,168 @@ pub fn apply_draft(stored: Option<&JobConfig>, draft: &JobDraft) -> Result<JobCo
         _ => {}
     }
 
-    // Checked against the *resulting* mirror value, not the stored one: a job being turned off
+    // Checked against the *resulting* mirror value, not the stored one: a job being turned off in
     // this same edit is no longer mirroring, and forbidding the combination there would be
     // pedantry rather than safety.
-    if draft.no_prescan && !base.no_prescan.unwrap_or(false) && draft.mirror {
+    if draft.no_prescan && !effective.no_prescan.unwrap_or(false) && draft.mirror {
         return Err(IngestError::EditorCannotDisablePrescanOnMirror(
             draft.name.clone(),
         ));
     }
 
-    let empty_to_none = |items: &Vec<String>| {
+    // The CLI rejects this range at startup (`IngestError::InvalidThreads`). Catching it here
+    // means the editor cannot write a file that only fails hours later, on a scheduled run.
+    if let Some(threads) = draft.threads {
+        if threads == 0 || threads > 128 {
+            return Err(IngestError::InvalidThreads(threads));
+        }
+    }
+
+    let list = |items: &[String]| {
         if items.is_empty() {
             None
         } else {
-            Some(items.clone())
+            Some(items.to_vec())
         }
     };
-    let path_of = |value: &Option<String>| value.as_ref().map(PathBuf::from);
+    let path_of = |value: &Option<String>| {
+        value
+            .as_ref()
+            .filter(|text| !text.trim().is_empty())
+            .map(PathBuf::from)
+    };
+    // An empty box in the form means "not set", not "set to the empty path" — which is the shape
+    // that produced `source = ""` above.
+    let required_path = |value: &str| {
+        if value.trim().is_empty() {
+            None
+        } else {
+            Some(PathBuf::from(value))
+        }
+    };
 
     Ok(JobConfig {
         name: Some(draft.name.clone()),
-        source: Some(PathBuf::from(&draft.source)),
-        dest: Some(PathBuf::from(&draft.dest)),
-        pattern: draft.pattern.clone(),
-        threads: draft.threads,
-        retries: draft.retries,
-        retry_wait_seconds: draft.retry_wait_seconds,
-        verify_integrity: Some(draft.verify_integrity),
-        fast_verify: Some(draft.fast_verify),
-        ignore_transient_missing: Some(draft.ignore_transient_missing),
-        exclude_junctions: Some(draft.exclude_junctions),
-        html_report_path: path_of(&draft.html_report_path),
-        hash_algo: draft.hash_algo,
-        compare_baseline: Some(draft.compare_baseline),
-        report_path: path_of(&draft.report_path),
-        log_path: path_of(&draft.log_path),
-        dry_run: Some(draft.dry_run),
-        backup_type: draft.backup_type,
-        keep_generations: draft.keep_generations,
-        mirror: Some(draft.mirror),
-        exclude_files: empty_to_none(&draft.exclude_files),
-        exclude_dirs: empty_to_none(&draft.exclude_dirs),
-        min_age_days: draft.min_age_days,
-        max_age_days: draft.max_age_days,
-        bandwidth_limit_mbps: draft.bandwidth_limit_mbps,
-        no_prescan: Some(draft.no_prescan),
-        long_paths: Some(draft.long_paths),
-        preserve_timestamps: Some(draft.preserve_timestamps),
-        preserve_acl: Some(draft.preserve_acl),
+        source: pin(
+            base.source.as_ref(),
+            inherited.source.as_ref(),
+            required_path(&draft.source),
+        ),
+        dest: pin(
+            base.dest.as_ref(),
+            inherited.dest.as_ref(),
+            required_path(&draft.dest),
+        ),
+        pattern: pin(
+            base.pattern.as_ref(),
+            inherited.pattern.as_ref(),
+            draft.pattern.clone(),
+        ),
+        threads: pin(
+            base.threads.as_ref(),
+            inherited.threads.as_ref(),
+            draft.threads,
+        ),
+        retries: pin(
+            base.retries.as_ref(),
+            inherited.retries.as_ref(),
+            draft.retries,
+        ),
+        retry_wait_seconds: pin(
+            base.retry_wait_seconds.as_ref(),
+            inherited.retry_wait_seconds.as_ref(),
+            draft.retry_wait_seconds,
+        ),
+        verify_integrity: pin_bool(
+            base.verify_integrity,
+            inherited.verify_integrity,
+            draft.verify_integrity,
+        ),
+        fast_verify: pin_bool(base.fast_verify, inherited.fast_verify, draft.fast_verify),
+        ignore_transient_missing: pin_bool(
+            base.ignore_transient_missing,
+            inherited.ignore_transient_missing,
+            draft.ignore_transient_missing,
+        ),
+        exclude_junctions: pin_bool(
+            base.exclude_junctions,
+            inherited.exclude_junctions,
+            draft.exclude_junctions,
+        ),
+        html_report_path: pin(
+            base.html_report_path.as_ref(),
+            inherited.html_report_path.as_ref(),
+            path_of(&draft.html_report_path),
+        ),
+        hash_algo: pin(
+            base.hash_algo.as_ref(),
+            inherited.hash_algo.as_ref(),
+            draft.hash_algo,
+        ),
+        compare_baseline: pin_bool(
+            base.compare_baseline,
+            inherited.compare_baseline,
+            draft.compare_baseline,
+        ),
+        report_path: pin(
+            base.report_path.as_ref(),
+            inherited.report_path.as_ref(),
+            path_of(&draft.report_path),
+        ),
+        log_path: pin(
+            base.log_path.as_ref(),
+            inherited.log_path.as_ref(),
+            path_of(&draft.log_path),
+        ),
+        dry_run: pin_bool(base.dry_run, inherited.dry_run, draft.dry_run),
+        backup_type: pin(
+            base.backup_type.as_ref(),
+            inherited.backup_type.as_ref(),
+            draft.backup_type,
+        ),
+        keep_generations: pin(
+            base.keep_generations.as_ref(),
+            inherited.keep_generations.as_ref(),
+            draft.keep_generations,
+        ),
+        mirror: pin_bool(base.mirror, inherited.mirror, draft.mirror),
+        exclude_files: pin(
+            base.exclude_files.as_ref(),
+            inherited.exclude_files.as_ref(),
+            list(&draft.exclude_files),
+        ),
+        exclude_dirs: pin(
+            base.exclude_dirs.as_ref(),
+            inherited.exclude_dirs.as_ref(),
+            list(&draft.exclude_dirs),
+        ),
+        min_age_days: pin(
+            base.min_age_days.as_ref(),
+            inherited.min_age_days.as_ref(),
+            draft.min_age_days,
+        ),
+        max_age_days: pin(
+            base.max_age_days.as_ref(),
+            inherited.max_age_days.as_ref(),
+            draft.max_age_days,
+        ),
+        bandwidth_limit_mbps: pin(
+            base.bandwidth_limit_mbps.as_ref(),
+            inherited.bandwidth_limit_mbps.as_ref(),
+            draft.bandwidth_limit_mbps,
+        ),
+        no_prescan: pin_bool(base.no_prescan, inherited.no_prescan, draft.no_prescan),
+        long_paths: pin_bool(base.long_paths, inherited.long_paths, draft.long_paths),
+        preserve_timestamps: pin_bool(
+            base.preserve_timestamps,
+            inherited.preserve_timestamps,
+            draft.preserve_timestamps,
+        ),
+        preserve_acl: pin_bool(
+            base.preserve_acl,
+            inherited.preserve_acl,
+            draft.preserve_acl,
+        ),
         // Not owned by this editor, therefore carried through rather than dropped. See the module
         // header: dropping them would be a silent semantic change, which is the failure mode this
         // whole module is shaped around.
@@ -250,7 +413,13 @@ pub fn build_proposal(
         match drafts {
             [] => return Ok(config),
             [draft] if existing.is_none() || draft.name == current_label => {
-                config.defaults = apply_draft(existing.map(|cfg| &cfg.defaults), draft)?;
+                // A single-job file has no layer above it, so nothing can be inherited and every
+                // field the draft sets is written outright.
+                config.defaults = apply_draft(
+                    existing.map(|cfg| &cfg.defaults),
+                    &JobConfig::default(),
+                    draft,
+                )?;
                 return Ok(config);
             }
             _ => return Err(IngestError::EditorCannotSplitSingleJobConfig(current_label)),
@@ -258,6 +427,7 @@ pub fn build_proposal(
     }
 
     let mut jobs = stored_jobs;
+    let defaults = config.defaults.clone();
     for draft in drafts {
         // Matched on the label `list_jobs` shows, so the name the operator saw is the name that
         // finds the job — including the positional fallback for an unnamed entry.
@@ -266,10 +436,10 @@ pub fn build_proposal(
             .enumerate()
             .position(|(index, job)| label_of(job, index) == draft.name)
         {
-            Some(index) => jobs[index] = apply_draft(Some(&jobs[index]), draft)?,
+            Some(index) => jobs[index] = apply_draft(Some(&jobs[index]), &defaults, draft)?,
             // A name matching nothing stored is a new job, appended. Jobs already there and not
             // named by any draft stay exactly as they were: omission never deletes.
-            None => jobs.push(apply_draft(None, draft)?),
+            None => jobs.push(apply_draft(None, &defaults, draft)?),
         }
     }
 
@@ -286,10 +456,6 @@ pub fn propose_config(
     drafts: &[JobDraft],
     out_path: &Path,
 ) -> Result<(), IngestError> {
-    if out_path.exists() {
-        return Err(IngestError::EditorWouldOverwrite(out_path.to_path_buf()));
-    }
-
     let proposal = build_proposal(existing, drafts)?;
     let rendered = toml::to_string_pretty(&proposal).map_err(|error| {
         IngestError::io(
@@ -298,7 +464,24 @@ pub fn propose_config(
         )
     })?;
 
-    crate::atomic_write(out_path, rendered.as_bytes())
+    // `create_new` is the refusal, not a check preceding one. Asking `exists()` first and then
+    // writing leaves a window in which the file can appear between the two, and `atomic_write`
+    // finishes with a rename, which replaces whatever is there — so the pair would have reported
+    // a refusal it did not actually enforce. Here the operating system decides, atomically.
+    let mut file = match std::fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(out_path)
+    {
+        Ok(file) => file,
+        Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => {
+            return Err(IngestError::EditorWouldOverwrite(out_path.to_path_buf()))
+        }
+        Err(error) => return Err(IngestError::io(out_path, error)),
+    };
+
+    use std::io::Write as _;
+    file.write_all(rendered.as_bytes())
         .map_err(|error| IngestError::io(out_path, error))
 }
 
@@ -337,7 +520,9 @@ pub fn read_drafts(config_path: &Path) -> Result<Vec<JobDraft>, IngestError> {
         .enumerate()
         .map(|(index, job)| {
             let name = label_of(job, index);
-            draft_from(job, &name)
+            // Merged, not raw: an inherited `source` read as `None` here would reach the form as
+            // an empty box, and be written back as an override that empties it.
+            draft_from(&job.merged_over(&config.defaults), &name)
         })
         .collect())
 }
@@ -394,7 +579,8 @@ mod tests {
         let mut draft = draft_for(&config, "job1");
         draft.mirror = true;
 
-        let error = apply_draft(Some(&config.defaults), &draft).expect_err("must be refused");
+        let error = apply_draft(Some(&config.defaults), &JobConfig::default(), &draft)
+            .expect_err("must be refused");
         assert!(
             matches!(error, IngestError::EditorCannotEnableMirror(ref name) if name == "job1"),
             "got {error:?}"
@@ -411,7 +597,8 @@ mod tests {
         assert!(draft.mirror, "the form must start from what the file says");
 
         draft.retries = Some(9);
-        let result = apply_draft(Some(&config.defaults), &draft).expect("an ordinary edit");
+        let result = apply_draft(Some(&config.defaults), &JobConfig::default(), &draft)
+            .expect("an ordinary edit");
 
         assert_eq!(result.mirror, Some(true), "mirroring must not be disarmed");
         assert_eq!(result.retries, Some(9));
@@ -424,7 +611,8 @@ mod tests {
         let mut draft = draft_for(&config, "job1");
         draft.mirror = false;
 
-        let result = apply_draft(Some(&config.defaults), &draft).expect("narrowing is allowed");
+        let result = apply_draft(Some(&config.defaults), &JobConfig::default(), &draft)
+            .expect("narrowing is allowed");
         assert_eq!(result.mirror, Some(false));
     }
 
@@ -438,7 +626,8 @@ mod tests {
 
         let mut introduce = draft_for(&config, "job1");
         introduce.keep_generations = Some(3);
-        let error = apply_draft(Some(&config.defaults), &introduce).expect_err("lowering refused");
+        let error = apply_draft(Some(&config.defaults), &JobConfig::default(), &introduce)
+            .expect_err("lowering refused");
         assert!(
             matches!(
                 error,
@@ -449,12 +638,14 @@ mod tests {
 
         let mut raise = draft_for(&config, "job1");
         raise.keep_generations = Some(12);
-        apply_draft(Some(&config.defaults), &raise).expect("keeping more deletes less");
+        apply_draft(Some(&config.defaults), &JobConfig::default(), &raise)
+            .expect("keeping more deletes less");
 
         let bare = config_from("source = \"D:/src\"\ndest = \"E:/dst\"\n");
         let mut fresh = draft_for(&bare, "job1");
         fresh.keep_generations = Some(2);
-        let error = apply_draft(Some(&bare.defaults), &fresh).expect_err("introduction refused");
+        let error = apply_draft(Some(&bare.defaults), &JobConfig::default(), &fresh)
+            .expect_err("introduction refused");
         assert!(
             matches!(error, IngestError::EditorCannotIntroduceRetention(_)),
             "got {error:?}"
@@ -469,7 +660,8 @@ mod tests {
         let mut draft = draft_for(&config, "job1");
         draft.no_prescan = true;
 
-        let error = apply_draft(Some(&config.defaults), &draft).expect_err("must be refused");
+        let error = apply_draft(Some(&config.defaults), &JobConfig::default(), &draft)
+            .expect_err("must be refused");
         assert!(
             matches!(error, IngestError::EditorCannotDisablePrescanOnMirror(_)),
             "got {error:?}"
@@ -479,7 +671,8 @@ mod tests {
         let plain = config_from("source = \"D:/src\"\ndest = \"E:/dst\"\n");
         let mut draft = draft_for(&plain, "job1");
         draft.no_prescan = true;
-        apply_draft(Some(&plain.defaults), &draft).expect("no mirror, no diff to protect");
+        apply_draft(Some(&plain.defaults), &JobConfig::default(), &draft)
+            .expect("no mirror, no diff to protect");
     }
 
     /// The fields this editor does not own are the ones F55's write half has still to decide on.
@@ -494,7 +687,8 @@ mod tests {
         let mut draft = draft_for(&config, "job1");
         draft.threads = Some(16);
 
-        let result = apply_draft(Some(&config.defaults), &draft).expect("an ordinary edit");
+        let result = apply_draft(Some(&config.defaults), &JobConfig::default(), &draft)
+            .expect("an ordinary edit");
 
         assert_eq!(
             result.webhook_url.as_deref(),
@@ -540,12 +734,14 @@ mod tests {
         draft.dest = "E:/2".to_string();
 
         let proposal = build_proposal(Some(&config), &[draft]).expect("builds");
-        let jobs = proposal.jobs.expect("jobs");
+        let jobs = proposal.jobs.clone().expect("jobs");
         assert_eq!(jobs.len(), 2);
         assert_eq!(jobs[1].name.as_deref(), Some("due"));
-        assert_eq!(
-            jobs[1].mirror,
-            Some(false),
+        assert!(
+            !jobs[1]
+                .merged_over(&proposal.defaults)
+                .mirror
+                .unwrap_or(false),
             "and a new job is born without the destructive setting"
         );
     }
@@ -625,5 +821,111 @@ mod tests {
         let json = serde_json::to_string(&draft).expect("JobDraft must serialize");
         let back: JobDraft = serde_json::from_str(&json).expect("and round-trip");
         assert_eq!(back, draft);
+    }
+
+    /// Measured, not argued. Before inheritance was preserved, changing one job's retry count on
+    /// this exact two-line configuration wrote `source = ""` and `verify_integrity = false` into
+    /// the proposal — an empty source that breaks the job, and integrity checking silently
+    /// switched off — because every owned field was written back at job level whether or not the
+    /// job had ever set it.
+    #[test]
+    fn an_unrelated_edit_leaves_every_inherited_field_inherited() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let path = dir.path().join("jobs.toml");
+        std::fs::write(
+            &path,
+            "source = \"D:/src\"\nverify_integrity = true\n\n\
+             [[jobs]]\nname = \"uno\"\ndest = \"E:/1\"\nretries = 2\n",
+        )
+        .expect("write");
+
+        let mut drafts = read_drafts(&path).expect("reads");
+        assert_eq!(
+            drafts[0].source, "D:/src",
+            "the form must open on the effective value, not on the empty raw one"
+        );
+        assert!(drafts[0].verify_integrity);
+
+        drafts[0].retries = Some(9);
+        let config = IngestConfig::load_from(&path).expect("loads");
+        let proposal = build_proposal(Some(&config), &drafts).expect("builds");
+        let job = &proposal.jobs.as_ref().expect("jobs")[0];
+
+        assert_eq!(job.retries, Some(9), "the edit lands");
+        assert_eq!(job.source, None, "and the inherited source stays inherited");
+        assert_eq!(
+            job.verify_integrity, None,
+            "as does verification, which must not be switched off by an unrelated edit"
+        );
+        assert!(
+            job.merged_over(&proposal.defaults)
+                .verify_integrity
+                .unwrap_or(false),
+            "so the job still verifies"
+        );
+    }
+
+    /// The rules read the merged view, not the raw entry: a job that inherits `mirror = true` is a
+    /// mirroring job even though its own section says nothing about it.
+    #[test]
+    fn an_inherited_mirror_counts_as_mirroring_for_the_rules() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let path = dir.path().join("jobs.toml");
+        std::fs::write(
+            &path,
+            "source = \"D:/src\"\nmirror = true\n\n[[jobs]]\nname = \"uno\"\ndest = \"E:/1\"\n",
+        )
+        .expect("write");
+
+        let mut drafts = read_drafts(&path).expect("reads");
+        assert!(
+            drafts[0].mirror,
+            "the form shows what the job effectively does"
+        );
+
+        // Removing the prescan from it must be refused, exactly as if the job set mirror itself.
+        drafts[0].no_prescan = true;
+        let config = IngestConfig::load_from(&path).expect("loads");
+        let error = build_proposal(Some(&config), &drafts).expect_err("must be refused");
+        assert!(
+            matches!(error, IngestError::EditorCannotDisablePrescanOnMirror(_)),
+            "got {error:?}"
+        );
+    }
+
+    /// The CLI rejects this range at startup. Catching it here means the editor cannot produce a
+    /// file that only fails hours later, on a scheduled run nobody is watching.
+    #[test]
+    fn a_thread_count_outside_the_supported_range_is_refused() {
+        let config = config_from("source = \"D:/src\"\ndest = \"E:/dst\"\n");
+
+        for threads in [0u16, 129] {
+            let mut draft = draft_for(&config, "job1");
+            draft.threads = Some(threads);
+            let error = apply_draft(Some(&config.defaults), &JobConfig::default(), &draft)
+                .expect_err("must be refused");
+            assert!(
+                matches!(error, IngestError::InvalidThreads(value) if value == threads),
+                "got {error:?}"
+            );
+        }
+
+        let mut draft = draft_for(&config, "job1");
+        draft.threads = Some(128);
+        apply_draft(Some(&config.defaults), &JobConfig::default(), &draft)
+            .expect("the bound holds");
+    }
+
+    /// An empty box means "not set", not "set to the empty path". This is the shape that produced
+    /// `source = ""`.
+    #[test]
+    fn an_empty_field_is_left_unset_rather_than_written_empty() {
+        let config = config_from("source = \"D:/src\"\ndest = \"E:/dst\"\n");
+        let mut draft = draft_for(&config, "job1");
+        draft.report_path = Some("   ".to_string());
+
+        let result =
+            apply_draft(Some(&config.defaults), &JobConfig::default(), &draft).expect("applies");
+        assert_eq!(result.report_path, None);
     }
 }

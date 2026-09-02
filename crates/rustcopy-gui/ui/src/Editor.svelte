@@ -11,6 +11,11 @@
   let written = $state(null);
   let loading = $state(false);
   let saving = $state(false);
+  // Which drafts were read from the file. Their names are their identity — `run_jobs` namespaces
+  // report, cache and generation manifest by the job name (D12) — so renaming one here would
+  // orphan its generation chain and start a fresh history under the new name. The editor offers
+  // creation instead, which has no such consequence.
+  let existingNames = $state(new Set());
 
   // The whole draft is loaded, edited in part, and sent back whole. That is deliberate: a field
   // this form does not render still round-trips untouched, so rendering a subset can never drop a
@@ -21,6 +26,7 @@
   // widen it. Disabling the control here is an affordance, not the enforcement — `write_proposal`
   // refuses the same edit whatever this frontend sends.
   const mirrorLocked = $derived(draft ? !draft.mirror : true);
+  const nameLocked = $derived(draft ? existingNames.has(draft.name) : true);
 
   async function load() {
     error = null;
@@ -28,6 +34,7 @@
     loading = true;
     try {
       drafts = await invoke("read_job_drafts", { configPath });
+      existingNames = new Set(drafts.map((entry) => entry.name));
       selected = 0;
       outPath = await invoke("suggest_proposal_path", { configPath });
     } catch (e) {
@@ -36,6 +43,18 @@
     } finally {
       loading = false;
     }
+  }
+
+  function addJob() {
+    if (drafts.length === 0) return;
+    // Copied from the currently selected job so the new one starts from something valid, then
+    // stripped of the settings the editor is not allowed to originate.
+    const base = { ...drafts[selected] };
+    base.name = "";
+    base.mirror = false;
+    base.keep_generations = null;
+    drafts = [...drafts, base];
+    selected = drafts.length - 1;
   }
 
   async function save() {
@@ -65,7 +84,7 @@
     const trimmed = text.trim();
     if (trimmed === "") return null;
     const value = Number(trimmed);
-    return Number.isFinite(value) ? value : null;
+    return Number.isInteger(value) ? value : null;
   }
 </script>
 
@@ -118,11 +137,31 @@
           onclick={() => (selected = index)}
         >{entry.name}</button>
       {/each}
+      <button
+        class="rounded px-2 py-0.5 text-xs text-blue-700 dark:text-blue-300"
+        onclick={addJob}
+      >+ Nuovo job</button>
     </div>
 
     <div class="mt-3 grid grid-cols-[10rem_1fr] items-center gap-x-3 gap-y-2 text-xs">
       <label for="f-name">Nome</label>
-      <input id="f-name" class="rounded border border-slate-300 px-2 py-1 font-mono dark:border-slate-700 dark:bg-slate-900" bind:value={draft.name} />
+      <div>
+        <input
+          id="f-name"
+          class="w-full rounded border border-slate-300 px-2 py-1 font-mono disabled:bg-slate-100
+                 disabled:text-slate-500 dark:border-slate-700 dark:bg-slate-900
+                 dark:disabled:bg-slate-800"
+          bind:value={draft.name}
+          disabled={nameLocked}
+        />
+        {#if nameLocked}
+          <p class="mt-0.5 text-[11px] text-slate-500">
+            Il nome è l'identità del job: report, cache e manifest delle generazioni sono
+            namespacizzati su di esso. Rinominarlo orfanerebbe la catena delle generazioni, quindi
+            l'editor non lo consente.
+          </p>
+        {/if}
+      </div>
 
       <label for="f-source">Sorgente</label>
       <input id="f-source" class="rounded border border-slate-300 px-2 py-1 font-mono dark:border-slate-700 dark:bg-slate-900" bind:value={draft.source} />
@@ -140,9 +179,14 @@
       />
 
       <label for="f-threads">Thread</label>
+      <!-- 1..=128 is the range the CLI enforces (`IngestError::InvalidThreads`). The bounds here
+           are the affordance; `apply_draft` refuses the same values whatever this form sends. -->
       <input
         id="f-threads"
         type="number"
+        min="1"
+        max="128"
+        step="1"
         class="w-32 rounded border border-slate-300 px-2 py-1 dark:border-slate-700 dark:bg-slate-900"
         value={draft.threads ?? ""}
         oninput={(e) => (draft.threads = numberOrNull(e.currentTarget.value))}
