@@ -7,6 +7,10 @@
       title: "Da dove si comincia",
       items: [
         [
+          "Non hai ancora niente da aprire",
+          "Nel repository c'è examples/demo-locale.toml: copia cinque file finti in una cartella accanto e scrive lì report e log, quindi non può toccare dati veri. Lanciala dalla CLI (`robocopy_ingest.exe --config examples/demo-locale.toml`), poi apri il report che ha prodotto nella scheda Report. Gli altri esempi di quella cartella sono modelli da adattare: la scheda Job li segnala come tali.",
+        ],
+        [
           "Un file di configurazione TOML",
           "È il file che descrive uno o più job di backup. Le schede Job, Impostazioni e Modifica partono da lì. Se non ne hai uno, la CLI funziona anche con soli argomenti da riga di comando: la console serve a leggere ciò che un file già descrive.",
         ],
@@ -19,6 +23,7 @@
     {
       title: "Cosa significano le schede",
       items: [
+        ["Report", "Il dettaglio di una singola run: esito, volumi, durata, e i file che la verifica ha segnalato, a blocchi di cento."],
         ["Job", "I job che il file descrive, con sorgente, destinazione e tipo. Un job che cancella in destinazione è segnalato in modo distinto."],
         ["Impostazioni", "Ogni impostazione risolta, raggruppata, con da quale strato viene il valore che vince e quali scelte portano una conseguenza."],
         ["Modifica", "L'unico punto che scrive. Produce una proposta in un file nuovo: la configurazione in uso non viene mai toccata."],

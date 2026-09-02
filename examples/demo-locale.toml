@@ -1,0 +1,41 @@
+# Demo eseguibile — l'unico esempio di questa cartella che si lancia senza modificarlo.
+#
+# Gli altri quattro (`first-time-full-copy`, `scheduled-incremental`, `smb-nas-mirror`,
+# `full-profile-test.local`) sono **modelli**: contengono segnaposto come `<PERCORSO_SORGENTE>`
+# da sostituire con percorsi veri. Vanno letti, non eseguiti.
+#
+# Questo invece copia una manciata di file finti già presenti nel repo verso una cartella accanto,
+# quindi non può toccare nulla di tuo. Dalla radice del repository:
+#
+#   robocopy_ingest.exe --config examples/demo-locale.toml --dry-run
+#   robocopy_ingest.exe --config examples/demo-locale.toml
+#
+# Poi apri il report nella console (scheda Report) o dalla CLI:
+#
+#   robocopy_ingest.exe --advise --report-path examples/demo-out/report.json
+#
+# `examples/demo-out/` è escluso da git: cancellala quando vuoi, si ricrea da sola.
+
+# Percorsi relativi alla cartella da cui lanci il comando, cioè la radice del repository.
+source = "examples/demo-data"
+dest   = "examples/demo-out/copia"
+
+# Il pattern predefinito è `*`; qui è esplicito perché la demo serve anche a leggersi.
+pattern = "*"
+
+# Esclude il `.tmp` presente in demo-data, così il conteggio dei file copiati (4 su 5) mostra
+# che l'esclusione ha davvero agito invece di essere una riga di configurazione decorativa.
+exclude_files = ["*.tmp"]
+
+# Riverifica i byte a destinazione confrontando gli hash: su cinque file costa nulla, e fa sì
+# che la scheda Report abbia qualcosa da mostrare oltre ai totali.
+verify_integrity = true
+
+# Report e log accanto alla copia, non dentro: l'indice dello storico vive di fianco al report,
+# e scrivere dentro la destinazione ne cambierebbe la data facendo ricopiare file immutati alla
+# run successiva.
+report_path = "examples/demo-out/report.json"
+log_path    = "examples/demo-out/ingest.log"
+
+# Deliberatamente **non** mirror: nessun esempio avviabile deve poter cancellare qualcosa.
+# Per vedere come si comporta `mirror`, leggi `smb-nas-mirror.toml` — che infatti non è avviabile.

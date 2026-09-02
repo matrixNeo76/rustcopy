@@ -86,6 +86,24 @@ pub struct JobSummary {
     /// destination is not caught on a run that skips that file. A UI rendering "verified: yes"
     /// without this overstates the guarantee.
     pub fast_verify: bool,
+    /// True when `source` or `dest` still holds a template placeholder like `<PERCORSO_SORGENTE>`.
+    ///
+    /// Most of `examples/` is written to be **read and adapted**, not run, and a list that renders
+    /// `<PERCORSO_SORGENTE_1>` in the source column shows a job that looks configured and is not.
+    /// Deciding that is a judgement about the configuration, so it is made here rather than by a
+    /// frontend guessing at angle brackets.
+    pub unconfigured: bool,
+}
+
+/// Whether a path is still a template placeholder rather than a real path.
+///
+/// Deliberately narrow: `<…>` wrapping the whole value. Windows forbids `<` and `>` in paths, so a
+/// value shaped this way cannot be a path anyone meant to use, and the check cannot fire on a real
+/// one.
+fn is_placeholder(value: Option<&str>) -> bool {
+    value
+        .map(str::trim)
+        .is_some_and(|text| text.starts_with('<') && text.ends_with('>') && text.len() > 2)
 }
 
 /// A page of per-file error paths, plus the total the page was taken from.
@@ -259,6 +277,8 @@ pub fn list_jobs(config_path: &Path) -> Result<Vec<JobSummary>, IngestError> {
             mirror: d.mirror.unwrap_or(false),
             verify_integrity: d.verify_integrity.unwrap_or(false),
             fast_verify: d.fast_verify.unwrap_or(false),
+            unconfigured: is_placeholder(d.source.as_ref().map(|p| p.to_string_lossy()).as_deref())
+                || is_placeholder(d.dest.as_ref().map(|p| p.to_string_lossy()).as_deref()),
         }]);
     }
 
@@ -283,6 +303,19 @@ pub fn list_jobs(config_path: &Path) -> Result<Vec<JobSummary>, IngestError> {
                 mirror: resolved.mirror.unwrap_or(false),
                 verify_integrity: resolved.verify_integrity.unwrap_or(false),
                 fast_verify: resolved.fast_verify.unwrap_or(false),
+                unconfigured: is_placeholder(
+                    resolved
+                        .source
+                        .as_ref()
+                        .map(|p| p.to_string_lossy())
+                        .as_deref(),
+                ) || is_placeholder(
+                    resolved
+                        .dest
+                        .as_ref()
+                        .map(|p| p.to_string_lossy())
+                        .as_deref(),
+                ),
             }
         })
         .collect())
@@ -471,6 +504,10 @@ fn settings_for(job: &JobConfig, base: &JobConfig, name: String) -> JobSettings 
                 base.source.as_ref(),
                 "—",
                 render_path,
+            )
+            .caution_when(
+                is_placeholder(resolved.source.as_ref().map(|p| p.to_string_lossy()).as_deref()),
+                "Questo è ancora un segnaposto di un file modello, non un percorso: il job non è configurato.",
             ),
             SettingEntry::resolve(
                 "dest",
@@ -478,6 +515,10 @@ fn settings_for(job: &JobConfig, base: &JobConfig, name: String) -> JobSettings 
                 base.dest.as_ref(),
                 "—",
                 render_path,
+            )
+            .caution_when(
+                is_placeholder(resolved.dest.as_ref().map(|p| p.to_string_lossy()).as_deref()),
+                "Questo è ancora un segnaposto di un file modello, non un percorso: il job non è configurato.",
             ),
             SettingEntry::resolve(
                 "pattern",
@@ -927,6 +968,52 @@ mod tests {
         let back: ReportView = serde_json::from_str(&json).expect("and round-trip");
         assert_eq!(back, view);
     }
+    /// Most of `examples/` is written to be adapted, not run. A list that renders
+    /// `<PERCORSO_SORGENTE_1>` in the source column shows a job that looks configured and is not —
+    /// which is exactly how someone trying the product for the first time ends up staring at a
+    /// screen that seems fine.
+    #[test]
+    fn a_job_still_holding_template_placeholders_is_flagged_as_unconfigured() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let path = dir.path().join("modello.toml");
+        std::fs::write(
+            &path,
+            "source = \"<PERCORSO_SORGENTE>\"
+dest = \"<PERCORSO_NAS>\"
+",
+        )
+        .expect("write");
+
+        let jobs = list_jobs(&path).expect("reads");
+        assert!(jobs[0].unconfigured);
+
+        let settings = read_settings(&path).expect("reads");
+        assert!(
+            entry(&settings[0], "source").caution.is_some(),
+            "and the settings pane says why, not just that"
+        );
+    }
+
+    /// The check must not fire on a real path. Windows forbids `<` and `>` in paths, so the shape
+    /// it looks for cannot occur in one — stated as a test rather than trusted.
+    #[test]
+    fn a_real_path_is_not_mistaken_for_a_placeholder() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let path = dir.path().join("vero.toml");
+        std::fs::write(
+            &path,
+            "source = \"D:/src\"
+dest = \"E:/dst\"
+",
+        )
+        .expect("write");
+
+        assert!(!list_jobs(&path).expect("reads")[0].unconfigured);
+        assert!(entry(&read_settings(&path).expect("reads")[0], "source")
+            .caution
+            .is_none());
+    }
+
     /// `list_jobs` must label unnamed jobs the way `run_jobs` does — positionally — not with a
     /// shared name inherited from the defaults. Before `merged_over` stopped inheriting `name`,
     /// every unnamed job here would have rendered as the same label while writing to genuinely
