@@ -81,17 +81,23 @@ crates/
 │           ├── mod.rs       # CopyEngine trait & CopyRequest / CopyOutcome definitions.
 │           ├── robocopy.rs  # Windows Robocopy process builder & parser.
 │           └── naive.rs     # Cross-platform baseline single-thread copy + selective copy for generations.
-└── rustcopy-cli/           # package `rustcopy-cli`; binary names unchanged (rule 17)
-    └── src/
-        ├── main.rs              # `robocopy_ingest` entrypoint, orchestration & signal handling (Ctrl+C).
-        └── notify_server_bin.rs # `notify-server` entrypoint (feature "notify-server"); own Windows service identity (F41).
+├── rustcopy-cli/           # package `rustcopy-cli`; binary names unchanged (rule 17)
+│   └── src/
+│       ├── main.rs              # `robocopy_ingest` entrypoint, orchestration & signal handling (Ctrl+C).
+│       └── notify_server_bin.rs # `notify-server` entrypoint (feature "notify-server"); own Windows service identity (F41).
+└── rustcopy-gui/           # package `rustcopy-gui`; the desktop console (milestone 7.0.0)
+    ├── src/main.rs         # Tauri commands: thin wrappers over `gui_api`/`job_editor`, no backup logic
+    ├── capabilities/       # Tauri permissions: dialog open/save only, no filesystem access
+    ├── tauri.conf.json     # `custom-protocol` decides dev-vs-production, not the cargo profile (D22)
+    └── ui/                 # Svelte 5 + Tailwind 4 frontend; `ui/dist` is embedded at build time
 ```
 
 ---
 
 ## 3. Mandatory Testing Guidelines
 
-- **Never declare success without running `cargo test`** (and `cargo test --features notify-server` if you touched `src/notify_server.rs`, `src/notify_sink.rs`, or `crates/rustcopy-cli/src/notify_server_bin.rs`).
+- **Never declare success without running `cargo test --workspace --exclude rustcopy-gui --locked --all-targets`** (and the same with `--features rustcopy-cli/notify-server` if you touched `notify_server.rs`, `notify_sink.rs`, or `crates/rustcopy-cli/src/notify_server_bin.rs`). These are the commands `ci.yml` runs.
+- **A green test run says nothing about the GUI.** No test in this repository opens a window; D22 shipped a console that could not render its own interface with every check passing. Anything touching `crates/rustcopy-gui` has to be verified by building it and looking at it.
 - All **422 unit and integration tests** (default build) MUST pass before committing changes. With `--features rustcopy-cli/notify-server`, **437** must pass. Exclude the GUI crate from the workspace run (`--exclude rustcopy-gui`), exactly as CI does; it has its own job.
 - Cross-Platform Constraint: Unit tests inside `src/engine/robocopy.rs`, `src/integrity.rs`, `src/notify.rs`, `src/notify_sink.rs`, etc. MUST pass on Linux and macOS using `ScriptedRunner`/scripted test doubles.
 

@@ -1312,7 +1312,7 @@ Contraddiceva il `beforeBuildCommand` due righe sotto, che usa già `--prefix ui
 mascherava il secondo: in modalità dev `frontendDist` non viene mai letto. Con `custom-protocol`
 attivo il percorso sbagliato diventa un errore di compilazione immediato — verificato rimettendolo:
 
-```
+```text
 error: proc macro panicked
     = help: message: The `frontendDist` configuration is set to `"../ui/dist"` but this path doesn't exist
 ```

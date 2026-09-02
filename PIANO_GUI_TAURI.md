@@ -68,7 +68,9 @@ domani la CLI acquisisse una dipendenza dalla GUI. È lo stesso meccanismo con c
 axum fuori dal binario di default.
 
 > **Conseguenza diretta sulla tua domanda su installazione separata**: l'architettura la impone già.
-> Vedi §5.3 — installare solo la CLI resterà sempre possibile, e sarà l'installazione predefinita.
+> Vedi §5.3 — installare **solo la CLI** resta sempre possibile, ed è ciò che sceglie il percorso
+> silenzioso usato dai server (`/TYPE=cli`). Nell'installer interattivo il tipo predefinito è
+> invece CLI + console: le due cose non sono in conflitto, sono due percorsi con utenti diversi.
 
 ### 2.2 Eseguire un backup *dalla* GUI: qui il rischio è reale, ed è misurabile
 
@@ -278,14 +280,15 @@ Non un secondo installer. `installer/rustcopy.iss` esiste, è **completato e tes
 (ciclo installazione silenziosa → PATH → disinstallazione → PATH ripristinato). Inno Setup
 impacchetta la console come **componente opzionale**.
 
-**Correzione rispetto alla formulazione originaria di questa sezione**: il bundler Tauri **non**
-viene usato nemmeno per costruire. `cargo build --release -p rustcopy-gui` produce l'eseguibile
-direttamente, e `bundle.active` resta `false` in `tauri.conf.json` — accenderlo genererebbe un
-MSI/NSIS separato per la sola console, cioè esattamente la separazione che questa sezione evita.
+> **Correzione rispetto alla formulazione originaria di questa sezione**: il bundler Tauri **non**
+> viene usato nemmeno per costruire. `cargo build --release -p rustcopy-gui` produce l'eseguibile
+> direttamente, e `bundle.active` resta `false` in `tauri.conf.json` — accenderlo genererebbe un
+> MSI/NSIS separato per la sola console, cioè esattamente la separazione che questa sezione evita.
 
 ```text
-[X] rustcopy CLI          (obbligatorio)
-[ ] Interfaccia grafica   (opzionale, deselezionata di default)
+[X] rustcopy CLI          (obbligatorio, non deselezionabile)
+[X] Interfaccia grafica   (opzionale; preselezionata nell'installazione interattiva,
+                           assente con /TYPE=cli)
 ```
 
 Quattro ragioni:

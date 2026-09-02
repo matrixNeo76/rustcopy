@@ -269,7 +269,7 @@ ma senza effetto).
 
 > ✅ **Stato al 2 Set 2026: sette voci su otto chiuse** — F52 (workspace), F53 (scheletro),
 > F54 (editor dei job, creazione e modifica; l'esecuzione resta fuori ambito), F55 (metà in
-> lettura), F56 (credenziali), F58 (viewer report), F59 (storico), F60 (installer). Resta aperta
+> lettura), F56 (credenziali), F59 (storico), F60 (installer). Resta aperta
 > la **metà in scrittura di F55** (gli script pre/post, dove morde l'avviso 2 qui sotto); **F57**
 > (ruoli) è ferma a P2 con una raccomandazione esplicita di non farla, motivata sotto.
 >

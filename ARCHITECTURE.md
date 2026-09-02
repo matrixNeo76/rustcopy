@@ -32,6 +32,7 @@ produce proposte di configurazione in file nuovi.
 |---|---|---|
 | `crates/rustcopy-core` | Tutta la logica: scansione, motori di copia, integrità, crypto, VSS, generazioni, storico, report | La libreria **`robocopy_ingest`** |
 | `crates/rustcopy-cli` | Solo gli entry point e la loro orchestrazione | I binari **`robocopy_ingest`** e **`notify-server`** |
+| `crates/rustcopy-gui` | La console desktop: comandi Tauri come involucri sottili su `gui_api`/`job_editor`, più il frontend Svelte in `ui/` | Il binario **`rustcopy-gui`**, componente opzionale dell'installer |
 
 **Il nome della libreria e quelli dei binari non sono cambiati.** Il package si chiama
 `rustcopy-core` ma la sua `[lib]` resta `robocopy_ingest`, quindi ogni `use robocopy_ingest::…`
