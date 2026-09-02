@@ -30,6 +30,7 @@ pub mod history;
 pub mod hooks;
 pub mod html_report;
 pub mod integrity;
+pub mod job_editor;
 pub mod logging;
 pub mod notify;
 #[cfg(feature = "notify-server")]

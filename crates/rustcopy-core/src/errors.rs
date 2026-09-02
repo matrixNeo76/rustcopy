@@ -30,6 +30,39 @@ pub enum IngestError {
     #[error("--keep-generations requires --backup-type: there is nothing to rotate without a generation history")]
     KeepGenerationsWithoutBackupType,
 
+    /// F54. The editor may narrow risk, never widen it: a job that purges the destination cannot
+    /// be born in a user interface. See `job_editor`'s module header for why the field is still
+    /// writable in the other direction.
+    #[error("the editor cannot turn mirroring on for job {0}: a job that deletes at the destination must be written in the configuration file by hand")]
+    EditorCannotEnableMirror(String),
+
+    /// F54. Retention deletes whole generation cycles.
+    #[error("the editor cannot introduce keep_generations for job {0}: retention deletes old generations and must be written in the configuration file by hand")]
+    EditorCannotIntroduceRetention(String),
+
+    /// F54. Lowering the count is the half that is easy to miss, because the number gets smaller
+    /// while the deletion gets larger.
+    #[error("the editor cannot lower keep_generations for job {name} from {from} to {to}: keeping fewer cycles deletes more")]
+    EditorCannotLowerRetention {
+        name: String,
+        from: usize,
+        to: usize,
+    },
+
+    /// F54. `--mirror` uses the prescan to work out what it would delete; without it the safety
+    /// diff cannot run at all.
+    #[error("the editor cannot disable the prescan on the mirroring job {0}: mirroring relies on it to know what it would delete")]
+    EditorCannotDisablePrescanOnMirror(String),
+
+    /// F54. A file with no `[[jobs]]` keeps its single job in the top-level fields; turning it
+    /// into a multi-job file changes what every one of those fields means.
+    #[error("the editor cannot split the single-job configuration holding {0} into several jobs: add the [[jobs]] section by hand first")]
+    EditorCannotSplitSingleJobConfig(String),
+
+    /// F54. The editor always writes a new file and leaves the substitution to the operator.
+    #[error("refusing to overwrite {0}: the editor writes a proposal and leaves it to you to put it in place")]
+    EditorWouldOverwrite(PathBuf),
+
     #[error("source directory does not exist: {0}")]
     SourceMissing(PathBuf),
 
@@ -190,7 +223,15 @@ impl IngestError {
             | IngestError::PreCommandFailed { .. }
             | IngestError::InvalidScheduleSpec(_)
             | IngestError::Schedule(_)
-            | IngestError::Service(_) => false,
+            | IngestError::Service(_)
+            // F54: every editor refusal is a decision about what the interface may write, not a
+            // condition that could clear on a second attempt.
+            | IngestError::EditorCannotEnableMirror(_)
+            | IngestError::EditorCannotIntroduceRetention(_)
+            | IngestError::EditorCannotLowerRetention { .. }
+            | IngestError::EditorCannotDisablePrescanOnMirror(_)
+            | IngestError::EditorCannotSplitSingleJobConfig(_)
+            | IngestError::EditorWouldOverwrite(_) => false,
         }
     }
 }

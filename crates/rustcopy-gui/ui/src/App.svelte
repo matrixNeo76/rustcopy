@@ -2,6 +2,7 @@
   import { invoke } from "@tauri-apps/api/core";
   import History from "./History.svelte";
   import Settings from "./Settings.svelte";
+  import Editor from "./Editor.svelte";
 
   let tab = $state("jobs");
 
@@ -10,6 +11,7 @@
   const TABS = [
     { id: "jobs", label: "Job" },
     { id: "settings", label: "Impostazioni" },
+    { id: "editor", label: "Modifica" },
     { id: "history", label: "Storico" },
   ];
 
@@ -40,7 +42,7 @@
   <header class="border-b border-slate-200 px-4 py-3 dark:border-slate-800">
     <h1 class="text-sm font-semibold tracking-tight">rustcopy — console</h1>
     <p class="text-xs text-slate-500 dark:text-slate-400">
-      Sola lettura: questa versione mostra la configurazione e lo storico, non esegue e non modifica nulla.
+      Non esegue backup. L’unica scrittura è una proposta di configurazione in un file nuovo: il file in uso non viene mai toccato.
     </p>
     <nav class="mt-2 flex gap-1" aria-label="Sezioni">
       {#each TABS as entry (entry.id)}
@@ -59,6 +61,8 @@
     <History />
   {:else if tab === "settings"}
     <Settings />
+  {:else if tab === "editor"}
+    <Editor />
   {:else}
 
   <section class="p-4">
