@@ -2,6 +2,7 @@
   import Jobs from "./Jobs.svelte";
   import Settings from "./Settings.svelte";
   import Editor from "./Editor.svelte";
+  import Report from "./Report.svelte";
   import History from "./History.svelte";
   import Help from "./Help.svelte";
 
@@ -13,6 +14,7 @@
     { id: "jobs", label: "Job", component: Jobs },
     { id: "settings", label: "Impostazioni", component: Settings },
     { id: "editor", label: "Modifica", component: Editor },
+    { id: "report", label: "Report", component: Report },
     { id: "history", label: "Storico", component: History },
     { id: "help", label: "Aiuto", component: Help },
   ];
