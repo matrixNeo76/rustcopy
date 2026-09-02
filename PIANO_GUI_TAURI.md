@@ -239,11 +239,19 @@ di design (§10).
 > zero vulnerabilità**, e produce 41 KB di JS più 8 KB di CSS. Era il criterio dichiarato — la
 > superficie della catena di fornitura — ed è l'unico su cui la scelta si giocava davvero.
 
-### 5.2 Ambito v1 → **console in sola lettura**
+### 5.2 Ambito v1 → **console in sola lettura** (superato in parte il 2 Set 2026)
 
 Nessun percorso di scrittura: mostra job configurati, avanzamento in sola lettura, cronologia
 (`.rustcopy_history.jsonl`, già esistente) e report. Creazione/modifica dei job, credenziali e
 operazioni distruttive arrivano dopo.
+
+
+> **Aggiornamento 2 Set 2026.** Vale ancora per tutto tranne un punto: F54 ha aggiunto un
+> percorso di scrittura, e uno solo — `job_editor::propose_config`, che scrive una **proposta** in
+> un file nuovo e non tocca mai la configurazione in uso. La garanzia "non può danneggiare un
+> backup" è quindi decaduta e sostituita da regole esplicite: l'editor può restringere il rischio,
+> mai allargarlo (riga F54 della ROADMAP). Nessun comando esegue, copia, cancella, pianifica o
+> installa: quello resta fuori.
 
 Quattro ragioni:
 

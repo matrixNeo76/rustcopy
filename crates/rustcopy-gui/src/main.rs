@@ -11,13 +11,18 @@
 //! If a command in this file ever grows a branch on backup semantics, the branch belongs in
 //! `rustcopy-core` instead.
 //!
-//! # Read-only, deliberately
+//! # What this application may do
 //!
-//! There is no command that copies, deletes, purges, schedules or installs. A v1 with no write
-//! path **cannot** damage a backup, which is the strongest guarantee available and the reason
-//! §5.2 recommends starting here. The prohibitions preserved in ROADMAP F61 — never expose
-//! `--force-purge`, unattended `--mirror`, retention purges or service installation to an
-//! automated caller — apply to this surface identically.
+//! There is no command that copies, deletes, purges, schedules or installs. The prohibitions kept
+//! in ROADMAP F61 — never expose `--force-purge`, unattended `--mirror`, retention purges or
+//! service installation to an automated caller — apply to this surface identically.
+//!
+//! Every command reads, with **one** exception: [`write_proposal`] (F54) writes a proposed
+//! configuration to a new file. It cannot overwrite, cannot enable mirroring or retention, and
+//! cannot remove a job by omission. Those rules live in `robocopy_ingest::job_editor`, where they
+//! are enforced and tested; this file only carries the refusal back as a string. The running
+//! configuration is never modified — the operator performs the substitution, which is what keeps
+//! a bad write from taking out every job at once.
 //!
 //! # Why the CLI is unaffected
 //!
@@ -34,6 +39,7 @@ use std::path::PathBuf;
 
 use robocopy_ingest::advise::Advice;
 use robocopy_ingest::gui_api::{self, HistoryView, JobSettings, JobSummary, ReportView};
+use robocopy_ingest::job_editor::{self, JobDraft};
 
 /// Runs a blocking library call off the IPC thread.
 ///
@@ -110,6 +116,44 @@ async fn read_advice(report_path: String, job_name: Option<String>) -> Result<Ve
     off_thread(move || gui_api::read_advice(&PathBuf::from(report_path), job_name.as_deref())).await
 }
 
+/// Reads every job of a config file as an editable draft (F54).
+#[tauri::command]
+async fn read_job_drafts(config_path: String) -> Result<Vec<JobDraft>, String> {
+    off_thread(move || job_editor::read_drafts(&PathBuf::from(config_path))).await
+}
+
+/// Suggests where the proposal should be written, beside the file it derives from.
+#[tauri::command]
+async fn suggest_proposal_path(config_path: String) -> Result<String, String> {
+    Ok(
+        job_editor::suggest_proposal_path_now(&PathBuf::from(config_path))
+            .display()
+            .to_string(),
+    )
+}
+
+/// Writes a proposed configuration to a **new** file (F54).
+///
+/// The only command in this application that writes anything. It cannot overwrite, it cannot
+/// enable mirroring or retention, and it cannot delete a job by omission — every one of those
+/// rules is enforced and tested in `job_editor`, not here. This command converts arguments and
+/// carries the refusal back as a string, like every other wrapper in this file.
+#[tauri::command]
+async fn write_proposal(
+    config_path: Option<String>,
+    drafts: Vec<JobDraft>,
+    out_path: String,
+) -> Result<(), String> {
+    off_thread(move || {
+        job_editor::propose_config_from_path(
+            config_path.as_ref().map(PathBuf::from).as_deref(),
+            &drafts,
+            &PathBuf::from(out_path),
+        )
+    })
+    .await
+}
+
 fn main() {
     tauri::Builder::default()
         .invoke_handler(tauri::generate_handler![
@@ -118,7 +162,10 @@ fn main() {
             read_report,
             read_report_page,
             read_history,
-            read_advice
+            read_advice,
+            read_job_drafts,
+            suggest_proposal_path,
+            write_proposal
         ])
         .run(tauri::generate_context!())
         .expect("error while running the rustcopy console");

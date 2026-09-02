@@ -19,10 +19,11 @@
 //! paths in one message. [`ReportView`] therefore returns a **page** plus the true total, never the
 //! whole list.
 //!
-//! **2. Read-only.** Nothing here writes, deletes, schedules or installs. The prohibitions kept in
-//! ROADMAP F61 and applied to `--advise` hold identically for a GUI: it may show and propose,
-//! never act. A v1 with no write path *cannot* damage a backup, which is the strongest guarantee
-//! available and the reason §5.2 recommends it.
+//! **2. Read-only.** Nothing *here* writes, deletes, schedules or installs. The prohibitions kept
+//! in ROADMAP F61 and applied to `--advise` hold identically for a GUI: it may show and propose,
+//! never act. The one write path the application has lives in [`crate::job_editor`] (F54), kept in
+//! its own module precisely so this boundary stays visible in the file tree rather than dissolving
+//! into a surface that both reads and writes.
 //!
 //! # What is intentionally not here
 //!
