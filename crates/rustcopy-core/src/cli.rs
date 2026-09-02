@@ -490,6 +490,19 @@ pub struct Args {
     pub delete_credential: Option<String>,
 
     // ── F33 internal: multi-job cache/manifest namespacing (D12) ─────────────
+    /// Stop the run when this file appears, exactly as Ctrl+C would.
+    ///
+    /// A supervisor that is not a terminal — the desktop console, a service wrapper, a CI job —
+    /// has no clean way to deliver Ctrl+C to this process on Windows. `GenerateConsoleCtrlEvent`
+    /// needs the caller attached to a console and the child in its own process group, and a GUI
+    /// built with `windows_subsystem = "windows"` has no console at all. Killing the process
+    /// instead loses the checkpoint, which is the property that makes an interruption resumable.
+    ///
+    /// So the supervisor creates this file and the run treats it as the interrupt it is, taking
+    /// the **same** branch Ctrl+C takes rather than a second implementation that could drift.
+    #[arg(long, value_name = "PATH")]
+    pub cancel_file: Option<PathBuf>,
+
     /// Internal-only, never a real CLI flag (`#[arg(skip)]`, no `--job-name`): set by
     /// `main.rs::run_jobs` to the current job's name so the fast-verify cache and the
     /// backup-generations manifest, both of which live purely under `dest` with no user-facing
@@ -639,6 +652,14 @@ impl Args {
         }
     }
     pub fn validate(&self) -> Result<(), IngestError> {
+        // A cancel file left behind by an earlier run would stop this one the moment it first
+        // looked, which an operator reads as a crash rather than as the stop it is. Caught here,
+        // before anything is copied, rather than surfacing as an instant mysterious interruption.
+        if let Some(path) = self.cancel_file.as_ref() {
+            if path.exists() {
+                return Err(IngestError::CancelFileAlreadyExists(path.clone()));
+            }
+        }
         // Checked before the restore-mode short-circuit below: --decrypt's primary use case is
         // exactly --restore-from, so this conflict must still be caught in that mode.
         if self.encrypt_aes256.is_some() && self.decrypt.is_some() {

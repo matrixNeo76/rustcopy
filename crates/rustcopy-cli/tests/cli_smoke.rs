@@ -2875,3 +2875,97 @@ fn a_broken_history_index_does_not_fail_an_otherwise_successful_run() {
         stderr_of(&output)
     );
 }
+
+/// The whole point of `--cancel-file`: a supervisor with no terminal stops the run and still gets
+/// the checkpoint, because the file takes the *same* branch Ctrl+C takes rather than a second one
+/// that has to remember to write it.
+///
+/// Held open by a slow pre-command rather than a large tree: on an SSD, copying 1.2 GB of the
+/// fixture finished in 1.6 s, which is no window at all to cancel inside. The hook runs at the top
+/// of `execute()`, so the interrupt future is already polling while it blocks.
+#[test]
+fn a_cancel_file_stops_the_run_and_still_writes_a_checkpoint() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let source = dir.path().join("src");
+    std::fs::create_dir_all(&source).expect("mkdir");
+    std::fs::write(source.join("uno.txt"), b"contenuto").expect("write");
+
+    let report = dir.path().join("report.json");
+    let cancel = dir.path().join("STOP");
+
+    // A no-op that blocks for long enough to cancel inside, on either platform.
+    let slow = if cfg!(windows) {
+        "ping -n 30 127.0.0.1"
+    } else {
+        "sleep 30"
+    };
+
+    let mut child = Command::new(BIN)
+        .arg("--source")
+        .arg(&source)
+        .arg("--dest")
+        .arg(dir.path().join("dst"))
+        .arg("--pre-command")
+        .arg(slow)
+        .arg("--report-path")
+        .arg(&report)
+        .arg("--log-path")
+        .arg(dir.path().join("run.log"))
+        .arg("--cancel-file")
+        .arg(&cancel)
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .spawn()
+        .expect("the binary must start");
+
+    // Give the run time to reach the pre-command and start polling.
+    std::thread::sleep(std::time::Duration::from_secs(3));
+    std::fs::write(&cancel, b"").expect("the supervisor creates the stop file");
+
+    let checkpoint = robocopy_ingest::checkpoint::checkpoint_path_for(&report);
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(60);
+    while !checkpoint.exists() && std::time::Instant::now() < deadline {
+        std::thread::sleep(std::time::Duration::from_millis(200));
+    }
+
+    assert!(
+        checkpoint.exists(),
+        "the interruption must leave something --resume-from can read"
+    );
+
+    let written = std::fs::read_to_string(&checkpoint).expect("readable");
+    assert!(
+        written.contains("stop requested via"),
+        "and it must say it was a stop, not a Ctrl+C: {written}"
+    );
+
+    let _ = child.wait();
+}
+
+/// A cancel file left behind by an earlier run would stop this one the instant it first looked,
+/// which an operator reads as a crash. Refused before anything is copied.
+#[test]
+fn a_cancel_file_that_already_exists_is_refused_before_any_work() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let source = dir.path().join("src");
+    std::fs::create_dir_all(&source).expect("mkdir");
+    let stale = dir.path().join("STOP");
+    std::fs::write(&stale, b"rimasto da prima").expect("write");
+
+    let output = Command::new(BIN)
+        .arg("--source")
+        .arg(&source)
+        .arg("--dest")
+        .arg(dir.path().join("dst"))
+        .arg("--cancel-file")
+        .arg(&stale)
+        .output()
+        .expect("runs");
+
+    assert!(!output.status.success());
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("already exists"),
+        "and it must say why rather than stopping mysteriously: {stderr}"
+    );
+}
