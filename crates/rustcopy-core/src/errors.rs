@@ -59,6 +59,11 @@ pub enum IngestError {
     #[error("the editor cannot split the single-job configuration holding {0} into several jobs: add the [[jobs]] section by hand first")]
     EditorCannotSplitSingleJobConfig(String),
 
+    /// `--cancel-file` names a file that must not exist yet: one left behind by an earlier run
+    /// would stop this one the moment it looked, which reads like a crash rather than a stop.
+    #[error("the --cancel-file {0} already exists: it would stop this run immediately. Remove it, or name a path that does not exist yet")]
+    CancelFileAlreadyExists(PathBuf),
+
     /// F54. The editor always writes a new file and leaves the substitution to the operator.
     #[error("refusing to overwrite {0}: the editor writes a proposal and leaves it to you to put it in place")]
     EditorWouldOverwrite(PathBuf),
@@ -231,7 +236,8 @@ impl IngestError {
             | IngestError::EditorCannotLowerRetention { .. }
             | IngestError::EditorCannotDisablePrescanOnMirror(_)
             | IngestError::EditorCannotSplitSingleJobConfig(_)
-            | IngestError::EditorWouldOverwrite(_) => false,
+            | IngestError::EditorWouldOverwrite(_)
+            | IngestError::CancelFileAlreadyExists(_) => false,
         }
     }
 }

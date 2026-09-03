@@ -230,6 +230,13 @@ async fn run(mut args: Args) -> Result<u8> {
 
     args.validate()?;
 
+    // Once, here, and not inside `validate()` — which `run_jobs` calls per job. A stop file
+    // created while a batch is running is a legitimate signal that the current job must handle as
+    // an interruption; checking it per job turned that signal into a configuration error for
+    // every remaining job. Here it does what it was for: catching one left behind by an earlier
+    // run, before anything is copied.
+    args.validate_cancel_file_absent()?;
+
     // F36: install the current invocation (minus the scheduling flags themselves) as a recurring
     // Task Scheduler entry, then exit without running a backup now. Runs after validate() (unlike
     // --uninstall-schedule above) because installing a schedule is only useful for a genuinely
@@ -258,7 +265,7 @@ async fn run(mut args: Args) -> Result<u8> {
 
     let exit_code = match run_one(&args, &log, Arc::clone(&child_pid)).await? {
         JobRunResult::Completed(code) => code,
-        JobRunResult::Interrupted => EXIT_INGESTION_PROBLEM,
+        JobRunResult::Interrupted(_) => EXIT_INGESTION_PROBLEM,
     };
 
     let dropped = log.dropped_lines();
@@ -375,9 +382,9 @@ async fn run_jobs(base_args: Args, config: robocopy_ingest::config::IngestConfig
 
         match result {
             JobRunResult::Completed(code) => worst_exit_code = worst_exit_code.max(code),
-            JobRunResult::Interrupted => {
+            JobRunResult::Interrupted(reason) => {
                 worst_exit_code = worst_exit_code.max(EXIT_INGESTION_PROBLEM);
-                eprintln!("aborting remaining jobs after Ctrl+C");
+                eprintln!("aborting remaining jobs: {reason}");
                 break;
             }
         }
@@ -395,7 +402,9 @@ async fn run_jobs(base_args: Args, config: robocopy_ingest::config::IngestConfig
 /// or Ctrl+C interrupted it (a checkpoint was written, if possible).
 enum JobRunResult {
     Completed(u8),
-    Interrupted,
+    /// Carries why, because there is more than one way in now: reporting "after Ctrl+C" for a
+    /// stop that came from `--cancel-file` would contradict the checkpoint written beside it.
+    Interrupted(String),
 }
 
 /// Runs one already-validated, already-logged-in job: the transfer itself, its Ctrl+C handling,
@@ -422,16 +431,20 @@ async fn run_one(
     // `taskkill /IM robocopy.exe` behaviour).
     let result = tokio::select! {
         res = execute(args, Arc::clone(&child_pid)) => res,
-        _ = tokio::signal::ctrl_c() => {
-            eprintln!("\nreceived Ctrl+C interrupt signal, terminating the active transfer...");
-            tracing::warn!("ingestion interrupted by Ctrl+C signal");
+        // Both arms of an interruption share the body below rather than each having their
+        // own, which is the point: the checkpoint guarantee is written once. `interrupted`
+        // is plain Ctrl+C when `--cancel-file` was not given, so a run without the flag
+        // behaves exactly as it did before the flag existed.
+        reason = interrupted(args.cancel_file.as_deref()) => {
+            eprintln!("\n{reason}, terminating the active transfer...");
+            tracing::warn!(%reason, "ingestion interrupted");
             kill_active_child(&child_pid);
 
             // F31: nothing was written to record an interrupted run before this existed, so
             // --resume-from had nothing to read. Best-effort: a failure to write the checkpoint
             // must not mask the Ctrl+C itself, only be reported.
             let checkpoint_path = robocopy_ingest::checkpoint::checkpoint_path_for(&args.report_path);
-            let checkpoint = robocopy_ingest::checkpoint::Checkpoint::new(args, "interrupted by Ctrl+C");
+            let checkpoint = robocopy_ingest::checkpoint::Checkpoint::new(args, &reason);
             match checkpoint.write_to(&checkpoint_path) {
                 Ok(()) => eprintln!(
                     "Checkpoint written to {} — resume with --resume-from {}",
@@ -445,7 +458,7 @@ async fn run_one(
             }
 
             log.flush().await;
-            return Ok(JobRunResult::Interrupted);
+            return Ok(JobRunResult::Interrupted(reason));
         }
     };
 
@@ -464,6 +477,51 @@ async fn run_one(
         eprintln!("\nthe ingestion completed with problems, see the report for details");
     }
     Ok(JobRunResult::Completed(outcome.exit_code))
+}
+
+/// Resolves when the run should stop, describing why.
+///
+/// Two ways in. Ctrl+C is the one a person at a terminal uses. The other is `--cancel-file`, for a
+/// supervisor with no terminal to send Ctrl+C from: on Windows `GenerateConsoleCtrlEvent` requires
+/// the caller to be attached to a console and the child to sit in its own process group, and a GUI
+/// built with `windows_subsystem = "windows"` has no console at all — while killing the process
+/// outright would skip the checkpoint, which is exactly what makes an interruption resumable.
+///
+/// Both resolve into the *same* caller branch. Deliberately: a second path that also had to
+/// remember to write a checkpoint is a second path that can forget to.
+async fn interrupted(cancel_file: Option<&Path>) -> String {
+    let ctrl_c = async {
+        let _ = tokio::signal::ctrl_c().await;
+        "received Ctrl+C interrupt signal".to_string()
+    };
+
+    match cancel_file {
+        None => ctrl_c.await,
+        Some(path) => {
+            let path = path.to_path_buf();
+            tokio::select! {
+                reason = ctrl_c => reason,
+                _ = wait_for_cancel_file(path.clone()) => {
+                    format!("stop requested via {}", path.display())
+                }
+            }
+        }
+    }
+}
+
+/// Polls for the cancel file.
+///
+/// Polling rather than a filesystem watcher: one `metadata` call twice a second against a path the
+/// supervisor chose is unmeasurable next to a backup, and a watcher would add a dependency and a
+/// platform-specific failure mode to a mechanism whose whole appeal is that you can see it work by
+/// looking at a folder.
+async fn wait_for_cancel_file(path: PathBuf) {
+    loop {
+        if tokio::fs::metadata(&path).await.is_ok() {
+            return;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+    }
 }
 
 /// Terminate only the tracked child PID (if any), never every `robocopy.exe` on the host.

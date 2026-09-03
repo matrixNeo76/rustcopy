@@ -2875,3 +2875,175 @@ fn a_broken_history_index_does_not_fail_an_otherwise_successful_run() {
         stderr_of(&output)
     );
 }
+
+/// The whole point of `--cancel-file`: a supervisor with no terminal stops the run and still gets
+/// the checkpoint, because the file takes the *same* branch Ctrl+C takes rather than a second one
+/// that has to remember to write it.
+///
+/// Held open by a slow pre-command rather than a large tree: on an SSD, copying 1.2 GB of the
+/// fixture finished in 1.6 s, which is no window at all to cancel inside. The hook runs at the top
+/// of `execute()`, so the interrupt future is already polling while it blocks.
+#[test]
+fn a_cancel_file_stops_the_run_and_still_writes_a_checkpoint() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let source = dir.path().join("src");
+    std::fs::create_dir_all(&source).expect("mkdir");
+    std::fs::write(source.join("uno.txt"), b"contenuto").expect("write");
+
+    let report = dir.path().join("report.json");
+    let cancel = dir.path().join("STOP");
+
+    // A no-op that blocks for long enough to cancel inside, on either platform.
+    let slow = if cfg!(windows) {
+        "ping -n 30 127.0.0.1"
+    } else {
+        "sleep 30"
+    };
+
+    let mut child = Command::new(BIN)
+        .arg("--source")
+        .arg(&source)
+        .arg("--dest")
+        .arg(dir.path().join("dst"))
+        .arg("--pre-command")
+        .arg(slow)
+        .arg("--report-path")
+        .arg(&report)
+        .arg("--log-path")
+        .arg(dir.path().join("run.log"))
+        .arg("--cancel-file")
+        .arg(&cancel)
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .spawn()
+        .expect("the binary must start");
+
+    // Give the run time to reach the pre-command and start polling.
+    std::thread::sleep(std::time::Duration::from_secs(3));
+    std::fs::write(&cancel, b"").expect("the supervisor creates the stop file");
+
+    let checkpoint = robocopy_ingest::checkpoint::checkpoint_path_for(&report);
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(60);
+    while !checkpoint.exists() && std::time::Instant::now() < deadline {
+        std::thread::sleep(std::time::Duration::from_millis(200));
+    }
+
+    assert!(
+        checkpoint.exists(),
+        "the interruption must leave something --resume-from can read"
+    );
+
+    let written = std::fs::read_to_string(&checkpoint).expect("readable");
+    assert!(
+        written.contains("stop requested via"),
+        "and it must say it was a stop, not a Ctrl+C: {written}"
+    );
+
+    let _ = child.wait();
+}
+
+/// A cancel file left behind by an earlier run would stop this one the instant it first looked,
+/// which an operator reads as a crash. Refused before anything is copied.
+#[test]
+fn a_cancel_file_that_already_exists_is_refused_before_any_work() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let source = dir.path().join("src");
+    std::fs::create_dir_all(&source).expect("mkdir");
+    let stale = dir.path().join("STOP");
+    std::fs::write(&stale, b"rimasto da prima").expect("write");
+
+    let output = Command::new(BIN)
+        .arg("--source")
+        .arg(&source)
+        .arg("--dest")
+        .arg(dir.path().join("dst"))
+        .arg("--cancel-file")
+        .arg(&stale)
+        .output()
+        .expect("runs");
+
+    assert!(!output.status.success());
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("already exists"),
+        "and it must say why rather than stopping mysteriously: {stderr}"
+    );
+}
+
+/// A stop file created *while a batch is running* is a legitimate signal, not a bad flag.
+///
+/// The guard against a leftover file used to sit in `Args::validate()`, which `run_jobs` calls
+/// once per job. So a file created after the first job finished made every remaining job fail
+/// validation: the batch skipped them one by one with a configuration complaint, exited 2 (usage
+/// error) instead of 1, and wrote no checkpoint at all — a stop reported as a mistake.
+#[test]
+fn a_stop_file_created_between_jobs_ends_the_batch_as_an_interruption() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let source = dir.path().join("src");
+    std::fs::create_dir_all(&source).expect("mkdir");
+    std::fs::write(source.join("uno.txt"), b"contenuto").expect("write");
+
+    let cancel = dir.path().join("STOP");
+    let report = dir.path().join("report.json");
+    let slow = if cfg!(windows) {
+        "ping -n 30 127.0.0.1"
+    } else {
+        "sleep 30"
+    };
+
+    // Two jobs. The first is quick and uses `backup_type = "full"`, which copies through the
+    // naive engine rather than robocopy — so this exercises the batch behaviour on Linux too,
+    // where `robocopy.exe` does not exist and a plain transfer would fail before the stop file
+    // could matter at all. The second blocks on a slow hook, so the file lands while the batch is
+    // genuinely in flight.
+    let config = dir.path().join("batch.toml");
+    std::fs::write(
+        &config,
+        format!(
+            "source = {src:?}\ndest = {dst:?}\nreport_path = {rep:?}\nlog_path = {log:?}\n\n\
+             [[jobs]]\nname = \"veloce\"\nbackup_type = \"full\"\n\n\
+             [[jobs]]\nname = \"lento\"\npre_command = {slow:?}\n",
+            src = source.to_string_lossy(),
+            dst = dir.path().join("dst").to_string_lossy(),
+            rep = report.to_string_lossy(),
+            log = dir.path().join("run.log").to_string_lossy(),
+            slow = slow,
+        ),
+    )
+    .expect("write config");
+
+    let child = Command::new(BIN)
+        .arg("--config")
+        .arg(&config)
+        .arg("--cancel-file")
+        .arg(&cancel)
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped())
+        .spawn()
+        .expect("the binary must start");
+
+    // Long enough for the first job to finish and the second to reach its hook.
+    std::thread::sleep(std::time::Duration::from_secs(4));
+    std::fs::write(&cancel, b"").expect("the supervisor stops the batch");
+
+    let output = child.wait_with_output().expect("waits");
+    let stderr = String::from_utf8_lossy(&output.stderr);
+
+    assert!(
+        !stderr.contains("failed validation"),
+        "a stop is not a configuration error: {stderr}"
+    );
+    assert_eq!(
+        output.status.code(),
+        Some(1),
+        "an interrupted batch is exit 1, not 2 (a usage error): {stderr}"
+    );
+    assert!(
+        stderr.contains("aborting remaining jobs"),
+        "and it must say the batch was cut short: {stderr}"
+    );
+    assert!(
+        !stderr.contains("after Ctrl+C"),
+        "nothing may claim Ctrl+C when a file did it: {stderr}"
+    );
+}
