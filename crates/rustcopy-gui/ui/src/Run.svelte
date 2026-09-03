@@ -17,6 +17,58 @@
   // schedule from here (F61's prohibitions apply to this console as a whole).
   let existingSchedules = $state([]);
 
+  // The batch position last seen in a live progress sample. Held apart from `status` itself
+  // because `run_status`'s finished branch clears `progress` entirely — without this, the queue
+  // view below would go blank at the exact moment a batch finishes, which is when an operator
+  // most wants to see "all done" rather than nothing.
+  //
+  // Never reset on `inspect()` (an earlier version did, and lost the queue on re-examining the
+  // very file that just finished — CodeRabbit review on #73). Instead `queue` below only renders
+  // when `status?.config_path` matches `session.configPath`: `status` always reflects whichever
+  // run this window is actually tracking (or last tracked), independent of what the operator has
+  // typed into the path field, so the comparison alone keeps a stale retained position from a
+  // *different* file from ever being shown, without needing to throw the value away.
+  let lastBatchIndex = $state(null);
+  let lastBatchTotal = $state(null);
+  // Set only by `stop()`, this window's own only way to interrupt a run. Distinguishes "the batch
+  // reached its natural end" from "it was cut short", which the `else` branch below needs: `run_
+  // jobs` records a per-job failure and moves on regardless (only Ctrl+C/--cancel-file breaks out
+  // early), so a batch that finished *without* ever being stopped from here is one where every
+  // job's position was genuinely reached — even if the last job's own phases were too fast for a
+  // single publisher tick to ever land, which the live samples alone cannot show (also #73).
+  let wasStopped = $state(false);
+
+  function rememberBatchPosition(s) {
+    if (s?.progress?.batch_total > 1) {
+      lastBatchIndex = s.progress.batch_index;
+      lastBatchTotal = s.progress.batch_total;
+    } else if (s && !s.running && !wasStopped && lastBatchTotal > 1) {
+      lastBatchIndex = lastBatchTotal;
+    }
+  }
+
+  // Onda 2, F49: a coarse queue, not a per-job outcome. `report_path` can carry `{timestamp}`
+  // (P1), so which exact report file a given job wrote is not reliably knowable ahead of the run
+  // — the queue only ever claims what `batch_index`/`batch_total` themselves can honestly say
+  // (position), never a guessed riuscito/fallito. That distinction is what Report and Storico are
+  // for, on the report the run actually wrote.
+  const queue = $derived(
+    jobs.length > 1 && lastBatchTotal > 1 && status?.config_path === session.configPath
+      ? jobs.map((job, i) => {
+          const position = i + 1;
+          const state =
+            position < lastBatchIndex
+              ? "concluso"
+              : position === lastBatchIndex
+                ? status?.running
+                  ? "in corso"
+                  : "concluso"
+                : "in attesa";
+          return { name: job.name, state };
+        })
+      : [],
+  );
+
   // A mirroring job cannot be authorised from here: the confirmation `check_mirror_safety` asks
   // for needs a terminal, and a child process launched from a window has none, so the run aborts
   // itself with exit 3. Saying so before the click is kinder than letting it fail.
@@ -29,6 +81,7 @@
     try {
       jobs = await invoke("list_jobs", { configPath: session.configPath });
       status = await invoke("run_status");
+      rememberBatchPosition(status);
     } catch (e) {
       error = String(e);
       jobs = [];
@@ -48,8 +101,11 @@
   async function start() {
     error = null;
     busy = true;
+    // A fresh run has not been stopped yet, whatever a previous one ended with.
+    wasStopped = false;
     try {
       status = await invoke("start_job", { configPath: session.configPath });
+      rememberBatchPosition(status);
       poll();
     } catch (e) {
       error = String(e);
@@ -62,6 +118,7 @@
     error = null;
     try {
       status = await invoke("stop_job");
+      wasStopped = true;
     } catch (e) {
       error = String(e);
     }
@@ -106,6 +163,7 @@
         if (mine !== generation) return;
         const wasRunning = status?.running === true;
         status = next;
+        rememberBatchPosition(status);
         if (next.running) {
           timer = setTimeout(tick, 1000);
         } else if (wasRunning) {
@@ -152,6 +210,30 @@
       {jobs.length}
       {jobs.length === 1 ? "job" : "job"} in questo file: <span class="font-mono">{jobs.map((j) => j.name).join(", ")}</span>
     </p>
+
+    {#if queue.length > 0}
+      <ul class="mt-2 flex flex-wrap gap-1.5">
+        {#each queue as entry}
+          {@const cls =
+            entry.state === "in corso"
+              ? "bg-blue-100 text-blue-900 dark:bg-blue-950 dark:text-blue-200"
+              : entry.state === "concluso"
+                ? "bg-emerald-100 text-emerald-900 dark:bg-emerald-950 dark:text-emerald-200"
+                : "bg-slate-100 text-slate-600 dark:bg-slate-800 dark:text-slate-400"}
+          <li
+            class="rounded px-1.5 py-0.5 text-[11px] font-mono {cls}"
+            title={entry.state}
+            aria-label="{entry.name}: {entry.state}"
+          >
+            {entry.name}
+          </li>
+        {/each}
+      </ul>
+      <p class="mt-1 text-[11px] text-slate-500">
+        Solo la posizione nel batch: quale job è concluso, in corso o in attesa. L'esito di ciascuno
+        — riuscito o fallito — resta nel Report o nello Storico di quella run.
+      </p>
+    {/if}
 
     {#if unconfigured.length > 0}
       <p class="mt-2 rounded border border-slate-300 bg-slate-50 px-2 py-1 text-xs
