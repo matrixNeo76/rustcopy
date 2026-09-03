@@ -27,6 +27,7 @@ TRACKED_DOCS=(
   RUNBOOK.md CHANGELOG.md SECURITY.md NEXT_SESSION_PROMPT.md PIANO_MIGLIORAMENTI.md
   VALUTAZIONE_AI.md
   PIANO_GUI_TAURI.md
+  PIANO_GUI_ESPANSIONE.md
   docs/cli-reference.md docs/installation.md
   docs/archive/PIANO_NOTIFY_SERVER.md docs/archive/AGENT_HARNESS_PLAN.md
 )
