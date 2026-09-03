@@ -344,6 +344,11 @@ async fn run_jobs(base_args: Args, config: robocopy_ingest::config::IngestConfig
         // namespace them with the job name in a multi-job run, otherwise jobs sharing a `dest`
         // would silently read/write each other's fast-verify cache and generation history (D12).
         job_args.job_name = Some(job_name.clone());
+        // Lets a published progress sample say which job of the batch is running, rather than
+        // leaving a supervisor watching one continuous progress bar with no idea it moved from
+        // job 1 to job 2. `idx` is 0-based; the label is written for a person.
+        job_args.batch_index = Some(idx as u32 + 1);
+        job_args.batch_total = Some(jobs.len() as u32);
         // P1: resolved per job, after namespacing above (order between the two doesn't matter --
         // they touch disjoint parts of the filename) and before validate(), each job getting its
         // own timestamp captured at its own start rather than one shared across the whole batch,
@@ -1892,6 +1897,8 @@ fn spawn_progress_publisher(
     files_total: Option<u64>,
 ) -> Option<ProgressPublisher> {
     let path = args.progress_file.clone()?;
+    let batch_index = args.batch_index;
+    let batch_total = args.batch_total;
 
     let handle = tokio::spawn(async move {
         let mut ticker = tokio::time::interval(Duration::from_secs(1));
@@ -1910,6 +1917,8 @@ fn spawn_progress_publisher(
                 files_total,
                 elapsed_seconds: started.elapsed().as_secs_f64(),
                 throughput_mbps: progress.average_mbps(),
+                batch_index,
+                batch_total,
             };
 
             // Non-fatal, deliberately (AGENTS.md rule 11): a backup that succeeded must not be

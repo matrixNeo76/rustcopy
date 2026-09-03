@@ -70,6 +70,14 @@ pub struct ProgressSample {
     pub files_total: Option<u64>,
     pub elapsed_seconds: f64,
     pub throughput_mbps: f64,
+    /// This run's 1-based position within a `[[jobs]]` batch, and the batch's total size. Both
+    /// `None` in the single-job path (unchanged from before these fields existed), and `#[serde(
+    /// default)]` so a progress file written by an older binary before a mid-run version change
+    /// still parses.
+    #[serde(default)]
+    pub batch_index: Option<u32>,
+    #[serde(default)]
+    pub batch_total: Option<u32>,
 }
 
 impl ProgressSample {
@@ -81,6 +89,25 @@ impl ProgressSample {
         match self.bytes_total {
             Some(total) if total > 0 => Some((self.bytes_done as f64 / total as f64).min(1.0)),
             _ => None,
+        }
+    }
+
+    /// The phase description, prefixed with this run's position in a batch when there is more
+    /// than one job to be in a position within. A single-job run carries `batch_total: Some(1)`
+    /// (or `None`, before any job ever ran) rather than skipping the field, so the `> 1` guard is
+    /// what keeps an ordinary single-job run's label exactly as it was before batches existed —
+    /// "job 1 di 1" would be true but useless, the kind of correct-and-unhelpful label users learn
+    /// to ignore.
+    ///
+    /// Composed here rather than by a caller: which numbers are worth showing together, and in
+    /// which language, is a decision about what this sample means, not a rendering choice — the
+    /// same reasoning `Phase::describe` above already applies to the phase name alone.
+    pub fn phase_label(&self) -> String {
+        match (self.batch_index, self.batch_total) {
+            (Some(index), Some(total)) if total > 1 => {
+                format!("job {index} di {total} — {}", self.phase.describe())
+            }
+            _ => self.phase.describe().to_string(),
         }
     }
 
@@ -119,6 +146,8 @@ mod tests {
             files_total: Some(10),
             elapsed_seconds: 1.5,
             throughput_mbps: 42.0,
+            batch_index: None,
+            batch_total: None,
         }
     }
 
@@ -137,6 +166,30 @@ mod tests {
     #[test]
     fn progress_past_the_total_is_capped_rather_than_shown_above_one() {
         assert_eq!(sample(2000, Some(1000)).fraction(), Some(1.0));
+    }
+
+    /// The ordinary case — no batch, or `run_jobs` never having set the fields yet — must read
+    /// exactly as it did before batches existed.
+    #[test]
+    fn a_single_job_run_gets_no_batch_prefix() {
+        let mut s = sample(500, Some(1000));
+        assert_eq!(s.phase_label(), "copia in corso");
+
+        s.batch_index = Some(1);
+        s.batch_total = Some(1);
+        assert_eq!(
+            s.phase_label(),
+            "copia in corso",
+            "a batch of one job is not a batch worth announcing"
+        );
+    }
+
+    #[test]
+    fn a_batch_run_names_its_position() {
+        let mut s = sample(500, Some(1000));
+        s.batch_index = Some(2);
+        s.batch_total = Some(5);
+        assert_eq!(s.phase_label(), "job 2 di 5 — copia in corso");
     }
 
     #[test]
