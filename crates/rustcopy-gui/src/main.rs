@@ -491,6 +491,10 @@ fn main() {
         // path a person selected, which is strictly less error-prone than the text box it
         // replaces.
         .plugin(tauri_plugin_dialog::init())
+        // Completion toast (Onda 1, PIANO_GUI_ESPANSIONE.md): the frontend calls it directly from
+        // Run.svelte on the running->finished transition it already detects while polling
+        // `run_status`, so no new command is needed here.
+        .plugin(tauri_plugin_notification::init())
         .invoke_handler(tauri::generate_handler![
             list_jobs,
             read_settings,
