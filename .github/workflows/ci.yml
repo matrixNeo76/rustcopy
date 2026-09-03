@@ -152,7 +152,7 @@ jobs:
       # dev server), and tauri-build refuses to compile when `frontendDist` is missing. This job
       # used to skip Node precisely because the check passed without it -- which is how it came to
       # certify a configuration nobody ships. It now compiles what ships.
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v7
         with:
           node-version: "22"
           cache: npm
@@ -181,7 +181,7 @@ jobs:
         with:
           persist-credentials: false
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v7
         with:
           node-version: "22"
           cache: npm
