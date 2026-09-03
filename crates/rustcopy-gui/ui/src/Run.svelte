@@ -1,5 +1,6 @@
 <script>
   import { invoke } from "@tauri-apps/api/core";
+  import { isPermissionGranted, requestPermission, sendNotification } from "@tauri-apps/plugin-notification";
   import PathBar from "./PathBar.svelte";
   import EmptyState from "./EmptyState.svelte";
   import { session } from "./session.svelte.js";
@@ -63,6 +64,25 @@
   // finished run is still going, with Avvia disabled and nothing that will ever re-enable it.
   let generation = 0;
 
+  // Fired only from inside `tick`, on a genuine running→finished transition it observes itself —
+  // never from `inspect()`, which can just as well load a run that already finished before this
+  // window opened. Notifying for state the window did not watch happen would be a lie about what
+  // just occurred, not a summary of it.
+  async function notifyFinished(finished) {
+    try {
+      let granted = await isPermissionGranted();
+      if (!granted) granted = (await requestPermission()) === "granted";
+      if (!granted) return;
+      sendNotification({
+        title: finished.exit_code === 0 ? "Run riuscita" : "Run terminata con problemi",
+        body: finished.meaning ?? `Codice di uscita ${finished.exit_code}`,
+      });
+    } catch {
+      // A missed toast is not worth surfacing as an error: the pane already shows the same
+      // outcome, this is a convenience on top of it, not the source of truth.
+    }
+  }
+
   function poll() {
     const mine = ++generation;
     clearTimeout(timer);
@@ -72,8 +92,13 @@
         const next = await invoke("run_status");
         // A reply from a superseded polling loop is discarded rather than rendered.
         if (mine !== generation) return;
+        const wasRunning = status?.running === true;
         status = next;
-        if (next.running) timer = setTimeout(tick, 1000);
+        if (next.running) {
+          timer = setTimeout(tick, 1000);
+        } else if (wasRunning) {
+          notifyFinished(next);
+        }
       } catch (e) {
         if (mine !== generation) return;
         error = String(e);

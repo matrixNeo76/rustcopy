@@ -31,6 +31,10 @@ tauri = { version = "2", features = [] }
 # path the operator chose and writes nothing. It removes mistyped paths, which is the failure
 # mode a text box invites.
 tauri-plugin-dialog = "2"
+# A completion toast, so a long-running job does not need the window kept in the foreground to be
+# noticed finishing. It only ever posts a summary of a run the console already ran through
+# `start_job`: nothing it displays comes from outside what the operator already asked to start.
+tauri-plugin-notification = "2"
 serde.workspace = true
 serde_json.workspace = true
 
