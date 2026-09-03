@@ -37,22 +37,14 @@ use robocopy_ingest::scan::{self, ScanSummary, ScannedFile};
 /// copies, so a long interval is sufficient.
 const POLL_INTERVAL: Duration = Duration::from_secs(30);
 
-/// Exit code when the transfer itself failed (robocopy exhausted its retries on some item).
-const EXIT_INGESTION_PROBLEM: u8 = 1;
-/// Exit code for usage errors and unrecoverable environment problems.
-const EXIT_UNRECOVERABLE: u8 = 2;
-/// Exit code when `--mirror` was aborted because it would have purged destination files and
-/// neither `--force-purge` nor an interactive confirmation was given.
-const EXIT_MIRROR_ABORTED: u8 = 3;
-/// F29b (closes half of D-none/O7): exit code when the transfer itself succeeded but
-/// `--verify-integrity` found a mismatch/missing/unreadable file. Previously this collapsed into
-/// the same `EXIT_INGESTION_PROBLEM` (1) as an actual robocopy transfer failure, which a scheduler
-/// can't tell apart from "some files couldn't be copied at all" — a materially different failure
-/// mode (data landed but doesn't match, vs. data never landed).
-const EXIT_INTEGRITY_FAILED: u8 = 4;
-/// F35: exit code when `--keep-generations` was aborted because it would have deleted old
-/// generation folders and neither `--force-purge` nor an interactive confirmation was given.
-const EXIT_RETENTION_PURGE_ABORTED: u8 = 5;
+// Exit codes live in `robocopy_ingest::runner`, not here: they are a contract with
+// schedulers (AGENTS.md rule 12), and the desktop console has to read the same numbers this
+// binary returns. They used to be private constants here *and* a hand-written map in the
+// console's history pane — two definitions of one contract, free to drift.
+use robocopy_ingest::runner::{
+    EXIT_INGESTION_PROBLEM, EXIT_INTEGRITY_FAILED, EXIT_MIRROR_ABORTED,
+    EXIT_RETENTION_ABORTED as EXIT_RETENTION_PURGE_ABORTED, EXIT_UNRECOVERABLE,
+};
 
 /// F37: a plain (non-`#[tokio::main]`) entry point on purpose. `windows_service::service_dispatcher`
 /// hands control to SCM's dispatch loop by blocking the calling OS thread until the service stops

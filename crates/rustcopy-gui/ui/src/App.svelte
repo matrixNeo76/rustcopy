@@ -2,6 +2,7 @@
   import Jobs from "./Jobs.svelte";
   import Settings from "./Settings.svelte";
   import Editor from "./Editor.svelte";
+  import Run from "./Run.svelte";
   import Report from "./Report.svelte";
   import History from "./History.svelte";
   import Help from "./Help.svelte";
@@ -14,6 +15,7 @@
     { id: "jobs", label: "Job", component: Jobs },
     { id: "settings", label: "Impostazioni", component: Settings },
     { id: "editor", label: "Modifica", component: Editor },
+    { id: "run", label: "Esegui", component: Run },
     { id: "report", label: "Report", component: Report },
     { id: "history", label: "Storico", component: History },
     { id: "help", label: "Aiuto", component: Help },
@@ -25,8 +27,8 @@
   <header class="border-b border-slate-200 px-4 py-3 dark:border-slate-800">
     <h1 class="text-sm font-semibold tracking-tight">rustcopy — console</h1>
     <p class="text-xs text-slate-500 dark:text-slate-400">
-      Non esegue backup. L'unica scrittura è una proposta di configurazione in un file nuovo: il
-      file in uso non viene mai toccato.
+      Esegue i job di un file di configurazione avviando la CLI, e ne prepara le modifiche come
+      proposte in file nuovi: quello in uso non viene mai toccato.
     </p>
     <nav class="mt-2 flex gap-1" aria-label="Sezioni">
       {#each TABS as entry (entry.id)}

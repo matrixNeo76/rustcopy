@@ -59,6 +59,10 @@ pub enum IngestError {
     #[error("the editor cannot split the single-job configuration holding {0} into several jobs: add the [[jobs]] section by hand first")]
     EditorCannotSplitSingleJobConfig(String),
 
+    /// A supervisor looked for the CLI beside itself and did not find it.
+    #[error("cannot find the rustcopy CLI at {0}. A supervisor runs the engine it was installed with, never one found on PATH")]
+    CliBinaryNotFound(PathBuf),
+
     /// `--cancel-file` names a file that must not exist yet: one left behind by an earlier run
     /// would stop this one the moment it looked, which reads like a crash rather than a stop.
     #[error("the --cancel-file {0} already exists: it would stop this run immediately. Remove it, or name a path that does not exist yet")]
@@ -237,7 +241,8 @@ impl IngestError {
             | IngestError::EditorCannotDisablePrescanOnMirror(_)
             | IngestError::EditorCannotSplitSingleJobConfig(_)
             | IngestError::EditorWouldOverwrite(_)
-            | IngestError::CancelFileAlreadyExists(_) => false,
+            | IngestError::CancelFileAlreadyExists(_)
+            | IngestError::CliBinaryNotFound(_) => false,
         }
     }
 }
