@@ -20,15 +20,30 @@
   // The batch position last seen in a live progress sample. Held apart from `status` itself
   // because `run_status`'s finished branch clears `progress` entirely — without this, the queue
   // view below would go blank at the exact moment a batch finishes, which is when an operator
-  // most wants to see "all done" rather than nothing. Reset in `inspect()` so examining a
-  // different file cannot show a stale queue left over from whatever last ran in this window.
+  // most wants to see "all done" rather than nothing.
+  //
+  // Never reset on `inspect()` (an earlier version did, and lost the queue on re-examining the
+  // very file that just finished — CodeRabbit review on #73). Instead `queue` below only renders
+  // when `status?.config_path` matches `session.configPath`: `status` always reflects whichever
+  // run this window is actually tracking (or last tracked), independent of what the operator has
+  // typed into the path field, so the comparison alone keeps a stale retained position from a
+  // *different* file from ever being shown, without needing to throw the value away.
   let lastBatchIndex = $state(null);
   let lastBatchTotal = $state(null);
+  // Set only by `stop()`, this window's own only way to interrupt a run. Distinguishes "the batch
+  // reached its natural end" from "it was cut short", which the `else` branch below needs: `run_
+  // jobs` records a per-job failure and moves on regardless (only Ctrl+C/--cancel-file breaks out
+  // early), so a batch that finished *without* ever being stopped from here is one where every
+  // job's position was genuinely reached — even if the last job's own phases were too fast for a
+  // single publisher tick to ever land, which the live samples alone cannot show (also #73).
+  let wasStopped = $state(false);
 
   function rememberBatchPosition(s) {
     if (s?.progress?.batch_total > 1) {
       lastBatchIndex = s.progress.batch_index;
       lastBatchTotal = s.progress.batch_total;
+    } else if (s && !s.running && !wasStopped && lastBatchTotal > 1) {
+      lastBatchIndex = lastBatchTotal;
     }
   }
 
@@ -38,7 +53,7 @@
   // (position), never a guessed riuscito/fallito. That distinction is what Report and Storico are
   // for, on the report the run actually wrote.
   const queue = $derived(
-    jobs.length > 1 && lastBatchTotal > 1
+    jobs.length > 1 && lastBatchTotal > 1 && status?.config_path === session.configPath
       ? jobs.map((job, i) => {
           const position = i + 1;
           const state =
@@ -63,10 +78,6 @@
   async function inspect() {
     error = null;
     busy = true;
-    // A different file may have nothing to do with whatever batch last ran in this window; start
-    // clean rather than carry over a queue that belongs to it.
-    lastBatchIndex = null;
-    lastBatchTotal = null;
     try {
       jobs = await invoke("list_jobs", { configPath: session.configPath });
       status = await invoke("run_status");
@@ -90,6 +101,8 @@
   async function start() {
     error = null;
     busy = true;
+    // A fresh run has not been stopped yet, whatever a previous one ended with.
+    wasStopped = false;
     try {
       status = await invoke("start_job", { configPath: session.configPath });
       rememberBatchPosition(status);
@@ -105,6 +118,7 @@
     error = null;
     try {
       status = await invoke("stop_job");
+      wasStopped = true;
     } catch (e) {
       error = String(e);
     }
@@ -206,7 +220,11 @@
               : entry.state === "concluso"
                 ? "bg-emerald-100 text-emerald-900 dark:bg-emerald-950 dark:text-emerald-200"
                 : "bg-slate-100 text-slate-600 dark:bg-slate-800 dark:text-slate-400"}
-          <li class="rounded px-1.5 py-0.5 text-[11px] font-mono {cls}" title={entry.state}>
+          <li
+            class="rounded px-1.5 py-0.5 text-[11px] font-mono {cls}"
+            title={entry.state}
+            aria-label="{entry.name}: {entry.state}"
+          >
             {entry.name}
           </li>
         {/each}
