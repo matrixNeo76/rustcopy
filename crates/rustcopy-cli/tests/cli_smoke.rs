@@ -2991,14 +2991,17 @@ fn a_stop_file_created_between_jobs_ends_the_batch_as_an_interruption() {
         "sleep 30"
     };
 
-    // Two jobs. The first is quick; the second blocks on a slow hook, so the stop file lands
-    // while the batch is genuinely in flight.
+    // Two jobs. The first is quick and uses `backup_type = "full"`, which copies through the
+    // naive engine rather than robocopy — so this exercises the batch behaviour on Linux too,
+    // where `robocopy.exe` does not exist and a plain transfer would fail before the stop file
+    // could matter at all. The second blocks on a slow hook, so the file lands while the batch is
+    // genuinely in flight.
     let config = dir.path().join("batch.toml");
     std::fs::write(
         &config,
         format!(
             "source = {src:?}\ndest = {dst:?}\nreport_path = {rep:?}\nlog_path = {log:?}\n\n\
-             [[jobs]]\nname = \"veloce\"\n\n\
+             [[jobs]]\nname = \"veloce\"\nbackup_type = \"full\"\n\n\
              [[jobs]]\nname = \"lento\"\npre_command = {slow:?}\n",
             src = source.to_string_lossy(),
             dst = dir.path().join("dst").to_string_lossy(),
