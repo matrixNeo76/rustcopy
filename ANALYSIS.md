@@ -1,7 +1,7 @@
 ---
 type: Log
 title: Analisi di Robustezza e Ottimizzazione Prestazioni
-description: Audit trail dei difetti D1-D22 e delle opportunità di miglioramento O1-O10.
+description: Audit trail dei difetti D1-D23 e delle opportunità di miglioramento O1-O10.
 status: stable
 generated:
   by: process:claude-code
@@ -171,9 +171,12 @@ Se l'applicazione Rust intercetta `Ctrl+C` e si arresta senza terminare il proce
 > **D20** (23 Agosto 2026) chiude la metà in lettura dello stesso costo: il manifest veniva
 > caricato per intero in RAM anche da chi non lo usava (580 MB misurati). **D21** (23 Agosto
 > 2026) elimina la duplicazione dell'inventario di scan, che `verify` teneva vivo in quattro
-> copie. Porta il totale storico a 22 (D1-D22, l'ultimo trovato dall'utente avviando la console installata — vedi la nota metodologica in D22). **Nessun difetto resta aperto**: D10, l'ultima
-> voce ancora segnata come tale, è stato riclassificato il 23 Agosto 2026 come *limite noto*
-> dello strumento di estrazione del grafo — la sua parte azionabile era già stata fatta, e ciò
+> copie. Porta il totale storico a 22 (D1-D22, l'ultimo trovato dall'utente avviando la console
+> installata — vedi la nota metodologica in D22). **D23** (3 Settembre 2026) chiude un difetto
+> trovato di striscio testando una feature non collegata: `--bandwidth-limit-mbps` falliva sempre
+> contro il motore reale per un conflitto `/IPG`+`/MT` mai gestito. **Nessun difetto resta aperto**:
+> D10, l'ultima voce ancora segnata come tale, è stato riclassificato il 23 Agosto 2026 come *limite
+> noto* dello strumento di estrazione del grafo — la sua parte azionabile era già stata fatta, e ciò
 > che resta non ha un fix (vedi la sezione D10 per il razionale).
 
 ## 🛑 3.1 Difetti aperti confermati
@@ -1339,6 +1342,46 @@ dell'editor restavano legate al percorso *condiviso* invece che al file da cui e
 (scrivere dopo aver cambiato percorso senza ricaricare avrebbe mescolato job di due file), e il
 cambio scheda **distruggeva** ogni altro pannello, perdendo in silenzio le modifiche aperte.
 Entrambi introdotti dal passo di usabilità che doveva rendere la console utilizzabile.
+
+---
+
+### D23 — `--bandwidth-limit-mbps` falliva sempre contro il motore reale, per un conflitto `/IPG`+`/MT` mai gestito ✅ RISOLTO (3 Set 2026)
+
+**Stato: chiuso e verificato.**
+
+**Gravità: ALTA** — non un caso limite: ogni run reale con `--bandwidth-limit-mbps` falliva, sempre.
+Trovato **di striscio**, testando una feature non collegata (l'etichetta di progresso per i batch,
+F62) sulla console.
+
+**Causa.** `engine::robocopy::build_args` aggiungeva `/MT:{threads}` **incondizionatamente**
+(nessuna guardia su `threads`), e `/IPG:{ms}` ogni volta che `--bandwidth-limit-mbps` era impostato.
+Robocopy reale rifiuta la combinazione:
+
+```
+Impossibile utilizzare l'opzione /IPG con l'opzione /MT.
+```
+
+verificato direttamente contro il binario: `robocopy.exe src dest * /E /MT:1 /R:3 /W:5 /BYTES /NP
+/IPG:13` termina con codice 16 ("fatal error, no files copied"), zero file trasferiti — anche con un
+solo thread, perché `/MT:1` resta comunque `/MT`.
+
+**Perché è passato.** Il test esistente (`bandwidth_throttle_flag_is_generated`) verificava solo la
+presenza di `/IPG:5242` nell'elenco costruito, mai l'assenza di `/MT` né la loro incompatibilità —
+passava quindi anche su un elenco che robocopy stesso rifiuta.
+
+**Rimedio.** Non una guardia su `threads > 1`: il default di `threads` (`default_threads`, il numero
+di CPU logiche) è quasi sempre maggiore di uno, quindi quella condizione avrebbe lasciato rotto
+proprio il caso comune. `/MT` è ora omesso **del tutto** quando `--bandwidth-limit-mbps` è attivo,
+indipendentemente da `threads` — l'assenza di `/MT` è il comportamento a thread singolo che robocopy
+usa comunque di default, non una modalità degradata inventata qui. La riga di comando effettivamente
+invocata resta loggata a livello info (`invoking robocopy`), quindi l'omissione è visibile senza un
+avviso separato.
+
+**Verifica.** Nuovo test `bandwidth_throttling_never_carries_mt` (con `threads: 16` nel fixture, non
+1, per coprire il caso reale, non quello degenere) più conferma diretta contro il binario: lo stesso
+comando senza `/MT` copia con successo (`exit=1`). Confermato anche end-to-end attraverso la CLI
+reale (`--bandwidth-limit-mbps 5`): la pipeline completa e la riga di comando loggata non contiene
+più `/MT`.
 
 ---
 
