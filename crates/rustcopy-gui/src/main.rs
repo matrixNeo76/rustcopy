@@ -150,6 +150,19 @@ async fn schedules_referencing(config_path: String) -> Result<Vec<String>, Strin
     off_thread(move || gui_api::schedules_referencing(&PathBuf::from(config_path))).await
 }
 
+/// Stores a secret in the Windows Credential Manager (Onda 2, F56's GUI half). `secret` travels
+/// only through Tauri's IPC channel — the frontend never builds a command line with it.
+#[tauri::command]
+async fn set_credential(name: String, secret: String) -> Result<(), String> {
+    off_thread(move || gui_api::set_credential(&name, &secret)).await
+}
+
+/// Removes a secret from the Windows Credential Manager.
+#[tauri::command]
+async fn delete_credential(name: String) -> Result<(), String> {
+    off_thread(move || gui_api::delete_credential(&name)).await
+}
+
 /// Reads every job of a config file as an editable draft (F54).
 #[tauri::command]
 async fn read_job_drafts(config_path: String) -> Result<Vec<JobDraft>, String> {
@@ -512,6 +525,8 @@ fn main() {
             read_history,
             read_advice,
             schedules_referencing,
+            set_credential,
+            delete_credential,
             read_job_drafts,
             suggest_proposal_path,
             write_proposal,
