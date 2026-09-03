@@ -171,13 +171,17 @@ né `runner.rs`.
 
 ### Onda 2 — Valore medio, nuova superficie ma dentro i limiti esistenti
 
-7. **Vista "coda job" (F49)** — elenco dei job di un batch con stato individuale (in attesa /
-   in corso / riuscito / fallito), letto dagli stessi file che la CLI già scrive (report per job,
-   namespacizzati da F33/D12), aggiornato mentre `start_job` esegue il batch. Nessuna esecuzione
-   diretta nel processo della console: resta un pannello di lettura sopra la stessa run.
-8. **UI per `--set-credential`/`--delete-credential`** — un campo mascherato che invoca un comando
-   dedicato il quale, come oggi la CLI, legge il segreto e lo passa a `keyring` **senza** farlo
-   transitare per un argomento di processo. Chiude la lacuna (c) per la parte già coperta da F56.
+7. ✅ **Fatto 3 Set 2026 (PR #73).** **Vista "coda job" (F49)** — elenco dei job di un batch con stato
+   individuale (in attesa / in corso / concluso), letto da `ProgressSample.batch_index`/`batch_total`
+   (già scritti da F49-Onda-1) mentre `start_job` esegue il batch. Nessuna esecuzione diretta nel
+   processo della console: resta un pannello di lettura sopra la stessa run. 3 rilievi CodeRabbit
+   corretti (persistenza sulla stessa run riesaminata, ultimo job troppo veloce per un campione live,
+   accessibilità del badge) — dettaglio in `CLAUDE.md` e `ROADMAP.md` (riga F49).
+8. ✅ **Fatto 3 Set 2026 (PR #74).** **UI per `--set-credential`/`--delete-credential`** — un campo
+   mascherato che invoca un comando dedicato il quale, come oggi la CLI, legge il segreto e lo passa a
+   `keyring` **senza** farlo transitare per un argomento di processo. Chiude la lacuna (c) per la parte
+   già coperta da F56. Verificato contro il Credential Manager reale (salva → `cmdkey /list` conferma →
+   elimina → assenza confermata).
 9. **Interruttore VSS in Modifica** — *dopo* aver aggiunto `vss_snapshot: Option<bool>` a
    `JobConfig` lato core (non lavoro di frontend, vedi §4f). Fino ad allora questo punto resta bloccato.
 
