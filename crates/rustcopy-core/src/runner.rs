@@ -130,6 +130,17 @@ pub fn cancel_file_for_now(config: &Path) -> Result<PathBuf, IngestError> {
     Ok(cancel_file_in(&dir, config, &stamp))
 }
 
+/// Where a run publishes its progress, beside its stop file and named from the same run.
+///
+/// The same directory for the same reason: it is writable by construction, which the stop file
+/// learned the hard way. Derived from the stop file rather than named separately so one run has
+/// one identity and a supervisor cannot end up watching one run and stopping another.
+pub fn progress_file_for(cancel_file: &Path) -> PathBuf {
+    let mut name = cancel_file.file_name().unwrap_or_default().to_os_string();
+    name.push(".progress");
+    cancel_file.with_file_name(name)
+}
+
 /// The complete argument list for running one configuration file.
 ///
 /// Built from a fixed shape rather than from anything a caller passes: the only two values that
@@ -141,6 +152,8 @@ pub fn run_arguments(config: &Path, cancel_file: &Path) -> Vec<String> {
         config.display().to_string(),
         "--cancel-file".to_string(),
         cancel_file.display().to_string(),
+        "--progress-file".to_string(),
+        progress_file_for(cancel_file).display().to_string(),
     ]
 }
 
@@ -169,7 +182,23 @@ mod tests {
                 "{forbidden} must never reach a run started by a supervisor: {joined}"
             );
         }
-        assert_eq!(args.len(), 4, "and nothing else may be added silently");
+        assert_eq!(args.len(), 6, "and nothing else may be added silently");
+    }
+
+    /// One run, one identity: watching one run's progress while holding another's stop file would
+    /// let a supervisor report on one job and stop a different one.
+    #[test]
+    fn the_progress_file_belongs_to_the_same_run_as_the_stop_file() {
+        let cancel = Path::new("C:/temp/rustcopy/jobs.stop-abc");
+        let progress = progress_file_for(cancel);
+
+        assert_eq!(progress.parent(), cancel.parent());
+        assert!(progress
+            .file_name()
+            .expect("named")
+            .to_string_lossy()
+            .starts_with("jobs.stop-abc"));
+        assert_ne!(progress, cancel.to_path_buf());
     }
 
     /// A missing CLI must say which path it looked at. "Not found" without the path sends an

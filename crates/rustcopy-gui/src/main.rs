@@ -192,6 +192,15 @@ struct RunStatus {
     /// Set once a stop has been requested and the run has not ended yet, so the window can say
     /// "stopping" rather than looking frozen while the checkpoint is written.
     stopping: bool,
+    /// The run's latest published sample, when there is one.
+    ///
+    /// `None` before the first sample lands and again once the run ends, because the CLI removes
+    /// the file: absent means "not running", which is a signal that needs no reasoning about
+    /// staleness.
+    progress: Option<robocopy_ingest::progress_file::ProgressSample>,
+    /// What that phase is, in words. Decided in the core: which phase a run is in is a fact about
+    /// the backup, and naming it is not a rendering choice.
+    phase_label: Option<String>,
 }
 
 /// The one run this window supervises at a time.
@@ -288,6 +297,8 @@ async fn start_job(
         exit_code: None,
         meaning: None,
         stopping: false,
+        progress: None,
+        phase_label: None,
     })
 }
 
@@ -315,6 +326,8 @@ async fn stop_job(state: tauri::State<'_, RunState>) -> Result<RunStatus, String
         exit_code: None,
         meaning: None,
         stopping: true,
+        progress: read_progress(active.cancel_file.as_deref()),
+        phase_label: None,
     })
 }
 
@@ -335,17 +348,25 @@ async fn run_status(state: tauri::State<'_, RunState>) -> Result<RunStatus, Stri
                 active.stopping = false;
                 // The run is over, so the file it watched has no reader left.
                 if let Some(path) = active.cancel_file.take() {
+                    // The CLI removes its own progress file on a normal exit; this covers the run
+                    // that crashed before it could.
+                    let _ = std::fs::remove_file(robocopy_ingest::runner::progress_file_for(&path));
                     let _ = std::fs::remove_file(path);
                 }
             }
             Ok(None) => {
+                let progress = read_progress(active.cancel_file.as_deref());
                 return Ok(RunStatus {
                     running: true,
                     config_path: active.config_path.clone(),
                     exit_code: None,
                     meaning: None,
                     stopping: active.stopping,
-                })
+                    phase_label: progress
+                        .as_ref()
+                        .map(|sample| sample.phase.describe().to_string()),
+                    progress,
+                });
             }
             Err(error) => return Err(format!("cannot check the running job: {error}")),
         }
@@ -361,7 +382,17 @@ async fn run_status(state: tauri::State<'_, RunState>) -> Result<RunStatus, Stri
             .and_then(|code| u8::try_from(code).ok())
             .map(|code| robocopy_ingest::runner::exit_code_meaning(code).to_string()),
         stopping: false,
+        progress: None,
+        phase_label: None,
     })
+}
+
+/// Reads the sample beside a run's stop file, if the run has published one yet.
+fn read_progress(
+    cancel_file: Option<&std::path::Path>,
+) -> Option<robocopy_ingest::progress_file::ProgressSample> {
+    let path = robocopy_ingest::runner::progress_file_for(cancel_file?);
+    robocopy_ingest::progress_file::ProgressSample::read_from(&path)
 }
 
 fn main() {

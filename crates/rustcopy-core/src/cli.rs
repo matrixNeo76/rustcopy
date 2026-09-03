@@ -490,6 +490,18 @@ pub struct Args {
     pub delete_credential: Option<String>,
 
     // ── F33 internal: multi-job cache/manifest namespacing (D12) ─────────────
+    /// Publish this run's progress to a file a supervisor can read.
+    ///
+    /// The terminal progress bar is drawn with ANSI escapes for a person; a program watching from
+    /// another process needs the numbers instead. One JSON line, rewritten in place at most once a
+    /// second, carrying the phase as well as the counts — a window showing only "bytes copied"
+    /// would sit at 100% for the whole verification and look hung.
+    ///
+    /// Costs nothing when absent, which is every scheduled run. A failure to publish never fails
+    /// the backup: progress is a convenience, the copy is the product.
+    #[arg(long, value_name = "PATH")]
+    pub progress_file: Option<PathBuf>,
+
     /// Stop the run when this file appears, exactly as Ctrl+C would.
     ///
     /// A supervisor that is not a terminal — the desktop console, a service wrapper, a CI job —

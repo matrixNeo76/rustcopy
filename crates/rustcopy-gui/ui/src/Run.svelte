@@ -152,7 +152,7 @@
         <span class="text-xs text-slate-600 dark:text-slate-400">
           {status.stopping
             ? "sto scrivendo il checkpoint, poi la run esce"
-            : "in esecuzione"}
+            : (status.phase_label ?? "in esecuzione")}
         </span>
       {:else if status?.exit_code !== null && status?.exit_code !== undefined}
         <span class="text-xs">
@@ -167,6 +167,33 @@
         </span>
       {/if}
     </div>
+
+    {#if status?.running && status?.progress}
+      {@const p = status.progress}
+      {@const fraction = p.bytes_total ? Math.min(1, p.bytes_done / p.bytes_total) : null}
+      <div class="mt-3 max-w-2xl">
+        <!-- A bar only where a percentage can honestly be computed. During the inventory there is
+             no total, and a bar sitting at 0% for the twenty minutes a 1.34M-file prescan takes
+             would be an invention presented as knowledge. -->
+        {#if fraction !== null}
+          <div class="h-1.5 w-full overflow-hidden rounded bg-slate-200 dark:bg-slate-800">
+            <div class="h-full bg-blue-600" style="width: {(fraction * 100).toFixed(1)}%"></div>
+          </div>
+        {/if}
+        <p class="mt-1 text-[11px] text-slate-600 dark:text-slate-400">
+          {#if fraction !== null}
+            {(fraction * 100).toFixed(0)}% —
+          {/if}
+          {#if p.files_total}
+            {p.files_done} / {p.files_total} file —
+          {/if}
+          {Math.round(p.elapsed_seconds)}s
+          {#if p.throughput_mbps > 0}
+            — {p.throughput_mbps.toFixed(0)} MB/s
+          {/if}
+        </p>
+      </div>
+    {/if}
 
     <p class="mt-2 text-[11px] text-slate-500">
       Fermare non uccide il processo: crea il file che la run sorveglia, così scrive il checkpoint

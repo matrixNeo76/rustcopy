@@ -456,6 +456,15 @@ async fn run_one(
 
     log.flush().await;
 
+    // The run is over, so its progress file must stop describing a run in progress. Removed
+    // rather than left holding a final sample: a file that persists is indistinguishable from a
+    // run frozen at whatever it last reported, and "absent means not running" is a signal a
+    // supervisor can trust without having to reason about staleness. Reaches here on both arms of
+    // the select above, interruption included.
+    if let Some(path) = args.progress_file.as_ref() {
+        let _ = std::fs::remove_file(path);
+    }
+
     match &result {
         Ok(outcome) => tracing::info!(exit_code = outcome.exit_code, "ingestion finished"),
         Err(error) => tracing::error!("ingestion aborted: {error:#}"),
@@ -1262,6 +1271,22 @@ async fn prune_old_generations(args: &Args, dest_root: &Path, keep_cycles: usize
 /// which counts files/bytes without materialising every path in RAM — the whole point of the
 /// flag on multi-million file trees.
 async fn inventory_source(args: &Args, effective_source: &Path) -> Result<ScanSummary> {
+    // The longest silent phase: a prescan of the real 1.34M-file profile runs for twenty minutes
+    // during which nothing is copied and nothing is verified. Without a sample here a window shows
+    // an empty pane for all of it and the run reads as hung before it has done anything wrong.
+    //
+    // No counts, deliberately. `scan::scan` does not report incrementally, and threading a sink
+    // through its four call sites to produce a number is churn this does not need: what stops a
+    // window looking frozen is naming the phase and letting the clock run, not a file counter.
+    // The totals stay `None` — during an inventory there is genuinely no total, and rendering that
+    // as 0% would be an invention.
+    let _published = spawn_progress_publisher(
+        args,
+        robocopy_ingest::progress_file::Phase::Inventory,
+        ThroughputProgress::hidden(0),
+        None,
+    );
+
     let source = effective_source.to_path_buf();
     let pattern = args.pattern.clone();
     let no_prescan = args.no_prescan;
@@ -1524,6 +1549,14 @@ async fn transfer(
 ) -> Result<(CopyOutcome, Option<IngestError>)> {
     let progress = new_progress(args, inventory.total_bytes, "robocopy");
     let poller = spawn_dest_poller(args, Arc::clone(&progress));
+    // Dropped when this function returns, by any route: an abandoned publisher would keep
+    // republishing a sample that stopped being true the moment the phase ended.
+    let _published = spawn_progress_publisher(
+        args,
+        robocopy_ingest::progress_file::Phase::Transfer,
+        Arc::clone(&progress),
+        Some(inventory.files.len() as u64),
+    );
 
     let mut request = args.copy_request(args.dest().to_path_buf());
     // F30: read from the VSS shadow copy instead of the live volume when --vss-snapshot created
@@ -1740,6 +1773,15 @@ async fn verify(
     // stuck well short of 100%.
     let bytes_to_verify: u64 = files_to_check.iter().map(|f| f.size_bytes).sum();
     let progress = new_progress(args, bytes_to_verify, "verify");
+    // Verification is the phase a window most needs named. On a large tree it runs for minutes
+    // while nothing is copied, and a bar reporting only bytes copied would sit at 100% throughout
+    // — the run looking frozen at the moment it is working hardest.
+    let _published = spawn_progress_publisher(
+        args,
+        robocopy_ingest::progress_file::Phase::Verification,
+        Arc::clone(&progress),
+        Some(files_to_check.len() as u64),
+    );
 
     let source = effective_source.to_path_buf();
     let dest = args.dest().to_path_buf();
@@ -1812,6 +1854,68 @@ fn new_progress(args: &Args, total_bytes: u64, label: &str) -> Arc<ThroughputPro
         ThroughputProgress::hidden(total_bytes)
     } else {
         ThroughputProgress::new(total_bytes, label)
+    }
+}
+
+/// Publishes the run's progress to `--progress-file` until it is dropped.
+///
+/// One sample a second, which is what a window can use and far less than the terminal bar's own
+/// tick: the writer is a rename of a small file, unmeasurable next to a backup, but there is no
+/// reason to do it more often than anyone can read it.
+///
+/// Returns `None` when the flag was not given, so a scheduled run spawns nothing at all.
+fn spawn_progress_publisher(
+    args: &Args,
+    phase: robocopy_ingest::progress_file::Phase,
+    progress: Arc<ThroughputProgress>,
+    files_total: Option<u64>,
+) -> Option<ProgressPublisher> {
+    let path = args.progress_file.clone()?;
+
+    let handle = tokio::spawn(async move {
+        let mut ticker = tokio::time::interval(Duration::from_secs(1));
+        let started = std::time::Instant::now();
+        loop {
+            ticker.tick().await;
+
+            let total = progress.total_bytes();
+            let sample = robocopy_ingest::progress_file::ProgressSample {
+                phase,
+                bytes_done: progress.current_bytes(),
+                // Zero means "not known yet" here, and the reader must not see it as a total of
+                // nothing: during the inventory there genuinely is no total.
+                bytes_total: (total > 0).then_some(total),
+                files_done: progress.files(),
+                files_total,
+                elapsed_seconds: started.elapsed().as_secs_f64(),
+                throughput_mbps: progress.average_mbps(),
+            };
+
+            // Non-fatal, deliberately (AGENTS.md rule 11): a backup that succeeded must not be
+            // reported as failed because a convenience file could not be written. Logged once at
+            // warn rather than every second, so a read-only directory does not fill the log.
+            if let Err(error) = sample.write_to(&path) {
+                tracing::warn!(error = %error, path = %path.display(), "cannot publish progress");
+                return;
+            }
+        }
+    });
+
+    Some(ProgressPublisher { handle })
+}
+
+/// Stops the publisher when the phase it was reporting ends.
+///
+/// A guard rather than a bare `JoinHandle` because every phase has more than one way out — an
+/// error, a `?`, an interruption — and a publisher left running past its phase would keep
+/// republishing a sample that stopped being true.
+struct ProgressPublisher {
+    handle: tokio::task::JoinHandle<()>,
+}
+
+impl Drop for ProgressPublisher {
+    fn drop(&mut self) {
+        self.handle.abort();
     }
 }
 

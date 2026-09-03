@@ -38,6 +38,7 @@ pub mod notify_server;
 pub mod notify_sink;
 pub mod oem_codec;
 pub mod progress;
+pub mod progress_file;
 pub mod report;
 pub mod restore;
 pub mod runner;

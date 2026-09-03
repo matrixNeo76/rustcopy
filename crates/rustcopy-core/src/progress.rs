@@ -138,6 +138,14 @@ impl ThroughputProgress {
     }
 
     /// Average throughput in MB/s (10^6 bytes) since the bar was created.
+    /// The total this bar was created against, or `0` when the caller did not know one.
+    ///
+    /// Zero is "not known", not "nothing to copy": the inventory has not finished when a transfer
+    /// bar is built without a total, and a reader must be able to tell those apart.
+    pub fn total_bytes(&self) -> u64 {
+        self.total_bytes
+    }
+
     pub fn average_mbps(&self) -> f64 {
         throughput_mbps(self.current_bytes(), self.started.elapsed())
     }
