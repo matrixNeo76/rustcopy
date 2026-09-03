@@ -450,20 +450,18 @@ async fn run_one(
             }
 
             log.flush().await;
+            // A stopped run is exactly the case where "absent means not running" has to hold: a
+            // supervisor that sees the file survive an interruption reads the run as still going.
+            // The comment that used to sit on the cleanup below claimed this arm reached it. It
+            // did not — this `return` is three lines above it.
+            clear_progress_file(args);
             return Ok(JobRunResult::Interrupted(reason));
         }
     };
 
     log.flush().await;
 
-    // The run is over, so its progress file must stop describing a run in progress. Removed
-    // rather than left holding a final sample: a file that persists is indistinguishable from a
-    // run frozen at whatever it last reported, and "absent means not running" is a signal a
-    // supervisor can trust without having to reason about staleness. Reaches here on both arms of
-    // the select above, interruption included.
-    if let Some(path) = args.progress_file.as_ref() {
-        let _ = std::fs::remove_file(path);
-    }
+    clear_progress_file(args);
 
     match &result {
         Ok(outcome) => tracing::info!(exit_code = outcome.exit_code, "ingestion finished"),
@@ -478,6 +476,17 @@ async fn run_one(
         eprintln!("\nthe ingestion completed with problems, see the report for details");
     }
     Ok(JobRunResult::Completed(outcome.exit_code))
+}
+
+/// Removes the progress file, so its absence can mean "no run in progress".
+///
+/// One definition called from every exit of `run_one`. A file that outlives its run is
+/// indistinguishable from a run frozen at whatever it last reported, and a supervisor would have
+/// to reason about staleness instead of reading a fact.
+fn clear_progress_file(args: &Args) {
+    if let Some(path) = args.progress_file.as_ref() {
+        let _ = std::fs::remove_file(path);
+    }
 }
 
 /// Resolves when the run should stop, describing why.
@@ -1023,6 +1032,15 @@ async fn execute_generation_backup(
 
     let copied_bytes: u64 = files_to_copy.iter().map(|f| f.size_bytes).sum();
     let progress = new_progress(args, copied_bytes, "generation");
+    // `--backup-type` copies through the naive engine rather than `transfer()`, so instrumenting
+    // only that path left a generation backup publishing "inventory" for its entire copy — the
+    // phase would have been a lie precisely on the runs that take longest.
+    let _published = spawn_progress_publisher(
+        args,
+        robocopy_ingest::progress_file::Phase::Transfer,
+        Arc::clone(&progress),
+        Some(files_to_copy.len() as u64),
+    );
     // Kept for the report below (`IngestReport::with_timing` wants the file list, not just a
     // count) — the naive copy call needs its own owned copy to move into `spawn_blocking`.
     let copied_files = Arc::clone(&files_to_copy);
@@ -1555,7 +1573,10 @@ async fn transfer(
         args,
         robocopy_ingest::progress_file::Phase::Transfer,
         Arc::clone(&progress),
-        Some(inventory.files.len() as u64),
+        // `file_count()`, not `files.len()`: with `--no-prescan` the list is deliberately empty
+        // and the count lives in `total_files_hint`, so the length would publish `Some(0)` for a
+        // source that is not empty at all.
+        Some(inventory.file_count() as u64),
     );
 
     let mut request = args.copy_request(args.dest().to_path_buf());

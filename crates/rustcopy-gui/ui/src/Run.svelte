@@ -184,7 +184,9 @@
           {#if fraction !== null}
             {(fraction * 100).toFixed(0)}% —
           {/if}
-          {#if p.files_total}
+          <!-- Against null, not truthiness: a known total of zero is a fact worth showing
+               ("0 / 0 file"), while an absent one is the inventory not having finished. -->
+          {#if p.files_total != null}
             {p.files_done} / {p.files_total} file —
           {/if}
           {Math.round(p.elapsed_seconds)}s
