@@ -15,6 +15,10 @@
   } = $props();
 
   let showRecent = $state(false);
+  // This instance's own element. Every pane stays mounted, so several PathBars carry
+  // `kind="config"` at once and a shared attribute selector would let a click inside one
+  // pane's dropdown count as "inside" for all of them.
+  let root;
   const recents = $derived(showRecent ? recent(kind) : []);
 
   const FILTERS = {
@@ -32,13 +36,18 @@
     });
     if (typeof picked === "string" && picked.length > 0) {
       value = picked;
+      // Closed here too: picking through the file dialog is choosing a path, and leaving the
+      // recents list hanging open over the result was a panel with no obvious way to dismiss it.
+      showRecent = false;
       remember(kind, picked);
       onrun();
     }
   }
 
   function run() {
-    if (value.length === 0) return;
+    // `busy` too: the button is disabled while a read is in flight, but the input's Enter
+    // handler is not, and neither caller guards re-entry.
+    if (busy || value.length === 0) return;
     remember(kind, value);
     onrun();
   }
@@ -51,14 +60,34 @@
   }
 </script>
 
-<div class="relative">
+<svelte:window
+  onclick={(e) => {
+    // A dropdown that only closes by re-pressing the button it came from looks stuck. Any click
+    // outside dismisses it, which is what every other list on the system does — measured against
+    // this instance's own element, not a shared attribute.
+    if (showRecent && root && !root.contains(e.target)) showRecent = false;
+  }}
+  onkeydown={(e) => {
+    // At window level so it works wherever focus is: the input, the button that opened the list,
+    // or an entry inside it.
+    if (e.key === "Escape") showRecent = false;
+  }}
+/>
+
+<div class="relative" bind:this={root}>
   <div class="flex gap-2">
     <label class="sr-only" for="pathbar-{kind}">{label}</label>
+    <!-- `autocomplete="off"`: the WebView's own saved-values popup opened over this field and
+         stayed there, a second dropdown nobody asked for on top of the recents list below. The
+         recents list is the feature; the browser's guess at what we typed is not. -->
     <input
       id="pathbar-{kind}"
       class="flex-1 rounded border border-slate-300 px-2 py-1 text-sm dark:border-slate-700 dark:bg-slate-900"
+      autocomplete="off"
+      spellcheck="false"
       {placeholder}
       bind:value
+      onfocus={() => (showRecent = false)}
       onkeydown={(e) => e.key === "Enter" && run()}
     />
     <button

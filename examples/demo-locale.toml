@@ -4,21 +4,32 @@
 # `full-profile-test.local`) sono **modelli**: contengono segnaposto come `<PERCORSO_SORGENTE>`
 # da sostituire con percorsi veri. Vanno letti, non eseguiti.
 #
-# Questo invece copia una manciata di file finti già presenti nel repo verso una cartella accanto,
-# quindi non può toccare nulla di tuo. Dalla radice del repository:
+# Questo invece copia una manciata di file finti già presenti nel repo in una cartella accanto,
+# quindi non può toccare nulla di tuo.
 #
-#   robocopy_ingest.exe --config examples/demo-locale.toml --dry-run
-#   robocopy_ingest.exe --config examples/demo-locale.toml
+# Dalla console: scheda Esegui, scegli questo file, premi Avvia. Funziona da qualunque cartella
+# la console sia stata avviata, perché la console imposta la directory di lavoro su quella della
+# configurazione.
 #
-# Poi apri il report nella console (scheda Report) o dalla CLI:
+# Dalla CLI, lancia **da questa cartella**, per la stessa ragione:
 #
-#   robocopy_ingest.exe --advise --report-path examples/demo-out/report.json
+#   cd examples
+#   ../target/release/robocopy_ingest.exe --config demo-locale.toml --dry-run
+#   ../target/release/robocopy_ingest.exe --config demo-locale.toml
+#
+# Poi apri `demo-out/report.json` nella scheda Report, oppure:
+#
+#   ../target/release/robocopy_ingest.exe --advise --report-path demo-out/report.json
 #
 # `examples/demo-out/` è escluso da git: cancellala quando vuoi, si ricrea da sola.
 
-# Percorsi relativi alla cartella da cui lanci il comando, cioè la radice del repository.
-source = "examples/demo-data"
-dest   = "examples/demo-out/copia"
+# Percorsi relativi **a questo file**, non alla cartella da cui lanci il comando.
+#
+# È la convenzione che la console impone, e la ragione è che chi sceglie un file in una finestra
+# di dialogo non ha alcuna nozione della directory di lavoro di quella finestra: l'unico
+# significato sensato di un percorso relativo, lì, è "rispetto al file che lo contiene".
+source = "demo-data"
+dest   = "demo-out/copia"
 
 # Il pattern predefinito è `*`; qui è esplicito perché la demo serve anche a leggersi.
 pattern = "*"
@@ -39,8 +50,8 @@ verify_integrity = true
 # Report e log accanto alla copia, non dentro: l'indice dello storico vive di fianco al report,
 # e scrivere dentro la destinazione ne cambierebbe la data facendo ricopiare file immutati alla
 # run successiva.
-report_path = "examples/demo-out/report.json"
-log_path    = "examples/demo-out/ingest.log"
+report_path = "demo-out/report.json"
+log_path    = "demo-out/ingest.log"
 
 # Deliberatamente **non** mirror: nessun esempio avviabile deve poter cancellare qualcosa.
 # Per vedere come si comporta `mirror`, leggi `smb-nas-mirror.toml` — che infatti non è avviabile.

@@ -198,6 +198,12 @@ struct RunStatus {
     /// the file: absent means "not running", which is a signal that needs no reasoning about
     /// staleness.
     progress: Option<robocopy_ingest::progress_file::ProgressSample>,
+    /// The tail of what the run printed, shown when it fails.
+    ///
+    /// A tail rather than the whole file: a run that failed after copying for an hour can have
+    /// produced a lot of output, and the operator needs the end of it — where the error is — not
+    /// a transcript that has to cross the IPC boundary whole.
+    output_tail: Option<String>,
     /// What that phase is, in words. Decided in the core: which phase a run is in is a fact about
     /// the backup, and naming it is not a rendering choice.
     phase_label: Option<String>,
@@ -215,6 +221,8 @@ struct ActiveRun {
     cancel_file: Option<PathBuf>,
     stopping: bool,
     last_exit: Option<i32>,
+    /// Kept after the run ends, because the exit code alone does not say what went wrong.
+    last_output: Option<String>,
 }
 
 type RunState = std::sync::Mutex<ActiveRun>;
@@ -248,7 +256,12 @@ async fn start_job(
     let exe = std::env::current_exe().map_err(|error| error.to_string())?;
     let cli = robocopy_ingest::runner::cli_beside(&exe).map_err(|error| error.to_string())?;
 
-    let config = PathBuf::from(&config_path);
+    // Absolute before anything else. `--config` is resolved by the child, and the child now runs
+    // in the configuration's own directory — so a relative path would be resolved against itself:
+    // `examples/demo-locale.toml` becoming `examples/examples/demo-locale.toml`. The two changes
+    // are individually right and wrong together, which is the shape that gets shipped.
+    let config = std::path::absolute(PathBuf::from(&config_path))
+        .map_err(|error| format!("cannot resolve {config_path}: {error}"))?;
     // Creates the directory too, so a run cannot start somewhere its stop file could not be
     // written later.
     let cancel =
@@ -259,12 +272,31 @@ async fn start_job(
     let _ = std::fs::remove_file(&cancel);
 
     let args = robocopy_ingest::runner::run_arguments(&config, &cancel);
+
+    // Captured, not discarded. A window inherits no terminal, so sending these to null left a
+    // failed run reaching the operator as a bare exit code — the sentence explaining it existed
+    // and was thrown away.
+    let output_path = robocopy_ingest::runner::output_file_for(&cancel);
+    let capture = std::fs::File::create(&output_path)
+        .map_err(|error| format!("cannot capture the run's output: {error}"))?;
+    let capture_err = capture
+        .try_clone()
+        .map_err(|error| format!("cannot capture the run's output: {error}"))?;
+
     let mut command = std::process::Command::new(&cli);
     command
         .args(&args)
         .stdin(std::process::Stdio::null())
-        .stdout(std::process::Stdio::null())
-        .stderr(std::process::Stdio::null());
+        .stdout(std::process::Stdio::from(capture))
+        .stderr(std::process::Stdio::from(capture_err));
+
+    // Relative paths in a configuration can only sensibly mean "relative to the configuration".
+    // A person picking a file in a dialog has no notion of this window's working directory, and
+    // inheriting it made `examples/demo-data` resolve against wherever the console happened to be
+    // started from — which for an installed shortcut is not the repository.
+    if let Some(parent) = config.parent().filter(|p| !p.as_os_str().is_empty()) {
+        command.current_dir(parent);
+    }
 
     // The CLI is a console-subsystem binary and this window has no console to lend it, so Windows
     // allocates a fresh one — a black terminal popping up in front of the application on every
@@ -290,6 +322,7 @@ async fn start_job(
     active.cancel_file = Some(cancel);
     active.stopping = false;
     active.last_exit = None;
+    active.last_output = None;
 
     Ok(RunStatus {
         running: true,
@@ -299,6 +332,7 @@ async fn start_job(
         stopping: false,
         progress: None,
         phase_label: None,
+        output_tail: None,
     })
 }
 
@@ -328,6 +362,7 @@ async fn stop_job(state: tauri::State<'_, RunState>) -> Result<RunStatus, String
         stopping: true,
         progress: read_progress(active.cancel_file.as_deref()),
         phase_label: None,
+        output_tail: None,
     })
 }
 
@@ -347,10 +382,15 @@ async fn run_status(state: tauri::State<'_, RunState>) -> Result<RunStatus, Stri
                 active.child = None;
                 active.stopping = false;
                 // The run is over, so the file it watched has no reader left.
+                // Read before the files go: this is the moment the operator most needs the
+                // sentence the run printed, and cleaning up first would throw it away exactly
+                // then.
+                active.last_output = read_output_tail(active.cancel_file.as_deref());
                 if let Some(path) = active.cancel_file.take() {
                     // The CLI removes its own progress file on a normal exit; this covers the run
                     // that crashed before it could.
                     let _ = std::fs::remove_file(robocopy_ingest::runner::progress_file_for(&path));
+                    let _ = std::fs::remove_file(robocopy_ingest::runner::output_file_for(&path));
                     let _ = std::fs::remove_file(path);
                 }
             }
@@ -366,6 +406,7 @@ async fn run_status(state: tauri::State<'_, RunState>) -> Result<RunStatus, Stri
                         .as_ref()
                         .map(|sample| sample.phase.describe().to_string()),
                     progress,
+                    output_tail: None,
                 });
             }
             Err(error) => return Err(format!("cannot check the running job: {error}")),
@@ -373,6 +414,7 @@ async fn run_status(state: tauri::State<'_, RunState>) -> Result<RunStatus, Stri
     }
 
     let exit_code = active.last_exit;
+    let output_tail = active.last_output.clone();
     Ok(RunStatus {
         running: false,
         config_path: active.config_path.clone(),
@@ -384,8 +426,55 @@ async fn run_status(state: tauri::State<'_, RunState>) -> Result<RunStatus, Stri
         stopping: false,
         progress: None,
         phase_label: None,
+        output_tail,
     })
 }
+
+/// The last few lines the run printed, if any.
+///
+/// Bounded on both counts — lines and bytes — because this crosses the IPC boundary and a run that
+/// logged for an hour must not be able to hand the window a transcript.
+fn read_output_tail(cancel_file: Option<&std::path::Path>) -> Option<String> {
+    use std::io::{Read, Seek, SeekFrom};
+
+    const MAX_LINES: usize = 40;
+    const MAX_BYTES: usize = 16 * 1024;
+
+    let path = robocopy_ingest::runner::output_file_for(cancel_file?);
+    let mut file = std::fs::File::open(&path).ok()?;
+    let len = file.metadata().ok()?.len();
+
+    // Seek to the tail rather than reading the file: a run that logged for an hour would
+    // otherwise be loaded whole to show its last forty lines.
+    let start = len.saturating_sub(MAX_BYTES as u64);
+    file.seek(SeekFrom::Start(start)).ok()?;
+    let mut bytes = Vec::new();
+    file.take(MAX_BYTES as u64).read_to_end(&mut bytes).ok()?;
+
+    // `from_utf8_lossy`, never a slice at a byte offset: seeking into the middle of a file can
+    // land inside a multi-byte character, and `String`'s slicing methods panic on that. It is
+    // the same mistake `vss::remap_to_shadow` made, one layer up — decoding leniently removes
+    // the whole class instead of moving the cut somewhere safer.
+    let text = String::from_utf8_lossy(&bytes);
+    let trimmed = text.trim_end();
+    if trimmed.is_empty() {
+        return None;
+    }
+
+    let mut lines: Vec<&str> = trimmed.lines().collect();
+    // Whatever the seek landed in the middle of is half a line, not a line.
+    if start > 0 && lines.len() > 1 {
+        lines.remove(0);
+    }
+    let tail = lines.split_off(lines.len().saturating_sub(MAX_LINES));
+    Some(tail.join(LINE_BREAK))
+}
+
+/// The separator `read_output_tail` rejoins lines with.
+///
+/// A named constant because writing it inline once produced a literal newline inside the source
+/// after an editing mishap — which compiled, and worked, and read as a mistake.
+const LINE_BREAK: &str = "\n";
 
 /// Reads the sample beside a run's stop file, if the run has published one yet.
 fn read_progress(
