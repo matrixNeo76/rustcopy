@@ -64,12 +64,24 @@ pub fn build_args(request: &CopyRequest) -> Vec<String> {
         dest,
         request.pattern.clone(),
         "/E".to_string(),
-        format!("/MT:{}", request.threads),
         format!("/R:{}", request.file_retries),
         format!("/W:{}", request.retry_wait_seconds),
         "/BYTES".to_string(),
         "/NP".to_string(),
     ];
+
+    // F4.5: robocopy refuses /IPG combined with /MT outright ("Impossibile utilizzare l'opzione
+    // /IPG con l'opzione /MT.", verified against the real binary) — so a throttled run must skip
+    // /MT entirely rather than carry it unconditionally the way this used to. `threads` defaults
+    // to the logical CPU count (`default_threads`), not 1, so gating this on "threads > 1" alone
+    // would still have broken the common case: the default is essentially always greater than
+    // one. Omitting /MT is robocopy's own single-threaded default, not a degraded mode invented
+    // here, and the actual invoked command line is already logged at info level elsewhere in this
+    // file (`invoking robocopy`), so the operator can see the omission rather than being told
+    // about it twice.
+    if request.inter_packet_gap_ms.is_none() {
+        args.push(format!("/MT:{}", request.threads));
+    }
 
     // F6.2: preserve directory timestamps.
     if request.preserve_timestamps {
@@ -852,6 +864,28 @@ mod tests {
 
         let req2 = request(); // no throttle
         assert!(!build_args(&req2).iter().any(|a| a.starts_with("/IPG")));
+    }
+
+    /// Real robocopy.exe refuses this combination outright ("Impossibile utilizzare l'opzione
+    /// /IPG con l'opzione /MT.", verified directly against the binary) — a build that produced
+    /// both would fatal-error, copying nothing, on every throttled run. `request()`'s
+    /// `threads: 16` is deliberately not 1: the actual default (`default_threads`, the logical CPU
+    /// count) is essentially always greater than one, so a fix that only handled `threads == 1`
+    /// would have left the common case broken. Regression test for that bug.
+    #[test]
+    fn bandwidth_throttling_never_carries_mt() {
+        let mut req = request();
+        req.inter_packet_gap_ms = Some(5242);
+        let args = build_args(&req);
+        assert!(
+            !args.iter().any(|a| a.starts_with("/MT")),
+            "/IPG and /MT must never appear together: {args:?}"
+        );
+
+        // Unthrottled, /MT is still exactly as before: this is not a blanket removal of
+        // multithreading, only mutual exclusion with the one flag it genuinely conflicts with.
+        let req2 = request();
+        assert!(build_args(&req2).contains(&"/MT:16".to_string()));
     }
 
     /// F26d: `--exclude-junctions` produces /XJ; omitted by default (robocopy's own default is
