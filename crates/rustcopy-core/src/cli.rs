@@ -522,6 +522,16 @@ pub struct Args {
     /// `None` in the single-job path, which keeps today's unnamespaced filenames unchanged.
     #[arg(skip)]
     pub job_name: Option<String>,
+
+    /// Internal-only, never a real CLI flag: set by `main.rs::run_jobs` to this job's 1-based
+    /// position and the batch's total count, so a published progress sample (`--progress-file`)
+    /// can say which job of a batch is currently running instead of leaving a supervisor watching
+    /// one continuous progress bar with no idea it is now on job 3 of 5. `None` in the single-job
+    /// path, same as `job_name` above.
+    #[arg(skip)]
+    pub batch_index: Option<u32>,
+    #[arg(skip)]
+    pub batch_total: Option<u32>,
 }
 
 impl Args {

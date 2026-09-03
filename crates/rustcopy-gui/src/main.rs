@@ -402,9 +402,10 @@ async fn run_status(state: tauri::State<'_, RunState>) -> Result<RunStatus, Stri
                     exit_code: None,
                     meaning: None,
                     stopping: active.stopping,
-                    phase_label: progress
-                        .as_ref()
-                        .map(|sample| sample.phase.describe().to_string()),
+                    // `phase_label()` (not `phase.describe()` alone) so a job running inside a
+                    // batch says which one it is — composed in the core, not here, same as every
+                    // other judgement about what a sample means (this file's own doc comment).
+                    phase_label: progress.as_ref().map(|sample| sample.phase_label()),
                     progress,
                     output_tail: None,
                 });
