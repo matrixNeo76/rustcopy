@@ -230,6 +230,13 @@ async fn run(mut args: Args) -> Result<u8> {
 
     args.validate()?;
 
+    // Once, here, and not inside `validate()` — which `run_jobs` calls per job. A stop file
+    // created while a batch is running is a legitimate signal that the current job must handle as
+    // an interruption; checking it per job turned that signal into a configuration error for
+    // every remaining job. Here it does what it was for: catching one left behind by an earlier
+    // run, before anything is copied.
+    args.validate_cancel_file_absent()?;
+
     // F36: install the current invocation (minus the scheduling flags themselves) as a recurring
     // Task Scheduler entry, then exit without running a backup now. Runs after validate() (unlike
     // --uninstall-schedule above) because installing a schedule is only useful for a genuinely
@@ -258,7 +265,7 @@ async fn run(mut args: Args) -> Result<u8> {
 
     let exit_code = match run_one(&args, &log, Arc::clone(&child_pid)).await? {
         JobRunResult::Completed(code) => code,
-        JobRunResult::Interrupted => EXIT_INGESTION_PROBLEM,
+        JobRunResult::Interrupted(_) => EXIT_INGESTION_PROBLEM,
     };
 
     let dropped = log.dropped_lines();
@@ -375,9 +382,9 @@ async fn run_jobs(base_args: Args, config: robocopy_ingest::config::IngestConfig
 
         match result {
             JobRunResult::Completed(code) => worst_exit_code = worst_exit_code.max(code),
-            JobRunResult::Interrupted => {
+            JobRunResult::Interrupted(reason) => {
                 worst_exit_code = worst_exit_code.max(EXIT_INGESTION_PROBLEM);
-                eprintln!("aborting remaining jobs after Ctrl+C");
+                eprintln!("aborting remaining jobs: {reason}");
                 break;
             }
         }
@@ -395,7 +402,9 @@ async fn run_jobs(base_args: Args, config: robocopy_ingest::config::IngestConfig
 /// or Ctrl+C interrupted it (a checkpoint was written, if possible).
 enum JobRunResult {
     Completed(u8),
-    Interrupted,
+    /// Carries why, because there is more than one way in now: reporting "after Ctrl+C" for a
+    /// stop that came from `--cancel-file` would contradict the checkpoint written beside it.
+    Interrupted(String),
 }
 
 /// Runs one already-validated, already-logged-in job: the transfer itself, its Ctrl+C handling,
@@ -449,7 +458,7 @@ async fn run_one(
             }
 
             log.flush().await;
-            return Ok(JobRunResult::Interrupted);
+            return Ok(JobRunResult::Interrupted(reason));
         }
     };
 

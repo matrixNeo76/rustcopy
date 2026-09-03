@@ -2969,3 +2969,78 @@ fn a_cancel_file_that_already_exists_is_refused_before_any_work() {
         "and it must say why rather than stopping mysteriously: {stderr}"
     );
 }
+
+/// A stop file created *while a batch is running* is a legitimate signal, not a bad flag.
+///
+/// The guard against a leftover file used to sit in `Args::validate()`, which `run_jobs` calls
+/// once per job. So a file created after the first job finished made every remaining job fail
+/// validation: the batch skipped them one by one with a configuration complaint, exited 2 (usage
+/// error) instead of 1, and wrote no checkpoint at all — a stop reported as a mistake.
+#[test]
+fn a_stop_file_created_between_jobs_ends_the_batch_as_an_interruption() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let source = dir.path().join("src");
+    std::fs::create_dir_all(&source).expect("mkdir");
+    std::fs::write(source.join("uno.txt"), b"contenuto").expect("write");
+
+    let cancel = dir.path().join("STOP");
+    let report = dir.path().join("report.json");
+    let slow = if cfg!(windows) {
+        "ping -n 30 127.0.0.1"
+    } else {
+        "sleep 30"
+    };
+
+    // Two jobs. The first is quick; the second blocks on a slow hook, so the stop file lands
+    // while the batch is genuinely in flight.
+    let config = dir.path().join("batch.toml");
+    std::fs::write(
+        &config,
+        format!(
+            "source = {src:?}\ndest = {dst:?}\nreport_path = {rep:?}\nlog_path = {log:?}\n\n\
+             [[jobs]]\nname = \"veloce\"\n\n\
+             [[jobs]]\nname = \"lento\"\npre_command = {slow:?}\n",
+            src = source.to_string_lossy(),
+            dst = dir.path().join("dst").to_string_lossy(),
+            rep = report.to_string_lossy(),
+            log = dir.path().join("run.log").to_string_lossy(),
+            slow = slow,
+        ),
+    )
+    .expect("write config");
+
+    let child = Command::new(BIN)
+        .arg("--config")
+        .arg(&config)
+        .arg("--cancel-file")
+        .arg(&cancel)
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped())
+        .spawn()
+        .expect("the binary must start");
+
+    // Long enough for the first job to finish and the second to reach its hook.
+    std::thread::sleep(std::time::Duration::from_secs(4));
+    std::fs::write(&cancel, b"").expect("the supervisor stops the batch");
+
+    let output = child.wait_with_output().expect("waits");
+    let stderr = String::from_utf8_lossy(&output.stderr);
+
+    assert!(
+        !stderr.contains("failed validation"),
+        "a stop is not a configuration error: {stderr}"
+    );
+    assert_eq!(
+        output.status.code(),
+        Some(1),
+        "an interrupted batch is exit 1, not 2 (a usage error): {stderr}"
+    );
+    assert!(
+        stderr.contains("aborting remaining jobs"),
+        "and it must say the batch was cut short: {stderr}"
+    );
+    assert!(
+        !stderr.contains("after Ctrl+C"),
+        "nothing may claim Ctrl+C when a file did it: {stderr}"
+    );
+}

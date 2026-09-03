@@ -651,15 +651,22 @@ impl Args {
             self.post_command = Some(post.clone());
         }
     }
-    pub fn validate(&self) -> Result<(), IngestError> {
-        // A cancel file left behind by an earlier run would stop this one the moment it first
-        // looked, which an operator reads as a crash rather than as the stop it is. Caught here,
-        // before anything is copied, rather than surfacing as an instant mysterious interruption.
-        if let Some(path) = self.cancel_file.as_ref() {
-            if path.exists() {
-                return Err(IngestError::CancelFileAlreadyExists(path.clone()));
-            }
+    /// Rejects a `--cancel-file` that already exists, once, before any job starts.
+    ///
+    /// Deliberately **not** part of [`Self::validate`], which `run_jobs` calls per job: a stop
+    /// file created while a batch is running is a legitimate signal, and validating it per job
+    /// turned that signal into a usage error — the remaining jobs were skipped one by one with a
+    /// configuration complaint, the batch exited 2 instead of 1, and no checkpoint was written.
+    /// Checked once at startup it does what it was for: catching a file left behind by an earlier
+    /// run, which would otherwise stop this one the instant it first looked and read like a crash.
+    pub fn validate_cancel_file_absent(&self) -> Result<(), IngestError> {
+        match self.cancel_file.as_ref() {
+            Some(path) if path.exists() => Err(IngestError::CancelFileAlreadyExists(path.clone())),
+            _ => Ok(()),
         }
+    }
+
+    pub fn validate(&self) -> Result<(), IngestError> {
         // Checked before the restore-mode short-circuit below: --decrypt's primary use case is
         // exactly --restore-from, so this conflict must still be caught in that mode.
         if self.encrypt_aes256.is_some() && self.decrypt.is_some() {
