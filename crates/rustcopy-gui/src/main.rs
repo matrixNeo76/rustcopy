@@ -243,10 +243,29 @@ async fn start_job(
     let _ = std::fs::remove_file(&cancel);
 
     let args = robocopy_ingest::runner::run_arguments(&config, &cancel);
-    let child = std::process::Command::new(&cli)
+    let mut command = std::process::Command::new(&cli);
+    command
         .args(&args)
+        .stdin(std::process::Stdio::null())
         .stdout(std::process::Stdio::null())
-        .stderr(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null());
+
+    // The CLI is a console-subsystem binary and this window has no console to lend it, so Windows
+    // allocates a fresh one — a black terminal popping up in front of the application on every
+    // Start. Found by clicking the button, not by reading the code.
+    //
+    // Suppressing it is not only cosmetic. The mirror confirmation appears when stdin *and* stdout
+    // are terminals; leaving a console attached would put that question somewhere this window
+    // cannot answer it, turning "a mirroring job stops itself" into "a mirroring job waits
+    // forever behind a window nobody is looking at".
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt;
+        const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+        command.creation_flags(CREATE_NO_WINDOW);
+    }
+
+    let child = command
         .spawn()
         .map_err(|error| format!("cannot start {}: {error}", cli.display()))?;
 
