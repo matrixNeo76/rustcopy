@@ -272,6 +272,12 @@ pub fn referencing_config(_config_path: &Path) -> Result<Vec<String>, IngestErro
 
 /// The matching itself, pulled out of `referencing_config` so it can be tested against captured
 /// real `schtasks` output without a real Task Scheduler on the machine running the test.
+///
+/// `#[cfg(windows)]`, like `referencing_config`'s real implementation that is this function's only
+/// caller: on another platform the stub above never reaches it, and a plain `--lib` clippy check
+/// (which does not compile `#[cfg(test)]` code) would otherwise see a private function with no
+/// caller at all and flag it as dead code — found exactly this way by `ubuntu-latest`'s CI job.
+#[cfg(windows)]
 fn tasks_referencing(csv: &str, config_path: &Path) -> Vec<String> {
     // Paths on Windows are case-insensitive; a task installed with one casing must still match a
     // config path typed or picked with another.
@@ -299,6 +305,7 @@ fn tasks_referencing(csv: &str, config_path: &Path) -> Vec<String> {
 /// captured from this machine) does not round-trip through strict quote-doubling rules, and this
 /// function's only job is to get the *field boundaries* right so a substring search over the
 /// command field works — not to reproduce the original quoting exactly.
+#[cfg(windows)]
 fn parse_csv_line(line: &str) -> Vec<String> {
     let mut fields = Vec::new();
     let mut current = String::new();
@@ -323,59 +330,68 @@ fn parse_csv_line(line: &str) -> Vec<String> {
 mod tests {
     use super::*;
 
-    /// Captured directly from `schtasks.exe /Query /FO CSV /V` on this machine (an Italian Windows
-    /// install). The command field is real and deliberately messy: a quoted sub-path immediately
-    /// followed by unquoted flags, which does not round-trip through strict RFC 4180
-    /// quote-doubling rules — exactly why `parse_csv_line` is lenient rather than strict.
-    const REAL_CAPTURED_ROW: &str = r#""WKAI01","\Git for Windows Updater","04/09/2026 13:59:53","Pronta","Solo interattivo","03/09/2026 13:59:54","1","N/D",""C:\Program Files\Git\git-bash.exe" --hide --no-needs-console --command=cmd\git.exe update-git-for-windows --quiet --gui","N/D","N/D","Abilitata","Disabilitata","Interrompi in modalità di alimentazione a batterie, Non avviare se il sistema è alimentato a batterie","auresystem","Disabilitata","72:00:00","Dati di pianificazione non disponibili in questo formato.","Ogni giorno ","13:59:53","18/11/2025","N/D","Ogni 1 giorni","N/D","Disabilitata","Disabilitata","Disabilitata","Disabilitata""#;
+    // `tasks_referencing`/`parse_csv_line` are `#[cfg(windows)]` (see their doc comments), so the
+    // tests exercising them have to be too — they'd otherwise fail to compile on a non-Windows CI
+    // runner, referencing functions that do not exist there.
+    #[cfg(windows)]
+    mod schedule_matching {
+        use super::*;
 
-    fn csv_with(rows: &[&str]) -> String {
-        let mut csv = "\"header row, ignored by tasks_referencing\"\n".to_string();
-        for row in rows {
-            csv.push_str(row);
-            csv.push('\n');
+        /// Captured directly from `schtasks.exe /Query /FO CSV /V` on this machine (an Italian
+        /// Windows install). The command field is real and deliberately messy: a quoted sub-path
+        /// immediately followed by unquoted flags, which does not round-trip through strict
+        /// RFC 4180 quote-doubling rules — exactly why `parse_csv_line` is lenient rather than
+        /// strict.
+        const REAL_CAPTURED_ROW: &str = r#""WKAI01","\Git for Windows Updater","04/09/2026 13:59:53","Pronta","Solo interattivo","03/09/2026 13:59:54","1","N/D",""C:\Program Files\Git\git-bash.exe" --hide --no-needs-console --command=cmd\git.exe update-git-for-windows --quiet --gui","N/D","N/D","Abilitata","Disabilitata","Interrompi in modalità di alimentazione a batterie, Non avviare se il sistema è alimentato a batterie","auresystem","Disabilitata","72:00:00","Dati di pianificazione non disponibili in questo formato.","Ogni giorno ","13:59:53","18/11/2025","N/D","Ogni 1 giorni","N/D","Disabilitata","Disabilitata","Disabilitata","Disabilitata""#;
+
+        fn csv_with(rows: &[&str]) -> String {
+            let mut csv = "\"header row, ignored by tasks_referencing\"\n".to_string();
+            for row in rows {
+                csv.push_str(row);
+                csv.push('\n');
+            }
+            csv
         }
-        csv
-    }
 
-    #[test]
-    fn the_real_capture_splits_the_task_name_correctly() {
-        let fields = parse_csv_line(REAL_CAPTURED_ROW);
-        assert_eq!(fields[1], "\\Git for Windows Updater");
-    }
+        #[test]
+        fn the_real_capture_splits_the_task_name_correctly() {
+            let fields = parse_csv_line(REAL_CAPTURED_ROW);
+            assert_eq!(fields[1], "\\Git for Windows Updater");
+        }
 
-    #[test]
-    fn the_messy_quoted_command_field_still_yields_a_searchable_path() {
-        let fields = parse_csv_line(REAL_CAPTURED_ROW);
-        assert!(fields[8].contains(r"C:\Program Files\Git\git-bash.exe"));
-    }
+        #[test]
+        fn the_messy_quoted_command_field_still_yields_a_searchable_path() {
+            let fields = parse_csv_line(REAL_CAPTURED_ROW);
+            assert!(fields[8].contains(r"C:\Program Files\Git\git-bash.exe"));
+        }
 
-    #[test]
-    fn a_task_is_reported_when_its_command_contains_the_config_path() {
-        let csv = csv_with(&[
-            r#""WKAI01","\rustcopy-nightly","N/D","Pronta","N/D","N/D","0","N/D","C:\rustcopy.exe --config C:\jobs\nightly.toml""#,
-            REAL_CAPTURED_ROW,
-        ]);
-        let found = tasks_referencing(&csv, Path::new(r"C:\jobs\nightly.toml"));
-        assert_eq!(found, vec!["rustcopy-nightly".to_string()]);
-    }
+        #[test]
+        fn a_task_is_reported_when_its_command_contains_the_config_path() {
+            let csv = csv_with(&[
+                r#""WKAI01","\rustcopy-nightly","N/D","Pronta","N/D","N/D","0","N/D","C:\rustcopy.exe --config C:\jobs\nightly.toml""#,
+                REAL_CAPTURED_ROW,
+            ]);
+            let found = tasks_referencing(&csv, Path::new(r"C:\jobs\nightly.toml"));
+            assert_eq!(found, vec!["rustcopy-nightly".to_string()]);
+        }
 
-    /// Windows paths are case-insensitive; a schedule installed with one casing must still be
-    /// found against a config path typed or picked with another.
-    #[test]
-    fn matching_is_case_insensitive_like_windows_paths() {
-        let csv = csv_with(&[
-            r#""WKAI01","\job","N/D","N/D","N/D","N/D","N/D","N/D","C:\Rustcopy.exe --config C:\Jobs\Nightly.toml""#,
-        ]);
-        let found = tasks_referencing(&csv, Path::new(r"c:\jobs\nightly.toml"));
-        assert_eq!(found, vec!["job".to_string()]);
-    }
+        /// Windows paths are case-insensitive; a schedule installed with one casing must still be
+        /// found against a config path typed or picked with another.
+        #[test]
+        fn matching_is_case_insensitive_like_windows_paths() {
+            let csv = csv_with(&[
+                r#""WKAI01","\job","N/D","N/D","N/D","N/D","N/D","N/D","C:\Rustcopy.exe --config C:\Jobs\Nightly.toml""#,
+            ]);
+            let found = tasks_referencing(&csv, Path::new(r"c:\jobs\nightly.toml"));
+            assert_eq!(found, vec!["job".to_string()]);
+        }
 
-    #[test]
-    fn no_task_references_an_unrelated_config() {
-        let csv = csv_with(&[REAL_CAPTURED_ROW]);
-        let found = tasks_referencing(&csv, Path::new(r"C:\jobs\nightly.toml"));
-        assert!(found.is_empty());
+        #[test]
+        fn no_task_references_an_unrelated_config() {
+            let csv = csv_with(&[REAL_CAPTURED_ROW]);
+            let found = tasks_referencing(&csv, Path::new(r"C:\jobs\nightly.toml"));
+            assert!(found.is_empty());
+        }
     }
 
     #[test]
