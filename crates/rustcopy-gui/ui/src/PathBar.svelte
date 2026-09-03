@@ -1,5 +1,6 @@
 <script>
   import { open } from "@tauri-apps/plugin-dialog";
+  import { getCurrentWebview } from "@tauri-apps/api/webview";
   import { recent, remember } from "./session.svelte.js";
 
   // One row: a native picker, the chosen path, the recent ones, and the action. Every pane used to
@@ -58,6 +59,44 @@
     remember(kind, path);
     onrun();
   }
+
+  // Tauri's own window drag-and-drop, not the browser's File API: a dropped File object never
+  // carries a real filesystem path (a deliberate browser security restriction) — only this event
+  // does. One listener per mounted instance, but a drop only acts on the instance the cursor was
+  // actually over: every hidden pane's PathBar has a zero-size rect, which can never contain a
+  // drop position, so nothing extra has to ask which tab is active.
+  $effect(() => {
+    let unlisten;
+    let cancelled = false;
+    getCurrentWebview()
+      .onDragDropEvent((event) => {
+        if (event.payload.type !== "drop" || !root) return;
+        const rect = root.getBoundingClientRect();
+        if (rect.width === 0 || rect.height === 0) return;
+        // Tauri reports the drop in physical pixels; the DOM rect is in CSS pixels.
+        const ratio = window.devicePixelRatio || 1;
+        const x = event.payload.position.x / ratio;
+        const y = event.payload.position.y / ratio;
+        if (x < rect.left || x > rect.right || y < rect.top || y > rect.bottom) return;
+        const path = event.payload.paths[0];
+        const expectedExt = FILTERS[kind]?.[0]?.extensions?.[0];
+        // Silently ignored rather than loaded anyway: dropping the wrong kind of file should not
+        // populate the field with something that will only fail once "Apri"/"Esamina" is pressed.
+        if (!path || (expectedExt && !path.toLowerCase().endsWith(`.${expectedExt}`))) return;
+        choose(path);
+      })
+      .then((fn) => {
+        // The effect can be torn down (pane unmounted, though this app never unmounts panes; a
+        // future change might) before this promise settles — unlisten immediately rather than
+        // leaking a listener nothing will ever clean up.
+        if (cancelled) fn();
+        else unlisten = fn;
+      });
+    return () => {
+      cancelled = true;
+      unlisten?.();
+    };
+  });
 </script>
 
 <svelte:window
