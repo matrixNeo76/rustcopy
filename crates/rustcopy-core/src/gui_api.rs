@@ -268,6 +268,47 @@ pub fn schedules_referencing(config_path: &Path) -> Result<Vec<String>, IngestEr
     crate::schedule::referencing_config(config_path)
 }
 
+/// Stores `secret` under `name` in the Windows Credential Manager (F56's `keyring:NAME` form) —
+/// the console's Onda 2 equivalent of `--set-credential`. `secret` arrives here only through
+/// Tauri's IPC channel, the same safety property `--set-credential`'s stdin-only intake has on the
+/// CLI: it is never a process argument, so it never appears in a process list.
+///
+/// `crypto::write_credential`/`delete_credential` are `#[cfg(windows)]` with no non-Windows stub
+/// (unlike `read_credential`, which has one) — `main.rs` handles that split inline at its own two
+/// call sites rather than in `crypto.rs` itself, and this mirrors that same pattern rather than
+/// adding a third copy of the stub to the shared module.
+pub fn set_credential(name: &str, secret: &str) -> Result<(), IngestError> {
+    #[cfg(windows)]
+    {
+        crate::crypto::write_credential(name, secret)
+    }
+    #[cfg(not(windows))]
+    {
+        let _ = (name, secret);
+        Err(IngestError::Crypto(
+            "credential storage needs the Windows Credential Manager, which this platform does not have"
+                .to_string(),
+        ))
+    }
+}
+
+/// Removes `name` from the Windows Credential Manager — the console's Onda 2 equivalent of
+/// `--delete-credential`.
+pub fn delete_credential(name: &str) -> Result<(), IngestError> {
+    #[cfg(windows)]
+    {
+        crate::crypto::delete_credential(name)
+    }
+    #[cfg(not(windows))]
+    {
+        let _ = name;
+        Err(IngestError::Crypto(
+            "credential storage needs the Windows Credential Manager, which this platform does not have"
+                .to_string(),
+        ))
+    }
+}
+
 /// Lists the jobs a config file declares, resolved the same way `run_jobs` resolves them.
 ///
 /// Single-job configs (no `[[jobs]]`) yield one entry, so a UI does not need two code paths.

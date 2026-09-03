@@ -4,8 +4,13 @@
   import EmptyState from "./EmptyState.svelte";
   import { session } from "./session.svelte.js";
 
-  // Read-only, like every other pane in this version: it renders the TOML the CLI already reads
-  // and changes nothing. F55's write surface is a separate, still-undecided step.
+  // The job-settings table below is read-only: it renders the TOML the CLI already reads and
+  // changes nothing. F55's write surface (editing settings and scripts in place) is a separate,
+  // still-undecided step, and this pane does not attempt it.
+  //
+  // The credential section further down is the one deliberate exception in this file: it writes,
+  // but only to the Windows Credential Manager (F56, `crypto::write_credential`/
+  // `delete_credential`) — never to any TOML, and not the scripts/settings F55 leaves undecided.
   let jobs = $state([]);
   let error = $state(null);
   let loading = $state(false);
@@ -48,6 +53,44 @@
     return showDefaults
       ? entries
       : entries.filter((entry) => entry.origin !== "Default" || entry.caution);
+  }
+
+  // Independent of the config path above: a credential is not scoped to any one job or file.
+  let credName = $state("");
+  let credSecret = $state("");
+  let credBusy = $state(false);
+  let credMessage = $state(null);
+  let credError = $state(null);
+
+  async function saveCredential() {
+    credError = null;
+    credMessage = null;
+    credBusy = true;
+    try {
+      await invoke("set_credential", { name: credName, secret: credSecret });
+      credMessage = `Credenziale "${credName}" salvata. Usala come keyring:${credName}.`;
+      // Cleared, not just hidden: nothing left in the page's own state once the secret has done
+      // its one job of reaching the credential manager.
+      credSecret = "";
+    } catch (e) {
+      credError = String(e);
+    } finally {
+      credBusy = false;
+    }
+  }
+
+  async function removeCredential() {
+    credError = null;
+    credMessage = null;
+    credBusy = true;
+    try {
+      await invoke("delete_credential", { name: credName });
+      credMessage = `Credenziale "${credName}" rimossa.`;
+    } catch (e) {
+      credError = String(e);
+    } finally {
+      credBusy = false;
+    }
   }
 </script>
 
@@ -138,4 +181,56 @@
       ]}
     />
   {/if}
+
+  <section class="mt-6 border-t border-slate-200 pt-4 dark:border-slate-800">
+    <h2 class="text-xs font-semibold uppercase tracking-wide text-slate-500">Gestione credenziali</h2>
+    <p class="mt-1 text-xs text-slate-600 dark:text-slate-400">
+      Salva o rimuove un segreto in Gestione credenziali di Windows (F56) — mai nel file TOML, mai
+      come argomento: il segreto passa solo per questo modulo. Usalo poi come
+      <code>keyring:NOME</code> ovunque un campo accetti una chiave o una password, per esempio
+      <code>--encrypt-aes256 keyring:NOME</code>.
+    </p>
+    <div class="mt-2 flex flex-wrap items-end gap-2">
+      <label class="text-xs">
+        Nome
+        <input
+          class="block rounded border border-slate-300 px-2 py-1 text-sm dark:border-slate-700 dark:bg-slate-900"
+          bind:value={credName}
+          placeholder="es. backup-nas"
+          autocomplete="off"
+        />
+      </label>
+      <label class="text-xs">
+        Segreto
+        <input
+          type="password"
+          class="block rounded border border-slate-300 px-2 py-1 text-sm dark:border-slate-700 dark:bg-slate-900"
+          bind:value={credSecret}
+          autocomplete="off"
+        />
+      </label>
+      <button
+        class="rounded bg-blue-600 px-3 py-1 text-sm text-white disabled:opacity-50"
+        onclick={saveCredential}
+        disabled={credBusy || credName.length === 0 || credSecret.length === 0}
+      >Salva</button>
+      <button
+        class="rounded border border-slate-300 px-3 py-1 text-sm disabled:opacity-40 dark:border-slate-700"
+        onclick={removeCredential}
+        disabled={credBusy || credName.length === 0}
+      >Elimina</button>
+    </div>
+    {#if credMessage}
+      <p class="mt-2 rounded border border-emerald-300 bg-emerald-50 px-2 py-1 text-xs text-emerald-900
+                dark:border-emerald-800 dark:bg-emerald-950 dark:text-emerald-200">
+        {credMessage}
+      </p>
+    {/if}
+    {#if credError}
+      <p class="mt-2 rounded border border-red-300 bg-red-50 px-2 py-1 text-xs text-red-800
+                dark:border-red-800 dark:bg-red-950 dark:text-red-200" role="alert">
+        {credError}
+      </p>
+    {/if}
+  </section>
 </section>
