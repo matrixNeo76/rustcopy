@@ -1357,7 +1357,7 @@ F62) sulla console.
 (nessuna guardia su `threads`), e `/IPG:{ms}` ogni volta che `--bandwidth-limit-mbps` era impostato.
 Robocopy reale rifiuta la combinazione:
 
-```
+```text
 Impossibile utilizzare l'opzione /IPG con l'opzione /MT.
 ```
 
