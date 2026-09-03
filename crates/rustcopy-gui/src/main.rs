@@ -221,14 +221,18 @@ async fn start_job(
     config_path: String,
     state: tauri::State<'_, RunState>,
 ) -> Result<RunStatus, String> {
-    {
-        let mut active = state.lock().map_err(|_| "run state poisoned".to_string())?;
-        if let Some(child) = active.child.as_mut() {
-            match child.try_wait() {
-                Ok(Some(status)) => active.last_exit = status.code(),
-                Ok(None) => return Err("un backup è già in corso in questa finestra".to_string()),
-                Err(error) => return Err(format!("cannot check the running job: {error}")),
-            }
+    // One lock, held from the idle check through the spawn and the assignment. Async Tauri
+    // commands run concurrently, so releasing it in between made this a check-then-act: two
+    // clicks in quick succession could both pass the check, and the second would overwrite the
+    // first child — leaving a backup running that no window could stop, against a destination the
+    // second run is also writing to.
+    let mut active = state.lock().map_err(|_| "run state poisoned".to_string())?;
+
+    if let Some(child) = active.child.as_mut() {
+        match child.try_wait() {
+            Ok(Some(status)) => active.last_exit = status.code(),
+            Ok(None) => return Err("un backup è già in corso in questa finestra".to_string()),
+            Err(error) => return Err(format!("cannot check the running job: {error}")),
         }
     }
 
@@ -236,7 +240,10 @@ async fn start_job(
     let cli = robocopy_ingest::runner::cli_beside(&exe).map_err(|error| error.to_string())?;
 
     let config = PathBuf::from(&config_path);
-    let cancel = robocopy_ingest::runner::cancel_file_for_now(&config);
+    // Creates the directory too, so a run cannot start somewhere its stop file could not be
+    // written later.
+    let cancel =
+        robocopy_ingest::runner::cancel_file_for_now(&config).map_err(|error| error.to_string())?;
     // A stop file left over would make the CLI refuse to start; clearing it here means a crashed
     // previous run cannot block the next one behind a message about a file nobody created on
     // purpose.
@@ -269,7 +276,6 @@ async fn start_job(
         .spawn()
         .map_err(|error| format!("cannot start {}: {error}", cli.display()))?;
 
-    let mut active = state.lock().map_err(|_| "run state poisoned".to_string())?;
     active.child = Some(child);
     active.config_path = config_path.clone();
     active.cancel_file = Some(cancel);

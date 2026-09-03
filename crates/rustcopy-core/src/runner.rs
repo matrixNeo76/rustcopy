@@ -19,6 +19,7 @@
 //! outcome; it can never be the thing that authorises a purge.
 
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicU64, Ordering};
 
 use crate::errors::IngestError;
 
@@ -83,27 +84,50 @@ pub fn cli_beside(supervisor_exe: &Path) -> Result<PathBuf, IngestError> {
     }
 }
 
-/// Where the stop file for one run goes.
+/// Distinguishes stop files produced within the same millisecond by the same process.
+static CANCEL_FILE_SEQUENCE: AtomicU64 = AtomicU64::new(0);
+
+/// The directory stop files live in.
 ///
-/// Beside the configuration and named after this run, so two runs cannot stop each other and a
-/// file left behind by a previous one cannot stop this one — which the CLI refuses at startup
-/// anyway, but a colliding name would turn that refusal into a puzzle rather than a message.
-pub fn cancel_file_for(config: &Path, stamp: &str) -> PathBuf {
+/// **Not** beside the configuration, which was the first choice and the wrong one: a perfectly
+/// valid configuration can sit in a directory the operator can read and not write — under
+/// `Program Files`, on a share mounted read-only. A run would start and then be impossible to
+/// stop, because `stop_job` could not create the file, and the one guarantee this whole mechanism
+/// exists to provide — a stop that leaves a checkpoint — would be the part that failed.
+pub fn cancel_file_dir() -> PathBuf {
+    std::env::temp_dir().join("rustcopy")
+}
+
+/// Names the stop file for one run inside `dir`.
+///
+/// The configuration's stem is kept in the name so a directory holding several stop files can be
+/// read by a person, not only by the process that made them.
+pub fn cancel_file_in(dir: &Path, config: &Path, stamp: &str) -> PathBuf {
     let stem = config
         .file_stem()
         .map(|value| value.to_string_lossy().to_string())
         .unwrap_or_else(|| "rustcopy".to_string());
-    config.with_file_name(format!(".{stem}.stop-{stamp}"))
+    dir.join(format!("{stem}.stop-{stamp}"))
 }
 
-/// [`cancel_file_for`] with this moment's stamp.
+/// A stop file for a run starting now, in a directory the caller is known to be able to write.
 ///
-/// Here rather than in the caller so a supervisor needs no clock of its own: the desktop console
-/// would otherwise take a `chrono` dependency to format one string, and every dependency the GUI
-/// crate does not need is one it cannot drag into the workspace's lockfile.
-pub fn cancel_file_for_now(config: &Path) -> PathBuf {
-    let stamp = chrono::Local::now().format("%Y%m%d-%H%M%S%.3f").to_string();
-    cancel_file_for(config, &stamp)
+/// The stamp carries the process id and a per-process counter as well as the clock. A millisecond
+/// alone is not unique: two windows starting the same configuration inside one would pick the same
+/// file, and a Stop in either would then interrupt both runs.
+///
+/// Creates the directory, so a caller cannot start a run it will not be able to stop.
+pub fn cancel_file_for_now(config: &Path) -> Result<PathBuf, IngestError> {
+    let dir = cancel_file_dir();
+    std::fs::create_dir_all(&dir).map_err(|error| IngestError::io(&dir, error))?;
+
+    let stamp = format!(
+        "{}-{}-{}",
+        chrono::Local::now().format("%Y%m%d-%H%M%S%.3f"),
+        std::process::id(),
+        CANCEL_FILE_SEQUENCE.fetch_add(1, Ordering::Relaxed)
+    );
+    Ok(cancel_file_in(&dir, config, &stamp))
 }
 
 /// The complete argument list for running one configuration file.
@@ -169,22 +193,50 @@ mod tests {
         assert_eq!(found, dir.path().join(CLI_BINARY));
     }
 
-    /// Two runs must not be able to stop each other, and the name must not collide with a file the
-    /// CLI would then refuse to start against.
+    /// Two runs must not be able to stop each other.
     #[test]
-    fn each_run_gets_its_own_stop_file_beside_its_configuration() {
+    fn each_run_gets_its_own_stop_file() {
         let config = Path::new("C:/backup/jobs.toml");
+        let dir = Path::new("C:/temp/rustcopy");
 
-        let first = cancel_file_for(config, "20260903-0900");
-        let second = cancel_file_for(config, "20260903-0901");
+        let first = cancel_file_in(dir, config, "a");
+        let second = cancel_file_in(dir, config, "b");
 
         assert_ne!(first, second);
-        assert_eq!(first.parent(), config.parent());
+        assert_eq!(first.parent(), Some(dir));
         assert!(first
             .file_name()
             .expect("named")
             .to_string_lossy()
-            .starts_with(".jobs.stop-"));
+            .starts_with("jobs.stop-"));
+    }
+
+    /// A configuration can live somewhere readable and not writable. Putting the stop file beside
+    /// it — the first design — meant a run could start and then be impossible to stop, which is
+    /// the one thing this mechanism exists to make possible.
+    #[test]
+    fn the_stop_file_does_not_live_beside_the_configuration() {
+        let config = Path::new("C:/Program Files/rustcopy/jobs.toml");
+        let path = cancel_file_for_now(config).expect("the directory is created");
+
+        assert_ne!(path.parent(), config.parent());
+        assert_eq!(path.parent(), Some(cancel_file_dir().as_path()));
+        assert!(
+            cancel_file_dir().is_dir(),
+            "and it exists before a run starts"
+        );
+    }
+
+    /// A millisecond is not unique. Two windows starting the same configuration inside one would
+    /// otherwise pick the same file, and a Stop in either would interrupt both runs.
+    #[test]
+    fn two_runs_started_in_the_same_instant_do_not_share_a_stop_file() {
+        let config = Path::new("jobs.toml");
+
+        let first = cancel_file_for_now(config).expect("created");
+        let second = cancel_file_for_now(config).expect("created");
+
+        assert_ne!(first, second);
     }
 
     /// Exit 4 is not a failed copy, and a supervisor that renders it as one would send someone

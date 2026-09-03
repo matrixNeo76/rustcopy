@@ -56,20 +56,37 @@
 
   // Sampled on our own timer rather than pushed per event: a backup touches thousands of files a
   // second and an event per file is the shape D18 showed to be ruinous at this scale.
+  //
+  // Chained `setTimeout` rather than `setInterval`, and a generation counter on top. With an
+  // interval, a slow reply and a fast one are in flight together and can settle out of order: an
+  // earlier `running: true` landing after the final `running: false` leaves the pane insisting a
+  // finished run is still going, with Avvia disabled and nothing that will ever re-enable it.
+  let generation = 0;
+
   function poll() {
-    clearInterval(timer);
-    timer = setInterval(async () => {
+    const mine = ++generation;
+    clearTimeout(timer);
+
+    const tick = async () => {
       try {
-        status = await invoke("run_status");
-        if (!status.running) clearInterval(timer);
+        const next = await invoke("run_status");
+        // A reply from a superseded polling loop is discarded rather than rendered.
+        if (mine !== generation) return;
+        status = next;
+        if (next.running) timer = setTimeout(tick, 1000);
       } catch (e) {
+        if (mine !== generation) return;
         error = String(e);
-        clearInterval(timer);
       }
-    }, 1000);
+    };
+
+    timer = setTimeout(tick, 1000);
   }
 
-  $effect(() => () => clearInterval(timer));
+  $effect(() => () => {
+    generation += 1;
+    clearTimeout(timer);
+  });
 </script>
 
 <section class="p-4">
