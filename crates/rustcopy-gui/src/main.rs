@@ -13,9 +13,21 @@
 //!
 //! # What this application may do
 //!
-//! There is no command that copies, deletes, purges, schedules or installs. The prohibitions kept
-//! in ROADMAP F61 — never expose `--force-purge`, unattended `--mirror`, retention purges or
-//! service installation to an automated caller — apply to this surface identically.
+//! No command copies, deletes, purges, schedules or installs *itself*. The prohibitions kept in
+//! ROADMAP F61 — never expose `--force-purge`, unattended `--mirror`, retention purges or service
+//! installation to an automated caller — apply to this surface identically.
+//!
+//! [`start_job`] does start a backup, by launching the same CLI a scheduled task would as a
+//! separate process. It is not an exception to the rule above but an application of it: the
+//! argument list comes from `robocopy_ingest::runner::run_arguments`, which builds a fixed shape
+//! rather than forwarding anything, and a test there asserts no prohibited flag can appear. A
+//! mirroring job needs nothing extra — its confirmation requires a terminal, and a child process
+//! launched from a window has none, so it aborts itself with exit 3. This console can report a
+//! purge; it can never authorise one.
+//!
+//! [`stop_job`] writes the file the run watches rather than killing the process, because the CLI's
+//! stop path writes the checkpoint `--resume-from` reads and terminating it would skip exactly
+//! that.
 //!
 //! Every command reads, with **one** exception: [`write_proposal`] (F54) writes a proposed
 //! configuration to a new file. It cannot overwrite, cannot enable mirroring or retention, and
@@ -168,8 +180,168 @@ async fn write_proposal(
     .await
 }
 
+/// What a supervised run looks like from the window.
+#[derive(Debug, Clone, serde::Serialize)]
+struct RunStatus {
+    running: bool,
+    config_path: String,
+    /// `None` while it runs; the process's exit code once it has finished.
+    exit_code: Option<i32>,
+    /// What that exit code means, decided by `robocopy_ingest::runner` and never here.
+    meaning: Option<String>,
+    /// Set once a stop has been requested and the run has not ended yet, so the window can say
+    /// "stopping" rather than looking frozen while the checkpoint is written.
+    stopping: bool,
+}
+
+/// The one run this window supervises at a time.
+///
+/// One, deliberately: two concurrent runs of the same job would race on that destination's
+/// fast-verify cache and generation manifest, and offering a second Start would be offering a way
+/// to corrupt them.
+#[derive(Default)]
+struct ActiveRun {
+    child: Option<std::process::Child>,
+    config_path: String,
+    cancel_file: Option<PathBuf>,
+    stopping: bool,
+    last_exit: Option<i32>,
+}
+
+type RunState = std::sync::Mutex<ActiveRun>;
+
+/// Starts one configuration file as a child process.
+///
+/// The console never runs a backup itself: it starts the same CLI a scheduled task would, so a job
+/// behaves identically whether a person launched it or Task Scheduler did. Which binary, which
+/// arguments and where the stop file goes are decided in `robocopy_ingest::runner`, where the F61
+/// prohibitions are enforced by a test rather than by this function remembering them.
+#[tauri::command]
+async fn start_job(
+    config_path: String,
+    state: tauri::State<'_, RunState>,
+) -> Result<RunStatus, String> {
+    {
+        let mut active = state.lock().map_err(|_| "run state poisoned".to_string())?;
+        if let Some(child) = active.child.as_mut() {
+            match child.try_wait() {
+                Ok(Some(status)) => active.last_exit = status.code(),
+                Ok(None) => return Err("un backup è già in corso in questa finestra".to_string()),
+                Err(error) => return Err(format!("cannot check the running job: {error}")),
+            }
+        }
+    }
+
+    let exe = std::env::current_exe().map_err(|error| error.to_string())?;
+    let cli = robocopy_ingest::runner::cli_beside(&exe).map_err(|error| error.to_string())?;
+
+    let config = PathBuf::from(&config_path);
+    let cancel = robocopy_ingest::runner::cancel_file_for_now(&config);
+    // A stop file left over would make the CLI refuse to start; clearing it here means a crashed
+    // previous run cannot block the next one behind a message about a file nobody created on
+    // purpose.
+    let _ = std::fs::remove_file(&cancel);
+
+    let args = robocopy_ingest::runner::run_arguments(&config, &cancel);
+    let child = std::process::Command::new(&cli)
+        .args(&args)
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .spawn()
+        .map_err(|error| format!("cannot start {}: {error}", cli.display()))?;
+
+    let mut active = state.lock().map_err(|_| "run state poisoned".to_string())?;
+    active.child = Some(child);
+    active.config_path = config_path.clone();
+    active.cancel_file = Some(cancel);
+    active.stopping = false;
+    active.last_exit = None;
+
+    Ok(RunStatus {
+        running: true,
+        config_path,
+        exit_code: None,
+        meaning: None,
+        stopping: false,
+    })
+}
+
+/// Asks the run to stop, by creating the file it watches.
+///
+/// Not by killing it. The CLI's stop path writes a checkpoint that `--resume-from` can read, and
+/// terminating the process would skip exactly that — the property that makes an interruption worth
+/// having. See `--cancel-file` for why a file rather than a console control event.
+#[tauri::command]
+async fn stop_job(state: tauri::State<'_, RunState>) -> Result<RunStatus, String> {
+    let mut active = state.lock().map_err(|_| "run state poisoned".to_string())?;
+
+    let cancel = active
+        .cancel_file
+        .clone()
+        .ok_or_else(|| "nessun backup in corso da fermare".to_string())?;
+
+    std::fs::write(&cancel, b"stop requested from the console")
+        .map_err(|error| format!("cannot write the stop file {}: {error}", cancel.display()))?;
+    active.stopping = true;
+
+    Ok(RunStatus {
+        running: true,
+        config_path: active.config_path.clone(),
+        exit_code: None,
+        meaning: None,
+        stopping: true,
+    })
+}
+
+/// Reports the supervised run, polled by the window.
+///
+/// Polled rather than pushed: a backup emits nothing this process could subscribe to, and a status
+/// the window asks for on its own timer cannot flood it — which is the shape §2.3 requires and the
+/// one D18 showed matters at this scale.
+#[tauri::command]
+async fn run_status(state: tauri::State<'_, RunState>) -> Result<RunStatus, String> {
+    let mut active = state.lock().map_err(|_| "run state poisoned".to_string())?;
+
+    if let Some(child) = active.child.as_mut() {
+        match child.try_wait() {
+            Ok(Some(status)) => {
+                active.last_exit = status.code();
+                active.child = None;
+                active.stopping = false;
+                // The run is over, so the file it watched has no reader left.
+                if let Some(path) = active.cancel_file.take() {
+                    let _ = std::fs::remove_file(path);
+                }
+            }
+            Ok(None) => {
+                return Ok(RunStatus {
+                    running: true,
+                    config_path: active.config_path.clone(),
+                    exit_code: None,
+                    meaning: None,
+                    stopping: active.stopping,
+                })
+            }
+            Err(error) => return Err(format!("cannot check the running job: {error}")),
+        }
+    }
+
+    let exit_code = active.last_exit;
+    Ok(RunStatus {
+        running: false,
+        config_path: active.config_path.clone(),
+        exit_code,
+        // What the number means is backup semantics: read in the core, carried across here.
+        meaning: exit_code
+            .and_then(|code| u8::try_from(code).ok())
+            .map(|code| robocopy_ingest::runner::exit_code_meaning(code).to_string()),
+        stopping: false,
+    })
+}
+
 fn main() {
     tauri::Builder::default()
+        .manage(RunState::default())
         // Native pickers. The plugin reads nothing and writes nothing on its own: it returns the
         // path a person selected, which is strictly less error-prone than the text box it
         // replaces.
@@ -183,7 +355,10 @@ fn main() {
             read_advice,
             read_job_drafts,
             suggest_proposal_path,
-            write_proposal
+            write_proposal,
+            start_job,
+            stop_job,
+            run_status
         ])
         .run(tauri::generate_context!())
         .expect("error while running the rustcopy console");

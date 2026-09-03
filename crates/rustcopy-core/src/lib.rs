@@ -40,6 +40,7 @@ pub mod oem_codec;
 pub mod progress;
 pub mod report;
 pub mod restore;
+pub mod runner;
 pub mod scan;
 pub mod schedule;
 pub mod service;
