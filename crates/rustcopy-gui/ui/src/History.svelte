@@ -3,6 +3,7 @@
   import PathBar from "./PathBar.svelte";
   import EmptyState from "./EmptyState.svelte";
   import { session } from "./session.svelte.js";
+  import { toCsv, downloadCsv } from "./csv.js";
 
   // Read-only, like the rest of this version: this pane opens files the CLI already wrote and
   // renders them. It never asks the engine to do anything.
@@ -76,6 +77,23 @@
         )
       : [],
   );
+
+  // Exports exactly what the table below shows: the applied filter, in the same displayed order.
+  // A CSV that quietly included rows the operator had just filtered out would misrepresent what
+  // they chose to export.
+  function exportCsv() {
+    const headers = ["Quando", "Codice uscita", "Esito", "File copiati", "File totali", "Durata (s)", "Throughput (MB/s)"];
+    const rows = [...filteredRuns].reverse().map((run) => [
+      new Date(run.timestamp).toISOString(),
+      run.exit_code,
+      EXIT_MEANING[run.exit_code] ?? "sconosciuto",
+      run.files_copied,
+      run.total_files,
+      run.elapsed_seconds.toFixed(2),
+      run.throughput_mbps.toFixed(2),
+    ]);
+    downloadCsv(`rustcopy-storico-${Date.now()}.csv`, toCsv(headers, rows));
+  }
 </script>
 
 <section class="p-4">
@@ -145,17 +163,24 @@
         Run ({filteredRuns.length}{filteredRuns.length !== history.runs.length ? ` di ${history.runs.length}` : ""}{history.runs.length === history.limit_applied ? ", le più recenti" : ""})
       </h2>
       {#if history.runs.length > 0}
-        <label class="flex items-center gap-1 text-xs text-slate-600 dark:text-slate-400">
-          Esito
-          <select
-            class="rounded border border-slate-300 px-1 py-0.5 dark:border-slate-700 dark:bg-slate-900"
-            bind:value={outcomeFilter}
-          >
-            <option value="all">Tutti</option>
-            <option value="success">Solo riuscite (0)</option>
-            <option value="failed">Solo non riuscite</option>
-          </select>
-        </label>
+        <div class="flex items-center gap-2">
+          <label class="flex items-center gap-1 text-xs text-slate-600 dark:text-slate-400">
+            Esito
+            <select
+              class="rounded border border-slate-300 px-1 py-0.5 dark:border-slate-700 dark:bg-slate-900"
+              bind:value={outcomeFilter}
+            >
+              <option value="all">Tutti</option>
+              <option value="success">Solo riuscite (0)</option>
+              <option value="failed">Solo non riuscite</option>
+            </select>
+          </label>
+          <button
+            class="rounded border border-slate-300 px-2 py-0.5 text-xs disabled:opacity-40 dark:border-slate-700"
+            onclick={exportCsv}
+            disabled={filteredRuns.length === 0}
+          >Esporta CSV</button>
+        </div>
       {/if}
     </div>
     {#if history.runs.length === 0}

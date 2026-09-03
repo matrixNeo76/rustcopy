@@ -3,6 +3,7 @@
   import PathBar from "./PathBar.svelte";
   import EmptyState from "./EmptyState.svelte";
   import { session } from "./session.svelte.js";
+  import { toCsv, downloadCsv } from "./csv.js";
 
   // `read_report`/`read_report_page` existed in the core and on the IPC surface from F53 and no
   // pane ever called them: a complete report viewer with nothing attached to it. This is the pane.
@@ -72,6 +73,30 @@
   const anyErrors = $derived(
     report ? LISTS.some(([key]) => report[key].total > 0) : false,
   );
+
+  // Shared by the template and the export below, so the two can never disagree about what "the
+  // filter" currently matches.
+  function filteredEntries(key) {
+    const page = report[key];
+    return query.trim() === ""
+      ? page.entries
+      : page.entries.filter((path) => path.toLowerCase().includes(query.trim().toLowerCase()));
+  }
+
+  const anyFilteredEntries = $derived(
+    report ? LISTS.some(([key]) => filteredEntries(key).length > 0) : false,
+  );
+
+  // Exports exactly what is on screen: the current page, the current filter. Not the whole list —
+  // that would need every page fetched first, and would misrepresent "in questa pagina" as
+  // covering more than it does.
+  function exportCsv() {
+    const rows = [];
+    for (const [key, title] of LISTS) {
+      for (const path of filteredEntries(key)) rows.push([title, path]);
+    }
+    downloadCsv(`rustcopy-report-problemi-${Date.now()}.csv`, toCsv(["Categoria", "Percorso"], rows));
+  }
 </script>
 
 <section class="p-4">
@@ -167,18 +192,24 @@
         Problemi rilevati dalla verifica ({report.integrity_error_count})
       </h2>
 
-      <input
-        aria-label="Filtra i percorsi in questa pagina"
-        class="mt-2 w-full rounded border border-slate-300 px-2 py-1 text-xs dark:border-slate-700 dark:bg-slate-900"
-        placeholder="Filtra per percorso, in questa pagina"
-        bind:value={query}
-      />
+      <div class="mt-2 flex items-center gap-2">
+        <input
+          aria-label="Filtra i percorsi in questa pagina"
+          class="w-full rounded border border-slate-300 px-2 py-1 text-xs dark:border-slate-700 dark:bg-slate-900"
+          placeholder="Filtra per percorso, in questa pagina"
+          bind:value={query}
+        />
+        <button
+          class="shrink-0 rounded border border-slate-300 px-2 py-1 text-xs disabled:opacity-40 dark:border-slate-700"
+          onclick={exportCsv}
+          disabled={!anyFilteredEntries}
+          title="Esporta la pagina corrente, con il filtro applicato"
+        >Esporta CSV</button>
+      </div>
 
       {#each LISTS as [key, title]}
         {@const page = report[key]}
-        {@const filtered = query.trim() === ""
-          ? page.entries
-          : page.entries.filter((path) => path.toLowerCase().includes(query.trim().toLowerCase()))}
+        {@const filtered = filteredEntries(key)}
         <!-- On `entries`, not `total`: the three lists have different lengths and share one
              offset, so past the end of the shortest one a `total > 0` test still renders its
              header and prints a range like "mostrati 201-200". -->
