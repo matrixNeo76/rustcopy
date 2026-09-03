@@ -142,6 +142,14 @@ async fn read_advice(report_path: String, job_name: Option<String>) -> Result<Ve
     off_thread(move || gui_api::read_advice(&PathBuf::from(report_path), job_name.as_deref())).await
 }
 
+/// Task names (Windows Task Scheduler) whose command line already references this configuration
+/// file — read-only, informational. Answers "would starting this by hand duplicate a schedule
+/// that already exists", never installs or removes anything.
+#[tauri::command]
+async fn schedules_referencing(config_path: String) -> Result<Vec<String>, String> {
+    off_thread(move || gui_api::schedules_referencing(&PathBuf::from(config_path))).await
+}
+
 /// Reads every job of a config file as an editable draft (F54).
 #[tauri::command]
 async fn read_job_drafts(config_path: String) -> Result<Vec<JobDraft>, String> {
@@ -503,6 +511,7 @@ fn main() {
             read_report_page,
             read_history,
             read_advice,
+            schedules_referencing,
             read_job_drafts,
             suggest_proposal_path,
             write_proposal,

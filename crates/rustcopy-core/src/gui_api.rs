@@ -260,6 +260,14 @@ pub fn read_advice(
     Ok(crate::advise::analyse(&history))
 }
 
+/// Scheduled tasks (Windows Task Scheduler) whose command line references `config_path` —
+/// read-only, for the console's "does a schedule already point at this file" badge
+/// (PIANO_GUI_ESPANSIONE.md, Onda 1). Answers a question, never acts on one: there is no
+/// install/uninstall path through this function or anything that calls it.
+pub fn schedules_referencing(config_path: &Path) -> Result<Vec<String>, IngestError> {
+    crate::schedule::referencing_config(config_path)
+}
+
 /// Lists the jobs a config file declares, resolved the same way `run_jobs` resolves them.
 ///
 /// Single-job configs (no `[[jobs]]`) yield one entry, so a UI does not need two code paths.

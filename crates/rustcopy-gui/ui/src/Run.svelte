@@ -12,6 +12,10 @@
   let error = $state(null);
   let busy = $state(false);
   let timer = null;
+  // Names of any Windows scheduled tasks whose command already references this exact file — read
+  // once per "Esamina", advisory only. Never blocks starting a job, never offers to touch a
+  // schedule from here (F61's prohibitions apply to this console as a whole).
+  let existingSchedules = $state([]);
 
   // A mirroring job cannot be authorised from here: the confirmation `check_mirror_safety` asks
   // for needs a terminal, and a child process launched from a window has none, so the run aborts
@@ -30,6 +34,14 @@
       jobs = [];
     } finally {
       busy = false;
+    }
+    // Separate from the try above and never surfaced as `error`: a scheduler query failing (no
+    // Task Scheduler access, a non-Windows dev build) must not block loading the job list itself
+    // — this is a convenience note, not something the pane depends on.
+    try {
+      existingSchedules = await invoke("schedules_referencing", { configPath: session.configPath });
+    } catch {
+      existingSchedules = [];
     }
   }
 
@@ -157,6 +169,18 @@
         in destinazione. Da qui non si può autorizzare: la conferma richiede un terminale, quindi la
         run si fermerà da sola con esito 3. Eseguila dalla CLI, dove la conferma mostra
         <em>quali</em> file verrebbero eliminati.
+      </p>
+    {/if}
+
+    {#if existingSchedules.length > 0}
+      <!-- Informational, not a warning: avviare qui non è pericoloso quanto un mirror, è solo
+           potenzialmente ridondante con un'attività già pianificata. -->
+      <p class="mt-2 rounded border border-blue-300 bg-blue-50 px-2 py-1 text-xs text-blue-900
+                dark:border-blue-800 dark:bg-blue-950 dark:text-blue-200">
+        {existingSchedules.length === 1 ? "Un'attività pianificata" : "Delle attività pianificate"}
+        ({existingSchedules.join(", ")}) {existingSchedules.length === 1 ? "punta" : "puntano"} già
+        a questo file: avviarlo da qui non lo sostituisce né lo disattiva, è un'esecuzione
+        indipendente in più.
       </p>
     {/if}
 
