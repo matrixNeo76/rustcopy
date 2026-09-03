@@ -256,7 +256,12 @@ async fn start_job(
     let exe = std::env::current_exe().map_err(|error| error.to_string())?;
     let cli = robocopy_ingest::runner::cli_beside(&exe).map_err(|error| error.to_string())?;
 
-    let config = PathBuf::from(&config_path);
+    // Absolute before anything else. `--config` is resolved by the child, and the child now runs
+    // in the configuration's own directory — so a relative path would be resolved against itself:
+    // `examples/demo-locale.toml` becoming `examples/examples/demo-locale.toml`. The two changes
+    // are individually right and wrong together, which is the shape that gets shipped.
+    let config = std::path::absolute(PathBuf::from(&config_path))
+        .map_err(|error| format!("cannot resolve {config_path}: {error}"))?;
     // Creates the directory too, so a run cannot start somewhere its stop file could not be
     // written later.
     let cancel =
@@ -430,26 +435,46 @@ async fn run_status(state: tauri::State<'_, RunState>) -> Result<RunStatus, Stri
 /// Bounded on both counts — lines and bytes — because this crosses the IPC boundary and a run that
 /// logged for an hour must not be able to hand the window a transcript.
 fn read_output_tail(cancel_file: Option<&std::path::Path>) -> Option<String> {
+    use std::io::{Read, Seek, SeekFrom};
+
     const MAX_LINES: usize = 40;
     const MAX_BYTES: usize = 16 * 1024;
 
     let path = robocopy_ingest::runner::output_file_for(cancel_file?);
-    let raw = std::fs::read_to_string(&path).ok()?;
-    let trimmed = raw.trim_end();
+    let mut file = std::fs::File::open(&path).ok()?;
+    let len = file.metadata().ok()?.len();
+
+    // Seek to the tail rather than reading the file: a run that logged for an hour would
+    // otherwise be loaded whole to show its last forty lines.
+    let start = len.saturating_sub(MAX_BYTES as u64);
+    file.seek(SeekFrom::Start(start)).ok()?;
+    let mut bytes = Vec::new();
+    file.take(MAX_BYTES as u64).read_to_end(&mut bytes).ok()?;
+
+    // `from_utf8_lossy`, never a slice at a byte offset: seeking into the middle of a file can
+    // land inside a multi-byte character, and `String`'s slicing methods panic on that. It is
+    // the same mistake `vss::remap_to_shadow` made, one layer up — decoding leniently removes
+    // the whole class instead of moving the cut somewhere safer.
+    let text = String::from_utf8_lossy(&bytes);
+    let trimmed = text.trim_end();
     if trimmed.is_empty() {
         return None;
     }
 
-    let tail: Vec<&str> = trimmed.lines().rev().take(MAX_LINES).collect();
-    let mut text = tail.into_iter().rev().collect::<Vec<_>>().join(
-        "
-",
-    );
-    if text.len() > MAX_BYTES {
-        text = text.split_off(text.len() - MAX_BYTES);
+    let mut lines: Vec<&str> = trimmed.lines().collect();
+    // Whatever the seek landed in the middle of is half a line, not a line.
+    if start > 0 && lines.len() > 1 {
+        lines.remove(0);
     }
-    Some(text)
+    let tail = lines.split_off(lines.len().saturating_sub(MAX_LINES));
+    Some(tail.join(LINE_BREAK))
 }
+
+/// The separator `read_output_tail` rejoins lines with.
+///
+/// A named constant because writing it inline once produced a literal newline inside the source
+/// after an editing mishap — which compiled, and worked, and read as a mistake.
+const LINE_BREAK: &str = "\n";
 
 /// Reads the sample beside a run's stop file, if the run has published one yet.
 fn read_progress(

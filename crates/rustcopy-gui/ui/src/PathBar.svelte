@@ -15,6 +15,10 @@
   } = $props();
 
   let showRecent = $state(false);
+  // This instance's own element. Every pane stays mounted, so several PathBars carry
+  // `kind="config"` at once and a shared attribute selector would let a click inside one
+  // pane's dropdown count as "inside" for all of them.
+  let root;
   const recents = $derived(showRecent ? recent(kind) : []);
 
   const FILTERS = {
@@ -41,7 +45,9 @@
   }
 
   function run() {
-    if (value.length === 0) return;
+    // `busy` too: the button is disabled while a read is in flight, but the input's Enter
+    // handler is not, and neither caller guards re-entry.
+    if (busy || value.length === 0) return;
     remember(kind, value);
     onrun();
   }
@@ -54,13 +60,21 @@
   }
 </script>
 
-<svelte:window onclick={(e) => {
-  // A dropdown that only closes by re-pressing the button it came from is a dropdown that looks
-  // stuck. Any click outside dismisses it, which is what every other list on the system does.
-  if (showRecent && !e.target.closest?.(`[data-recents="${kind}"]`)) showRecent = false;
-}} />
+<svelte:window
+  onclick={(e) => {
+    // A dropdown that only closes by re-pressing the button it came from looks stuck. Any click
+    // outside dismisses it, which is what every other list on the system does — measured against
+    // this instance's own element, not a shared attribute.
+    if (showRecent && root && !root.contains(e.target)) showRecent = false;
+  }}
+  onkeydown={(e) => {
+    // At window level so it works wherever focus is: the input, the button that opened the list,
+    // or an entry inside it.
+    if (e.key === "Escape") showRecent = false;
+  }}
+/>
 
-<div class="relative" data-recents={kind}>
+<div class="relative" bind:this={root}>
   <div class="flex gap-2">
     <label class="sr-only" for="pathbar-{kind}">{label}</label>
     <!-- `autocomplete="off"`: the WebView's own saved-values popup opened over this field and
@@ -74,10 +88,7 @@
       {placeholder}
       bind:value
       onfocus={() => (showRecent = false)}
-      onkeydown={(e) => {
-        if (e.key === "Enter") run();
-        if (e.key === "Escape") showRecent = false;
-      }}
+      onkeydown={(e) => e.key === "Enter" && run()}
     />
     <button
       class="rounded border border-slate-300 px-2 py-1 text-sm dark:border-slate-700"
