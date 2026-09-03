@@ -168,6 +168,7 @@
       </h2>
 
       <input
+        aria-label="Filtra i percorsi in questa pagina"
         class="mt-2 w-full rounded border border-slate-300 px-2 py-1 text-xs dark:border-slate-700 dark:bg-slate-900"
         placeholder="Filtra per percorso, in questa pagina"
         bind:value={query}
