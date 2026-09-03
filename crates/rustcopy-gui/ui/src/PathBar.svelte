@@ -32,6 +32,9 @@
     });
     if (typeof picked === "string" && picked.length > 0) {
       value = picked;
+      // Closed here too: picking through the file dialog is choosing a path, and leaving the
+      // recents list hanging open over the result was a panel with no obvious way to dismiss it.
+      showRecent = false;
       remember(kind, picked);
       onrun();
     }
@@ -51,15 +54,30 @@
   }
 </script>
 
-<div class="relative">
+<svelte:window onclick={(e) => {
+  // A dropdown that only closes by re-pressing the button it came from is a dropdown that looks
+  // stuck. Any click outside dismisses it, which is what every other list on the system does.
+  if (showRecent && !e.target.closest?.(`[data-recents="${kind}"]`)) showRecent = false;
+}} />
+
+<div class="relative" data-recents={kind}>
   <div class="flex gap-2">
     <label class="sr-only" for="pathbar-{kind}">{label}</label>
+    <!-- `autocomplete="off"`: the WebView's own saved-values popup opened over this field and
+         stayed there, a second dropdown nobody asked for on top of the recents list below. The
+         recents list is the feature; the browser's guess at what we typed is not. -->
     <input
       id="pathbar-{kind}"
       class="flex-1 rounded border border-slate-300 px-2 py-1 text-sm dark:border-slate-700 dark:bg-slate-900"
+      autocomplete="off"
+      spellcheck="false"
       {placeholder}
       bind:value
-      onkeydown={(e) => e.key === "Enter" && run()}
+      onfocus={() => (showRecent = false)}
+      onkeydown={(e) => {
+        if (e.key === "Enter") run();
+        if (e.key === "Escape") showRecent = false;
+      }}
     />
     <button
       class="rounded border border-slate-300 px-2 py-1 text-sm dark:border-slate-700"

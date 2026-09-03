@@ -197,6 +197,20 @@
       </div>
     {/if}
 
+    {#if status?.output_tail}
+      <!-- Shown whenever the run ended, not only on failure: a successful run's summary is worth
+           reading too, and hiding it until something breaks means the operator only ever meets
+           this panel in a bad moment. -->
+      <details class="mt-3" open={status.exit_code !== 0}>
+        <summary class="cursor-pointer text-xs text-slate-600 dark:text-slate-400">
+          Output della run {status.exit_code === 0 ? "(riuscita)" : "— qui c'è il motivo"}
+        </summary>
+        <pre class="mt-1 max-h-64 overflow-auto rounded border border-slate-200 bg-slate-50 p-2
+                    text-[11px] leading-snug whitespace-pre-wrap dark:border-slate-800
+                    dark:bg-slate-900">{status.output_tail}</pre>
+      </details>
+    {/if}
+
     <p class="mt-2 text-[11px] text-slate-500">
       Fermare non uccide il processo: crea il file che la run sorveglia, così scrive il checkpoint
       e puoi riprendere con <code>--resume-from</code>. Terminarlo di forza salterebbe proprio

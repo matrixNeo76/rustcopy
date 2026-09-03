@@ -198,6 +198,12 @@ struct RunStatus {
     /// the file: absent means "not running", which is a signal that needs no reasoning about
     /// staleness.
     progress: Option<robocopy_ingest::progress_file::ProgressSample>,
+    /// The tail of what the run printed, shown when it fails.
+    ///
+    /// A tail rather than the whole file: a run that failed after copying for an hour can have
+    /// produced a lot of output, and the operator needs the end of it — where the error is — not
+    /// a transcript that has to cross the IPC boundary whole.
+    output_tail: Option<String>,
     /// What that phase is, in words. Decided in the core: which phase a run is in is a fact about
     /// the backup, and naming it is not a rendering choice.
     phase_label: Option<String>,
@@ -215,6 +221,8 @@ struct ActiveRun {
     cancel_file: Option<PathBuf>,
     stopping: bool,
     last_exit: Option<i32>,
+    /// Kept after the run ends, because the exit code alone does not say what went wrong.
+    last_output: Option<String>,
 }
 
 type RunState = std::sync::Mutex<ActiveRun>;
@@ -259,12 +267,31 @@ async fn start_job(
     let _ = std::fs::remove_file(&cancel);
 
     let args = robocopy_ingest::runner::run_arguments(&config, &cancel);
+
+    // Captured, not discarded. A window inherits no terminal, so sending these to null left a
+    // failed run reaching the operator as a bare exit code — the sentence explaining it existed
+    // and was thrown away.
+    let output_path = robocopy_ingest::runner::output_file_for(&cancel);
+    let capture = std::fs::File::create(&output_path)
+        .map_err(|error| format!("cannot capture the run's output: {error}"))?;
+    let capture_err = capture
+        .try_clone()
+        .map_err(|error| format!("cannot capture the run's output: {error}"))?;
+
     let mut command = std::process::Command::new(&cli);
     command
         .args(&args)
         .stdin(std::process::Stdio::null())
-        .stdout(std::process::Stdio::null())
-        .stderr(std::process::Stdio::null());
+        .stdout(std::process::Stdio::from(capture))
+        .stderr(std::process::Stdio::from(capture_err));
+
+    // Relative paths in a configuration can only sensibly mean "relative to the configuration".
+    // A person picking a file in a dialog has no notion of this window's working directory, and
+    // inheriting it made `examples/demo-data` resolve against wherever the console happened to be
+    // started from — which for an installed shortcut is not the repository.
+    if let Some(parent) = config.parent().filter(|p| !p.as_os_str().is_empty()) {
+        command.current_dir(parent);
+    }
 
     // The CLI is a console-subsystem binary and this window has no console to lend it, so Windows
     // allocates a fresh one — a black terminal popping up in front of the application on every
@@ -290,6 +317,7 @@ async fn start_job(
     active.cancel_file = Some(cancel);
     active.stopping = false;
     active.last_exit = None;
+    active.last_output = None;
 
     Ok(RunStatus {
         running: true,
@@ -299,6 +327,7 @@ async fn start_job(
         stopping: false,
         progress: None,
         phase_label: None,
+        output_tail: None,
     })
 }
 
@@ -328,6 +357,7 @@ async fn stop_job(state: tauri::State<'_, RunState>) -> Result<RunStatus, String
         stopping: true,
         progress: read_progress(active.cancel_file.as_deref()),
         phase_label: None,
+        output_tail: None,
     })
 }
 
@@ -347,10 +377,15 @@ async fn run_status(state: tauri::State<'_, RunState>) -> Result<RunStatus, Stri
                 active.child = None;
                 active.stopping = false;
                 // The run is over, so the file it watched has no reader left.
+                // Read before the files go: this is the moment the operator most needs the
+                // sentence the run printed, and cleaning up first would throw it away exactly
+                // then.
+                active.last_output = read_output_tail(active.cancel_file.as_deref());
                 if let Some(path) = active.cancel_file.take() {
                     // The CLI removes its own progress file on a normal exit; this covers the run
                     // that crashed before it could.
                     let _ = std::fs::remove_file(robocopy_ingest::runner::progress_file_for(&path));
+                    let _ = std::fs::remove_file(robocopy_ingest::runner::output_file_for(&path));
                     let _ = std::fs::remove_file(path);
                 }
             }
@@ -366,6 +401,7 @@ async fn run_status(state: tauri::State<'_, RunState>) -> Result<RunStatus, Stri
                         .as_ref()
                         .map(|sample| sample.phase.describe().to_string()),
                     progress,
+                    output_tail: None,
                 });
             }
             Err(error) => return Err(format!("cannot check the running job: {error}")),
@@ -373,6 +409,7 @@ async fn run_status(state: tauri::State<'_, RunState>) -> Result<RunStatus, Stri
     }
 
     let exit_code = active.last_exit;
+    let output_tail = active.last_output.clone();
     Ok(RunStatus {
         running: false,
         config_path: active.config_path.clone(),
@@ -384,7 +421,34 @@ async fn run_status(state: tauri::State<'_, RunState>) -> Result<RunStatus, Stri
         stopping: false,
         progress: None,
         phase_label: None,
+        output_tail,
     })
+}
+
+/// The last few lines the run printed, if any.
+///
+/// Bounded on both counts — lines and bytes — because this crosses the IPC boundary and a run that
+/// logged for an hour must not be able to hand the window a transcript.
+fn read_output_tail(cancel_file: Option<&std::path::Path>) -> Option<String> {
+    const MAX_LINES: usize = 40;
+    const MAX_BYTES: usize = 16 * 1024;
+
+    let path = robocopy_ingest::runner::output_file_for(cancel_file?);
+    let raw = std::fs::read_to_string(&path).ok()?;
+    let trimmed = raw.trim_end();
+    if trimmed.is_empty() {
+        return None;
+    }
+
+    let tail: Vec<&str> = trimmed.lines().rev().take(MAX_LINES).collect();
+    let mut text = tail.into_iter().rev().collect::<Vec<_>>().join(
+        "
+",
+    );
+    if text.len() > MAX_BYTES {
+        text = text.split_off(text.len() - MAX_BYTES);
+    }
+    Some(text)
 }
 
 /// Reads the sample beside a run's stop file, if the run has published one yet.

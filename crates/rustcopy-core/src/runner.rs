@@ -141,6 +141,18 @@ pub fn progress_file_for(cancel_file: &Path) -> PathBuf {
     cancel_file.with_file_name(name)
 }
 
+/// Where a run's console output is captured, beside its stop and progress files.
+///
+/// A window has no terminal to inherit, so without this the CLI's stdout and stderr go nowhere and
+/// a failed run reaches the operator as an exit code with no sentence attached. The messages exist
+/// — "source directory does not exist: examples/demo-data" is exactly what a person needs — and
+/// discarding them is what made the console unhelpful at the only moment it mattered.
+pub fn output_file_for(cancel_file: &Path) -> PathBuf {
+    let mut name = cancel_file.file_name().unwrap_or_default().to_os_string();
+    name.push(".output");
+    cancel_file.with_file_name(name)
+}
+
 /// The complete argument list for running one configuration file.
 ///
 /// Built from a fixed shape rather than from anything a caller passes: the only two values that
