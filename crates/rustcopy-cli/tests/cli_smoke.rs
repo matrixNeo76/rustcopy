@@ -3047,3 +3047,67 @@ fn a_stop_file_created_between_jobs_ends_the_batch_as_an_interruption() {
         "nothing may claim Ctrl+C when a file did it: {stderr}"
     );
 }
+
+/// "Absent means not running" has to hold on the path where it matters most.
+///
+/// The cleanup lived only after the select, and the interruption arm returns before reaching it —
+/// so a stopped run left its progress file behind and a supervisor reading that file would have
+/// gone on reporting a run that had already written its checkpoint and exited. The comment sitting
+/// on that cleanup claimed both arms reached it; the `return` three lines above says otherwise.
+#[test]
+fn a_stopped_run_leaves_no_progress_file_behind() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let source = dir.path().join("src");
+    std::fs::create_dir_all(&source).expect("mkdir");
+    std::fs::write(source.join("uno.txt"), b"contenuto").expect("write");
+
+    let cancel = dir.path().join("STOP");
+    let progress = dir.path().join("progress.json");
+    let slow = if cfg!(windows) {
+        "ping -n 30 127.0.0.1"
+    } else {
+        "sleep 30"
+    };
+
+    let child = Command::new(BIN)
+        .arg("--source")
+        .arg(&source)
+        .arg("--dest")
+        .arg(dir.path().join("dst"))
+        .arg("--pre-command")
+        .arg(slow)
+        .arg("--report-path")
+        .arg(dir.path().join("report.json"))
+        .arg("--log-path")
+        .arg(dir.path().join("run.log"))
+        .arg("--cancel-file")
+        .arg(&cancel)
+        .arg("--progress-file")
+        .arg(&progress)
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .spawn()
+        .expect("the binary must start");
+
+    // Stands in for a sample the run published before being stopped. Seeded rather than waited
+    // for: the publisher ticks once a second and the hook here runs *before* any phase begins, so
+    // waiting for a real sample would test the publisher's timing instead of the cleanup — which
+    // is what this test is about. (Found by writing the timing-dependent version first: nothing
+    // is published while a `--pre-command` runs, because no phase has started.)
+    std::thread::sleep(std::time::Duration::from_secs(2));
+    std::fs::write(&progress, b"{}").expect("seed a published sample");
+
+    std::fs::write(&cancel, b"").expect("the supervisor stops the run");
+
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(60);
+    while progress.exists() && std::time::Instant::now() < deadline {
+        std::thread::sleep(std::time::Duration::from_millis(200));
+    }
+
+    assert!(
+        !progress.exists(),
+        "a stopped run must not leave a file that reads as a run still in progress"
+    );
+
+    let _ = child.wait_with_output();
+}
