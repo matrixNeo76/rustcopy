@@ -13,6 +13,10 @@
   let advice = $state([]);
   let error = $state(null);
   let loading = $state(false);
+  // Client-side only, and honest about it: `history.runs` is already the whole loaded batch (the
+  // fixed `limit: 100` above, not a further server-side page), so filtering it here drops nothing
+  // the operator hasn't already been told about via the "le più recenti" label.
+  let outcomeFilter = $state("all");
 
   const SEVERITY_ORDER = { ATTENZIONE: 0, PROPOSTA: 1, INFO: 2 };
 
@@ -28,6 +32,8 @@
   async function load() {
     error = null;
     loading = true;
+    // A filter left over from a different report/job would silently hide runs in the new one.
+    outcomeFilter = "all";
     try {
       // Two calls rather than one combined view: the history is what happened, the advice is a
       // reading of it. Keeping them apart means a parse problem in one does not blank the other.
@@ -62,6 +68,14 @@
     4: "copiato, verifica fallita",
     5: "purge retention annullata",
   };
+
+  const filteredRuns = $derived(
+    history
+      ? history.runs.filter((run) =>
+          outcomeFilter === "all" ? true : outcomeFilter === "success" ? run.exit_code === 0 : run.exit_code !== 0,
+        )
+      : [],
+  );
 </script>
 
 <section class="p-4">
@@ -126,9 +140,24 @@
       </ul>
     {/if}
 
-    <h2 class="mt-4 text-xs font-semibold uppercase tracking-wide text-slate-500">
-      Run ({history.runs.length}{history.runs.length === history.limit_applied ? ", le più recenti" : ""})
-    </h2>
+    <div class="mt-4 flex flex-wrap items-center justify-between gap-2">
+      <h2 class="text-xs font-semibold uppercase tracking-wide text-slate-500">
+        Run ({filteredRuns.length}{filteredRuns.length !== history.runs.length ? ` di ${history.runs.length}` : ""}{history.runs.length === history.limit_applied ? ", le più recenti" : ""})
+      </h2>
+      {#if history.runs.length > 0}
+        <label class="flex items-center gap-1 text-xs text-slate-600 dark:text-slate-400">
+          Esito
+          <select
+            class="rounded border border-slate-300 px-1 py-0.5 dark:border-slate-700 dark:bg-slate-900"
+            bind:value={outcomeFilter}
+          >
+            <option value="all">Tutti</option>
+            <option value="success">Solo riuscite (0)</option>
+            <option value="failed">Solo non riuscite</option>
+          </select>
+        </label>
+      {/if}
+    </div>
     {#if history.runs.length === 0}
       <p class="mt-1 text-sm text-slate-500">
         Nessuna run registrata
@@ -140,6 +169,8 @@
           ogni job ha un indice separato.
         {/if}
       </p>
+    {:else if filteredRuns.length === 0}
+      <p class="mt-1 text-sm text-slate-500">Nessuna run corrisponde al filtro scelto.</p>
     {:else}
       <table class="mt-1 w-full text-left text-xs">
         <thead class="border-b border-slate-300 dark:border-slate-700">
@@ -152,7 +183,7 @@
           </tr>
         </thead>
         <tbody>
-          {#each [...history.runs].reverse() as run}
+          {#each [...filteredRuns].reverse() as run}
             <tr class="border-b border-slate-200 dark:border-slate-800">
               <td class="py-1 pr-3 font-mono">{new Date(run.timestamp).toLocaleString("it-IT")}</td>
               <td class="py-1 pr-3">
