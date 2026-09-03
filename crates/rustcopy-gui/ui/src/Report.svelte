@@ -10,6 +10,12 @@
   let error = $state(null);
   let loading = $state(false);
   let offset = $state(0);
+  // Filters only the entries already on screen. Each list is server-paginated at PAGE (100) out of
+  // up to MAX_REPORTED_ERRORS (10 000) — a filter that quietly searched only the loaded page while
+  // *reading* as a search of the whole list would be exactly the kind of unlabelled truncation this
+  // report otherwise goes out of its way to declare (see `truncated_at_source` below). The label on
+  // the input says "in questa pagina" for that reason, not as decoration.
+  let query = $state("");
 
   const PAGE = 100;
 
@@ -23,6 +29,9 @@
         limit: PAGE,
       });
       offset = from;
+      // A filter left over from a previous report, or from a page the operator just left, would
+      // silently hide entries in the one just loaded.
+      query = "";
     } catch (e) {
       error = String(e);
       report = null;
@@ -158,8 +167,18 @@
         Problemi rilevati dalla verifica ({report.integrity_error_count})
       </h2>
 
+      <input
+        aria-label="Filtra i percorsi in questa pagina"
+        class="mt-2 w-full rounded border border-slate-300 px-2 py-1 text-xs dark:border-slate-700 dark:bg-slate-900"
+        placeholder="Filtra per percorso, in questa pagina"
+        bind:value={query}
+      />
+
       {#each LISTS as [key, title]}
         {@const page = report[key]}
+        {@const filtered = query.trim() === ""
+          ? page.entries
+          : page.entries.filter((path) => path.toLowerCase().includes(query.trim().toLowerCase()))}
         <!-- On `entries`, not `total`: the three lists have different lengths and share one
              offset, so past the end of the shortest one a `total > 0` test still renders its
              header and prints a range like "mostrati 201-200". -->
@@ -174,13 +193,18 @@
               {#if page.total > page.entries.length}
                 — mostrati {page.offset + 1}–{page.offset + page.entries.length}
               {/if}
+              {#if query.trim() !== ""}
+                — {filtered.length} corrispondono nella pagina
+              {/if}
             </span>
           </h3>
-          <ul class="mt-1 max-h-64 overflow-y-auto rounded border border-slate-200 dark:border-slate-800">
-            {#each page.entries as path}
-              <li class="truncate px-2 py-0.5 font-mono text-[11px]" title={path}>{path}</li>
-            {/each}
-          </ul>
+          {#if filtered.length > 0}
+            <ul class="mt-1 max-h-64 overflow-y-auto rounded border border-slate-200 dark:border-slate-800">
+              {#each filtered as path}
+                <li class="truncate px-2 py-0.5 font-mono text-[11px]" title={path}>{path}</li>
+              {/each}
+            </ul>
+          {/if}
         {/if}
       {/each}
 
