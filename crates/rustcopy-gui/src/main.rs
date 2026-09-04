@@ -6,7 +6,7 @@
 //! arguments, calls one function, and maps the error to a string the frontend can display. No
 //! command decides anything — not whether a purge is safe, not what an exit code means, not
 //! whether a mismatch is transient. That judgement lives in the library and is tested there
-//! (`PIANO_GUI_TAURI.md` §4.1).
+//! (`docs/archive/PIANO_GUI_TAURI.md` §4.1).
 //!
 //! If a command in this file ever grows a branch on backup semantics, the branch belongs in
 //! `rustcopy-core` instead.
@@ -148,6 +148,23 @@ async fn read_advice(report_path: String, job_name: Option<String>) -> Result<Ve
 #[tauri::command]
 async fn schedules_referencing(config_path: String) -> Result<Vec<String>, String> {
     off_thread(move || gui_api::schedules_referencing(&PathBuf::from(config_path))).await
+}
+
+/// Checkpoints found beside `config_path` (Onda 3, F31's GUI half). Directory, not file: a
+/// checkpoint is named from a *report* path, which can be namespaced per job or carry a
+/// `{timestamp}` placeholder — scanning what is actually on disk sidesteps recomputing that
+/// resolution here (`gui_api::list_checkpoints`'s own doc comment has the full reasoning). Takes
+/// the config's directory as the scan root because the console already runs a job's own process
+/// with that directory as its working directory, so a job's relative `--report-path` (and the
+/// checkpoint beside it) lands there.
+#[tauri::command]
+async fn list_checkpoints(config_path: String) -> Result<Vec<gui_api::CheckpointSummary>, String> {
+    off_thread(move || {
+        let config = PathBuf::from(config_path);
+        let dir = config.parent().unwrap_or(std::path::Path::new("."));
+        gui_api::list_checkpoints(dir)
+    })
+    .await
 }
 
 /// Stores a secret in the Windows Credential Manager (Onda 2, F56's GUI half). `secret` travels
@@ -357,6 +374,94 @@ async fn start_job(
     })
 }
 
+/// Resumes one interrupted run from a checkpoint (Onda 3, F31's GUI half — `PIANO_GUI.md`).
+///
+/// Mirrors [`start_job`] almost exactly — same lock discipline, same captured output, same
+/// `CREATE_NO_WINDOW`, same "one run per window" rule — except the argument list comes from
+/// `runner::resume_arguments` (`--resume-from`, never `--config`) and `active.config_path` becomes
+/// the checkpoint's own path rather than a configuration file's. Nothing downstream needs to know
+/// the difference: `stop_job`/`run_status` already treat "the one active run" generically, and a
+/// resumed run is always single-job (`main.rs`'s `--resume-from` branch never reaches `run_jobs`),
+/// so the batch-queue view in `Run.svelte` simply never applies here.
+#[tauri::command]
+async fn resume_job(
+    checkpoint_path: String,
+    state: tauri::State<'_, RunState>,
+) -> Result<RunStatus, String> {
+    let mut active = state.lock().map_err(|_| "run state poisoned".to_string())?;
+
+    if let Some(child) = active.child.as_mut() {
+        match child.try_wait() {
+            Ok(Some(status)) => active.last_exit = status.code(),
+            Ok(None) => return Err("un backup è già in corso in questa finestra".to_string()),
+            Err(error) => return Err(format!("cannot check the running job: {error}")),
+        }
+    }
+
+    let exe = std::env::current_exe().map_err(|error| error.to_string())?;
+    let cli = robocopy_ingest::runner::cli_beside(&exe).map_err(|error| error.to_string())?;
+
+    // Same reasoning as `start_job`: absolute before the child changes its own working directory,
+    // so a relative checkpoint path is not resolved against itself.
+    let checkpoint = std::path::absolute(PathBuf::from(&checkpoint_path))
+        .map_err(|error| format!("cannot resolve {checkpoint_path}: {error}"))?;
+    let cancel = robocopy_ingest::runner::cancel_file_for_now(&checkpoint)
+        .map_err(|error| error.to_string())?;
+    let _ = std::fs::remove_file(&cancel);
+
+    let args = robocopy_ingest::runner::resume_arguments(&checkpoint, &cancel);
+
+    let output_path = robocopy_ingest::runner::output_file_for(&cancel);
+    let capture = std::fs::File::create(&output_path)
+        .map_err(|error| format!("cannot capture the run's output: {error}"))?;
+    let capture_err = capture
+        .try_clone()
+        .map_err(|error| format!("cannot capture the run's output: {error}"))?;
+
+    let mut command = std::process::Command::new(&cli);
+    command
+        .args(&args)
+        .stdin(std::process::Stdio::null())
+        .stdout(std::process::Stdio::from(capture))
+        .stderr(std::process::Stdio::from(capture_err));
+
+    // Same convention as `start_job`: relative paths inside the resumed job's own configuration
+    // (carried in the checkpoint, not on this command line) resolve against the checkpoint's
+    // directory, which is where the interrupted run's report/log/checkpoint files already live.
+    if let Some(parent) = checkpoint.parent().filter(|p| !p.as_os_str().is_empty()) {
+        command.current_dir(parent);
+    }
+
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt;
+        const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+        command.creation_flags(CREATE_NO_WINDOW);
+    }
+
+    let child = command
+        .spawn()
+        .map_err(|error| format!("cannot start {}: {error}", cli.display()))?;
+
+    active.child = Some(child);
+    active.config_path = checkpoint_path;
+    active.cancel_file = Some(cancel);
+    active.stopping = false;
+    active.last_exit = None;
+    active.last_output = None;
+
+    Ok(RunStatus {
+        running: true,
+        config_path: active.config_path.clone(),
+        exit_code: None,
+        meaning: None,
+        stopping: false,
+        progress: None,
+        phase_label: None,
+        output_tail: None,
+    })
+}
+
 /// Asks the run to stop, by creating the file it watches.
 ///
 /// Not by killing it. The CLI's stop path writes a checkpoint that `--resume-from` can read, and
@@ -516,7 +621,7 @@ fn main() {
         // path a person selected, which is strictly less error-prone than the text box it
         // replaces.
         .plugin(tauri_plugin_dialog::init())
-        // Completion toast (Onda 1, PIANO_GUI_ESPANSIONE.md): the frontend calls it directly from
+        // Completion toast (Onda 1, PIANO_GUI.md): the frontend calls it directly from
         // Run.svelte on the running->finished transition it already detects while polling
         // `run_status`, so no new command is needed here.
         .plugin(tauri_plugin_notification::init())
@@ -535,7 +640,9 @@ fn main() {
             write_proposal,
             start_job,
             stop_job,
-            run_status
+            run_status,
+            list_checkpoints,
+            resume_job
         ])
         .run(tauri::generate_context!())
         .expect("error while running the rustcopy console");

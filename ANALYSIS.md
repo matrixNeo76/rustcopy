@@ -1,7 +1,7 @@
 ---
 type: Log
 title: Analisi di Robustezza e Ottimizzazione Prestazioni
-description: Audit trail dei difetti D1-D24 e delle opportunità di miglioramento O1-O10.
+description: Audit trail dei difetti D1-D25 e delle opportunità di miglioramento O1-O10.
 status: stable
 generated:
   by: process:claude-code
@@ -1418,6 +1418,61 @@ chiamanti.
 scheda Esegui della console faceva lampeggiare una console nera ogni volta; dopo, nessuna finestra
 compare. `cargo build -p rustcopy-core` pulito; nessun test esistente toccato (nessuna asserzione
 verificava l'assenza del flag, quindi nulla si è rotto nell'aggiungerlo).
+
+---
+
+### D25 — `--resume-from` scarta silenziosamente quasi tutta la configurazione originale, non solo `--mirror` 🟡 APERTO (4 Set 2026)
+
+**Stato: aperto, non bloccante.**
+
+**Gravità: MEDIA** — nessun rischio per l'integrità dei dati (l'effetto è quasi sempre "la ripresa
+gira più permissiva o più veloce dell'originale", mai più distruttiva), ma un comportamento che
+un operatore non ha modo di prevedere senza leggere il codice. Trovato **di striscio**, mentre si
+verificava la scheda "Riprese disponibili" della console (Onda 3, `PIANO_GUI.md`) con una run reale
+throttled a `bandwidth_limit_mbps = 3`: la ripresa è ripartita a 1988 MB/s, velocità piena.
+
+**Causa.** `checkpoint::Checkpoint` cattura la configurazione dell'invocazione interrotta in un
+`report::ConfigurationReport` — **7 campi soli** (`threads`, `retries`, `retry_wait_seconds`,
+`pattern`, `verify_integrity`, `compare_baseline`, `dry_run`) su 56 che `Args` possiede oggi.
+`checkpoint::build_resume_args` ne restituisce solo **5** dei 7 catturati (manca `compare_baseline`
+e `dry_run`, pur presenti nel checkpoint scritto su disco). Tutto il resto — `bandwidth_limit_mbps`,
+`exclude_files`/`exclude_dirs`, `min_age_days`/`max_age_days`, `hash_algo`, `fast_verify`,
+`ignore_transient_missing`, `preserve_acl`, `long_paths`, `exclude_junctions`, `webhook_url`,
+`pre_command`/`post_command`, `backup_type`/`keep_generations` — non è mai stato catturato, quindi
+una ripresa **non lo eredita in nessun caso**, che sia lanciata da CLI o dalla console.
+
+**Non è nuovo, e non è specifico della console.** `checkpoint.rs` (F31, 3 Agosto 2026) si comporta
+così da quando esiste; la scheda Esegui della console (Onda 3) lo eredita semplicemente invocando la
+stessa `--resume-from`, come da disegno (`PIANO_GUI.md` §8, voce 11: "avvio della stessa CLI con
+`--resume-from` risolto dal core... mai costruito lato frontend"). Nessun codice della GUI decide
+quali impostazioni sopravvivano: la decisione, o l'assenza di una, sta interamente in
+`checkpoint.rs`.
+
+**Perché non è P0/destructive.** L'asimmetria gioca quasi sempre a favore della sicurezza, non
+contro: un job che interrompeva con `--mirror` **non** lo riottiene alla ripresa (l'omissione più
+importante è anche la più innocua). Il rischio reale è operativo — una ripresa senza throttle può
+saturare un collegamento che l'originale proteggeva apposta, e una ripresa senza `exclude_files`/
+`exclude_dirs` può copiare file che l'originale escludeva di proposito — non è mai una perdita o
+corruzione di dati già copiati.
+
+**Perché è passato inosservato.** `flags_from_the_real_invocation_survive_resume`
+(`checkpoint.rs`) verifica solo che i flag digitati sulla *riga di comando della ripresa* (es.
+`--quiet`, `--log-path`) sopravvivano — la lezione F25b. Nessun test verifica il caso complementare:
+che le impostazioni della *configurazione originale interrotta*, oltre ai 5 campi già coperti,
+sopravvivano altrettanto. I due casi sembrano la stessa garanzia ma non lo sono.
+
+**Rimedio non ancora deciso.** Espandere `ConfigurationReport` toccherebbe anche il report di run
+completate (lo stesso tipo, condiviso), quindi la scelta più pulita è probabilmente un tipo dedicato
+per il checkpoint invece di riusare `ConfigurationReport` — decisione di design da prendere prima di
+scrivere il codice, non implementazione diretta. **Rimandato deliberatamente**: la console si limita
+oggi a esporre la stessa `--resume-from` che la CLI ha sempre avuto, quindi non introduce un rischio
+nuovo — allarga solo la platea di chi la usa senza leggere `checkpoint.rs`.
+
+**Verifica.** Riprodotto contro il binario reale: job con `bandwidth_limit_mbps = 3` interrotto a
+metà (22%, 30/130 file) via la console, ripreso dalla scheda Esegui — 130/130 file copiati,
+integrità verificata (0 mismatch), ma a 1988,89 MB/s invece che ~3 MB/s. Il comportamento
+*funzionale* della ripresa (copia il resto, verifica l'integrità) è corretto; solo la fedeltà alla
+configurazione originale non lo è.
 
 ---
 

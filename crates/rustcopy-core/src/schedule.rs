@@ -247,7 +247,7 @@ fn run_schtasks(args: &[String]) -> Result<(), IngestError> {
 }
 
 /// Task names whose command line references `config_path` — read-only, for the console's F49-
-/// adjacent "does a schedule already point at this file" badge (PIANO_GUI_ESPANSIONE.md, Onda 1).
+/// adjacent "does a schedule already point at this file" badge (PIANO_GUI.md, Onda 1).
 /// This never installs, removes, or otherwise acts on a schedule; F61's prohibitions on the
 /// console apply here exactly as everywhere else — it can report a schedule, never touch one.
 ///

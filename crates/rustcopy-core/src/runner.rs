@@ -169,6 +169,22 @@ pub fn run_arguments(config: &Path, cancel_file: &Path) -> Vec<String> {
     ]
 }
 
+/// The complete argument list for resuming from a checkpoint (F31, closes the resume half of
+/// Onda 3 in `PIANO_GUI.md`). Same fixed shape and same reasoning as [`run_arguments`] — the only
+/// difference is `--resume-from` in place of `--config`, because `main.rs` treats the two as
+/// mutually exclusive top-level modes (`--resume-from` never goes through `run_jobs`, so a
+/// resumed run is always single-job, whatever `[[jobs]]` the original interrupted config had).
+pub fn resume_arguments(checkpoint: &Path, cancel_file: &Path) -> Vec<String> {
+    vec![
+        "--resume-from".to_string(),
+        checkpoint.display().to_string(),
+        "--cancel-file".to_string(),
+        cancel_file.display().to_string(),
+        "--progress-file".to_string(),
+        progress_file_for(cancel_file).display().to_string(),
+    ]
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -194,6 +210,33 @@ mod tests {
                 "{forbidden} must never reach a run started by a supervisor: {joined}"
             );
         }
+        assert_eq!(args.len(), 6, "and nothing else may be added silently");
+    }
+
+    /// Same prohibition, same reasoning, for the resume path — `--resume-from` is a second entry
+    /// point into the CLI and needs its own test rather than trusting that `run_arguments`'s test
+    /// somehow covers it too.
+    #[test]
+    fn the_resume_argument_list_cannot_carry_a_destructive_flag() {
+        let args = resume_arguments(Path::new("run.checkpoint.json"), Path::new(".jobs.stop-1"));
+        let joined = args.join(" ");
+
+        for forbidden in [
+            "--force-purge",
+            "--mirror",
+            "--install-service",
+            "--uninstall-service",
+            "--install-schedule",
+            "--uninstall-schedule",
+            "--keep-generations",
+            "--config",
+        ] {
+            assert!(
+                !joined.contains(forbidden),
+                "{forbidden} must never reach a run started by a supervisor: {joined}"
+            );
+        }
+        assert!(joined.starts_with("--resume-from run.checkpoint.json"));
         assert_eq!(args.len(), 6, "and nothing else may be added silently");
     }
 

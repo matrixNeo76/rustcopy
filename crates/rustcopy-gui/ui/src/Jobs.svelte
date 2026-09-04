@@ -5,7 +5,7 @@
   import { session } from "./session.svelte.js";
 
   // The frontend does not decide: it asks the library and renders what comes back
-  // (PIANO_GUI_TAURI.md 4.1). No judgement about mirroring, verification or outcomes here.
+  // (docs/archive/PIANO_GUI_TAURI.md §4.1). No judgement about mirroring, verification or outcomes here.
   let jobs = $state([]);
   let error = $state(null);
   let loading = $state(false);
