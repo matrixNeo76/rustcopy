@@ -1,8 +1,8 @@
 ---
 type: Reference
 title: Come procedere con la GUI Tauri — piano operativo e vincoli
-description: Percorso per la GUI Tauri (milestone 7.0.0): impatto misurato sulle prestazioni del motore di copia, tre decisioni con raccomandazione motivata, e il registro della rinumerazione 7.0.0/8.0.0 che ha rimosso uno stallo nella roadmap.
-status: draft
+description: Piano pre-implementazione della GUI Tauri (milestone 7.0.0), eseguito per intero. Archiviato, non più attivo — per lo stato attuale vedi PIANO_GUI.md.
+status: deprecated
 generated:
   by: process:claude-code
   at: 2026-08-27T00:00:00Z
@@ -12,6 +12,14 @@ verified:
 ---
 
 # Come procedere con la GUI Tauri
+
+> **Archiviato (4 Set 2026)**: le tre decisioni di prodotto qui raccomandate (§5: stack Svelte +
+> Tailwind, v1 in sola lettura, installer unico con componente opzionale) sono state accolte e
+> realizzate; la rinumerazione di §6 è applicata in `ROADMAP.md`; la sequenza di §7 è completata.
+> Questo documento non è più aggiornato — per lo stato attuale della console, cosa manca e il piano
+> per completarla (funzionale e visivo), vedi [`PIANO_GUI.md`](../../PIANO_GUI.md), che consolida
+> anche i vincoli permanenti di sicurezza di §8 sotto e le note sulla skill `ui-ux-pro-max` di §10.
+> Conservato qui come registro delle decisioni e del loro perché.
 
 > **Stato al 2 Settembre 2026**: §3, §5 e §6 tutte applicate. Lo stack (Svelte + Tailwind) e
 > l'ambito v1 sono stati realizzati, e **§5.3 è stata accolta**: F60 impacchetta la console come
@@ -33,7 +41,7 @@ verified:
 
 ## 1. In una pagina
 
-La milestone della GUI esiste in [`ROADMAP.md`](ROADMAP.md) — **7.0.0** dopo la rinumerazione di §6 — con otto voci (F52-F57, F59, F60). **Questo
+La milestone della GUI esiste in [`ROADMAP.md`](../../ROADMAP.md) — **7.0.0** dopo la rinumerazione di §6 — con otto voci (F52-F57, F59, F60). **Questo
 documento non la sostituisce**: risponde alla domanda che la precede — *una GUI compromette le
 prestazioni e la robustezza, che restano la priorità assoluta?* — e spiega come muoversi se la
 risposta è no.
@@ -576,11 +584,12 @@ tray, multi-finestra, dialoghi di file, workflow da tastiera. Per quelle sono pi
 
 ## Riferimenti
 
-- [`ROADMAP.md`](ROADMAP.md) — milestone **7.0.0** interfaccia grafica (F52-F57, F59, F60) e i
+- [`ROADMAP.md`](../../ROADMAP.md) — milestone **7.0.0** interfaccia grafica (F52-F57, F59, F60) e i
   suoi avvisi di sicurezza; **8.0.0** motore controllabile condizionale (F47, F48, F58); backlog
   indipendente (F46, F49, F50, F51)
-- [`AGENTS.md`](AGENTS.md) — regole 8 (feature-gate, il modello del gate di §4.2), 12 (exit code), 16 (metadati fuori da `--dest`)
-- [`ANALYSIS.md`](ANALYSIS.md) — D14 (scrittura atomica), D18 (il costo del lavoro per-file), D20/D21 (disciplina di memoria)
-- [`ARCHITECTURE.md`](ARCHITECTURE.md) — struttura attuale del package singolo che F52 ristruttura
-- [`VALUTAZIONE_AI.md`](VALUTAZIONE_AI.md) — i divieti su operazioni distruttive, validi per qualunque superficie automatica, GUI inclusa
-- [`docs/cli-reference.md`](docs/cli-reference.md) — flag ed exit code che la GUI deve rispettare
+- [`AGENTS.md`](../../AGENTS.md) — regole 8 (feature-gate, il modello del gate di §4.2), 12 (exit code), 16 (metadati fuori da `--dest`)
+- [`ANALYSIS.md`](../../ANALYSIS.md) — D14 (scrittura atomica), D18 (il costo del lavoro per-file), D20/D21 (disciplina di memoria)
+- [`ARCHITECTURE.md`](../../ARCHITECTURE.md) — struttura attuale del package singolo che F52 ristruttura
+- [`VALUTAZIONE_AI.md`](../../VALUTAZIONE_AI.md) — i divieti su operazioni distruttive, validi per qualunque superficie automatica, GUI inclusa
+- [`docs/cli-reference.md`](../cli-reference.md) — flag ed exit code che la GUI deve rispettare
+- [`../../PIANO_GUI.md`](../../PIANO_GUI.md) — il piano attivo che ha sostituito questo documento

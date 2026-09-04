@@ -5,4 +5,4 @@
 
 # Subdirectories
 
-* [archive](archive/index.md) - Contains 2 entries: Piano di Implementazione — AgentHarnesses (agentharnesses.io), Piano di Implementazione — Notify Server (axum).
+* [archive](archive/index.md) - Contains 3 entries: Piano di Implementazione — AgentHarnesses (agentharnesses.io), Come procedere con la GUI Tauri — piano operativo e vincoli, Piano di Implementazione — Notify Server (axum).
