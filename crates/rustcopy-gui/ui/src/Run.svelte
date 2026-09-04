@@ -16,6 +16,10 @@
   // once per "Esamina", advisory only. Never blocks starting a job, never offers to touch a
   // schedule from here (F61's prohibitions apply to this console as a whole).
   let existingSchedules = $state([]);
+  // Onda 3: checkpoints found beside the config, read once per "Esamina" like the schedule badge
+  // above. Independent of `jobs` on purpose — a checkpoint's own existence does not depend on the
+  // config still parsing the same way it did when the interrupted run wrote it.
+  let checkpoints = $state([]);
 
   // The batch position last seen in a live progress sample. Held apart from `status` itself
   // because `run_status`'s finished branch clears `progress` entirely — without this, the queue
@@ -95,6 +99,28 @@
       existingSchedules = await invoke("schedules_referencing", { configPath: session.configPath });
     } catch {
       existingSchedules = [];
+    }
+    // Same tolerance: a directory that cannot be scanned (permissions, a network share gone
+    // missing) is "no checkpoints found", not a reason to fail the whole examination.
+    try {
+      checkpoints = await invoke("list_checkpoints", { configPath: session.configPath });
+    } catch {
+      checkpoints = [];
+    }
+  }
+
+  async function resumeJob(checkpoint) {
+    error = null;
+    busy = true;
+    wasStopped = false;
+    try {
+      status = await invoke("resume_job", { checkpointPath: checkpoint.path });
+      rememberBatchPosition(status);
+      poll();
+    } catch (e) {
+      error = String(e);
+    } finally {
+      busy = false;
     }
   }
 
@@ -203,6 +229,42 @@
     >
       {error}
     </p>
+  {/if}
+
+  {#if checkpoints.length > 0}
+    <div class="mt-3 rounded border border-slate-300 p-2 dark:border-slate-700">
+      <p class="text-xs font-semibold uppercase tracking-wide text-slate-500">
+        {checkpoints.length === 1 ? "Ripresa disponibile" : "Riprese disponibili"}
+      </p>
+      <p class="mt-0.5 text-[11px] text-slate-500">
+        Run interrotte che hanno scritto un checkpoint in questa cartella. Riprendere continua nella
+        stessa direzione sorgente→destinazione, con pattern, thread, tentativi e verifica
+        dell'interruzione — <strong>non</strong> il resto della configurazione originale (limite
+        di quota, esclusioni, algoritmo di hash, mirror inclusi: D25 in ANALYSIS.md). Una ripresa
+        può quindi girare più permissiva o più veloce dell'originale, mai più distruttiva.
+      </p>
+      <ul class="mt-2 space-y-1.5">
+        {#each checkpoints as checkpoint}
+          <li class="flex items-center justify-between gap-2 rounded border border-slate-200 px-2 py-1
+                     text-xs dark:border-slate-800">
+            <div class="min-w-0">
+              <p class="font-mono truncate" title="{checkpoint.source} → {checkpoint.dest}">
+                {checkpoint.source} → {checkpoint.dest}
+              </p>
+              <p class="text-[11px] text-slate-500">
+                {new Date(checkpoint.timestamp).toLocaleString("it-IT")} — {checkpoint.reason}
+              </p>
+            </div>
+            <button
+              class="shrink-0 rounded border border-slate-300 px-2 py-1 text-[11px]
+                     disabled:opacity-40 dark:border-slate-700"
+              onclick={() => resumeJob(checkpoint)}
+              disabled={busy || status?.running}
+            >Riprendi</button>
+          </li>
+        {/each}
+      </ul>
+    </div>
   {/if}
 
   {#if jobs.length > 0}
@@ -353,6 +415,7 @@
       lines={[
         "Questa scheda avvia la stessa CLI che eseguirebbe un'attività pianificata, come processo separato: un job si comporta allo stesso modo che lo lanci tu o Task Scheduler.",
         "Non può accendere il mirror, forzare un purge, installare servizi o pianificazioni: la lista degli argomenti è costruita nel core con una forma fissa, e un test verifica che quei flag non possano comparire.",
+        "Se una run interrotta ha scritto un checkpoint in questa cartella, questa scheda lo trova e propone di riprenderla.",
         "A run conclusa, apri il report che ha prodotto nella scheda Report.",
       ]}
     />

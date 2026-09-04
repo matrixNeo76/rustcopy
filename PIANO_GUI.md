@@ -252,7 +252,7 @@ sorgente attuale, non contro la memoria di quando furono scritti.
 9. **Interruttore VSS in Modifica** — *dopo* aver aggiunto `vss_snapshot: Option<bool>` a
    `JobConfig` lato core (non lavoro di frontend, vedi §5f). Fino ad allora questo punto resta bloccato.
 
-### Onda 3 — Valore alto, richiede una decisione esplicita prima di progettare 🔴 **non iniziata**
+### Onda 3 — Valore alto, richiede una decisione esplicita prima di progettare 🟠 **1 su 3 fatta**
 
 10. **Flusso di ripristino guidato (`--restore-from`)** — la lacuna più sentita, ma `--restore-from`
     inverte sorgente e destinazione e può sovrascrivere dati: prima di un solo pixel di disegno serve
@@ -261,10 +261,19 @@ sorgente attuale, non contro la memoria di quando furono scritti.
     può proporre il ripristino, non forzarlo). Proposta di massima: elenco dei report disponibili →
     anteprima di cosa verrebbe ripristinato (letta, non eseguita) → conferma esplicita → avvio via
     `start_job` con un `--config` derivato, mai un flag forzato in `run_arguments`.
-11. **Ripresa da checkpoint (`--resume-from`)** — stesso pattern del punto 10 ma rischio minore
-    (non inverte sorgente/destinazione): elenco dei checkpoint `.checkpoint.json` trovati accanto ai
-    report, avvio della stessa CLI con `--resume-from` risolto dal core (`checkpoint::build_resume_args`,
-    già esistente), mai costruito lato frontend.
+11. ✅ **Fatto 4 Set 2026.** **Ripresa da checkpoint (`--resume-from`)** — nella scheda Esegui, sotto
+    "Riprese disponibili": `gui_api::list_checkpoints` scansiona la cartella del config per
+    `*.checkpoint.json` (non calcola un percorso atteso — un `--report-path` può essere
+    namespacizzato per job o portare `{timestamp}`, quindi non c'è un unico percorso da ricostruire
+    senza duplicare quella logica), `resume_job` avvia la stessa CLI con `runner::resume_arguments`
+    (`--resume-from`, forma fissa come `run_arguments`, proprio test F61). Verificato contro un
+    trasferimento reale interrotto a metà: la ripresa completa i file restanti e la verifica
+    d'integrità passa. **Trovato in verifica, non nel disegno**: la ripresa porta con sé solo
+    pattern/thread/tentativi/verifica dell'interruzione, non il resto della configurazione originale
+    (limite di banda, esclusioni, algoritmo di hash, mirror inclusi) — comportamento preesistente di
+    `checkpoint::build_resume_args`, non introdotto qui, ma mai dichiarato prima d'ora. Dichiarato
+    nel testo della console e in `ANALYSIS.md` (D25, aperto, non bloccante: l'asimmetria gioca quasi
+    sempre a favore della sicurezza, mai verso il distruttivo).
 12. **Scrittura di `webhook_url`/`pre_command`/`post_command` in Modifica (F55, metà in scrittura)** —
     **non la marco pronta**: la porto qui esattamente perché ROADMAP la lascia esplicitamente non
     decisa, con la ragione già scritta (avviso 2, script + servizio privilegiato = escalation locale).
@@ -451,17 +460,19 @@ Una tabella sola per la domanda "a che punto siamo", sulle due dimensioni di que
 | Funzionale — Onda 2 | Coda job (F49), credenziali in Impostazioni (F56) | ✅ **2/2 fatte** | PR #73, #74 |
 | Funzionale — Onda 2 | Interruttore VSS in Modifica | ⛔ **bloccata** | Serve prima `vss_snapshot: Option<bool>` su `JobConfig` lato core — non è lavoro di frontend |
 | Funzionale — Onda 3 | Flusso di ripristino guidato (`--restore-from`) | 🔴 **proposta, non iniziata** | La lacuna più sentita; richiede un disegno di conferma esplicita prima di qualunque riga |
-| Funzionale — Onda 3 | Ripresa da checkpoint (`--resume-from`) | 🔴 **proposta, non iniziata** | Rischio minore del ripristino; pattern già pronto lato core (`checkpoint::build_resume_args`) |
+| Funzionale — Onda 3 | Ripresa da checkpoint (`--resume-from`) | ✅ **fatta 4 Set 2026** | Verificata contro un trasferimento reale interrotto; limite noto dichiarato (D25) — la ripresa non eredita tutta la configurazione originale |
 | Funzionale — Onda 3 | Scrittura di webhook/script pre-post in Modifica | 🔴 **proposta, bloccata da una decisione di sicurezza** | Morde il vincolo permanente 2 (§2.3); serve una decisione esplicita prima del disegno |
 | Visivo — Livello 1 | 5 correzioni puntuali (contenimento layout, colonne tabella, badge provenienza, traduzione stringhe, collegamento run→report) | 🔴 **proposto, non iniziato** | Nessun rischio, poche righe ciascuna — il punto di partenza più ovvio |
 | Visivo — Livello 2 | Sistema di design minimo (scala tipografica, card, icone, larghezza campi editor) | 🔴 **proposto, non iniziato** | Tocca ogni scheda ma senza logica nuova; la voce icone è la causa singola più citata nel giudizio "spartana" |
 | Visivo — Livello 3 | Sidebar di navigazione, dimensione finestra, empty state con ancora visiva | 🔴 **proposto, richiede una decisione di design** | Struttura, non solo stile — da discutere prima di disegnare |
 | Difetto trovato per strada | D24 — console che lampeggiava (`schtasks.exe` senza `CREATE_NO_WINDOW`) | ✅ **corretto** | Non era nel piano: scoperto durante l'audit visivo, non una scelta di design |
+| Difetto trovato per strada | D25 — la ripresa non eredita quasi nessuna impostazione originale (solo mirror ne beneficia) | 🟡 **aperto, non bloccante** | Trovato verificando la ripresa contro un trasferimento reale; comportamento preesistente di `checkpoint.rs`, non introdotto dalla console |
 
-**In una frase**: la parte fondativa e funzionale a rischio basso/medio è quasi tutta fatta (11 voci
-su 13, le due mancanti bloccate da una decisione esplicita più che da lavoro); la parte a valore più
-alto — Onda 3 funzionale e l'intero rifacimento visivo — è tutta ancora da fare, ed è lì che si
-gioca sia "sembra ancora spartana" sia le lacune che gli operatori sentono di più.
+**In una frase**: la parte fondativa e funzionale a rischio basso/medio è quasi tutta fatta — Onda 1
+e 2 chiuse, e ora anche la ripresa da checkpoint (Onda 3); le due voci rimaste bloccate (VSS, script
+in scrittura) lo sono per una decisione esplicita da prendere, non per lavoro mancante. La parte a
+valore più alto ancora da fare è il ripristino guidato e l'intero rifacimento visivo — ed è lì che
+si gioca sia "sembra ancora spartana" sia le lacune che gli operatori sentono di più.
 
 ## Riferimenti
 

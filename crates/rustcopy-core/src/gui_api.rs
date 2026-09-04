@@ -1,8 +1,8 @@
-//! Read-only, serializable views for a user interface (Passo 3 of `PIANO_GUI_TAURI.md`, F53).
+//! Read-only, serializable views for a user interface (Passo 3 of `docs/archive/PIANO_GUI_TAURI.md`, F53).
 //!
 //! This module exists so the Tauri commands of `crates/rustcopy-gui` can be **thin wrappers**: a
 //! `#[tauri::command]` should call one function here and hand back what it returns, nothing more.
-//! That is `PIANO_GUI_TAURI.md` §4.1 made mechanical rather than aspirational — if the judgement
+//! That is `docs/archive/PIANO_GUI_TAURI.md` §4.1 made mechanical rather than aspirational — if the judgement
 //! lives in Rust and is tested here, the frontend has nothing left to decide.
 //!
 //! It is deliberately **stack-agnostic**: nothing here knows about Tauri, and it compiles and is
@@ -37,6 +37,7 @@ use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
 
+use crate::checkpoint::Checkpoint;
 use crate::config::{IngestConfig, JobConfig};
 use crate::errors::IngestError;
 use crate::history::{RunHistory, RunRecord, DEFAULT_HISTORY_WINDOW};
@@ -262,10 +263,81 @@ pub fn read_advice(
 
 /// Scheduled tasks (Windows Task Scheduler) whose command line references `config_path` —
 /// read-only, for the console's "does a schedule already point at this file" badge
-/// (PIANO_GUI_ESPANSIONE.md, Onda 1). Answers a question, never acts on one: there is no
+/// (PIANO_GUI.md, Onda 1). Answers a question, never acts on one: there is no
 /// install/uninstall path through this function or anything that calls it.
 pub fn schedules_referencing(config_path: &Path) -> Result<Vec<String>, IngestError> {
     crate::schedule::referencing_config(config_path)
+}
+
+/// A checkpoint (`checkpoint::Checkpoint`) found on disk, with the path it was read from — needed
+/// to resume it later, since [`Checkpoint`] itself carries no notion of where it lives.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CheckpointSummary {
+    /// Absolute path to the `*.checkpoint.json` file — what `start_resume`/`resume_arguments`
+    /// need, since resuming means passing this exact path to `--resume-from`.
+    pub path: String,
+    pub timestamp: chrono::DateTime<chrono::Utc>,
+    pub source: String,
+    pub dest: String,
+    /// Why the checkpoint was written, e.g. `"interrupted by Ctrl+C"` — shown verbatim, not
+    /// interpreted: the reason string is written once, at the point of interruption, and nothing
+    /// here has more information about it than that.
+    pub reason: String,
+}
+
+/// Checkpoints found directly inside `dir` — for Onda 3's "elenco dei checkpoint trovati accanto
+/// ai report" (`PIANO_GUI.md`). Deliberately a directory scan rather than computing one expected
+/// path per job: a job's effective `--report-path` can be namespaced per job (F33/D12) or carry a
+/// `{timestamp}` placeholder resolved fresh on every run (P1), so there is no single path to
+/// compute from a config alone without duplicating that resolution logic here — and every
+/// duplicated judgement is a second place for it to drift from `main.rs`'s real behaviour.
+/// Scanning for what is actually on disk sidesteps the whole problem: a checkpoint's own
+/// `source`/`dest`/`timestamp` say what it is, read directly from the file, not inferred from a
+/// job's current configuration (which may have changed since the checkpoint was written).
+///
+/// Sorted newest first. A checkpoint that fails to parse (partial write, unrelated `.checkpoint.json`
+/// left by something else) is silently skipped rather than failing the whole listing — the same
+/// tolerance `IngestCache::load_from` and `RunHistory`'s skipped-line handling already apply to
+/// other best-effort, non-critical reads; one unreadable file must not hide every other real one.
+pub fn list_checkpoints(dir: &Path) -> Result<Vec<CheckpointSummary>, IngestError> {
+    let mut found = Vec::new();
+    let entries = match std::fs::read_dir(dir) {
+        Ok(entries) => entries,
+        // A directory that does not exist yet (a config that has never produced a checkpoint) is
+        // "no checkpoints", not an error — the caller does not need to check first.
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(found),
+        Err(error) => return Err(IngestError::io(dir, error)),
+    };
+
+    for entry in entries.flatten() {
+        let path = entry.path();
+        if path.extension().and_then(|ext| ext.to_str()) != Some("json") {
+            continue;
+        }
+        if !path
+            .file_name()
+            .and_then(|name| name.to_str())
+            .is_some_and(|name| name.ends_with(".checkpoint.json"))
+        {
+            continue;
+        }
+        let Ok(content) = std::fs::read_to_string(&path) else {
+            continue;
+        };
+        let Ok(checkpoint) = serde_json::from_str::<Checkpoint>(&content) else {
+            continue;
+        };
+        found.push(CheckpointSummary {
+            path: path.display().to_string(),
+            timestamp: checkpoint.timestamp,
+            source: checkpoint.source,
+            dest: checkpoint.dest,
+            reason: checkpoint.reason,
+        });
+    }
+
+    found.sort_by_key(|entry| std::cmp::Reverse(entry.timestamp));
+    Ok(found)
 }
 
 /// Stores `secret` under `name` in the Windows Credential Manager (F56's `keyring:NAME` form) —
@@ -430,7 +502,7 @@ pub struct SettingEntry {
     /// True when `value` is **not** the stored value, only enough of it to be recognised.
     pub redacted: bool,
     /// Why this setting deserves a second look, when it does. A judgement about backup semantics,
-    /// so it is made here and not in the frontend (`PIANO_GUI_TAURI.md` §4.1).
+    /// so it is made here and not in the frontend (`docs/archive/PIANO_GUI_TAURI.md` §4.1).
     pub caution: Option<String>,
 }
 
@@ -1542,5 +1614,93 @@ webhook_url = \"https://u:p@notify.internal\"
         let json = serde_json::to_string(&all).expect("JobSettings must serialize");
         let back: Vec<JobSettings> = serde_json::from_str(&json).expect("and round-trip");
         assert_eq!(back, all);
+    }
+
+    fn write_checkpoint(dir: &std::path::Path, name: &str, when: chrono::DateTime<chrono::Utc>) {
+        use clap::Parser;
+        let mut args = crate::cli::Args::try_parse_from([
+            "robocopy_ingest",
+            "--source",
+            "D:/src",
+            "--dest",
+            "E:/dst",
+        ])
+        .expect("parse");
+        // Only reachable via `--restore-from`/`--resume-from` in the real CLI, but the accessors
+        // this test needs are private to `cli.rs` beyond the struct fields themselves — setting
+        // them directly is fine inside this crate.
+        args.source = Some(std::path::PathBuf::from("D:/src"));
+        args.dest = Some(std::path::PathBuf::from("E:/dst"));
+        let mut checkpoint = Checkpoint::new(&args, "interrupted by Ctrl+C");
+        checkpoint.timestamp = when;
+        checkpoint
+            .write_to(&dir.join(name))
+            .expect("write checkpoint fixture");
+    }
+
+    /// A directory with no checkpoints (and one that does not exist at all) is "nothing found",
+    /// not an error — the caller should not have to check existence first.
+    #[test]
+    fn list_checkpoints_on_a_missing_directory_is_empty_not_an_error() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let missing = dir.path().join("does-not-exist");
+
+        let found = list_checkpoints(&missing).expect("missing dir is not an error");
+        assert!(found.is_empty());
+    }
+
+    /// Newest first — an operator resuming interrupted work almost always wants the most recent
+    /// interruption, not whichever the filesystem happened to enumerate first.
+    #[test]
+    fn list_checkpoints_sorts_newest_first() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let older = chrono::DateTime::parse_from_rfc3339("2026-09-01T00:00:00Z")
+            .expect("valid")
+            .with_timezone(&chrono::Utc);
+        let newer = chrono::DateTime::parse_from_rfc3339("2026-09-03T00:00:00Z")
+            .expect("valid")
+            .with_timezone(&chrono::Utc);
+        write_checkpoint(dir.path(), "a.checkpoint.json", older);
+        write_checkpoint(dir.path(), "b.checkpoint.json", newer);
+
+        let found = list_checkpoints(dir.path()).expect("reads");
+        assert_eq!(found.len(), 2);
+        assert_eq!(found[0].timestamp, newer);
+        assert_eq!(found[1].timestamp, older);
+    }
+
+    /// A file that is not a checkpoint at all (a report, a random `.json`, a `.checkpoint.json`
+    /// left over from a build that no longer parses) must not hide the real ones next to it — one
+    /// unreadable file is not a reason to report zero resumable runs.
+    #[test]
+    fn list_checkpoints_skips_unrelated_and_unparseable_json_silently() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        write_checkpoint(dir.path(), "good.checkpoint.json", chrono::Utc::now());
+        std::fs::write(
+            dir.path().join("report.json"),
+            b"{\"not\":\"a checkpoint\"}",
+        )
+        .expect("write");
+        std::fs::write(
+            dir.path().join("broken.checkpoint.json"),
+            b"not json at all",
+        )
+        .expect("write");
+
+        let found = list_checkpoints(dir.path()).expect("reads despite the two bad files");
+        assert_eq!(found.len(), 1);
+        assert_eq!(found[0].source, "D:/src");
+    }
+
+    #[test]
+    fn checkpoint_summary_serializes_to_json() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        write_checkpoint(dir.path(), "a.checkpoint.json", chrono::Utc::now());
+
+        let found = list_checkpoints(dir.path()).expect("reads");
+        let json = serde_json::to_string(&found).expect("CheckpointSummary must serialize");
+        let back: Vec<CheckpointSummary> = serde_json::from_str(&json).expect("round-trip");
+        assert_eq!(back.len(), 1);
+        assert_eq!(back[0].dest, "E:/dst");
     }
 }
