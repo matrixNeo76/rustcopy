@@ -55,6 +55,22 @@ jobs:
       - name: cargo clippy (notify-server feature)
         run: cargo clippy --locked --workspace --exclude rustcopy-gui --all-targets --features rustcopy-cli/notify-server -- -D warnings
 
+      # clippy::unwrap_used/expect_used are allow-by-default "restriction" lints, so `-D warnings`
+      # alone never catches a new unwrap()/expect() — they have to be turned on explicitly first
+      # (order matters: -D warnings promotes whatever is at warn-level *at that point*, so the -W
+      # flags must come before it). Deliberately `--lib --bins`, not `--all-targets`/the two steps
+      # above: test code legitimately unwraps everywhere (that's idiomatic, not a defect), and
+      # linting it here was tried first — it hit ~560 pre-existing call sites in the test suite
+      # alone. Scoping to production code only is what makes this gate about the 24 real call
+      # sites (each carrying its own #[allow(...)] with a one-line reason) instead of the whole
+      # test suite. Every crate needs its own line: `-p` here (unlike `--workspace` above) doesn't
+      # merge, and rustcopy-gui has no lib target, hence `--bins` alone for it below.
+      - name: cargo clippy (unwrap/expect discipline, production code only)
+        run: |
+          cargo clippy --locked -p rustcopy-core --lib --bins -- -W clippy::unwrap_used -W clippy::expect_used -D warnings
+          cargo clippy --locked -p rustcopy-cli --bins -- -W clippy::unwrap_used -W clippy::expect_used -D warnings
+          cargo clippy --locked -p rustcopy-cli --bins --features notify-server -- -W clippy::unwrap_used -W clippy::expect_used -D warnings
+
       - name: cargo test (default features)
         run: cargo test --locked --workspace --exclude rustcopy-gui --all-targets
 
@@ -166,7 +182,7 @@ jobs:
         run: cargo check --locked -p rustcopy-gui --all-targets
 
       - name: cargo clippy (GUI crate)
-        run: cargo clippy --locked -p rustcopy-gui --all-targets -- -D warnings
+        run: cargo clippy --locked -p rustcopy-gui --all-targets -- -W clippy::unwrap_used -W clippy::expect_used -D warnings
 
   # PIANO_GUI_TAURI.md §8.6: the Rust dependencies have `cargo audit` in security-audit.yml; the
   # npm ones that arrived with the frontend need the equivalent. Kept in the ordinary CI rather

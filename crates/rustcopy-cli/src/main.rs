@@ -63,6 +63,9 @@ fn main() -> ExitCode {
         };
     }
 
+    // Nothing meaningful to do if the OS won't hand out a runtime (no threads, no epoll/IOCP) —
+    // there's no smaller-scope fallback to degrade to this early, before a single flag is parsed.
+    #[allow(clippy::expect_used)]
     let runtime = tokio::runtime::Runtime::new().expect("failed to build the tokio async runtime");
     runtime.block_on(async_main())
 }

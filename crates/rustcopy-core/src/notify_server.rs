@@ -166,6 +166,9 @@ pub async fn serve_until_shutdown_or(
 }
 
 async fn shutdown_signal() {
+    // Only fails if the OS refuses to hand out a signal handler at all — nothing this server
+    // could degrade to gracefully; the alternative is running with no way to shut down cleanly.
+    #[allow(clippy::expect_used)]
     let ctrl_c = async {
         tokio::signal::ctrl_c()
             .await

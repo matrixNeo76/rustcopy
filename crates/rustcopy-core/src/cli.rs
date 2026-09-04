@@ -542,6 +542,7 @@ impl Args {
     /// isn't short-circuited by restore mode (`validate()` returns early for that case, and
     /// `restore::build_restore_args` always supplies both paths explicitly), so this is an
     /// invariant violation, not a user-facing error, if it ever fires.
+    #[allow(clippy::expect_used)]
     pub fn source(&self) -> &Path {
         self.source
             .as_deref()
@@ -549,6 +550,7 @@ impl Args {
     }
 
     /// Real path to the destination directory. See [`Self::source`] for the invariant.
+    #[allow(clippy::expect_used)]
     pub fn dest(&self) -> &Path {
         self.dest
             .as_deref()

@@ -506,6 +506,9 @@ fn read_progress(
     robocopy_ingest::progress_file::ProgressSample::read_from(&path)
 }
 
+// Tauri's own idiomatic entry point: `run` only returns `Err` for a launch failure (no
+// WebView2, corrupt bundle) that leaves nothing else to do but report it and exit.
+#[allow(clippy::expect_used)]
 fn main() {
     tauri::Builder::default()
         .manage(RunState::default())
