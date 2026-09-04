@@ -20,6 +20,16 @@
 
   const PAGE = 100;
 
+  // `report.integrity_status` is `format!("{:?}", IntegrityStatus)` from the core — a small,
+  // stable, closed enum (`integrity.rs`: exactly Passed/Failed), so translating the label here is
+  // a display choice, not a judgement the frontend is making about backup semantics. Unlike
+  // `exit_code_meaning` below: that one is robocopy's own bitmask description assembled from up to
+  // five composable English phrases ("files copied; extra files or directories detected; …",
+  // `exit_code.rs::RobocopyStatus::describe`), not a fixed small vocabulary — a lookup table keyed
+  // on the wrong shape of string here was caught before shipping (Livello 1, punto 4,
+  // PIANO_GUI.md §10) and deliberately left in English rather than mistranslated.
+  const INTEGRITY_LABEL = { Passed: "superata", Failed: "fallita" };
+
   async function load(from = 0) {
     error = null;
     loading = true;
@@ -40,6 +50,18 @@
       loading = false;
     }
   }
+
+  // "Apri il report di questa run" (Esegui, Livello 1 punto 5, PIANO_GUI.md §10) sets
+  // `session.reportPath` and this flag together, then switches here. A one-shot signal consumed
+  // immediately rather than a live binding on `reportPath` itself — this pane stays mounted even
+  // while hidden (App.svelte), so watching the path directly would reload on every keystroke of
+  // someone typing a path by hand in this very pane, not just on an actual cross-pane jump.
+  $effect(() => {
+    if (session.pendingReportLoad) {
+      session.pendingReportLoad = false;
+      load(0);
+    }
+  });
 
   function bytes(value) {
     if (value < 1024) return `${value} B`;
@@ -162,7 +184,7 @@
         <p class="text-slate-500">Verifica</p>
         <!-- Absent is not the same as passed: a run without --verify-integrity compared nothing,
              and rendering that as a blank cell would read like a clean result. -->
-        <p class="font-mono">{report.integrity_status ?? "non eseguita"}</p>
+        <p class="font-mono">{INTEGRITY_LABEL[report.integrity_status] ?? report.integrity_status ?? "non eseguita"}</p>
       </div>
     </div>
 

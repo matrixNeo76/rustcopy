@@ -197,7 +197,17 @@
     {:else if filteredRuns.length === 0}
       <p class="mt-1 text-sm text-slate-500">Nessuna run corrisponde al filtro scelto.</p>
     {:else}
-      <table class="mt-1 w-full text-left text-xs">
+      <table class="mt-1 w-full table-fixed text-left text-xs">
+        <!-- Explicit widths (Livello 1, punto 2, PIANO_GUI.md §10): the default table layout put
+             nearly half the row into "Quando" while "Durata"/"Throughput" stayed cramped, with no
+             relation to what either actually needs. -->
+        <colgroup>
+          <col class="w-[20%]" />
+          <col class="w-[38%]" />
+          <col class="w-[14%]" />
+          <col class="w-[14%]" />
+          <col class="w-[14%]" />
+        </colgroup>
         <thead class="border-b border-slate-300 dark:border-slate-700">
           <tr>
             <th class="py-1 pr-3 font-medium">Quando</th>

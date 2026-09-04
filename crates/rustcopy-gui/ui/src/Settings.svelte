@@ -139,7 +139,14 @@
                       {entry.key}
                     </td>
                     <td class="py-1 pr-3">
+                      <!-- Origin badge inline with the value it describes, not in its own column
+                           at the far right — on a wide window that put it ~1300px from the value
+                           it labels, forcing a full-width eye movement per row for no reason
+                           (Livello 1, punto 3, PIANO_GUI.md §10). -->
                       <span class="font-mono">{entry.value}</span>
+                      <span class="ml-1.5 rounded px-1 text-[10px] font-semibold {ORIGIN_CLASS[entry.origin]}">
+                        {ORIGIN_LABEL[entry.origin]}
+                      </span>
                       {#if entry.redacted}
                         <!-- The value shown is not the stored one. Saying so is the difference
                              between a redaction and a wrong reading of the file. -->
@@ -150,11 +157,6 @@
                           {entry.caution}
                         </p>
                       {/if}
-                    </td>
-                    <td class="w-24 py-1 text-right">
-                      <span class="rounded px-1 text-[10px] font-semibold {ORIGIN_CLASS[entry.origin]}">
-                        {ORIGIN_LABEL[entry.origin]}
-                      </span>
                     </td>
                   </tr>
                 {/each}

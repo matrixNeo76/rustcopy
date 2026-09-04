@@ -79,6 +79,30 @@
   const mirrorJobs = $derived(jobs.filter((job) => job.mirror).map((job) => job.name));
   const unconfigured = $derived(jobs.filter((job) => job.unconfigured).map((job) => job.name));
 
+  // Livello 1, punto 5 (PIANO_GUI.md §10): a finished run's own report is one click away instead
+  // of retyping or re-browsing to a path the console already knows. Deliberately narrow — only
+  // when there is exactly one job (a batch has one report per job, and guessing which one just
+  // finished is exactly the guess §7's queue view already refuses to make), the status still
+  // belongs to the config currently open here (not a checkpoint resume, whose config_path is the
+  // checkpoint's own path), and `report_path` is non-null (gui_api::list_jobs already declines to
+  // guess one that still carries {timestamp}, resolved fresh per run — see its own doc comment).
+  const finishedRunReportPath = $derived(
+    !status?.running &&
+      status?.exit_code !== null &&
+      status?.exit_code !== undefined &&
+      status?.config_path === session.configPath &&
+      jobs.length === 1 &&
+      jobs[0]?.report_path
+      ? jobs[0].report_path
+      : null,
+  );
+
+  function openThisRunReport() {
+    session.reportPath = finishedRunReportPath;
+    session.pendingReportLoad = true;
+    session.activeTab = "report";
+  }
+
   async function inspect() {
     error = null;
     busy = true;
@@ -358,6 +382,13 @@
                schedulers, not a label this pane invents. -->
           {status.meaning}
         </span>
+      {/if}
+
+      {#if finishedRunReportPath}
+        <button
+          class="rounded border border-slate-300 px-2 py-0.5 text-[11px] dark:border-slate-700"
+          onclick={openThisRunReport}
+        >Apri il report di questa run</button>
       {/if}
     </div>
 

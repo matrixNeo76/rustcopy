@@ -379,23 +379,37 @@ Diviso per rischio/sforzo come le tre onde funzionali di §8, ma ortogonale ad e
 voci tocca `runner.rs`, `job_editor.rs` o il confine F61 — sono tutte CSS/markup/organizzazione dei
 contenuti Svelte esistenti, non nuova superficie verso il core.
 
-### Livello 1 — correzioni puntuali, nessun rischio, poche righe ciascuna
+### Livello 1 — correzioni puntuali, nessun rischio, poche righe ciascuna ✅ **completato 4 Set 2026**
 
-1. **Contenere e centrare il contenuto** entro una larghezza massima leggibile (es. un contenitore
-   `max-w-6xl` centrato sul `<main>`), invece di lasciarlo ancorato in alto a sinistra su qualunque
-   larghezza di finestra. Risolve (a) alla radice con poche righe di CSS, senza toccare nessuna
-   scheda individualmente.
-2. **Colonne di tabella esplicite** (Job, Storico) invece di lasciare il motore di rendering
-   distribuire lo spazio in eccesso sulla prima colonna. Risolve (d).
-3. **Avvicinare il badge di provenienza** in Impostazioni al valore a cui appartiene — sulla stessa
-   riga del nome del campo invece che in una colonna a distanza fissa dal bordo destro. Risolve (e).
-4. **Tradurre `exit_code_meaning`/`integrity_status` in Report** con la stessa tabella `EXIT_MEANING`
-   già presente in `History.svelte` — da estrarre in un modulo condiviso, per non tenere due copie
-   che possono divergere. Risolve (f).
-5. **"Apri il report di questa run"** — un collegamento in Esegui che appare a run conclusa e
-   naviga a Report/Storico con `session.reportPath` già impostato dal `report_path` del job appena
-   eseguito. Risolve (g). Verificare prima se il percorso serve un piccolo campo aggiuntivo su
-   `RunStatus`/`gui_api`, o se è già derivabile da `jobs` (letto da `list_jobs`) senza toccare il core.
+1. ✅ **Contenere e centrare il contenuto** in un `<div class="mx-auto max-w-6xl">` attorno a
+   header e schede in `App.svelte`, invece di lasciarlo ancorato in alto a sinistra su qualunque
+   larghezza di finestra. Risolve (a) alla radice, senza toccare nessuna scheda individualmente.
+2. ✅ **Colonne di tabella esplicite** (`<colgroup>` con larghezze percentuali, `table-fixed`) in
+   Job e Storico, invece di lasciare il motore di rendering distribuire lo spazio in eccesso sulla
+   prima colonna. Risolve (d).
+3. ✅ **Badge di provenienza spostato accanto al valore** in Impostazioni — stessa cella, non più
+   una colonna a distanza fissa dal bordo destro. Risolve (e).
+4. 🟠 **Tradurre `integrity_status` in Report** — fatto: è `format!("{:?}", IntegrityStatus)`, un
+   enum chiuso a 2 valori (Passed/Failed), tradurlo è una scelta di rendering. **`exit_code_meaning`
+   non tradotto, di proposito**: verificando il codice si è scoperto che non è lo stesso tipo di
+   dato dell'`EXIT_MEANING` di Storico — è la descrizione bitmask nativa di robocopy
+   (`exit_code.rs::RobocopyStatus::describe`, una frase composta da fino a 5 frammenti inglesi
+   combinabili, non un codice fisso 0-5). Applicare la tabella sbagliata avrebbe dato
+   un'informazione fuorviante, non solo un'etichetta in inglese. Tradurlo davvero richiede o
+   esporre il codice numerico e duplicare la logica bitmask in JS (viola il vincolo permanente
+   "nessuna logica duplicata in TypeScript", §2.3) o una variante italiana lato core di
+   `describe()` — che tocca un campo del report JSON che *è* un contratto con gli scheduler (regola
+   12) e merita una decisione a sé, non una riga di Livello 1. Resta in inglese; non risolve (f)
+   per intero.
+5. ✅ **"Apri il report di questa run"** — collegamento in Esegui che appare a run conclusa (job
+   singolo, stato ancora quello del file caricato — mai per una ripresa da checkpoint, il cui
+   `config_path` è quello del checkpoint) e naviga a Report con `session.reportPath` già impostato
+   e il caricamento già avviato. Ha richiesto un piccolo campo aggiuntivo (`report_path` su
+   `JobSummary`, `gui_api.rs`): namespacizzato per job esattamente come `run_jobs` lo namespacizza
+   (`namespaced_path`, F33/D12, riusata non duplicata), `None` quando porta ancora `{timestamp}`
+   (P1) invece di indovinare un percorso che nessun calcolo a posteriori può prevedere. `tab` è
+   stato spostato da stato locale di `App.svelte` a `session.svelte.js` perché una scheda potesse
+   cambiarne un'altra. Risolve (g).
 
 ### Livello 2 — un sistema di design minimo, tocca ogni scheda ma senza logica nuova
 
@@ -462,7 +476,7 @@ Una tabella sola per la domanda "a che punto siamo", sulle due dimensioni di que
 | Funzionale — Onda 3 | Flusso di ripristino guidato (`--restore-from`) | 🔴 **proposta, non iniziata** | La lacuna più sentita; richiede un disegno di conferma esplicita prima di qualunque riga |
 | Funzionale — Onda 3 | Ripresa da checkpoint (`--resume-from`) | ✅ **fatta 4 Set 2026** | Verificata contro un trasferimento reale interrotto; limite noto dichiarato (D25) — la ripresa non eredita tutta la configurazione originale |
 | Funzionale — Onda 3 | Scrittura di webhook/script pre-post in Modifica | 🔴 **proposta, bloccata da una decisione di sicurezza** | Morde il vincolo permanente 2 (§2.3); serve una decisione esplicita prima del disegno |
-| Visivo — Livello 1 | 5 correzioni puntuali (contenimento layout, colonne tabella, badge provenienza, traduzione stringhe, collegamento run→report) | 🔴 **proposto, non iniziato** | Nessun rischio, poche righe ciascuna — il punto di partenza più ovvio |
+| Visivo — Livello 1 | 5 correzioni puntuali (contenimento layout, colonne tabella, badge provenienza, traduzione stringhe, collegamento run→report) | ✅ **4/5 fatte, 4 Set 2026** | La traduzione di `exit_code_meaning` non era fattibile come previsto — trovato verificando il codice, non un limite di sforzo (vedi §10 punto 4) |
 | Visivo — Livello 2 | Sistema di design minimo (scala tipografica, card, icone, larghezza campi editor) | 🔴 **proposto, non iniziato** | Tocca ogni scheda ma senza logica nuova; la voce icone è la causa singola più citata nel giudizio "spartana" |
 | Visivo — Livello 3 | Sidebar di navigazione, dimensione finestra, empty state con ancora visiva | 🔴 **proposto, richiede una decisione di design** | Struttura, non solo stile — da discutere prima di disegnare |
 | Difetto trovato per strada | D24 — console che lampeggiava (`schtasks.exe` senza `CREATE_NO_WINDOW`) | ✅ **corretto** | Non era nel piano: scoperto durante l'audit visivo, non una scelta di design |
@@ -470,9 +484,11 @@ Una tabella sola per la domanda "a che punto siamo", sulle due dimensioni di que
 
 **In una frase**: la parte fondativa e funzionale a rischio basso/medio è quasi tutta fatta — Onda 1
 e 2 chiuse, e ora anche la ripresa da checkpoint (Onda 3); le due voci rimaste bloccate (VSS, script
-in scrittura) lo sono per una decisione esplicita da prendere, non per lavoro mancante. La parte a
-valore più alto ancora da fare è il ripristino guidato e l'intero rifacimento visivo — ed è lì che
-si gioca sia "sembra ancora spartana" sia le lacune che gli operatori sentono di più.
+in scrittura) lo sono per una decisione esplicita da prendere, non per lavoro mancante. Il Livello 1
+del rifacimento visivo è chiuso a sua volta (4/5, l'unica eccezione per un motivo tecnico reale, non
+per pigrizia). Restano da fare il ripristino guidato e i Livelli 2-3 del rifacimento — sistema di
+design, icone, navigazione — che sono dove si gioca ancora "sembra spartana", visto che il Livello 1
+risolveva soprattutto lo spazio sprecato e non l'assenza di gerarchia visiva.
 
 ## Riferimenti
 
