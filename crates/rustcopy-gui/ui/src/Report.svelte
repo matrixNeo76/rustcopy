@@ -4,6 +4,7 @@
   import EmptyState from "./EmptyState.svelte";
   import { session } from "./session.svelte.js";
   import { toCsv, downloadCsv } from "./csv.js";
+  import { FileText, CircleCheck, CircleX } from "@lucide/svelte";
 
   // `read_report`/`read_report_page` existed in the core and on the IPC surface from F53 and no
   // pane ever called them: a complete report viewer with nothing attached to it. This is the pane.
@@ -143,48 +144,61 @@
   {/if}
 
   {#if report}
-    <div class="mt-4 grid grid-cols-2 gap-x-6 gap-y-1 text-xs md:grid-cols-4">
+    <div class="card mt-4 grid grid-cols-2 gap-x-6 gap-y-2 text-xs md:grid-cols-4">
       <div>
         <p class="text-slate-500">Quando</p>
-        <p class="font-mono">{new Date(report.timestamp).toLocaleString("it-IT")}</p>
+        <p class="font-mono text-sm">{new Date(report.timestamp).toLocaleString("it-IT")}</p>
       </div>
       <div>
         <p class="text-slate-500">Esito</p>
-        <p class="font-mono">{report.exit_code_meaning ?? "—"}</p>
+        <!-- No pass/fail icon here, deliberately: `exit_code_meaning` is robocopy's own open,
+             composable bitmask description (`RobocopyStatus::describe`), not a closed enum like
+             `integrity_status` below — `ReportView` does not even expose the numeric code to
+             derive one from. Same reasoning that kept this field untranslated (Livello 1, punto
+             4, PIANO_GUI.md §10): a fixed check/✕ here would claim a certainty the string itself
+             does not have. -->
+        <p class="font-mono text-sm">{report.exit_code_meaning ?? "—"}</p>
       </div>
       <div>
         <p class="text-slate-500">Durata</p>
-        <p class="font-mono">{duration(report.elapsed_seconds)}</p>
+        <p class="font-mono text-sm">{duration(report.elapsed_seconds)}</p>
       </div>
       <div>
         <p class="text-slate-500">Throughput</p>
-        <p class="font-mono">{report.throughput_mbps.toFixed(1)} MB/s</p>
+        <p class="font-mono text-sm">{report.throughput_mbps.toFixed(1)} MB/s</p>
       </div>
       <div class="col-span-2">
         <p class="text-slate-500">Sorgente</p>
-        <p class="truncate font-mono" title={report.source}>{report.source}</p>
+        <p class="truncate font-mono text-sm" title={report.source}>{report.source}</p>
       </div>
       <div class="col-span-2">
         <p class="text-slate-500">Destinazione</p>
-        <p class="truncate font-mono" title={report.dest}>{report.dest}</p>
+        <p class="truncate font-mono text-sm" title={report.dest}>{report.dest}</p>
       </div>
       <div>
         <p class="text-slate-500">File copiati</p>
-        <p class="font-mono">{report.files_copied} / {report.total_files}</p>
+        <p class="font-mono text-sm">{report.files_copied} / {report.total_files}</p>
       </div>
       <div>
         <p class="text-slate-500">Byte copiati</p>
-        <p class="font-mono">{bytes(report.bytes_copied)} / {bytes(report.total_bytes)}</p>
+        <p class="font-mono text-sm">{bytes(report.bytes_copied)} / {bytes(report.total_bytes)}</p>
       </div>
       <div>
         <p class="text-slate-500">Cifrato</p>
-        <p class="font-mono">{report.encrypted ? "sì" : "no"}</p>
+        <p class="font-mono text-sm">{report.encrypted ? "sì" : "no"}</p>
       </div>
       <div>
         <p class="text-slate-500">Verifica</p>
         <!-- Absent is not the same as passed: a run without --verify-integrity compared nothing,
              and rendering that as a blank cell would read like a clean result. -->
-        <p class="font-mono">{INTEGRITY_LABEL[report.integrity_status] ?? report.integrity_status ?? "non eseguita"}</p>
+        <p class="flex items-center gap-1 font-mono text-sm">
+          {#if report.integrity_status === "Passed"}
+            <CircleCheck size={14} strokeWidth={2} class="shrink-0 text-emerald-600 dark:text-emerald-400" aria-hidden="true" />
+          {:else if report.integrity_status === "Failed"}
+            <CircleX size={14} strokeWidth={2} class="shrink-0 text-amber-600 dark:text-amber-400" aria-hidden="true" />
+          {/if}
+          {INTEGRITY_LABEL[report.integrity_status] ?? report.integrity_status ?? "non eseguita"}
+        </p>
       </div>
     </div>
 
@@ -281,6 +295,7 @@
     {/if}
   {:else if !error}
     <EmptyState
+      icon={FileText}
       title="Scegli un report per vederne il dettaglio"
       lines={[
         "Ogni run conclusa scrive un report JSON (per impostazione predefinita ingest-report.json). Questa scheda ne mostra esito, volumi, durata e i file che la verifica ha segnalato.",

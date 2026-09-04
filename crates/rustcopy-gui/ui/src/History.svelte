@@ -4,6 +4,7 @@
   import EmptyState from "./EmptyState.svelte";
   import { session } from "./session.svelte.js";
   import { toCsv, downloadCsv } from "./csv.js";
+  import { Clock, CircleCheck, CircleX } from "@lucide/svelte";
 
   // Read-only, like the rest of this version: this pane opens files the CLI already wrote and
   // renders them. It never asks the engine to do anything.
@@ -197,51 +198,61 @@
     {:else if filteredRuns.length === 0}
       <p class="mt-1 text-sm text-slate-500">Nessuna run corrisponde al filtro scelto.</p>
     {:else}
-      <table class="mt-1 w-full table-fixed text-left text-xs">
-        <!-- Explicit widths (Livello 1, punto 2, PIANO_GUI.md §10): the default table layout put
-             nearly half the row into "Quando" while "Durata"/"Throughput" stayed cramped, with no
-             relation to what either actually needs. -->
-        <colgroup>
-          <col class="w-[20%]" />
-          <col class="w-[38%]" />
-          <col class="w-[14%]" />
-          <col class="w-[14%]" />
-          <col class="w-[14%]" />
-        </colgroup>
-        <thead class="border-b border-slate-300 dark:border-slate-700">
-          <tr>
-            <th class="py-1 pr-3 font-medium">Quando</th>
-            <th class="py-1 pr-3 font-medium">Esito</th>
-            <th class="py-1 pr-3 font-medium">File</th>
-            <th class="py-1 pr-3 font-medium">Durata</th>
-            <th class="py-1 pr-3 font-medium">Throughput</th>
-          </tr>
-        </thead>
-        <tbody>
-          {#each [...filteredRuns].reverse() as run}
-            <tr class="border-b border-slate-200 dark:border-slate-800">
-              <td class="py-1 pr-3 font-mono">{new Date(run.timestamp).toLocaleString("it-IT")}</td>
-              <td class="py-1 pr-3">
-                <span
-                  class="rounded px-1 text-[10px] font-semibold
-                         {run.exit_code === 0
-                           ? 'bg-emerald-100 text-emerald-900 dark:bg-emerald-950 dark:text-emerald-200'
-                           : 'bg-red-100 text-red-900 dark:bg-red-950 dark:text-red-200'}"
-                >{run.exit_code} — {EXIT_MEANING[run.exit_code] ?? "sconosciuto"}</span>
-                {#if run.dry_run}
-                  <span class="ml-1 text-[10px] text-slate-500">dry-run</span>
-                {/if}
-              </td>
-              <td class="py-1 pr-3">{run.files_copied} / {run.total_files}</td>
-              <td class="py-1 pr-3">{duration(run.elapsed_seconds)}</td>
-              <td class="py-1 pr-3">{run.throughput_mbps.toFixed(1)} MB/s</td>
+      <div class="card overflow-x-auto p-0">
+        <table class="w-full table-fixed text-left text-xs">
+          <!-- Explicit widths (Livello 1, punto 2, PIANO_GUI.md §10): the default table layout put
+               nearly half the row into "Quando" while "Durata"/"Throughput" stayed cramped, with
+               no relation to what either actually needs. -->
+          <colgroup>
+            <col class="w-[20%]" />
+            <col class="w-[38%]" />
+            <col class="w-[14%]" />
+            <col class="w-[14%]" />
+            <col class="w-[14%]" />
+          </colgroup>
+          <thead class="border-b border-slate-300 dark:border-slate-700">
+            <tr>
+              <th class="py-1.5 pr-3 pl-3 font-medium">Quando</th>
+              <th class="py-1.5 pr-3 font-medium">Esito</th>
+              <th class="py-1.5 pr-3 font-medium">File</th>
+              <th class="py-1.5 pr-3 font-medium">Durata</th>
+              <th class="py-1.5 pr-3 font-medium">Throughput</th>
             </tr>
-          {/each}
-        </tbody>
-      </table>
+          </thead>
+          <tbody>
+            {#each [...filteredRuns].reverse() as run}
+              <tr class="border-b border-slate-200 last:border-0 dark:border-slate-800">
+                <td class="py-1 pr-3 pl-3 font-mono">{new Date(run.timestamp).toLocaleString("it-IT")}</td>
+                <td class="py-1 pr-3">
+                  <span
+                    class="inline-flex items-center gap-1 rounded px-1 text-[10px] font-semibold
+                           {run.exit_code === 0
+                             ? 'bg-emerald-100 text-emerald-900 dark:bg-emerald-950 dark:text-emerald-200'
+                             : 'bg-red-100 text-red-900 dark:bg-red-950 dark:text-red-200'}"
+                  >
+                    {#if run.exit_code === 0}
+                      <CircleCheck size={11} strokeWidth={2.25} aria-hidden="true" />
+                    {:else}
+                      <CircleX size={11} strokeWidth={2.25} aria-hidden="true" />
+                    {/if}
+                    {run.exit_code} — {EXIT_MEANING[run.exit_code] ?? "sconosciuto"}
+                  </span>
+                  {#if run.dry_run}
+                    <span class="ml-1 text-[10px] text-slate-500">dry-run</span>
+                  {/if}
+                </td>
+                <td class="py-1 pr-3">{run.files_copied} / {run.total_files}</td>
+                <td class="py-1 pr-3">{duration(run.elapsed_seconds)}</td>
+                <td class="py-1 pr-3">{run.throughput_mbps.toFixed(1)} MB/s</td>
+              </tr>
+            {/each}
+          </tbody>
+        </table>
+      </div>
     {/if}
   {:else if !error}
     <EmptyState
+      icon={Clock}
       title="Scegli un report per vedere lo storico delle run"
       lines={[
         "L'indice delle run vive accanto al report, non nella destinazione del backup: scriverci dentro cambierebbe la data della destinazione e la run successiva ricopierebbe file immutati.",

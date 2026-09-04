@@ -6,3 +6,13 @@
 :root {
   color-scheme: light dark;
 }
+
+/* Livello 2 (PIANO_GUI.md §10, punto 7): one place for "what a related group of content looks
+   like", instead of every pane re-deciding border/background/radius on its own — the audit's
+   own complaint (§9c) was that nothing in the app distinguished a section from the bg-slate-50
+   canvas behind it except the EmptyState's dashed border. */
+@layer components {
+  .card {
+    @apply rounded-lg border border-slate-200 bg-white p-3 dark:border-slate-800 dark:bg-slate-900;
+  }
+}

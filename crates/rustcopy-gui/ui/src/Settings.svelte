@@ -3,6 +3,7 @@
   import PathBar from "./PathBar.svelte";
   import EmptyState from "./EmptyState.svelte";
   import { session } from "./session.svelte.js";
+  import { SlidersHorizontal, KeyRound } from "@lucide/svelte";
 
   // The job-settings table below is read-only: it renders the TOML the CLI already reads and
   // changes nothing. F55's write surface (editing settings and scripts in place) is a separate,
@@ -122,7 +123,7 @@
     </label>
 
     {#each jobs as job (job.name)}
-      <article class="mt-4">
+      <article class="card mt-4">
         <h2 class="font-mono text-sm font-semibold">{job.name}</h2>
 
         {#each job.groups as group}
@@ -134,7 +135,7 @@
             <table class="mt-1 w-full text-left text-xs">
               <tbody>
                 {#each entries as entry}
-                  <tr class="border-b border-slate-200 align-top dark:border-slate-800">
+                  <tr class="border-b border-slate-200 align-top last:border-0 dark:border-slate-800">
                     <td class="w-56 py-1 pr-3 font-mono text-slate-600 dark:text-slate-400">
                       {entry.key}
                     </td>
@@ -143,7 +144,7 @@
                            at the far right — on a wide window that put it ~1300px from the value
                            it labels, forcing a full-width eye movement per row for no reason
                            (Livello 1, punto 3, PIANO_GUI.md §10). -->
-                      <span class="font-mono">{entry.value}</span>
+                      <span class="font-mono text-sm">{entry.value}</span>
                       <span class="ml-1.5 rounded px-1 text-[10px] font-semibold {ORIGIN_CLASS[entry.origin]}">
                         {ORIGIN_LABEL[entry.origin]}
                       </span>
@@ -176,6 +177,7 @@
     />
   {:else if !error}
     <EmptyState
+      icon={SlidersHorizontal}
       title="Scegli un file di configurazione per vederne le impostazioni"
       lines={[
         "Questa scheda mostra le due cose che il TOML non dice: da quale strato viene il valore che vince per ciascun job, e quali impostazioni portano una conseguenza — cancellano, saltano controlli, eliminano generazioni.",
@@ -184,8 +186,11 @@
     />
   {/if}
 
-  <section class="mt-6 border-t border-slate-200 pt-4 dark:border-slate-800">
-    <h2 class="text-xs font-semibold uppercase tracking-wide text-slate-500">Gestione credenziali</h2>
+  <section class="card mt-6">
+    <h2 class="flex items-center gap-1.5 text-xs font-semibold uppercase tracking-wide text-slate-500">
+      <KeyRound size={13} strokeWidth={2.25} aria-hidden="true" />
+      Gestione credenziali
+    </h2>
     <p class="mt-1 text-xs text-slate-600 dark:text-slate-400">
       Salva o rimuove un segreto in Gestione credenziali di Windows (F56) — mai nel file TOML, mai
       come argomento: il segreto passa solo per questo modulo. Usalo poi come

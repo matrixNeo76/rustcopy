@@ -13,8 +13,8 @@
     "windows": [
       {
         "title": "rustcopy — console",
-        "width": 1100,
-        "height": 700,
+        "width": 1440,
+        "height": 900,
         "resizable": true,
         "label": "main"
       }

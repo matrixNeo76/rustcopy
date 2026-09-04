@@ -411,34 +411,54 @@ contenuti Svelte esistenti, non nuova superficie verso il core.
    stato spostato da stato locale di `App.svelte` a `session.svelte.js` perché una scheda potesse
    cambiarne un'altra. Risolve (g).
 
-### Livello 2 — un sistema di design minimo, tocca ogni scheda ma senza logica nuova
+### Livello 2 — un sistema di design minimo, tocca ogni scheda ma senza logica nuova ✅ **completato 4 Set 2026**
 
-6. **Una vera scala tipografica** (2-3 dimensioni oltre l'attuale 11-12px onnipresente) applicata in
-   modo coerente fra titoli di sezione, etichette e valori.
-7. **Card per ogni gruppo di contenuto imparentato** (bordo leggero + sfondo distinto da
-   `bg-slate-50`) al posto di elenchi/tabelle che fluttuano sullo sfondo — tabella Job, griglia
-   statistiche Report, gruppi di Impostazioni. Risolve (c).
-8. **Un set minimo di icone** (valutare peso di una libreria SVG contro icone inline scritte a mano —
-   la toolchain JS è deliberatamente leggera, 52 pacchetti/0 vulnerabilità, criterio già scritto in
-   `CLAUDE.md`) per: le 7 voci di navigazione, gli stati di run (riuscito/fallito/in corso), il badge
-   mirror. Non decorazione: è la differenza principale fra "pannello operativo" e "modulo di testo",
-   e la causa singola più citata nel giudizio "spartana". Risolve (b) insieme al punto 6.
-9. **Larghezza dei campi dell'editor proporzionata al contenuto atteso** (nome/pattern corti restano
-   corti, percorsi restano larghi) invece di `w-full` uniforme dentro la griglia a due colonne.
-   Completa (a) sulla scheda Modifica.
+6. ✅ **Una vera scala tipografica** — i valori nella griglia di Report e nelle righe di
+   Impostazioni sono passati da `text-xs` (11-12px) a `text-sm`, mentre etichette e didascalie
+   restano alla dimensione precedente: due livelli distinti invece di un unico corpo indifferenziato.
+7. ✅ **Card per ogni gruppo di contenuto imparentato** — una classe `.card` (`app.css`,
+   `@layer components`) applicata a: tabella Job, griglia statistiche Report, ogni job in
+   Impostazioni più il riquadro credenziali, tabella Storico, riquadro checkpoint/coda in Esegui.
+   Risolve (c).
+8. ✅ **Un set minimo di icone**, `@lucide/svelte` — valutata contro icone scritte a mano: 55
+   pacchetti totali (52 preesistenti + 3 della libreria e le sue dipendenze dirette), **0
+   vulnerabilità** (`npm audit`), tree-shaking verificato (il bundle è cresciuto di ~11 KB per 7
+   icone importate dal barrel, non del peso dell'intera libreria). Applicate a: le 7 voci di
+   navigazione, gli stati di run (`CircleCheck`/`CircleX`/`LoaderCircle` animata), il badge mirror
+   (`ShieldAlert`) e modello (`FileQuestionMark`), l'icona di ogni empty state. Risolve (b) insieme
+   al punto 6.
 
-### Livello 3 — struttura, richiede una decisione di design prima di cominciare
+   **Un'icona non aggiunta di proposito**: la prima bozza metteva ✓/✗ anche su "Esito" in Report,
+   derivandola da `report.exit_code === 0` — ma `ReportView` (`gui_api.rs`) non espone affatto un
+   `exit_code` numerico, solo `exit_code_meaning: Option<String>` (la stessa frase bitmask aperta
+   di robocopy che il punto 4 del Livello 1 aveva già escluso dalla traduzione, per lo stesso
+   identico motivo). Il confronto era quindi sempre falso — un'icona morta, non solo superflua.
+   Trovato solo caricando un report vero nella console compilata, non leggendo il codice: la stessa
+   lezione di §9/§10 su dove si annidano i difetti in questo progetto. Rimossa; "Verifica" mantiene
+   la sua icona perché `integrity_status` **è** un enum chiuso a 2 valori.
+9. ✅ **Larghezza dei campi dell'editor proporzionata al contenuto atteso** — Nome (`w-64`) e
+   Pattern (`w-48`) ristretti; Sorgente, Destinazione, Escludi file/cartelle e Report restano
+   larghi quanto la griglia, dove un percorso ha davvero bisogno di spazio. Completa (a) sulla
+   scheda Modifica.
 
-10. **Navigazione a barra laterale verticale** (con le icone del punto 8) al posto della riga di
-    pulsanti testuali in testa — libera la testata per il contesto del file attivo (nome, tipo,
-    ultimo esito) invece di ripetere la stessa frase statica identica su ogni scheda.
-11. **Dimensione di apertura della finestra**: oggi apre piccola (~1080×615), costringendo a
-    massimizzare manualmente ogni volta. Da decidere fra ricordare l'ultima dimensione (richiede un
-    salvataggio locale lato Tauri, superficie nuova per quanto piccola) o semplicemente aprire più
-    grande di default (nessuna superficie nuova, ma non risolve chi la ridimensiona comunque).
-12. **Empty state con un'ancora visiva** oltre al solo paragrafo di testo — oggi ogni scheda vuota è
-    tre righe di prosa dentro un riquadro tratteggiato (già meglio di niente, vedi il commento in
-    `EmptyState.svelte`), ma resta un muro di testo come primo contatto con ciascuna scheda.
+### Livello 3 — struttura ✅ **completato 4 Set 2026**
+
+10. ✅ **Navigazione a barra laterale verticale** (con le icone del punto 8) al posto della riga di
+    pulsanti testuali in testa. La testata liberata sopra ogni scheda mostra ora il nome del file
+    di configurazione caricato (`session.configPath`, già condiviso fra le schede) al posto della
+    stessa descrizione statica ripetuta ovunque — quando nessun file è ancora caricato, mostra
+    quella descrizione come prima. **Scope volutamente più stretto di quanto il punto suggeriva**:
+    "tipo, ultimo esito" del file attivo non sono mostrati, perché quell'informazione non vive in
+    uno stato condiviso fra le schede (`status` è locale a Esegui) — costruirla avrebbe voluto dire
+    una nuova superficie di stato condiviso, non una riga di questo livello. Il solo nome file è
+    già la risposta a "cosa sto guardando", la domanda che il punto poneva.
+11. ✅ **Dimensione di apertura della finestra**: 1100×700 → 1440×900 in `tauri.conf.json`. Scelta
+    la strada senza superficie nuova (nessun salvataggio locale della dimensione lato Tauri) —
+    resta ridimensionabile, e chi lavora su un monitor più piccolo può comunque restringerla.
+12. ✅ **Empty state con un'ancora visiva** — `EmptyState.svelte` accetta ora un `icon` opzionale
+    (default `Inbox`), reso accanto al titolo; ogni chiamata specifica l'icona pertinente alla
+    propria scheda (`ListChecks`, `Play`, `FileText`, `Clock`, `SlidersHorizontal`) tranne dove il
+    generico va bene così com'è (Modifica).
 
 ### Uno strumento per i Livelli 2-3: la skill `ui-ux-pro-max`
 
@@ -477,18 +497,19 @@ Una tabella sola per la domanda "a che punto siamo", sulle due dimensioni di que
 | Funzionale — Onda 3 | Ripresa da checkpoint (`--resume-from`) | ✅ **fatta 4 Set 2026** | Verificata contro un trasferimento reale interrotto; limite noto dichiarato (D25) — la ripresa non eredita tutta la configurazione originale |
 | Funzionale — Onda 3 | Scrittura di webhook/script pre-post in Modifica | 🔴 **proposta, bloccata da una decisione di sicurezza** | Morde il vincolo permanente 2 (§2.3); serve una decisione esplicita prima del disegno |
 | Visivo — Livello 1 | 5 correzioni puntuali (contenimento layout, colonne tabella, badge provenienza, traduzione stringhe, collegamento run→report) | ✅ **4/5 fatte, 4 Set 2026** | La traduzione di `exit_code_meaning` non era fattibile come previsto — trovato verificando il codice, non un limite di sforzo (vedi §10 punto 4) |
-| Visivo — Livello 2 | Sistema di design minimo (scala tipografica, card, icone, larghezza campi editor) | 🔴 **proposto, non iniziato** | Tocca ogni scheda ma senza logica nuova; la voce icone è la causa singola più citata nel giudizio "spartana" |
-| Visivo — Livello 3 | Sidebar di navigazione, dimensione finestra, empty state con ancora visiva | 🔴 **proposto, richiede una decisione di design** | Struttura, non solo stile — da discutere prima di disegnare |
+| Visivo — Livello 2 | Sistema di design minimo (scala tipografica, card, icone, larghezza campi editor) | ✅ **fatto, 4 Set 2026** | `@lucide/svelte`, 0 vulnerabilità; un'icona di troppo (Esito in Report) trovata e tolta in verifica — derivava da un campo che `ReportView` non espone |
+| Visivo — Livello 3 | Sidebar di navigazione, dimensione finestra, empty state con ancora visiva | ✅ **fatto, 4 Set 2026** | Sidebar libera la testata per il nome del file caricato (non "tipo/ultimo esito": nessuno stato condiviso li porta oggi); finestra 1440×900; icona per empty state |
 | Difetto trovato per strada | D24 — console che lampeggiava (`schtasks.exe` senza `CREATE_NO_WINDOW`) | ✅ **corretto** | Non era nel piano: scoperto durante l'audit visivo, non una scelta di design |
 | Difetto trovato per strada | D25 — la ripresa non eredita quasi nessuna impostazione originale (solo mirror ne beneficia) | 🟡 **aperto, non bloccante** | Trovato verificando la ripresa contro un trasferimento reale; comportamento preesistente di `checkpoint.rs`, non introdotto dalla console |
 
 **In una frase**: la parte fondativa e funzionale a rischio basso/medio è quasi tutta fatta — Onda 1
 e 2 chiuse, e ora anche la ripresa da checkpoint (Onda 3); le due voci rimaste bloccate (VSS, script
-in scrittura) lo sono per una decisione esplicita da prendere, non per lavoro mancante. Il Livello 1
-del rifacimento visivo è chiuso a sua volta (4/5, l'unica eccezione per un motivo tecnico reale, non
-per pigrizia). Restano da fare il ripristino guidato e i Livelli 2-3 del rifacimento — sistema di
-design, icone, navigazione — che sono dove si gioca ancora "sembra spartana", visto che il Livello 1
-risolveva soprattutto lo spazio sprecato e non l'assenza di gerarchia visiva.
+in scrittura) lo sono per una decisione esplicita da prendere, non per lavoro mancante. Il rifacimento
+visivo è chiuso su tutti e tre i livelli (Livello 1 4/5, Livelli 2-3 al completo) — la sidebar con
+icone, le card e la scala tipografica sono la parte che effettivamente rispondeva a "sembra spartana",
+più del Livello 1 da solo, che aveva risolto soprattutto lo spazio sprecato. Resta da fare solo il
+ripristino guidato (Onda 3, la lacuna funzionale più sentita) e le due voci bloccate da una decisione
+esplicita.
 
 ## Riferimenti
 
