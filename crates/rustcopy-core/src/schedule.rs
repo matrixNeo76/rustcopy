@@ -218,8 +218,19 @@ pub fn uninstall(_name: &str) -> Result<(), IngestError> {
 
 #[cfg(windows)]
 fn run_schtasks(args: &[String]) -> Result<(), IngestError> {
-    let output = std::process::Command::new("schtasks.exe")
-        .args(args)
+    let mut command = std::process::Command::new("schtasks.exe");
+    command.args(args);
+    // The caller may be the CLI (already has a console) or the GUI (a windowed process with none) —
+    // without this, `schtasks.exe` is a console-subsystem binary and Windows allocates it a fresh
+    // console regardless, flashing a black window in front of the console on every install/uninstall
+    // even though `.output()` already captures everything it would print. Same fix, same reasoning
+    // as `main.rs`'s child-process spawn (F54).
+    {
+        use std::os::windows::process::CommandExt;
+        const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+        command.creation_flags(CREATE_NO_WINDOW);
+    }
+    let output = command
         .output()
         .map_err(|source| IngestError::SpawnFailed {
             program: "schtasks.exe".to_string(),
@@ -246,8 +257,16 @@ fn run_schtasks(args: &[String]) -> Result<(), IngestError> {
 /// than a header string that would only work in one language.
 #[cfg(windows)]
 pub fn referencing_config(config_path: &Path) -> Result<Vec<String>, IngestError> {
-    let output = std::process::Command::new("schtasks.exe")
-        .args(["/Query", "/FO", "CSV", "/V"])
+    let mut command = std::process::Command::new("schtasks.exe");
+    command.args(["/Query", "/FO", "CSV", "/V"]);
+    // Called from the console's Esegui tab on every "Esamina" — without this a black console
+    // window flashes in front of the GUI each time, same cause and fix as `run_schtasks` above.
+    {
+        use std::os::windows::process::CommandExt;
+        const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+        command.creation_flags(CREATE_NO_WINDOW);
+    }
+    let output = command
         .output()
         .map_err(|source| IngestError::SpawnFailed {
             program: "schtasks.exe".to_string(),

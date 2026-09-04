@@ -174,7 +174,13 @@ jobs:
   # builds the frontend: that is what caught `index.html` being swallowed by the blanket `*.html`
   # ignore, which the local build could not see because the file was present there.
   gui-npm-audit:
-    timeout-minutes: 10
+    # Bumped from 10 (4 Set 2026): `npm ci` alone was consistently taking 7-8 minutes even with a
+    # warm cache hit, leaving `npm audit`/`npm run build` no room before the job hit the old limit
+    # and GitHub cancelled it mid-step ("The operation was canceled") — reproduced identically on 4
+    # consecutive runs, unrelated to any change in this repo's own npm files. If this starts timing
+    # out again, the registry/network got slower still — check actual step durations before bumping
+    # further rather than assuming the same cause.
+    timeout-minutes: 15
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7

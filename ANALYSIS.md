@@ -1,7 +1,7 @@
 ---
 type: Log
 title: Analisi di Robustezza e Ottimizzazione Prestazioni
-description: Audit trail dei difetti D1-D23 e delle opportunità di miglioramento O1-O10.
+description: Audit trail dei difetti D1-D24 e delle opportunità di miglioramento O1-O10.
 status: stable
 generated:
   by: process:claude-code
@@ -1382,6 +1382,42 @@ avviso separato.
 comando senza `/MT` copia con successo (`exit=1`). Confermato anche end-to-end attraverso la CLI
 reale (`--bandwidth-limit-mbps 5`): la pipeline completa e la riga di comando loggata non contiene
 più `/MT`.
+
+---
+
+### D24 — `schedule.rs` faceva lampeggiare una console nera davanti alla GUI a ogni `schtasks.exe` ✅ RISOLTO (4 Set 2026)
+
+**Stato: chiuso e verificato.**
+
+**Gravità: MEDIA** — nessun dato a rischio, ma un difetto di percezione diretto: ogni pressione di
+«Esamina» nella scheda Esegui della console faceva comparire e sparire una finestra di terminale
+nera davanti all'applicazione. Trovato durante un audit visivo della GUI richiesto dall'utente (non
+una feature collegata), riproducendo di persona ogni scheda con Windows-MCP.
+
+**Causa.** `schedule::run_schtasks` (install/uninstall, F36) e `schedule::referencing_config`
+(query, F49-Onda-1) costruivano entrambi `std::process::Command::new("schtasks.exe")` senza
+`CREATE_NO_WINDOW`. `schtasks.exe` è un binario a sottosistema console: lanciato dalla CLI (che ha
+già una console) il fenomeno passa inosservato, ma lanciato dalla GUI (un processo a finestre, senza
+alcuna console da prestargli) Windows gliene alloca una nuova — esattamente la stessa causa già
+corretta per lo spawn del processo figlio principale in `main.rs` (F54, vedi la riga corrispondente
+in `CLAUDE.md`), ma mai applicata a questi due punti perché entrambi risalgono a F36, quando la GUI
+non esisteva ancora.
+
+**Perché è passato.** `run_schtasks`/`referencing_config` sono testati (`schedule.rs`, i test
+`schedule_matching` inclusi) contro l'output catturato di `schtasks.exe`, mai eseguendo davvero il
+binario da un processo a finestre — un test che invoca il comando reale da un harness console non
+può osservare un fenomeno che dipende dal sottosistema del *processo chiamante*.
+
+**Rimedio.** Stessa `creation_flags(CREATE_NO_WINDOW)` già usata in `main.rs`, applicata a entrambi
+i punti di spawn in `schedule.rs`. Innocuo per il percorso CLI (che ha già una propria console, e
+l'output di `schtasks.exe` è comunque catturato via `.output()` in entrambi i casi, mai stampato a
+schermo) — non un comportamento nuovo condizionato alla GUI, la stessa chiamata per entrambi i
+chiamanti.
+
+**Verifica.** Riprodotto e confermato visivamente con Windows-MCP: prima del fix, «Esamina» nella
+scheda Esegui della console faceva lampeggiare una console nera ogni volta; dopo, nessuna finestra
+compare. `cargo build -p rustcopy-core` pulito; nessun test esistente toccato (nessuna asserzione
+verificava l'assenza del flag, quindi nulla si è rotto nell'aggiungerlo).
 
 ---
 
