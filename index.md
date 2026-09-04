@@ -17,7 +17,7 @@ okf_version: "0.2"
 * [Architettura di Sistema — robocopy-ingest-cli](ARCHITECTURE.md) - Diagrammi Mermaid, tabella moduli, pipeline di esecuzione, pattern trasversali (D13/D14).
 * [CLAUDE.md — Claude Code \& AI Agent Prompt Instructions](CLAUDE.md) - Technical notes and hard constraints for AI agents working on this codebase.
 * [Come procedere con la GUI Tauri — piano operativo e vincoli](PIANO_GUI_TAURI.md) - Percorso per la GUI Tauri (milestone 7.0.0): impatto misurato sulle prestazioni del motore di copia, tre decisioni con raccomandazione motivata, e il registro della rinumerazione 7.0.0/8.0.0 che ha rimosso uno stallo nella roadmap.
-* [Piano di ampliamento della console rustcopy](PIANO_GUI_ESPANSIONE.md) - Inventario di ciò che la console (F52-F60) espone oggi rispetto alla CLI, analisi delle lacune per categoria, e un piano prioritizzato in tre onde per ampliarla senza allargare il confine di sicurezza F53/F54.
+* [Piano di ampliamento della console rustcopy](PIANO_GUI_ESPANSIONE.md) - Inventario di ciò che la console (F52-F60) espone oggi rispetto alla CLI, analisi delle lacune per categoria, un piano prioritizzato in tre onde funzionali, e un audit visivo/di usabilità con un piano di rifacimento a tre livelli.
 * [Piano di Miglioramento Consolidato — robocopy-ingest-cli](PIANO_MIGLIORAMENTI.md) - Piano operativo unico — lacune documentazione, economia di contesto, debito tecnico, launcher PowerShell, performance.
 * [Roadmap di Progetto — robocopy-ingest-cli](ROADMAP.md) - Milestone, elenco feature F1-F61, backlog, debito tecnico noto.
 * [robocopy-ingest-cli (rustcopy) — README](README.md) - Panoramica del progetto — cosa fa, come si installa, primi comandi e indice della documentazione.

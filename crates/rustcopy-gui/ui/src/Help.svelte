@@ -23,10 +23,11 @@
     {
       title: "Cosa significano le schede",
       items: [
-        ["Report", "Il dettaglio di una singola run: esito, volumi, durata, e i file che la verifica ha segnalato, a blocchi di cento."],
         ["Job", "I job che il file descrive, con sorgente, destinazione e tipo. Un job che cancella in destinazione è segnalato in modo distinto."],
-        ["Impostazioni", "Ogni impostazione risolta, raggruppata, con da quale strato viene il valore che vince e quali scelte portano una conseguenza."],
-        ["Modifica", "L'unico punto che scrive. Produce una proposta in un file nuovo: la configurazione in uso non viene mai toccata."],
+        ["Impostazioni", "Ogni impostazione risolta, raggruppata, con da quale strato viene il valore che vince e quali scelte portano una conseguenza. Le credenziali si salvano ed eliminano da qui."],
+        ["Modifica", "L'unico punto che scrive una configurazione. Produce una proposta in un file nuovo: quella in uso non viene mai toccata."],
+        ["Esegui", "Avvia la stessa CLI che eseguirebbe un'attività pianificata, come processo separato. Non può accendere il mirror, forzare un purge, installare servizi o pianificazioni."],
+        ["Report", "Il dettaglio di una singola run: esito, volumi, durata, e i file che la verifica ha segnalato, a blocchi di cento."],
         ["Storico", "Le run passate con il significato del loro esito, più l'analisi deterministica che la CLI stampa con --advise."],
       ],
     },
