@@ -4,6 +4,7 @@
   import PathBar from "./PathBar.svelte";
   import EmptyState from "./EmptyState.svelte";
   import { session } from "./session.svelte.js";
+  import { Play, ShieldAlert, CircleCheck, CircleX, LoaderCircle, RotateCcw } from "@lucide/svelte";
 
   // The console does not run backups itself: it starts the same CLI a scheduled task would, so a
   // job behaves identically whether a person launched it or Task Scheduler did.
@@ -256,8 +257,9 @@
   {/if}
 
   {#if checkpoints.length > 0}
-    <div class="mt-3 rounded border border-slate-300 p-2 dark:border-slate-700">
-      <p class="text-xs font-semibold uppercase tracking-wide text-slate-500">
+    <div class="card mt-3">
+      <p class="flex items-center gap-1.5 text-xs font-semibold uppercase tracking-wide text-slate-500">
+        <RotateCcw size={13} strokeWidth={2.25} aria-hidden="true" />
         {checkpoints.length === 1 ? "Ripresa disponibile" : "Riprese disponibili"}
       </p>
       <p class="mt-0.5 text-[11px] text-slate-500">
@@ -331,12 +333,15 @@
     {/if}
 
     {#if mirrorJobs.length > 0}
-      <p class="mt-2 rounded border border-amber-300 bg-amber-50 px-2 py-1 text-xs text-amber-900
-                dark:border-amber-800 dark:bg-amber-950 dark:text-amber-200">
-        <strong>{mirrorJobs.join(", ")}</strong> {mirrorJobs.length === 1 ? "cancella" : "cancellano"}
-        in destinazione. Da qui non si può autorizzare: la conferma richiede un terminale, quindi la
-        run si fermerà da sola con esito 3. Eseguila dalla CLI, dove la conferma mostra
-        <em>quali</em> file verrebbero eliminati.
+      <p class="mt-2 flex items-start gap-1.5 rounded border border-amber-300 bg-amber-50 px-2 py-1
+                text-xs text-amber-900 dark:border-amber-800 dark:bg-amber-950 dark:text-amber-200">
+        <ShieldAlert size={13} strokeWidth={2.25} class="mt-0.5 shrink-0" aria-hidden="true" />
+        <span>
+          <strong>{mirrorJobs.join(", ")}</strong> {mirrorJobs.length === 1 ? "cancella" : "cancellano"}
+          in destinazione. Da qui non si può autorizzare: la conferma richiede un terminale, quindi la
+          run si fermerà da sola con esito 3. Eseguila dalla CLI, dove la conferma mostra
+          <em>quali</em> file verrebbero eliminati.
+        </span>
       </p>
     {/if}
 
@@ -354,10 +359,13 @@
 
     <div class="mt-3 flex items-center gap-2">
       <button
-        class="rounded bg-blue-600 px-3 py-1 text-sm text-white disabled:opacity-50"
+        class="flex items-center gap-1.5 rounded bg-blue-600 px-3 py-1 text-sm text-white disabled:opacity-50"
         onclick={start}
         disabled={busy || status?.running}
-      >Avvia</button>
+      >
+        <Play size={14} strokeWidth={2.25} aria-hidden="true" />
+        Avvia
+      </button>
       <button
         class="rounded border border-slate-300 px-3 py-1 text-sm disabled:opacity-40
                dark:border-slate-700"
@@ -366,18 +374,26 @@
       >{status?.stopping ? "Arresto in corso…" : "Ferma"}</button>
 
       {#if status?.running}
-        <span class="text-xs text-slate-600 dark:text-slate-400">
+        <span class="flex items-center gap-1.5 text-xs text-slate-600 dark:text-slate-400">
+          <LoaderCircle size={13} strokeWidth={2.25} class="animate-spin" aria-hidden="true" />
           {status.stopping
             ? "sto scrivendo il checkpoint, poi la run esce"
             : (status.phase_label ?? "in esecuzione")}
         </span>
       {:else if status?.exit_code !== null && status?.exit_code !== undefined}
-        <span class="text-xs">
+        <span class="flex items-center gap-1 text-xs">
           <span
-            class="rounded px-1 font-mono text-[10px] font-semibold {status.exit_code === 0
+            class="inline-flex items-center gap-1 rounded px-1 font-mono text-[10px] font-semibold {status.exit_code === 0
               ? 'bg-emerald-100 text-emerald-900 dark:bg-emerald-950 dark:text-emerald-200'
               : 'bg-amber-100 text-amber-900 dark:bg-amber-950 dark:text-amber-200'}"
-          >{status.exit_code}</span>
+          >
+            {#if status.exit_code === 0}
+              <CircleCheck size={11} strokeWidth={2.25} aria-hidden="true" />
+            {:else}
+              <CircleX size={11} strokeWidth={2.25} aria-hidden="true" />
+            {/if}
+            {status.exit_code}
+          </span>
           <!-- The meaning comes from the core: what an exit code means is a contract with
                schedulers, not a label this pane invents. -->
           {status.meaning}
@@ -442,6 +458,7 @@
     </p>
   {:else if !error}
     <EmptyState
+      icon={Play}
       title="Scegli un file di configurazione per eseguirlo"
       lines={[
         "Questa scheda avvia la stessa CLI che eseguirebbe un'attività pianificata, come processo separato: un job si comporta allo stesso modo che lo lanci tu o Task Scheduler.",

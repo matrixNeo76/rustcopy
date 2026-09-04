@@ -181,7 +181,7 @@
       <div>
         <input
           id="f-name"
-          class="w-full rounded border border-slate-300 px-2 py-1 font-mono disabled:bg-slate-100
+          class="w-64 rounded border border-slate-300 px-2 py-1 font-mono disabled:bg-slate-100
                  disabled:text-slate-500 dark:border-slate-700 dark:bg-slate-900
                  dark:disabled:bg-slate-800"
           bind:value={draft.name}
@@ -205,7 +205,7 @@
       <label for="f-pattern">Pattern</label>
       <input
         id="f-pattern"
-        class="rounded border border-slate-300 px-2 py-1 font-mono dark:border-slate-700 dark:bg-slate-900"
+        class="w-48 rounded border border-slate-300 px-2 py-1 font-mono dark:border-slate-700 dark:bg-slate-900"
         placeholder="*"
         value={draft.pattern ?? ""}
         oninput={(e) => (draft.pattern = e.currentTarget.value.trim() === "" ? null : e.currentTarget.value)}
