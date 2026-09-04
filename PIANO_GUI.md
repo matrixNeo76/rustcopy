@@ -1,17 +1,25 @@
 ---
 type: Reference
-title: Piano di ampliamento della console rustcopy
-description: Inventario di ciò che la console (F52-F60) espone oggi rispetto alla CLI, analisi delle lacune per categoria, un piano prioritizzato in tre onde funzionali, e un audit visivo/di usabilità con un piano di rifacimento a tre livelli.
+title: Piano della console rustcopy
+description: Documento unico e vivo per la console (F52-F60) — consolida il piano pre-implementazione (stack, ambito, distribuzione, vincoli permanenti) con l'inventario di ciò che espone oggi rispetto alla CLI, le lacune funzionali con un piano in tre onde, e un audit visivo/di usabilità con un piano di rifacimento a tre livelli. Sostituisce PIANO_GUI_TAURI.md (archiviato) e PIANO_GUI_ESPANSIONE.md (questo stesso file, rinominato).
 status: draft
 generated:
   by: process:claude-code
   at: 2026-09-03T14:12:16Z
 verified:
   by: process:claude-code
-  at: 2026-09-04T08:00:00Z
+  at: 2026-09-04T10:00:00Z
 ---
 
-# Piano di ampliamento della console rustcopy
+# Piano della console rustcopy
+
+**Nota di consolidamento (4 Set 2026)**: questo file nasce dalla fusione di due documenti —
+`PIANO_GUI_ESPANSIONE.md` (di cui è la continuazione diretta, stesso file rinominato) e
+`docs/archive/PIANO_GUI_TAURI.md` (il piano pre-implementazione,
+ora archiviato perché eseguito per intero). Da qui in avanti **questo è l'unico piano attivo** della
+console: cosa è stato deciso e perché (§2), cosa fa oggi (§3-§4), cosa manca e con che priorità
+(§5-§8), e — dal 4 Set 2026 — come renderla meno spartana (§9-§10). §11 riassume tutto in una
+tabella sola: fatto, da fare, proposto.
 
 La milestone 7.0.0 (la console) ha chiuso sette voci su otto — F52/F53/F54/F55-lettura/F56/F59/F60 —
 e ha lasciato scritte due decisioni deliberatamente aperte: la metà in scrittura di F55 (script
@@ -19,11 +27,11 @@ pre/post) e F57 (ruoli), quest'ultima non raccomandata. Questo documento non rip
 cosa la console fa oggi, la confronta campo per campo con quello che la CLI sa fare, e organizza la
 distanza fra le due in un piano. Non riapre nessuna decisione già presa — le richiama e basta, dove
 sono rilevanti — e non propone nulla che allarghi il vincolo strutturale di `runner.rs`: **la console
-può riferire un'operazione distruttiva, mai autorizzarla** (§6 sotto per il dettaglio).
+può riferire un'operazione distruttiva, mai autorizzarla** (§7 sotto per il dettaglio).
 
-**Aggiornamento 4 Set 2026**: dopo che l'Onda 1 e l'Onda 2 sono state spedite (§7), l'utente ha
+**Aggiornamento 4 Set 2026**: dopo che l'Onda 1 e l'Onda 2 sono state spedite (§8), l'utente ha
 segnalato che la console resta "poco intuitiva" e "con una UI eccessivamente spartana" — un giudizio
-sulla *forma*, non sulla copertura funzionale che §2-§7 misurano. §9-§10 sono un secondo audit,
+sulla *forma*, non sulla copertura funzionale che §3-§8 misurano. §9-§10 sono un secondo audit,
 ortogonale al primo: ogni scheda riaperta nella console compilata (non solo il codice) per catalogare
 cosa rende difficile usarla, e un piano di rifacimento visivo a tre livelli che non tocca nessuna
 delle scelte di sicurezza sopra.
@@ -39,7 +47,56 @@ Ispezionati per questo piano: i 12 comandi `#[tauri::command]` in
 (`cli.rs`) e i 29 campi di `JobConfig` (`config.rs`). Non è un audit di codice: è una mappa di cosa
 esiste, cosa manca, e cosa manca *di proposito*.
 
-## 2. Cosa la console fa oggi
+## 2. Decisioni fondative e vincoli permanenti
+
+Prima di scrivere una riga di GUI, tre domande di prodotto e una domanda tecnica hanno avuto una
+risposta esplicita, motivata e — le prime tre — verificata dopo il fatto. Il ragionamento completo,
+coi dati misurati, è in `docs/archive/PIANO_GUI_TAURI.md`; qui
+solo l'esito, perché resta la base su cui ogni voce successiva di questo piano si appoggia.
+
+### 2.1 La GUI rallenta il motore di copia? No, per costruzione
+
+`rustcopy-core`/`rustcopy-cli`/`rustcopy-gui` sono binari separati (F52): `robocopy_ingest.exe` non
+linka Tauri, non ha dipendenze JS, e il percorso non presidiato (Task Scheduler, servizio Windows)
+invoca solo la CLI. Un gate CI dimostra la proprietà a ogni commit invece di lasciarla una promessa
+(`ci.yml`, "the CLI never depends on the GUI toolchain"). Il rischio reale non era "installare Tauri"
+ma **la frequenza con cui il motore comunica il progresso alla UI** — e il pattern sicuro (contatori
+atomici lock-free, campionamento a 200ms disaccoppiato dal numero di file, mai un evento IPC per
+file) era già in `src/progress.rs` prima che la GUI esistesse. `Run.svelte` campiona `run_status` sul
+proprio timer; non riceve mai una notifica per file.
+
+### 2.2 Tre decisioni di prodotto, tutte confermate dopo l'implementazione
+
+| Decisione | Scelta | Verificato |
+|---|---|---|
+| Stack frontend | **Svelte + Tailwind** (non React+shadcn) — criterio decisivo: superficie della catena di fornitura npm, non prestazioni | 52 pacchetti npm, 0 vulnerabilità, 41 KB di JS (31 Ago 2026) |
+| Ambito v1 | **Sola lettura** — nessun percorso di scrittura può corrompere un backup o sbagliare una purge | Valido fino al 2 Set 2026, quando F54 ha aggiunto **un** percorso di scrittura (proposte in file nuovi, mai la configurazione in uso) |
+| Distribuzione | **Un solo installer** (`installer/rustcopy.iss`), console come componente opzionale — non un bundle Tauri separato | F60, 2 Set 2026: setup da 6,6 MB, ciclo installazione→disinstallazione verificato |
+
+### 2.3 Vincoli di sicurezza permanenti
+
+Non decisioni prese una volta: regole che ogni voce di questo piano — comprese le proposte non ancora
+implementate in §8 e §10 — deve rispettare, perché è facile progettare una UI che le viola senza
+accorgersene.
+
+1. **I ruoli in un'app desktop non sono un confine di sicurezza.** Chi ha una sessione locale può
+   eseguire `rustcopy.exe` direttamente o leggere/modificare il TOML, scavalcando la UI. "Operatore"
+   impedisce errori, non azioni deliberate — è per questo che F57 non è raccomandata (§6).
+2. **Script configurabili + servizio privilegiato = escalation locale.** Se un servizio Windows gira
+   come SYSTEM ed esegue script pre/post configurati dalla UI, un utente non amministratore che può
+   scrivere quello script ottiene esecuzione come SYSTEM. È la ragione per cui la scrittura di
+   `pre_command`/`post_command` in Modifica resta in Onda 3 (§8, voce 12) e non prima.
+3. **La UI non deve diventare una nuova sede dei segreti.** F56 estende la convenzione esistente
+   (`env:`/`file:`/`keyring:`) al Credential Manager — non ne introduce una parallela.
+4. **Le azioni distruttive non si allentano passando dalla UI.** `--mirror` e `--keep-generations`
+   hanno presidi ed exit code dedicati (`3`, `5`); la console conferma **cosa** verrebbe cancellato,
+   mai una scorciatoia ricordata fra sessioni.
+5. **Gli exit code sono un contratto con gli scheduler.** La UI li mostra e li interpreta, non li
+   ridefinisce — `4` (copiato, verifica fallita) resta distinguibile da `1` (copia fallita).
+6. **La superficie npm va sottoposta ad audit come quella Rust.** `crates/rustcopy-gui/ui`'s
+   `gui-npm-audit` in `ci.yml` copre questo dalla milestone 7.0.0.
+
+## 3. Cosa la console fa oggi
 
 | Scheda | Comandi Tauri | Cosa fa | Scrive? |
 |---|---|---|---|
@@ -51,7 +108,7 @@ esiste, cosa manca, e cosa manca *di proposito*.
 | **Storico** | `read_history`, `read_advice` | Run passate con il significato dell'exit code, più l'analisi deterministica di `--advise`. | No |
 | **Aiuto** | — | Contenuto statico. | No |
 
-## 3. Copertura CLI → GUI, per categoria
+## 4. Copertura CLI → GUI, per categoria
 
 Legenda: **L**=leggibile in Impostazioni/Report/Storico, **S**=scrivibile in Modifica, **E**=eseguibile da Esegui.
 
@@ -71,9 +128,9 @@ Legenda: **L**=leggibile in Impostazioni/Report/Storico, **S**=scrivibile in Mod
 | Ripresa | `--resume-from` | ❌ | ❌ | ❌ | Nessun flusso in GUI |
 | Automazione | `--install/uninstall-schedule/-service` | ❌ | ❌ | ❌ | Vietato di proposito (vincolo `runner.rs`) |
 | Mirror non presidiato | `--force-purge` | ❌ | ❌ | ❌ | Vietato di proposito |
-| Job multipli | `[[jobs]]` in un TOML | ✅ (elenco) | ✅ | ✅ (posizione, Onda 2) | Vedi §4d — la posizione nel batch si vede (F49), l'esito per-job resta nel Report/Storico di quella run |
+| Job multipli | `[[jobs]]` in un TOML | ✅ (elenco) | ✅ | ✅ (posizione, Onda 2) | Vedi §5d — la posizione nel batch si vede (F49), l'esito per-job resta nel Report/Storico di quella run |
 
-## 4. Lacune, per categoria
+## 5. Lacune, per categoria
 
 ### a) Editor — script e notifiche (F55, scrittura)
 
@@ -83,7 +140,7 @@ Questa non è una svista: ROADMAP la lascia esplicitamente non decisa perché mo
 sicurezza 2 — *script configurabili più servizio privilegiato uguale escalation locale* (rilevante
 da quando F37 rende `rustcopy_ingest` installabile come servizio Windows). Un campo di testo libero
 che poi esegue con i privilegi del servizio è una superficie diversa da un mirror che si ferma da
-solo con l'exit 3. **Non la riapro come già decisa** — la porto in §6 come Onda 3, con la stessa
+solo con l'exit 3. **Non la riapro come già decisa** — la porto in §8 come Onda 3, con la stessa
 cautela con cui ROADMAP la lascia aperta.
 
 ### b) Ripristino e ripresa — la lacuna più grande
@@ -135,7 +192,7 @@ serve un passo lato core (aggiungere il campo a `JobConfig`, farlo fluire come g
   (`schtasks /Query`, `sc query`) esposta come comando di sola lettura — mai un'azione — utile a
   capire se un job già gira da solo prima di duplicarlo con `--install-schedule`.
 
-## 5. Cosa resta fuori da questo piano, e perché
+## 6. Cosa resta fuori da questo piano, e perché
 
 - **F57 (ruoli admin/operatore)** — ROADMAP la marca P2 e non raccomandata: "utile come prevenzione
   degli errori, non come confine di sicurezza". Non la ripropongo.
@@ -148,7 +205,7 @@ serve un passo lato core (aggiungere il campo a `JobConfig`, farlo fluire come g
 - **F46 (modalità "sposta")** — è una feature del motore di copia, non della console: comparirebbe in
   GUI solo come un interruttore in più *dopo* che esiste a livello CLI. Non è lavoro di questo piano.
 
-## 6. Il vincolo che ogni onda deve rispettare
+## 7. Il vincolo che ogni onda deve rispettare
 
 Ogni proposta sotto passa lo stesso test che `runner.rs` già impone e verifica con un test
 (`the_argument_list_cannot_carry_a_destructive_flag`): la console può **eseguire** solo attraverso la
@@ -157,29 +214,29 @@ stessa CLI, con `run_arguments` a forma fissa, e può **riferire** un'operazione
 parametro che inoltra flag, o esegue codice di backup dentro il processo della console invece che
 dentro la CLI.
 
-## 7. Piano prioritizzato
+## 8. Piano prioritizzato
 
-### Onda 1 — Rischio basso, nessuna nuova superficie di scrittura
+### Onda 1 — Rischio basso, nessuna nuova superficie di scrittura ✅ **completata**
 
 Tutte lettura pura o piccole aggiunte al formato interno del progresso; nessuna tocca `job_editor.rs`
-né `runner.rs`.
+né `runner.rs`. **Tutti e sei gli item sono in `main` da prima dell'Onda 2** (PR #66-#71) — non erano
+mai stati segnati come fatti in questo documento; corretto qui il 4 Set 2026, verificato contro il
+sorgente attuale, non contro la memoria di quando furono scritti.
 
-1. **Notifica di sistema a fine run** — `run_status` già sa quando una run finisce; basta collegare
-   `tauri-plugin-notification` (nuova dipendenza, nessun nuovo permesso pericoloso) al punto in cui
+1. ✅ **Notifica di sistema a fine run** — `Run.svelte::notifyFinished`, collegata al punto in cui
    `RunStatus.running` passa a `false`.
-2. **Etichetta "job N di M" durante un batch** — richiede un campo in più in `ProgressSample`
-   (`job_index`/`job_name`, `Option` come gli altri totali) scritto da `run_jobs` in `main.rs` (CLI),
-   letto e mostrato da `Run.svelte`. Piccola estensione additiva, non tocca il formato per chi non
-   fa batch (resta `None`).
-3. **Filtro e ricerca in Report e Storico** — puramente client-side sui dati già restituiti da
-   `read_report_page`/`read_history`, nessun nuovo comando Tauri.
-4. **Esportazione CSV** di report e storico — trasformazione lato frontend dei dati già in memoria.
-5. **Trascina-e-rilascia un TOML sulla finestra** per popolare `PathBar` — evento nativo di Tauri,
-   nessuna nuova superficie verso il core.
-6. **Badge di sola lettura** "pianificazione/servizio installati per questo job" — un nuovo comando
-   `gui_api` che esegue `schtasks /Query`/`sc query` e basta, mai un'azione.
+2. ✅ **Etichetta "job N di M" durante un batch** — `ProgressSample.batch_index`/`batch_total`
+   (`Option`, `None` per chi non fa batch), scritto da `run_jobs` in `main.rs`, mostrato da
+   `Run.svelte::phase_label()`.
+3. ✅ **Filtro e ricerca in Report e Storico** — `Report.svelte`'s `query`, `History.svelte`'s
+   `outcomeFilter`, entrambi client-side sui dati già restituiti.
+4. ✅ **Esportazione CSV** di report e storico — `csv.js` (`toCsv`/`downloadCsv`, con neutralizzazione
+   delle formule contro CSV injection, rilievo CodeRabbit corretto in corsa).
+5. ✅ **Trascina-e-rilascia un TOML sulla finestra** — `PathBar.svelte`'s `onDragDropEvent`.
+6. ✅ **Badge di sola lettura** "pianificazione installata per questo job" — `schedule::referencing_config`
+   (`gui_api::schedules_referencing`), mostrato in `Run.svelte`.
 
-### Onda 2 — Valore medio, nuova superficie ma dentro i limiti esistenti
+### Onda 2 — Valore medio, nuova superficie ma dentro i limiti esistenti 🟠 **2 su 3 fatte**
 
 7. ✅ **Fatto 3 Set 2026 (PR #73).** **Vista "coda job" (F49)** — elenco dei job di un batch con stato
    individuale (in attesa / in corso / concluso), letto da `ProgressSample.batch_index`/`batch_total`
@@ -193,9 +250,9 @@ né `runner.rs`.
    già coperta da F56. Verificato contro il Credential Manager reale (salva → `cmdkey /list` conferma →
    elimina → assenza confermata).
 9. **Interruttore VSS in Modifica** — *dopo* aver aggiunto `vss_snapshot: Option<bool>` a
-   `JobConfig` lato core (non lavoro di frontend, vedi §4f). Fino ad allora questo punto resta bloccato.
+   `JobConfig` lato core (non lavoro di frontend, vedi §5f). Fino ad allora questo punto resta bloccato.
 
-### Onda 3 — Valore alto, richiede una decisione esplicita prima di progettare
+### Onda 3 — Valore alto, richiede una decisione esplicita prima di progettare 🔴 **non iniziata**
 
 10. **Flusso di ripristino guidato (`--restore-from`)** — la lacuna più sentita, ma `--restore-from`
     inverte sorgente e destinazione e può sovrascrivere dati: prima di un solo pixel di disegno serve
@@ -217,7 +274,7 @@ né `runner.rs`.
     esplicito a schermo — ma questa è una discussione di sicurezza da avere prima, non un dettaglio
     di implementazione.
 
-## 8. Come leggere le tre onde
+### Come leggere le tre onde
 
 Le onde sono un ordine di rischio, non di urgenza: l'Onda 1 si può fare senza toccare `job_editor.rs`
 o `runner.rs`, quindi non ha bisogno di nessuna nuova revisione del vincolo di sicurezza. L'Onda 2
@@ -309,7 +366,7 @@ non è una scelta di design ma un difetto, e non aspetta una decisione visiva pe
 
 ## 10. Piano di rifacimento visivo, prioritizzato
 
-Diviso per rischio/sforzo come le tre onde funzionali di §7, ma ortogonale ad esse: nessuna di queste
+Diviso per rischio/sforzo come le tre onde funzionali di §8, ma ortogonale ad esse: nessuna di queste
 voci tocca `runner.rs`, `job_editor.rs` o il confine F61 — sono tutte CSS/markup/organizzazione dei
 contenuti Svelte esistenti, non nuova superficie verso il core.
 
@@ -360,6 +417,20 @@ contenuti Svelte esistenti, non nuova superficie verso il core.
     tre righe di prosa dentro un riquadro tratteggiato (già meglio di niente, vedi il commento in
     `EmptyState.svelte`), ma resta un muro di testo come primo contatto con ciascuna scheda.
 
+### Uno strumento per i Livelli 2-3: la skill `ui-ux-pro-max`
+
+Installata in `~/.claude/skills/ui-ux-pro-max` (v2.13.0), utile per palette a token, coppie di font,
+spaziatura e stati — **ma dipende dalla query**, misurato prima di scriverlo qui: interrogata in
+automatico su `"backup operator console desktop file transfer"` ha restituito il pattern *Product
+Demo + Features*, una landing page di marketing, non una console operativa. Interrogata invece su
+`"data dense dashboard operator monitoring"` ha restituito lo stile `data-dense-dashboard` —
+griglia a 12 colonne, tipografia 12-14px, tabelle con header sticky, esattamente il registro che
+serve qui. **Non prendere il primo output della modalità automatica.** Copre gli stack `svelte` e
+`html-tailwind` (quelli di questo frontend), non le convenzioni desktop native (chrome della
+finestra, menu, tray, multi-finestra) — per quelle sono più centrate `ux-heuristics` e
+`accessibility-compliance`. Non usarla per decidere quali operazioni esporre o allentare un presidio
+di §2.3: quello resta un giudizio del core, mai della skill.
+
 ### Cosa resta fuori da questo rifacimento
 
 Nessuna di queste voci riapre le scelte già motivate altrove: la sola-lettura salvo le due eccezioni
@@ -368,12 +439,38 @@ dichiarate (Modifica, Credenziali), il vincolo di `runner.rs`, la densità come 
 qualunque libreria scelta per il punto 8 va verificata contro lo stesso criterio che ha scelto Svelte
 su React+shadcn (`CLAUDE.md`) — pacchetti e vulnerabilità aggiunte, non solo funzionalità offerta.
 
+## 11. Stato riassuntivo — fatto, da fare, proposto
+
+Una tabella sola per la domanda "a che punto siamo", sulle due dimensioni di questo piano
+(funzionale e visivo) insieme.
+
+| Traccia | Voce | Stato | Nota |
+|---|---|---|---|
+| Fondativa | F52-F60 (workspace, scheletro, editor, impostazioni, credenziali CLI, storico, installer) | ✅ **7/8 fatte** | F55 (script in scrittura) e F57 (ruoli) restano deliberatamente aperte |
+| Funzionale — Onda 1 | 6 item, rischio basso (notifica, etichetta batch, filtro, CSV, drag&drop, badge pianificazione) | ✅ **6/6 fatte** | Spedite prima dell'Onda 2, mai segnate qui fino ad oggi |
+| Funzionale — Onda 2 | Coda job (F49), credenziali in Impostazioni (F56) | ✅ **2/2 fatte** | PR #73, #74 |
+| Funzionale — Onda 2 | Interruttore VSS in Modifica | ⛔ **bloccata** | Serve prima `vss_snapshot: Option<bool>` su `JobConfig` lato core — non è lavoro di frontend |
+| Funzionale — Onda 3 | Flusso di ripristino guidato (`--restore-from`) | 🔴 **proposta, non iniziata** | La lacuna più sentita; richiede un disegno di conferma esplicita prima di qualunque riga |
+| Funzionale — Onda 3 | Ripresa da checkpoint (`--resume-from`) | 🔴 **proposta, non iniziata** | Rischio minore del ripristino; pattern già pronto lato core (`checkpoint::build_resume_args`) |
+| Funzionale — Onda 3 | Scrittura di webhook/script pre-post in Modifica | 🔴 **proposta, bloccata da una decisione di sicurezza** | Morde il vincolo permanente 2 (§2.3); serve una decisione esplicita prima del disegno |
+| Visivo — Livello 1 | 5 correzioni puntuali (contenimento layout, colonne tabella, badge provenienza, traduzione stringhe, collegamento run→report) | 🔴 **proposto, non iniziato** | Nessun rischio, poche righe ciascuna — il punto di partenza più ovvio |
+| Visivo — Livello 2 | Sistema di design minimo (scala tipografica, card, icone, larghezza campi editor) | 🔴 **proposto, non iniziato** | Tocca ogni scheda ma senza logica nuova; la voce icone è la causa singola più citata nel giudizio "spartana" |
+| Visivo — Livello 3 | Sidebar di navigazione, dimensione finestra, empty state con ancora visiva | 🔴 **proposto, richiede una decisione di design** | Struttura, non solo stile — da discutere prima di disegnare |
+| Difetto trovato per strada | D24 — console che lampeggiava (`schtasks.exe` senza `CREATE_NO_WINDOW`) | ✅ **corretto** | Non era nel piano: scoperto durante l'audit visivo, non una scelta di design |
+
+**In una frase**: la parte fondativa e funzionale a rischio basso/medio è quasi tutta fatta (11 voci
+su 13, le due mancanti bloccate da una decisione esplicita più che da lavoro); la parte a valore più
+alto — Onda 3 funzionale e l'intero rifacimento visivo — è tutta ancora da fare, ed è lì che si
+gioca sia "sembra ancora spartana" sia le lacune che gli operatori sentono di più.
+
 ## Riferimenti
 
 - [`CLAUDE.md`](CLAUDE.md) — regole operative per `runner.rs`, `job_editor.rs`, `gui_api.rs`.
 - [`ROADMAP.md`](ROADMAP.md) — righe F53-F60 (console), F49/F51/F46 (backlog TeraCopy-parity),
   milestone 8.0.0 (motore pilotabile, condizionale).
-- [`PIANO_GUI_TAURI.md`](PIANO_GUI_TAURI.md) — il piano operativo che ha portato alla console attuale.
+- `docs/archive/PIANO_GUI_TAURI.md` — il piano pre-implementazione
+  che ha portato alla console attuale, archiviato perché eseguito per intero (§2 sopra ne riassume
+  l'esito).
 - [`ANALYSIS.md`](ANALYSIS.md) — D1-D24, per il tipo di difetto che questo progetto trova più spesso
   (nel meccanismo di sicurezza attorno alla funzione, non nella funzione stessa) — la stessa cautela
   vale per ogni voce dell'Onda 3, e D24 è l'esempio più recente di un difetto trovato mentre si

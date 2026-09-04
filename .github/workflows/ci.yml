@@ -108,10 +108,10 @@ jobs:
       # F52: the GUI (milestone 7.0.0) will be a workspace member with an npm/vite toolchain. The
       # CLI must never acquire a dependency on it -- that is what keeps a scheduled, unattended
       # backup running exactly the same code whether or not the GUI is installed
-      # (PIANO_GUI_TAURI.md §2.1). Same shape as the axum gate above: `if`, never
+      # (docs/archive/PIANO_GUI_TAURI.md §2.1). Same shape as the axum gate above: `if`, never
       # `... | grep -q … && exit 1`, which returns 1 when grep finds nothing and would fail the
       # job precisely when the tree is clean.
-      - name: the CLI never depends on the GUI toolchain (PIANO_GUI_TAURI.md §4.2)
+      - name: the CLI never depends on the GUI toolchain (docs/archive/PIANO_GUI_TAURI.md §4.2)
         shell: bash
         run: |
           if cargo tree --locked -p rustcopy-cli | grep -qiE 'tauri|wry|tao'; then
@@ -184,7 +184,7 @@ jobs:
       - name: cargo clippy (GUI crate)
         run: cargo clippy --locked -p rustcopy-gui --all-targets -- -W clippy::unwrap_used -W clippy::expect_used -D warnings
 
-  # PIANO_GUI_TAURI.md §8.6: the Rust dependencies have `cargo audit` in security-audit.yml; the
+  # docs/archive/PIANO_GUI_TAURI.md §8.6: the Rust dependencies have `cargo audit` in security-audit.yml; the
   # npm ones that arrived with the frontend need the equivalent. Kept in the ordinary CI rather
   # than the audit workflow because it is fast and needs no advisory-database checkout. Also
   # builds the frontend: that is what caught `index.html` being swallowed by the blanket `*.html`

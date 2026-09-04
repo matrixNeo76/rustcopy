@@ -49,9 +49,10 @@ Log file   : E:\backup\ingest.log
 > (`--html-report-path`).
 >
 > Dalla milestone **7.0.0** esiste anche una **console desktop** (Tauri, componente opzionale
-> dell'installer): mostra job, impostazioni risolte e storico, e prepara proposte di configurazione
-> in file nuovi. **Non esegue backup, non copia e non cancella nulla**, e non tocca mai la
-> configurazione in uso — vedi [ROADMAP.md](ROADMAP.md) e `PIANO_GUI_TAURI.md`.
+> dell'installer): mostra job, impostazioni risolte e storico, avvia backup avviando la stessa CLI
+> come processo separato, e prepara proposte di configurazione in file nuovi. Non installa servizi
+> né pianificazioni, non forza un mirror non presidiato, e non tocca mai la configurazione in uso —
+> vedi [ROADMAP.md](ROADMAP.md) e [`PIANO_GUI.md`](PIANO_GUI.md).
 
 ---
 
