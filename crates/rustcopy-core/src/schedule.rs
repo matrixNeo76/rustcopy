@@ -230,7 +230,8 @@ fn run_schtasks(args: &[String]) -> Result<(), IngestError> {
         const CREATE_NO_WINDOW: u32 = 0x0800_0000;
         command.creation_flags(CREATE_NO_WINDOW);
     }
-    let output = command.output()
+    let output = command
+        .output()
         .map_err(|source| IngestError::SpawnFailed {
             program: "schtasks.exe".to_string(),
             source,
@@ -265,7 +266,8 @@ pub fn referencing_config(config_path: &Path) -> Result<Vec<String>, IngestError
         const CREATE_NO_WINDOW: u32 = 0x0800_0000;
         command.creation_flags(CREATE_NO_WINDOW);
     }
-    let output = command.output()
+    let output = command
+        .output()
         .map_err(|source| IngestError::SpawnFailed {
             program: "schtasks.exe".to_string(),
             source,
