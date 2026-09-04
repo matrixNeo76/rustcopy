@@ -48,7 +48,18 @@
   {/if}
 
   {#if jobs.length > 0}
-    <table class="mt-4 w-full text-left text-xs">
+    <table class="mt-4 w-full table-fixed text-left text-xs">
+      <!-- Explicit widths instead of leaving the browser's default table layout put all the
+           extra space on whichever column has the widest content — on a wide window that put
+           nearly the whole row into "Sorgente" while "Tipo"/"Verifica" stayed cramped, unrelated
+           to what either column actually needs (Livello 1, punto 2, PIANO_GUI.md §10). -->
+      <colgroup>
+        <col class="w-[22%]" />
+        <col class="w-[28%]" />
+        <col class="w-[28%]" />
+        <col class="w-[11%]" />
+        <col class="w-[11%]" />
+      </colgroup>
       <thead class="border-b border-slate-300 dark:border-slate-700">
         <tr>
           <th class="py-1 pr-3 font-medium">Job</th>
@@ -80,8 +91,8 @@
                 >MIRROR — cancella in destinazione</span>
               {/if}
             </td>
-            <td class="py-1 pr-3 font-mono text-slate-600 dark:text-slate-400">{job.source ?? "—"}</td>
-            <td class="py-1 pr-3 font-mono text-slate-600 dark:text-slate-400">{job.dest ?? "—"}</td>
+            <td class="truncate py-1 pr-3 font-mono text-slate-600 dark:text-slate-400" title={job.source ?? ""}>{job.source ?? "—"}</td>
+            <td class="truncate py-1 pr-3 font-mono text-slate-600 dark:text-slate-400" title={job.dest ?? ""}>{job.dest ?? "—"}</td>
             <td class="py-1 pr-3">{job.backup_type ?? "copia"}</td>
             <td class="py-1 pr-3">
               <!-- fast_verify travels beside verify_integrity, never instead of it: it skips files

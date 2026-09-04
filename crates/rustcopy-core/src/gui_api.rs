@@ -94,6 +94,55 @@ pub struct JobSummary {
     /// Deciding that is a judgement about the configuration, so it is made here rather than by a
     /// frontend guessing at angle brackets.
     pub unconfigured: bool,
+    /// The report this job would write, resolved and — for a job that came from `[[jobs]]` and
+    /// never set its own `report_path` — namespaced exactly as `run_jobs` namespaces it (F33/D12),
+    /// via the same `namespaced_path` `main.rs` calls. `None` when the path still carries `{timestamp}`
+    /// (P1): that placeholder is resolved fresh at the *start* of each run, so nothing computed
+    /// ahead of time (or after the fact, from this list) can predict what a specific past run
+    /// actually wrote. Used by the console's Esegui tab to link a just-finished run to its own
+    /// report (Livello 1, punto 5, `PIANO_GUI.md` §10) — deliberately not attempted for a
+    /// `{timestamp}` config rather than guessed at and wrong.
+    pub report_path: Option<String>,
+}
+
+/// Same default `--report-path` clap gives `Args` (`cli.rs`), applied here because `JobSummary`
+/// is built from `JobConfig`/`IngestConfig`, which — unlike `Args` — has no default of its own:
+/// `report_path` stays `None` in the TOML until something resolves it, exactly the gap clap's own
+/// `default_value` fills for a real invocation.
+const DEFAULT_REPORT_PATH: &str = "./robocopy_ingest_report.json";
+
+/// The report path a `JobSummary` should show, resolved and — when `namespace_with` is given —
+/// namespaced via [`crate::namespaced_path`] exactly as `run_jobs` namespaces it. `None` when the
+/// result still carries [`crate::REPORT_PATH_TIMESTAMP_PLACEHOLDER`]: that placeholder is resolved
+/// fresh at the start of each run, so nothing computed here can predict what a specific past run
+/// actually wrote.
+fn report_path_for_summary(
+    resolved: Option<&Path>,
+    namespace_with: Option<&str>,
+    anchor: &Path,
+) -> Option<String> {
+    let mut path = resolved
+        .map(Path::to_path_buf)
+        .unwrap_or_else(|| PathBuf::from(DEFAULT_REPORT_PATH));
+    if let Some(name) = namespace_with {
+        path = crate::namespaced_path(&path, name);
+    }
+    if path
+        .to_string_lossy()
+        .contains(crate::REPORT_PATH_TIMESTAMP_PLACEHOLDER)
+    {
+        return None;
+    }
+    // A relative path in the TOML means relative to the config file, not to whatever directory
+    // the console process happens to have as its own working directory (Desktop, for a Start Menu
+    // shortcut) — the same convention `start_job` already applies by setting `current_dir` before
+    // spawning. Without this, "Apri il report di questa run" resolved a relative report_path
+    // against the console's own cwd instead of the config's, and failed with a plain "path not
+    // found" — found by clicking the button against a real run, not by reading the code.
+    if path.is_relative() {
+        path = anchor.join(path);
+    }
+    Some(path.display().to_string())
 }
 
 /// Whether a path is still a template placeholder rather than a real path.
@@ -387,9 +436,15 @@ pub fn delete_credential(name: &str) -> Result<(), IngestError> {
 pub fn list_jobs(config_path: &Path) -> Result<Vec<JobSummary>, IngestError> {
     let config = IngestConfig::load_from(config_path)?;
     let jobs = config.jobs.clone().unwrap_or_default();
+    // Same anchor `start_job` gives the child process via `current_dir`: a relative report_path
+    // in the TOML means relative to the config file, not to the console's own working directory.
+    let anchor = config_path.parent().unwrap_or(Path::new("."));
 
     if jobs.is_empty() {
         let d = &config.defaults;
+        // No `[[jobs]]` at all means `run_jobs` (and its namespacing) never runs — the single
+        // implicit job writes exactly the resolved path, unmodified.
+        let report_path = report_path_for_summary(d.report_path.as_deref(), None, anchor);
         return Ok(vec![JobSummary {
             name: d.name.clone().unwrap_or_else(|| "job1".to_string()),
             source: d.source.as_ref().map(|p| p.display().to_string()),
@@ -400,6 +455,7 @@ pub fn list_jobs(config_path: &Path) -> Result<Vec<JobSummary>, IngestError> {
             fast_verify: d.fast_verify.unwrap_or(false),
             unconfigured: is_placeholder(d.source.as_ref().map(|p| p.to_string_lossy()).as_deref())
                 || is_placeholder(d.dest.as_ref().map(|p| p.to_string_lossy()).as_deref()),
+            report_path,
         }]);
     }
 
@@ -408,14 +464,22 @@ pub fn list_jobs(config_path: &Path) -> Result<Vec<JobSummary>, IngestError> {
         .enumerate()
         .map(|(idx, job)| {
             let resolved = job.merged_over(&config.defaults);
+            let name = resolved
+                .name
+                .clone()
+                .unwrap_or_else(|| format!("job{}", idx + 1));
+            // Namespace only when *this job itself* never set report_path — mirrors main.rs's own
+            // `job.report_path.is_none()` check exactly (D12): `resolved` already folded in the
+            // top-level default even when the job didn't ask for it, which would otherwise defeat
+            // the check every time.
+            let namespace_with = job.report_path.is_none().then_some(name.as_str());
+            let report_path =
+                report_path_for_summary(resolved.report_path.as_deref(), namespace_with, anchor);
             JobSummary {
                 // Mirrors `run_jobs`: the job's own name, else the positional fallback. Reading it
                 // from `resolved` would be wrong now that `name` no longer inherits, and would have
                 // been wrong before too — every unnamed job would have shown the same label.
-                name: resolved
-                    .name
-                    .clone()
-                    .unwrap_or_else(|| format!("job{}", idx + 1)),
+                name,
                 source: resolved.source.as_ref().map(|p| p.display().to_string()),
                 dest: resolved.dest.as_ref().map(|p| p.display().to_string()),
                 backup_type: resolved
@@ -437,6 +501,7 @@ pub fn list_jobs(config_path: &Path) -> Result<Vec<JobSummary>, IngestError> {
                         .map(|p| p.to_string_lossy())
                         .as_deref(),
                 ),
+                report_path,
             }
         })
         .collect())
@@ -1702,5 +1767,117 @@ webhook_url = \"https://u:p@notify.internal\"
         let back: Vec<CheckpointSummary> = serde_json::from_str(&json).expect("round-trip");
         assert_eq!(back.len(), 1);
         assert_eq!(back[0].dest, "E:/dst");
+    }
+
+    fn write_config(body: &str) -> (tempfile::TempDir, std::path::PathBuf) {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let path = dir.path().join("jobs.toml");
+        std::fs::write(&path, body).expect("write");
+        (dir, path)
+    }
+
+    fn job<'a>(summaries: &'a [JobSummary], name: &str) -> &'a JobSummary {
+        summaries
+            .iter()
+            .find(|j| j.name == name)
+            .unwrap_or_else(|| panic!("no job named {name} in {summaries:?}"))
+    }
+
+    /// `PathBuf::display()` renders `\` on Windows and `/` on Unix for the exact same logical
+    /// path — normalised here so these tests assert on the namespacing/defaulting logic itself,
+    /// not on which CI runner happened to build it.
+    fn report_path_of(summaries: &[JobSummary], name: &str) -> Option<String> {
+        job(summaries, name)
+            .report_path
+            .as_ref()
+            .map(|p| p.replace('\\', "/"))
+    }
+
+    /// No `[[jobs]]` at all means `run_jobs` — and its namespacing — never runs: the single
+    /// implicit job's report_path is exactly clap's own `--report-path` default, untouched.
+    #[test]
+    fn report_path_for_a_single_implicit_job_is_the_plain_default() {
+        let (dir, path) = write_config("source = \"D:/src\"\ndest = \"E:/dst\"\n");
+        let jobs = list_jobs(&path).expect("reads");
+        assert_eq!(jobs.len(), 1);
+        // Anchored at the config's own directory — same convention `start_job` gives the child
+        // process via `current_dir` — not left relative (which resolved against the console's own
+        // cwd, not the config's, and 404'd when "Apri il report di questa run" tried it for real).
+        let expected = dir.path().join("./robocopy_ingest_report.json");
+        assert_eq!(
+            jobs[0].report_path.as_ref().map(|p| p.replace('\\', "/")),
+            Some(expected.display().to_string().replace('\\', "/"))
+        );
+    }
+
+    /// F33/D12: a `[[jobs]]` entry that never set its own report_path gets one namespaced with
+    /// its own name — mirrors `main.rs::run_jobs`'s `job.report_path.is_none()` check exactly, so
+    /// two jobs sharing an inherited default do not appear to share one report.
+    #[test]
+    fn report_path_is_namespaced_per_job_when_the_job_did_not_set_its_own() {
+        let (dir, path) = write_config(
+            r#"
+[[jobs]]
+name = "documenti"
+source = "D:/docs"
+dest = "E:/docs"
+
+[[jobs]]
+name = "archivio"
+source = "D:/arch"
+dest = "E:/arch"
+"#,
+        );
+        let jobs = list_jobs(&path).expect("reads");
+        let expect_at = |file: &str| {
+            Some(
+                dir.path()
+                    .join(file)
+                    .display()
+                    .to_string()
+                    .replace('\\', "/"),
+            )
+        };
+        assert_eq!(
+            report_path_of(&jobs, "documenti"),
+            expect_at("./robocopy_ingest_report.documenti.json")
+        );
+        assert_eq!(
+            report_path_of(&jobs, "archivio"),
+            expect_at("./robocopy_ingest_report.archivio.json")
+        );
+    }
+
+    /// A job that sets its own `report_path` is never namespaced — matches `main.rs` exactly:
+    /// the check is on the job's *own* field, not the merged/resolved value.
+    #[test]
+    fn report_path_is_not_namespaced_when_the_job_set_its_own() {
+        let (dir, path) = write_config(
+            r#"
+[[jobs]]
+name = "documenti"
+source = "D:/docs"
+dest = "E:/docs"
+report_path = "reports/documenti.json"
+"#,
+        );
+        let jobs = list_jobs(&path).expect("reads");
+        let expected = dir.path().join("reports/documenti.json");
+        assert_eq!(
+            report_path_of(&jobs, "documenti"),
+            Some(expected.display().to_string().replace('\\', "/"))
+        );
+    }
+
+    /// P1: `{timestamp}` is resolved fresh at the start of each real run. Nothing computed ahead
+    /// of time (or, here, read back from the config after the fact) can predict what a specific
+    /// past run actually wrote — so this must say "unknown", not guess.
+    #[test]
+    fn report_path_is_none_when_it_still_carries_the_timestamp_placeholder() {
+        let (_dir, path) = write_config(
+            "source = \"D:/src\"\ndest = \"E:/dst\"\nreport_path = \"report-{timestamp}.json\"\n",
+        );
+        let jobs = list_jobs(&path).expect("reads");
+        assert_eq!(jobs[0].report_path, None);
     }
 }

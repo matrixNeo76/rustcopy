@@ -11,6 +11,15 @@ export const session = $state({
   configPath: "",
   reportPath: "",
   jobName: "",
+  // Owned here rather than as App.svelte's own local state so a pane can navigate to another one
+  // — "Apri il report di questa run" in Esegui needs to switch to Report with reportPath already
+  // set, and App.svelte is the only place that otherwise ever reads or writes which tab is active
+  // (Livello 1, punto 5, PIANO_GUI.md §10).
+  activeTab: "jobs",
+  // One-shot: set together with reportPath by "Apri il report di questa run", consumed by
+  // Report.svelte's own effect the moment it fires. Never left `true` — a signal that could stay
+  // set would re-trigger a load the next time something unrelated touched reportPath.
+  pendingReportLoad: false,
 });
 
 const RECENT_LIMIT = 8;
