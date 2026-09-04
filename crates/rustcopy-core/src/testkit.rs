@@ -3,6 +3,11 @@
 //! Kept in the library (rather than behind `#[cfg(test)]`) so both the unit tests and the
 //! integration tests under `tests/` can drive the engine layer without a Windows machine.
 
+// Test-support code, not a production code path — clippy's own `#[cfg(test)]` exemption doesn't
+// apply here precisely because this module is deliberately *not* `#[cfg(test)]` (see above), so
+// it needs its own blanket allow rather than one `#[allow]` per call site.
+#![allow(clippy::unwrap_used, clippy::expect_used)]
+
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Mutex;
 use std::time::Duration;
