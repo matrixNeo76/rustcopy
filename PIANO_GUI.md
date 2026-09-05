@@ -1,7 +1,7 @@
 ---
 type: Reference
 title: Piano della console rustcopy
-description: Documento unico e vivo per la console (F52-F60) — consolida il piano pre-implementazione (stack, ambito, distribuzione, vincoli permanenti) con l'inventario di ciò che espone oggi rispetto alla CLI, le lacune funzionali con un piano in tre onde, e un audit visivo/di usabilità con un piano di rifacimento a tre livelli. Sostituisce PIANO_GUI_TAURI.md (archiviato) e PIANO_GUI_ESPANSIONE.md (questo stesso file, rinominato).
+description: Documento unico e vivo per la console (F52-F60) — consolida il piano pre-implementazione (stack, ambito, distribuzione, vincoli permanenti) con l'inventario di ciò che espone oggi rispetto alla CLI, le lacune funzionali con un piano in tre onde, un audit visivo/di usabilità con un piano di rifacimento a tre livelli (chiuso), e una valutazione di una metodologia a workspace più cinque funzionalità CLI non ancora costruite. Sostituisce PIANO_GUI_TAURI.md (archiviato) e PIANO_GUI_ESPANSIONE.md (questo stesso file, rinominato).
 status: draft
 generated:
   by: process:claude-code
@@ -511,6 +511,103 @@ più del Livello 1 da solo, che aveva risolto soprattutto lo spazio sprecato. Re
 ripristino guidato (Onda 3, la lacuna funzionale più sentita) e le due voci bloccate da una decisione
 esplicita.
 
+## 12. Metodologia a workspace e funzionalità CLI non ancora valutate (analisi del 5 Set 2026)
+
+Richiesta dall'utente dopo la chiusura dei Livelli 1-3: (a) una console a workspace avrebbe senso,
+o l'architettura attuale non lo permette? (b) quali funzionalità CLI non ancora valutate potremmo
+costruire e rendere utilizzabili anche in GUI? Risposta basata sul codice reale, non su ipotesi —
+ogni affermazione sotto è stata verificata leggendo l'implementazione citata, non assunta.
+
+### 12.1 Una metodologia "a workspace" ha senso qui?
+
+**Cosa esiste già che è, di fatto, un workspace**: `[[jobs]]` in un TOML è già l'unità che il core
+tratta come un gruppo di job correlati — un file, più destinazioni, condiviso da CLI e GUI allo
+stesso modo (F33). La console vi si appoggia interamente: ogni scheda legge lo stesso
+`session.configPath` (`session.svelte.js`), quindi aprire un file in Job lo rende immediatamente
+disponibile in Impostazioni, Modifica ed Esegui senza incollarlo tre volte — è già, in miniatura,
+"un progetto aperto in più viste". A questo si aggiunge "Recenti": una lista MRU di 8 percorsi
+(separata per config/report) in `localStorage`, senza etichette, letta e scritta da `recent()`/
+`remember()` nello stesso file.
+
+**Cosa esiste in parallelo e non parla con nessuno dei due**: `scripts/profiles.json` (più
+`scripts/_profiles-common.ps1`, `scripts/rustcopy-launcher.ps1`) è un **secondo** sistema di
+"profili" nominati (nome, source, dest, threads, mirror, hash-algo, credenziali SMB) che il layer
+PowerShell legge per costruire invocazioni CLI dirette — non passa da `[[jobs]]` TOML, non è letto
+né scritto dalla GUI, e non c'è alcuna riconciliazione fra i due. Non è un difetto introdotto ora
+(precede la console), ma è la prova concreta di cosa succede quando un secondo formato di
+configurazione nasce accanto al primo: due elenchi di "backup che faccio abitualmente" che possono
+divergere silenziosamente, e un operatore che aggiorna un profilo PowerShell non sposta nulla nel
+mondo `[[jobs]]`/GUI, o viceversa.
+
+**Conclusione**: un vero file di workspace separato (un terzo formato, superset di configurazioni
+TOML non correlate, con un proprio stato salvato) **non ha senso qui** — duplicherebbe esattamente
+ciò che `[[jobs]]` già risolve, e ripeterebbe l'errore che i profili PowerShell hanno già commesso,
+frammentando la configurazione invece di consolidarla. È lo stesso principio che ha già escluso una
+cache di scan duplicata (P3) e SQLite (D19/D20): niente terza struttura quando la prima basta.
+
+**Cosa invece ha senso, a rischio pressoché nullo**: elevare "Recenti" a un piccolo elenco di
+**preferiti nominati** (etichetta breve → percorso), *superset* di "Recenti" e non sua sostituzione
+— stesso meccanismo (client-side, `localStorage`, zero modifiche al core, stesso pattern già in
+`session.svelte.js`). Risolve il problema reale — un MRU di 8 percorsi anonimi è scomodo appena si
+gestiscono più di due o tre destinazioni ricorrenti, che è esattamente il caso che i profili
+PowerShell testimoniano nel repository — senza introdurre un secondo formato di configurazione o
+toccare in alcun modo prestazioni, robustezza o potenza del motore. Non è ancora implementato: resta
+una proposta.
+
+**Effetto collaterale di questa analisi**: vale la pena che l'utente sappia che il repository ha
+oggi due sistemi di "profili" paralleli e disconnessi (PowerShell e, potenzialmente domani, i
+preferiti GUI proposti sopra andrebbero costruiti come *etichette su percorsi `[[jobs]]` esistenti*,
+mai come un terzo formato equivalente a `profiles.json`) — non una richiesta di azione immediata,
+ma una cosa da tenere a mente la prossima volta che si tocca l'uno o l'altro.
+
+### 12.2 Funzionalità CLI non ancora valutate, utilizzabili anche in GUI
+
+Cinque idee, ciascuna verificata contro il codice reale — non proposte a vuoto. Le prime tre
+riusano quasi per intero logica **già scritta e testata**, solo mai esposta con questo scopo.
+
+1. **`--list-schedules`** — lacuna già dichiarata (`CLAUDE.md`, riga F36: "Known gap: no
+   `--list-schedules`") ma mai colmata. `schedule::referencing_config`
+   (`crates/rustcopy-core/src/schedule.rs`) interroga già `schtasks.exe /Query /FO CSV /V` e
+   filtra le attività il cui comando cita un `config_path` specifico — usata oggi solo dalla GUI
+   (`gui_api::schedules_referencing`, il badge "un'attività punta già qui" in Esegui). Una
+   variante che filtra invece sul percorso del **binario** (ogni attività che invoca
+   `robocopy_ingest.exe`, non solo quelle che citano un file preciso) chiuderebbe la lacuna CLI
+   riusando lo stesso motore di parsing CSV già coperto da test contro output reale catturato. La
+   GUI guadagnerebbe un vero elenco al posto del semplice badge booleano di oggi.
+2. **Anteprima di un mirror/purge, di sola lettura** — `check_mirror_safety`
+   (`crates/rustcopy-cli/src/main.rs`) **calcola già** l'elenco esatto (`extraneous: Vec<&Path>`)
+   dei file che `--mirror` cancellerebbe, ma oggi lo tronca a 5 voci e lo stampa solo su
+   `stderr` quando sta per abortire in modo interattivo. L'avviso mirror della console
+   (`Run.svelte`) dice letteralmente "eseguila dalla CLI, dove la conferma mostra quali file
+   verrebbero eliminati" — un'opzione che scrive la lista **intera**, strutturata (JSON), senza
+   mai eseguire il purge, chiuderebbe quella frase con un pulsante invece che con un rimando alla
+   riga di comando. Il vincolo F61 resta intatto: leggere un elenco non è autorizzare una
+   cancellazione, stessa distinzione già usata per il badge di pianificazione.
+3. **Anteprima di ripristino** — `--restore-from` e `--dry-run` non risultano in conflitto in
+   `cli.rs` (nessun `conflicts_with` fra i due), quindi la combinazione **probabilmente** già
+   funziona oggi — non verificato con un'esecuzione reale in questa sessione, va confermato prima
+   di costruirci sopra. Se confermato, è il primo mattone naturale per il flusso di ripristino
+   guidato già in cima al backlog (§5b, §8 Onda 3): elenco report → anteprima (questo comando) →
+   conferma esplicita → avvio.
+4. **Controllo preventivo di spazio libero in destinazione** — verificato: **non esiste in
+   nessuna forma** nel codice attuale (nessun riferimento a spazio libero/disco in tutto
+   `rustcopy-core`/`rustcopy-cli`). Confrontare i byte totali del prescan con lo spazio libero a
+   `--dest` prima di avviare il trasferimento eviterebbe una run di ore che fallisce a metà per
+   disco pieno — attivo di default, con un `--skip-space-check` per destinazioni dove lo spazio
+   libero non è interrogabile (alcune condivisioni di rete non lo espongono in modo affidabile).
+   Naturale anche come indicatore "pronto a partire" nella scheda Esegui, prima di Avvia — una
+   lettura, non un giudizio, quindi coerente con quanto la console può già fare da sola.
+5. **Considerata e scartata**: un comando di introspezione schema (`--print-schema`) che
+   permetterebbe all'editor della GUI di generare il proprio form dinamicamente invece del form
+   scritto a mano di oggi (26 dei 29 campi di `JobConfig`). Scartata perché sposterebbe il pattern
+   consolidato di questo progetto — "involucro sottile, il giudizio resta nel core" — verso uno
+   schema-driven generico: un cambio di paradigma sproporzionato rispetto al problema reale, che è
+   un form manuale funzionante e senza segnalata difficoltà di manutenzione.
+
+**Nessuna di queste cinque voci è stata implementata in questa sessione**: sono proposte, verificate
+contro il codice reale dove possibile, in attesa di una decisione sulla priorità — stesso metodo
+già usato per l'Onda 3 (proporre con `AskUserQuestion` prima di scrivere codice).
+
 ## Riferimenti
 
 - [`CLAUDE.md`](CLAUDE.md) — regole operative per `runner.rs`, `job_editor.rs`, `gui_api.rs`.
@@ -519,7 +616,7 @@ esplicita.
 - `docs/archive/PIANO_GUI_TAURI.md` — il piano pre-implementazione
   che ha portato alla console attuale, archiviato perché eseguito per intero (§2 sopra ne riassume
   l'esito).
-- [`ANALYSIS.md`](ANALYSIS.md) — D1-D24, per il tipo di difetto che questo progetto trova più spesso
+- [`ANALYSIS.md`](ANALYSIS.md) — D1-D25, per il tipo di difetto che questo progetto trova più spesso
   (nel meccanismo di sicurezza attorno alla funzione, non nella funzione stessa) — la stessa cautela
   vale per ogni voce dell'Onda 3, e D24 è l'esempio più recente di un difetto trovato mentre si
   cercava altro.
