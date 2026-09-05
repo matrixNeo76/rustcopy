@@ -42,8 +42,9 @@ const POLL_INTERVAL: Duration = Duration::from_secs(30);
 // binary returns. They used to be private constants here *and* a hand-written map in the
 // console's history pane — two definitions of one contract, free to drift.
 use robocopy_ingest::runner::{
-    EXIT_INGESTION_PROBLEM, EXIT_INTEGRITY_FAILED, EXIT_MIRROR_ABORTED,
-    EXIT_RETENTION_ABORTED as EXIT_RETENTION_PURGE_ABORTED, EXIT_UNRECOVERABLE,
+    EXIT_INGESTION_PROBLEM, EXIT_INSUFFICIENT_DISK_SPACE, EXIT_INTEGRITY_FAILED,
+    EXIT_MIRROR_ABORTED, EXIT_RETENTION_ABORTED as EXIT_RETENTION_PURGE_ABORTED,
+    EXIT_UNRECOVERABLE,
 };
 
 /// F37: a plain (non-`#[tokio::main]`) entry point on purpose. `windows_service::service_dispatcher`
@@ -81,6 +82,9 @@ async fn async_main() -> ExitCode {
                 Some(IngestError::MirrorPurgeAborted { .. }) => ExitCode::from(EXIT_MIRROR_ABORTED),
                 Some(IngestError::RetentionPurgeAborted { .. }) => {
                     ExitCode::from(EXIT_RETENTION_PURGE_ABORTED)
+                }
+                Some(IngestError::InsufficientDiskSpace { .. }) => {
+                    ExitCode::from(EXIT_INSUFFICIENT_DISK_SPACE)
                 }
                 _ => ExitCode::from(EXIT_UNRECOVERABLE),
             }
@@ -748,6 +752,26 @@ async fn execute(args: &Args, child_pid: Arc<AtomicU32>) -> Result<RunOutcome> {
             args.pattern,
             args.source().display()
         );
+    }
+
+    // F65: before either pipeline below starts writing anything — plain-sync and --backup-type
+    // can both fill a disk, so this runs ahead of the diversion rather than in just one branch.
+    if !args.skip_space_check {
+        if inventory.total_files_hint.is_some() {
+            // --no-prescan has no byte total to check a requirement against; erring toward
+            // letting the run proceed, same as `disk_space::ensure_enough_free_space`'s own
+            // treatment of a check it cannot make.
+            tracing::warn!(
+                "--no-prescan has no byte total to check against; skipping the free-space check \
+                 (pass --skip-space-check to silence this warning)"
+            );
+        } else {
+            robocopy_ingest::disk_space::ensure_enough_free_space(
+                args.dest(),
+                inventory.total_bytes,
+                args.space_safety_margin_percent,
+            )?;
+        }
     }
 
     // F34: --backup-type diverts into a completely different pipeline (a naive, explicit-file-list

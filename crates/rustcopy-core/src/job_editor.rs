@@ -32,6 +32,9 @@
 //! So the fields this editor does not own are not dropped — they are copied through verbatim:
 //! `pre_command`, `post_command` and `webhook_url` among them. Those belong to F55's write half,
 //! which is still an open decision, and carrying them untouched is what keeps it genuinely open.
+//! `skip_space_check`/`space_safety_margin_percent` (F65) are carried the same way for a simpler
+//! reason: the form has no control for them yet, not a security decision — add one if that
+//! changes, rather than leaving them silently verbatim forever.
 //!
 //! # Never in place
 //!
@@ -381,6 +384,10 @@ pub fn apply_draft(
         webhook_url: base.webhook_url.clone(),
         pre_command: base.pre_command.clone(),
         post_command: base.post_command.clone(),
+        // F65: same reasoning as the three fields above — not yet exposed in the editor form, so
+        // carried through verbatim rather than dropped.
+        skip_space_check: base.skip_space_check,
+        space_safety_margin_percent: base.space_safety_margin_percent,
     })
 }
 

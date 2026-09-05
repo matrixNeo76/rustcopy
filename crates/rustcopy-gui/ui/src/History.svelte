@@ -69,6 +69,7 @@
     3: "purge mirror annullata",
     4: "copiato, verifica fallita",
     5: "purge retention annullata",
+    6: "spazio libero insufficiente",
   };
 
   const filteredRuns = $derived(

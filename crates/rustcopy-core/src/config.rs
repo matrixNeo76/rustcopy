@@ -65,6 +65,9 @@ pub struct JobConfig {
     pub max_age_days: Option<u32>,
     pub bandwidth_limit_mbps: Option<u32>,
     pub no_prescan: Option<bool>,
+    /// F65: preflight free-space check.
+    pub skip_space_check: Option<bool>,
+    pub space_safety_margin_percent: Option<u32>,
     pub long_paths: Option<bool>,
     pub preserve_timestamps: Option<bool>,
     pub preserve_acl: Option<bool>,
@@ -130,6 +133,10 @@ impl JobConfig {
             max_age_days: self.max_age_days.or(base.max_age_days),
             bandwidth_limit_mbps: self.bandwidth_limit_mbps.or(base.bandwidth_limit_mbps),
             no_prescan: self.no_prescan.or(base.no_prescan),
+            skip_space_check: self.skip_space_check.or(base.skip_space_check),
+            space_safety_margin_percent: self
+                .space_safety_margin_percent
+                .or(base.space_safety_margin_percent),
             long_paths: self.long_paths.or(base.long_paths),
             preserve_timestamps: self.preserve_timestamps.or(base.preserve_timestamps),
             preserve_acl: self.preserve_acl.or(base.preserve_acl),

@@ -21,6 +21,7 @@ pub mod cli;
 pub mod cloud;
 pub mod config;
 pub mod crypto;
+pub mod disk_space;
 pub mod engine;
 pub mod errors;
 pub mod exit_code;
