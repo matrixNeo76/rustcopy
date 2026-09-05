@@ -63,3 +63,69 @@ export function remember(kind, path) {
   lists[key] = [path, ...kept].slice(0, RECENT_LIMIT);
   write(KEYS[key], lists[key]);
 }
+
+// F66: named favorites, a superset of "Recenti" and not its replacement — an unlabeled MRU of 8
+// is uncomfortable once an operator manages more than two or three recurring destinations, which
+// is exactly the case scripts/profiles.json exists to work around at the PowerShell layer
+// (PIANO_GUI.md §12.1). This stays a label on a path already accepted by Job/Impostazioni/Report —
+// never a second configuration format: no fields beyond `label`/`path` are stored here, and
+// nothing here is read by the core or by `[[jobs]]` TOML.
+const FAVORITE_LIMIT = 20;
+const FAVORITE_KEYS = {
+  config: "rustcopy.favorites.config",
+  report: "rustcopy.favorites.report",
+};
+
+function readFavorites(key) {
+  try {
+    const raw = localStorage.getItem(key);
+    const parsed = raw ? JSON.parse(raw) : [];
+    return Array.isArray(parsed)
+      ? parsed.filter(
+          (entry) =>
+            entry && typeof entry.path === "string" && typeof entry.label === "string",
+        )
+      : [];
+  } catch {
+    return [];
+  }
+}
+
+function writeFavorites(key, values) {
+  try {
+    localStorage.setItem(key, JSON.stringify(values.slice(0, FAVORITE_LIMIT)));
+  } catch {
+    // Same tolerance as `write()` above: a lost favorite is a convenience gone, not work lost.
+  }
+}
+
+const favoriteLists = $state({
+  config: readFavorites(FAVORITE_KEYS.config),
+  report: readFavorites(FAVORITE_KEYS.report),
+});
+
+export function favorites(kind) {
+  return favoriteLists[kind] ?? [];
+}
+
+export function isFavorite(kind, path) {
+  const key = kind in FAVORITE_KEYS ? kind : "config";
+  return (favoriteLists[key] ?? []).some((entry) => entry.path === path);
+}
+
+// Adding an already-favorited path updates its label in place rather than duplicating the entry —
+// re-labeling should never leave the old label behind as a second row for the same path.
+export function addFavorite(kind, path, label) {
+  if (!path) return;
+  const key = kind in FAVORITE_KEYS ? kind : "config";
+  const trimmed = label.trim() || path;
+  const kept = (favoriteLists[key] ?? []).filter((entry) => entry.path !== path);
+  favoriteLists[key] = [{ label: trimmed, path }, ...kept].slice(0, FAVORITE_LIMIT);
+  writeFavorites(FAVORITE_KEYS[key], favoriteLists[key]);
+}
+
+export function removeFavorite(kind, path) {
+  const key = kind in FAVORITE_KEYS ? kind : "config";
+  favoriteLists[key] = (favoriteLists[key] ?? []).filter((entry) => entry.path !== path);
+  writeFavorites(FAVORITE_KEYS[key], favoriteLists[key]);
+}
