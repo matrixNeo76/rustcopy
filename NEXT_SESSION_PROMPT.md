@@ -25,7 +25,7 @@ generated:
 
 **Il difetto più istruttivo resta D22** (2 Set, non di questa sessione, ma da rileggere prima di toccare la GUI): la console installata caricava il server di sviluppo invece del proprio frontend, e `cargo build`/`clippy`/tutti i test erano verdi, perché nessuno di loro apre una finestra. **Per una GUI non esiste sostituto all'aprire la finestra e cliccarci dentro** — ogni bug di questa sessione (D23, D24, il bug dell'icona morta) è stato trovato così, mai leggendo solo il diff.
 
-Milestone 5.2.0/5.3.0/6.0.0/6.1.0/7.0.0 chiuse (7.0.0 a sette voci su otto: resta la metà in **scrittura** di F55 — script pre/post — e F57, i ruoli, fermo con raccomandazione esplicita di non farlo). Difetti storici: **D1-D25**, **un solo aperto (D25)**, non bloccante. Feature F1-F61 tutte classificate.
+Milestone 5.2.0/5.3.0/6.0.0/6.1.0/7.0.0 chiuse (7.0.0 a sette voci su otto: resta la metà in **scrittura** di F55 — script pre/post — e F57, i ruoli, fermo con raccomandazione esplicita di non farlo). Difetti storici: **D1-D25**, **un solo aperto (D25)**, non bloccante. Feature F1-F66 tutte classificate — **F62-F66 sono nuove**, aggiunte al backlog il 5 Set 2026 da un'analisi richiesta dall'utente su una metodologia a workspace e su funzionalità CLI non ancora valutate (`--list-schedules`, anteprima mirror/purge, anteprima restore, controllo spazio libero, preferiti nominati in GUI) — spec tecnica completa in `ROADMAP.md`, nessuna ancora implementata.
 
 ---
 
@@ -38,6 +38,7 @@ Nessuna richiesta esplicita in sospeso all'apertura di questa sessione. Le aree 
    - Interruttore VSS in Modifica — serve prima `vss_snapshot: Option<bool>` su `JobConfig` lato core, non è lavoro di frontend.
    - Scrittura di webhook/script pre-post in Modifica (F55, metà scrittura) — morde il vincolo permanente 2 (§2.3 di `PIANO_GUI.md`): script configurabili + servizio privilegiato = escalation locale. Non procedere senza una decisione esplicita.
 3. **D25** (`checkpoint::build_resume_args` scarta la maggior parte della configurazione originale) — aperto ma non bloccante. Il fix corretto è un tipo dedicato per il checkpoint, non allargare `ConfigurationReport` (condiviso con i report di run completate). Non affrontarlo con una patch rapida.
+4. **F62-F66** (backlog, 5 Set 2026, spec completa in `ROADMAP.md`) — nessuno richiesto esplicitamente ancora, ma pronti se l'utente ne sceglie uno: `--list-schedules` (F62) e l'anteprima mirror/purge (F63) sono i più economici perché riusano quasi per intero logica già scritta e testata; l'anteprima di ripristino (F64) è il primo mattone del punto 1 sopra, ma richiede prima una verifica empirica se `--restore-from --dry-run` già funziona; il controllo spazio libero (F65) e i preferiti nominati in GUI (F66) sono indipendenti dal resto.
 
 In assenza di una richiesta, il modello resta quello delle sessioni precedenti: **verificare empiricamente prima di proporre un fix**, mai fix speculativi su ipotesi non confermate — e, per qualunque cosa tocchi la GUI, **aprire la finestra** contro il binario release compilato, non fidarsi di `cargo build`/test/clippy da soli.
 

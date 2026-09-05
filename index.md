@@ -18,7 +18,7 @@ okf_version: "0.2"
 * [CLAUDE.md — Claude Code \& AI Agent Prompt Instructions](CLAUDE.md) - Technical notes and hard constraints for AI agents working on this codebase.
 * [Piano della console rustcopy](PIANO_GUI.md) - Documento unico e vivo per la console (F52-F60) — consolida il piano pre-implementazione (stack, ambito, distribuzione, vincoli permanenti) con l'inventario di ciò che espone oggi rispetto alla CLI, le lacune funzionali con un piano in tre onde, un audit visivo/di usabilità con un piano di rifacimento a tre livelli (chiuso), e una valutazione di una metodologia a workspace più cinque funzionalità CLI non ancora costruite. Sostituisce PIANO_GUI_TAURI.md (archiviato) e PIANO_GUI_ESPANSIONE.md (questo stesso file, rinominato).
 * [Piano di Miglioramento Consolidato — robocopy-ingest-cli](PIANO_MIGLIORAMENTI.md) - Piano operativo unico — lacune documentazione, economia di contesto, debito tecnico, launcher PowerShell, performance.
-* [Roadmap di Progetto — robocopy-ingest-cli](ROADMAP.md) - Milestone, elenco feature F1-F61, backlog, debito tecnico noto.
+* [Roadmap di Progetto — robocopy-ingest-cli](ROADMAP.md) - Milestone, elenco feature F1-F66, backlog, debito tecnico noto.
 * [robocopy-ingest-cli (rustcopy) — README](README.md) - Panoramica del progetto — cosa fa, come si installa, primi comandi e indice della documentazione.
 * [Runbook Operativo — robocopy-ingest-cli](RUNBOOK.md) - Guide operative pratiche, esempi reali, benchmark SMB/NAS.
 * [Security Policy](SECURITY.md) - How to report vulnerabilities, and the security scope of this project.

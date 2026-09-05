@@ -552,7 +552,8 @@ cache di scan duplicata (P3) e SQLite (D19/D20): niente terza struttura quando l
 gestiscono più di due o tre destinazioni ricorrenti, che è esattamente il caso che i profili
 PowerShell testimoniano nel repository — senza introdurre un secondo formato di configurazione o
 toccare in alcun modo prestazioni, robustezza o potenza del motore. Non è ancora implementato: resta
-una proposta.
+una proposta, ora anche una riga di backlog — [`F66`](ROADMAP.md) in `ROADMAP.md`, con la spec
+completa.
 
 **Effetto collaterale di questa analisi**: vale la pena che l'utente sappia che il repository ha
 oggi due sistemi di "profili" paralleli e disconnessi (PowerShell e, potenzialmente domani, i
@@ -565,7 +566,7 @@ ma una cosa da tenere a mente la prossima volta che si tocca l'uno o l'altro.
 Cinque idee, ciascuna verificata contro il codice reale — non proposte a vuoto. Le prime tre
 riusano quasi per intero logica **già scritta e testata**, solo mai esposta con questo scopo.
 
-1. **`--list-schedules`** — lacuna già dichiarata (`CLAUDE.md`, riga F36: "Known gap: no
+1. **`--list-schedules`** (ora [`F62`](ROADMAP.md)) — lacuna già dichiarata (`CLAUDE.md`, riga F36: "Known gap: no
    `--list-schedules`") ma mai colmata. `schedule::referencing_config`
    (`crates/rustcopy-core/src/schedule.rs`) interroga già `schtasks.exe /Query /FO CSV /V` e
    filtra le attività il cui comando cita un `config_path` specifico — usata oggi solo dalla GUI
@@ -574,7 +575,7 @@ riusano quasi per intero logica **già scritta e testata**, solo mai esposta con
    `robocopy_ingest.exe`, non solo quelle che citano un file preciso) chiuderebbe la lacuna CLI
    riusando lo stesso motore di parsing CSV già coperto da test contro output reale catturato. La
    GUI guadagnerebbe un vero elenco al posto del semplice badge booleano di oggi.
-2. **Anteprima di un mirror/purge, di sola lettura** — `check_mirror_safety`
+2. **Anteprima di un mirror/purge, di sola lettura** (ora [`F63`](ROADMAP.md)) — `check_mirror_safety`
    (`crates/rustcopy-cli/src/main.rs`) **calcola già** l'elenco esatto (`extraneous: Vec<&Path>`)
    dei file che `--mirror` cancellerebbe, ma oggi lo tronca a 5 voci e lo stampa solo su
    `stderr` quando sta per abortire in modo interattivo. L'avviso mirror della console
@@ -583,13 +584,13 @@ riusano quasi per intero logica **già scritta e testata**, solo mai esposta con
    mai eseguire il purge, chiuderebbe quella frase con un pulsante invece che con un rimando alla
    riga di comando. Il vincolo F61 resta intatto: leggere un elenco non è autorizzare una
    cancellazione, stessa distinzione già usata per il badge di pianificazione.
-3. **Anteprima di ripristino** — `--restore-from` e `--dry-run` non risultano in conflitto in
+3. **Anteprima di ripristino** (ora [`F64`](ROADMAP.md)) — `--restore-from` e `--dry-run` non risultano in conflitto in
    `cli.rs` (nessun `conflicts_with` fra i due), quindi la combinazione **probabilmente** già
    funziona oggi — non verificato con un'esecuzione reale in questa sessione, va confermato prima
    di costruirci sopra. Se confermato, è il primo mattone naturale per il flusso di ripristino
    guidato già in cima al backlog (§5b, §8 Onda 3): elenco report → anteprima (questo comando) →
    conferma esplicita → avvio.
-4. **Controllo preventivo di spazio libero in destinazione** — verificato: **non esiste in
+4. **Controllo preventivo di spazio libero in destinazione** (ora [`F65`](ROADMAP.md)) — verificato: **non esiste in
    nessuna forma** nel codice attuale (nessun riferimento a spazio libero/disco in tutto
    `rustcopy-core`/`rustcopy-cli`). Confrontare i byte totali del prescan con lo spazio libero a
    `--dest` prima di avviare il trasferimento eviterebbe una run di ore che fallisce a metà per
@@ -606,7 +607,10 @@ riusano quasi per intero logica **già scritta e testata**, solo mai esposta con
 
 **Nessuna di queste cinque voci è stata implementata in questa sessione**: sono proposte, verificate
 contro il codice reale dove possibile, in attesa di una decisione sulla priorità — stesso metodo
-già usato per l'Onda 3 (proporre con `AskUserQuestion` prima di scrivere codice).
+già usato per l'Onda 3 (proporre con `AskUserQuestion` prima di scrivere codice). Le quattro
+costruibili (punti 1-4) hanno una spec tecnica completa in `ROADMAP.md` come F62-F65, più F66 per il
+punto sul workspace in §12.1 — il punto 5 resta solo qui, essendo stato scartato e non una voce di
+backlog.
 
 ## Riferimenti
 
