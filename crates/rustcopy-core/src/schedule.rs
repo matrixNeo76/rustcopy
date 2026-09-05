@@ -12,6 +12,8 @@
 
 use std::path::Path;
 
+use serde::{Deserialize, Serialize};
+
 use crate::errors::IngestError;
 
 /// A parsed `--install-schedule <SPEC>` value. Deliberately a small, fixed set of trigger shapes
@@ -246,17 +248,30 @@ fn run_schtasks(args: &[String]) -> Result<(), IngestError> {
     Ok(())
 }
 
-/// Task names whose command line references `config_path` — read-only, for the console's F49-
-/// adjacent "does a schedule already point at this file" badge (PIANO_GUI.md, Onda 1).
-/// This never installs, removes, or otherwise acts on a schedule; F61's prohibitions on the
-/// console apply here exactly as everywhere else — it can report a schedule, never touch one.
-///
-/// Column *order* in `schtasks.exe`'s verbose CSV output is stable across locales even though the
-/// header *labels* are localized (verified empirically on this machine, an Italian Windows
-/// install) — matched by position (`Attività da eseguire` / "Task To Run" is column 8) rather
-/// than a header string that would only work in one language.
+/// One scheduled task discovered by [`list_installed`] — F62, `--list-schedules`, closing the gap
+/// `CLAUDE.md`'s F36 note had documented ("no --list-schedules — the operator can run
+/// `schtasks /Query /TN <name>` directly"). Also the shape `gui_api::list_all_schedules` hands to
+/// the console, replacing the plain boolean badge [`referencing_config`] gives with a real list.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ScheduledTask {
+    pub name: String,
+    /// The full `/TR` command line — showing what a schedule actually runs is the point, not just
+    /// that one exists (same reasoning as `Settings.svelte` reading `pre_command`/`post_command`
+    /// verbatim rather than summarizing them).
+    pub command: String,
+    /// "Prossima esecuzione" as `schtasks.exe` reports it, in whatever locale/format the machine
+    /// uses — shown verbatim, never reparsed into a different representation.
+    pub next_run: String,
+    /// "Stato" — "Pronta"/"Disabilitata"/etc., same locale caveat as `next_run`.
+    pub status: String,
+}
+
+/// Queries `schtasks.exe` once and returns its raw verbose CSV, or `None` when the query itself
+/// fails (a locked-down policy, a permission gap) — shared by [`referencing_config`] and
+/// [`list_installed`] so the one `Command` invocation and its `CREATE_NO_WINDOW` flag exist in
+/// exactly one place.
 #[cfg(windows)]
-pub fn referencing_config(config_path: &Path) -> Result<Vec<String>, IngestError> {
+fn query_all_tasks_csv() -> Result<Option<String>, IngestError> {
     let mut command = std::process::Command::new("schtasks.exe");
     command.args(["/Query", "/FO", "CSV", "/V"]);
     // Called from the console's Esegui tab on every "Esamina" — without this a black console
@@ -273,15 +288,24 @@ pub fn referencing_config(config_path: &Path) -> Result<Vec<String>, IngestError
             source,
         })?;
     if !output.status.success() {
-        // A machine where the operator cannot query the scheduler at all (locked-down policy, a
-        // permission gap) should not turn this advisory check into a hard failure blocking a job
-        // that has nothing to do with scheduling.
-        return Ok(Vec::new());
+        // A machine where the operator cannot query the scheduler at all should not turn this
+        // advisory check into a hard failure blocking a job that has nothing to do with
+        // scheduling.
+        return Ok(None);
     }
-    Ok(tasks_referencing(
-        &String::from_utf8_lossy(&output.stdout),
-        config_path,
-    ))
+    Ok(Some(String::from_utf8_lossy(&output.stdout).into_owned()))
+}
+
+/// Task names whose command line references `config_path` — read-only, for the console's F49-
+/// adjacent "does a schedule already point at this file" badge (PIANO_GUI.md, Onda 1).
+/// This never installs, removes, or otherwise acts on a schedule; F61's prohibitions on the
+/// console apply here exactly as everywhere else — it can report a schedule, never touch one.
+#[cfg(windows)]
+pub fn referencing_config(config_path: &Path) -> Result<Vec<String>, IngestError> {
+    let Some(csv) = query_all_tasks_csv()? else {
+        return Ok(Vec::new());
+    };
+    Ok(tasks_referencing(&csv, config_path))
 }
 
 #[cfg(not(windows))]
@@ -289,29 +313,69 @@ pub fn referencing_config(_config_path: &Path) -> Result<Vec<String>, IngestErro
     Ok(Vec::new())
 }
 
-/// The matching itself, pulled out of `referencing_config` so it can be tested against captured
-/// real `schtasks` output without a real Task Scheduler on the machine running the test.
+/// Every scheduled task whose command line invokes `binary_path` — F62, unlike
+/// [`referencing_config`] this does not filter by which config a task happens to reference, only
+/// by which executable it runs. Read-only, same as every other function in this module that does
+/// not install/uninstall.
+#[cfg(windows)]
+pub fn list_installed(binary_path: &Path) -> Result<Vec<ScheduledTask>, IngestError> {
+    let Some(csv) = query_all_tasks_csv()? else {
+        return Ok(Vec::new());
+    };
+    Ok(tasks_matching_binary(&csv, binary_path))
+}
+
+#[cfg(not(windows))]
+pub fn list_installed(_binary_path: &Path) -> Result<Vec<ScheduledTask>, IngestError> {
+    Ok(Vec::new())
+}
+
+/// The matching itself, pulled out of the public functions above so it can be tested against
+/// captured real `schtasks` output without a real Task Scheduler on the machine running the test.
 ///
-/// `#[cfg(windows)]`, like `referencing_config`'s real implementation that is this function's only
-/// caller: on another platform the stub above never reaches it, and a plain `--lib` clippy check
-/// (which does not compile `#[cfg(test)]` code) would otherwise see a private function with no
-/// caller at all and flag it as dead code — found exactly this way by `ubuntu-latest`'s CI job.
+/// `#[cfg(windows)]`, like the public functions that are these two functions' only callers: on
+/// another platform the stubs above never reach them, and a plain `--lib` clippy check (which does
+/// not compile `#[cfg(test)]` code) would otherwise see a private function with no caller at all
+/// and flag it as dead code — found exactly this way by `ubuntu-latest`'s CI job (D16).
+///
+/// Column *order* in `schtasks.exe`'s verbose CSV output is stable across locales even though the
+/// header *labels* are localized (verified empirically on this machine, an Italian Windows
+/// install) — matched by position rather than a header string that would only work in one
+/// language.
+#[cfg(windows)]
+fn parse_scheduled_tasks(csv: &str) -> Vec<ScheduledTask> {
+    csv.lines()
+        .skip(1) // header row
+        .filter_map(|line| {
+            let fields = parse_csv_line(line);
+            Some(ScheduledTask {
+                name: fields.get(1)?.trim_start_matches('\\').to_string(), // "Nome attività" / "Task Name"
+                next_run: fields.get(2)?.clone(), // "Prossima esecuzione" / "Next Run Time"
+                status: fields.get(3)?.clone(),   // "Stato" / "Status"
+                command: fields.get(8)?.clone(),  // "Attività da eseguire" / "Task To Run"
+            })
+        })
+        .collect()
+}
+
 #[cfg(windows)]
 fn tasks_referencing(csv: &str, config_path: &Path) -> Vec<String> {
     // Paths on Windows are case-insensitive; a task installed with one casing must still match a
     // config path typed or picked with another.
     let needle = config_path.display().to_string().to_lowercase();
-    csv.lines()
-        .skip(1) // header row
-        .filter_map(|line| {
-            let fields = parse_csv_line(line);
-            let name = fields.get(1)?; // "Nome attività" / "Task Name"
-            let command = fields.get(8)?; // "Attività da eseguire" / "Task To Run"
-            command
-                .to_lowercase()
-                .contains(&needle)
-                .then(|| name.trim_start_matches('\\').to_string())
-        })
+    parse_scheduled_tasks(csv)
+        .into_iter()
+        .filter(|task| task.command.to_lowercase().contains(&needle))
+        .map(|task| task.name)
+        .collect()
+}
+
+#[cfg(windows)]
+fn tasks_matching_binary(csv: &str, binary_path: &Path) -> Vec<ScheduledTask> {
+    let needle = binary_path.display().to_string().to_lowercase();
+    parse_scheduled_tasks(csv)
+        .into_iter()
+        .filter(|task| task.command.to_lowercase().contains(&needle))
         .collect()
 }
 
@@ -410,6 +474,53 @@ mod tests {
             let csv = csv_with(&[REAL_CAPTURED_ROW]);
             let found = tasks_referencing(&csv, Path::new(r"C:\jobs\nightly.toml"));
             assert!(found.is_empty());
+        }
+
+        // F62: `--list-schedules` filters by the binary's own path rather than a specific config,
+        // so it must find a task even when the two jobs it schedules use different config files —
+        // exactly the case `tasks_referencing` above would need two separate queries for.
+        #[test]
+        fn matching_by_binary_finds_every_task_regardless_of_which_config_it_targets() {
+            let csv = csv_with(&[
+                r#""WKAI01","\rustcopy-nightly","04/09/2026 02:00:00","Pronta","N/D","N/D","0","N/D","C:\rustcopy.exe --config C:\jobs\nightly.toml""#,
+                r#""WKAI01","\rustcopy-weekly","05/09/2026 03:00:00","Pronta","N/D","N/D","0","N/D","C:\rustcopy.exe --config C:\jobs\weekly.toml""#,
+                REAL_CAPTURED_ROW,
+            ]);
+            let found = tasks_matching_binary(&csv, Path::new(r"C:\rustcopy.exe"));
+            assert_eq!(found.len(), 2);
+            assert_eq!(found[0].name, "rustcopy-nightly");
+            assert_eq!(found[0].next_run, "04/09/2026 02:00:00");
+            assert_eq!(found[0].status, "Pronta");
+            assert_eq!(found[1].name, "rustcopy-weekly");
+        }
+
+        #[test]
+        fn matching_by_binary_is_case_insensitive_like_windows_paths() {
+            let csv = csv_with(&[
+                r#""WKAI01","\job","N/D","N/D","N/D","N/D","N/D","N/D","C:\Rustcopy.exe --config C:\Jobs\Nightly.toml""#,
+            ]);
+            let found = tasks_matching_binary(&csv, Path::new(r"c:\rustcopy.exe"));
+            assert_eq!(found.len(), 1);
+        }
+
+        #[test]
+        fn matching_by_binary_ignores_a_task_that_invokes_a_different_program() {
+            let csv = csv_with(&[REAL_CAPTURED_ROW]);
+            let found = tasks_matching_binary(&csv, Path::new(r"C:\rustcopy.exe"));
+            assert!(found.is_empty());
+        }
+
+        #[test]
+        fn parse_scheduled_tasks_extracts_all_four_fields() {
+            let csv = csv_with(&[REAL_CAPTURED_ROW]);
+            let tasks = parse_scheduled_tasks(&csv);
+            assert_eq!(tasks.len(), 1);
+            assert_eq!(tasks[0].name, "Git for Windows Updater");
+            assert_eq!(tasks[0].next_run, "04/09/2026 13:59:53");
+            assert_eq!(tasks[0].status, "Pronta");
+            assert!(tasks[0]
+                .command
+                .contains(r"C:\Program Files\Git\git-bash.exe"));
         }
     }
 

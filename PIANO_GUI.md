@@ -566,7 +566,7 @@ ma una cosa da tenere a mente la prossima volta che si tocca l'uno o l'altro.
 Cinque idee, ciascuna verificata contro il codice reale — non proposte a vuoto. Le prime tre
 riusano quasi per intero logica **già scritta e testata**, solo mai esposta con questo scopo.
 
-1. **`--list-schedules`** (ora [`F62`](ROADMAP.md)) — lacuna già dichiarata (`CLAUDE.md`, riga F36: "Known gap: no
+1. **`--list-schedules`** (ora [`F62`](ROADMAP.md), ✅ completato 5 Set 2026) — lacuna già dichiarata (`CLAUDE.md`, riga F36: "Known gap: no
    `--list-schedules`") ma mai colmata. `schedule::referencing_config`
    (`crates/rustcopy-core/src/schedule.rs`) interroga già `schtasks.exe /Query /FO CSV /V` e
    filtra le attività il cui comando cita un `config_path` specifico — usata oggi solo dalla GUI

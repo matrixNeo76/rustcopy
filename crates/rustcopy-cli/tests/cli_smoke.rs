@@ -793,6 +793,61 @@ fn install_and_uninstall_schedule_round_trip_via_real_schtasks() {
     );
 }
 
+/// F62 black-box test: `--list-schedules` doesn't require --source/--dest — confirms the clap
+/// `required_unless_present_any` exemption and `validate()`'s early return, same pattern as
+/// `--install-service`'s equivalent test above.
+#[test]
+fn list_schedules_does_not_require_source_or_dest() {
+    let output = run(&["--list-schedules"]);
+    assert!(
+        !stderr_of(&output).contains("--source and --dest must be set"),
+        "stderr: {}",
+        stderr_of(&output)
+    );
+}
+
+/// F62 black-box test: `--list-schedules` finds a real Task Scheduler entry this binary installed
+/// — a genuine round trip against `schtasks.exe`, not a mock. Installs its own throwaway schedule
+/// (no elevation needed, same as `install_and_uninstall_schedule_round_trip_via_real_schtasks`
+/// above) so the test is self-contained and never depends on whatever else happens to be
+/// scheduled on the machine running it.
+#[cfg(windows)]
+#[test]
+fn list_schedules_finds_a_real_task_this_binary_installed() {
+    let source = fixture_tree(&[("a.csv", 8)]);
+    let dest = tempfile::tempdir().expect("dest");
+    let task_name = format!("rustcopy-cli-smoke-list-{}", std::process::id());
+    let _guard = ScheduledTaskGuard(task_name.clone());
+
+    let install_output = run(&[
+        "--source",
+        source.path().to_str().expect("utf8"),
+        "--dest",
+        dest.path().to_str().expect("utf8"),
+        "--install-schedule",
+        "daily@03:00",
+        "--schedule-name",
+        &task_name,
+    ]);
+    assert!(
+        install_output.status.success(),
+        "stderr: {}",
+        stderr_of(&install_output)
+    );
+
+    let list_output = run(&["--list-schedules"]);
+    assert!(
+        list_output.status.success(),
+        "stderr: {}",
+        stderr_of(&list_output)
+    );
+    assert!(
+        stdout_of(&list_output).contains(&task_name),
+        "stdout: {}",
+        stdout_of(&list_output)
+    );
+}
+
 #[cfg(not(windows))]
 #[test]
 fn on_linux_the_run_scans_logs_and_then_explains_that_robocopy_needs_windows() {
