@@ -22,6 +22,23 @@ For full technical detail behind any entry, see `ANALYSIS.md` (defect list, `D<N
 ## [Unreleased]
 
 ### Added
+- The console can now **resume an interrupted run from a checkpoint**: the *Run* pane finds any
+  `*.checkpoint.json` beside the loaded config and offers to continue it, going through the same
+  fixed-argument builder (`runner::resume_arguments`) that already covers `run_arguments`, so the
+  F61 prohibitions (`--force-purge`, `--mirror`, install/uninstall) apply identically. A resumed
+  run only inherits pattern/threads/retries/verify-integrity from the interruption, not the rest
+  of the original configuration (bandwidth limit, exclusions, hash algorithm, mirror included) —
+  pre-existing behaviour of `checkpoint::build_resume_args`, documented for the first time here.
+- The console shows a **coarse job queue** while a `[[jobs]]` batch runs (which job is waiting,
+  running or done — never a guessed per-job outcome, which stays in Report/Storico), and can
+  **save or delete a credential** in the Windows Credential Manager directly from *Impostazioni*
+  (the same store `keyring:NAME` already reads) — the secret travels only over Tauri's IPC
+  channel, never a process argument.
+- **A visual rework of the console**, in three risk-ordered levels (`PIANO_GUI.md` §10): the
+  layout now fills the window instead of hugging the top-left corner, tables use explicit column
+  widths, a vertical sidebar with icons (`@lucide/svelte`) replaces the row of text buttons and
+  frees the header to show the loaded config's filename, related content is grouped into cards,
+  and the default window size grew from 1100×700 to 1440×900.
 - **A desktop console** (milestone 7.0.0), shipped as an **optional component** of the installer.
   It reads what rustcopy already wrote and prepares configuration proposals. It does not run
   backups, and it never copies, deletes, schedules or installs. Five panes: the jobs a TOML
@@ -58,6 +75,14 @@ For full technical detail behind any entry, see `ANALYSIS.md` (defect list, `D<N
   selected — without blocking setup.
 
 ### Fixed
+- **D24**: the console flashed a black console window every time it invoked `schtasks.exe`
+  (scheduling checks, install/uninstall) — two spawns were missing `CREATE_NO_WINDOW`, the same
+  flag the CLI's own child-process spawn already carried. Found in the same visual audit as the
+  rework above, not a design choice.
+- **D23**: `--bandwidth-limit-mbps` always fatal-errored against a real `robocopy.exe` (exit 16,
+  zero files copied) — real robocopy refuses `/IPG` combined with `/MT` outright, and `build_args`
+  pushed `/MT` unconditionally regardless of the bandwidth flag. `/MT` is now omitted entirely
+  (robocopy's own single-threaded default) whenever a bandwidth limit is set.
 - The installed console loaded the **dev server** instead of its own frontend, showing
   `ERR_CONNECTION_REFUSED` on any machine without Vite running — which is every machine an
   installer reaches. Tauri decides dev-vs-production from the `custom-protocol` feature, not from
