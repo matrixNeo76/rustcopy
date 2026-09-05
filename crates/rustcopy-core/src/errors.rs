@@ -146,6 +146,15 @@ pub enum IngestError {
     )]
     RetentionPurgeAborted { count: usize },
 
+    /// F65: the destination volume does not have enough free space for what the prescan found,
+    /// plus the configured safety margin. `needed` already includes that margin — it is not the
+    /// raw byte total, so the message states the number the destination actually has to clear.
+    #[error(
+        "not enough free space at the destination: needs {needed} byte(s), has {available}; \
+         free up space, lower --space-safety-margin-percent, or pass --skip-space-check"
+    )]
+    InsufficientDiskSpace { needed: u64, available: u64 },
+
     #[error("encryption error: {0}")]
     Crypto(String),
 
@@ -226,6 +235,7 @@ impl IngestError {
             | IngestError::InvalidPattern { .. }
             | IngestError::MirrorPurgeAborted { .. }
             | IngestError::RetentionPurgeAborted { .. }
+            | IngestError::InsufficientDiskSpace { .. }
             | IngestError::Crypto(_)
             | IngestError::EncryptAndDecryptConflict
             | IngestError::Vss(_)

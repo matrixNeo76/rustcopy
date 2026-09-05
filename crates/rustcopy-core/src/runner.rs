@@ -38,6 +38,10 @@ pub const EXIT_INTEGRITY_FAILED: u8 = 4;
 /// A `--keep-generations` retention purge was aborted. Kept apart from [`EXIT_MIRROR_ABORTED`] so
 /// a scheduler can tell which purge it was (F35).
 pub const EXIT_RETENTION_ABORTED: u8 = 5;
+/// The preflight free-space check (F65) found less free space at the destination than the run
+/// needs. Distinct from [`EXIT_UNRECOVERABLE`] so a scheduler can tell "the disk is full" apart
+/// from "a flag was wrong" without parsing stderr.
+pub const EXIT_INSUFFICIENT_DISK_SPACE: u8 = 6;
 
 /// What an exit code means, in one place.
 ///
@@ -54,6 +58,7 @@ pub fn exit_code_meaning(code: u8) -> &'static str {
         EXIT_MIRROR_ABORTED => "cancellazione di --mirror annullata",
         EXIT_INTEGRITY_FAILED => "copiato, ma la verifica ha trovato differenze",
         EXIT_RETENTION_ABORTED => "cancellazione della retention annullata",
+        EXIT_INSUFFICIENT_DISK_SPACE => "spazio libero insufficiente in destinazione",
         _ => "sconosciuto",
     }
 }
@@ -333,5 +338,15 @@ mod tests {
         );
         assert!(exit_code_meaning(EXIT_INTEGRITY_FAILED).contains("copiato"));
         assert_eq!(exit_code_meaning(99), "sconosciuto");
+    }
+
+    /// F65: exit 6 must read as "not enough disk", not as the generic usage-error message a
+    /// scheduler would otherwise have to assume for any unrecognised non-zero code.
+    #[test]
+    fn insufficient_disk_space_has_its_own_meaning() {
+        assert_ne!(
+            exit_code_meaning(EXIT_INSUFFICIENT_DISK_SPACE),
+            exit_code_meaning(EXIT_UNRECOVERABLE)
+        );
     }
 }

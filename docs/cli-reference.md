@@ -42,6 +42,8 @@ completi e i comandi reali verificati sul campo vedi il [RUNBOOK](../RUNBOOK.md)
 | `--max-age-days <N>` | *nessuno* | `/MAXAGE:N` | Esclude i file più vecchi di N giorni. |
 | `--bandwidth-limit-mbps <N>`| *nessuno* | `/IPG` | Limita la banda di trasferimento a N MB/s. |
 | `--no-prescan` | `false` | — | Salta la scansione preventiva ed avvia immediatamente la copia. |
+| `--skip-space-check` | `false` | — | (F65) Salta il controllo preventivo dello spazio libero in destinazione. Necessario per destinazioni dove lo spazio libero non è interrogabile in modo affidabile. Implicito (con avviso, non errore) insieme a `--no-prescan`, che non ha un totale byte da confrontare. |
+| `--space-safety-margin-percent <N>` | `5` | — | (F65) Margine extra richiesto oltre al totale byte del prescan prima che il controllo spazio libero passi — `5` significa "richiedi il totale più il 5% in più". Nessun effetto con `--skip-space-check`. |
 | `--verify-integrity` | `false` | — | Esegue la verifica dei checksum sorgente vs destinazione a fine copia. Un fallimento di sola integrità (trasferimento riuscito ma checksum non tornano) termina con **exit code 4**, distinto dall'exit code 1 di un trasferimento fallito (F29b). |
 | `--fast-verify` | `false` | — | Salta il ri-hashing dei file il cui size+mtime sorgente coincidono con l'ultima verifica riuscita, tracciata in `<dest>/.ingest_cache`. Un file che fallisce la verifica non viene mai messo in cache come "fidato", quindi resta segnalato ad ogni run finché non è davvero corretto (F28). |
 | `--ignore-transient-missing` | `false` | — | Dopo `--verify-integrity`, non considera un fallimento l'assenza di file con pattern transienti noti (`.log`, `.tmp`, `.git/objects/`) (F26a). |
@@ -97,6 +99,7 @@ completi e i comandi reali verificati sul campo vedi il [RUNBOOK](../RUNBOOK.md)
 | `3` | `--mirror`: la purge di sicurezza è stata abortita (file estranei in destinazione senza `--force-purge` né conferma interattiva). |
 | `4` | `--verify-integrity` ha trovato un mismatch di checksum — il trasferimento in sé è comunque riuscito, distinto da `1` (F29b). |
 | `5` | `--keep-generations`: la purge di ritenzione è stata abortita — il backup appena eseguito resta comunque salvato, solo la rotazione dei cicli più vecchi viene annullata (F35). |
+| `6` | Il controllo preventivo di spazio libero ha trovato meno spazio del necessario in destinazione — nessun byte copiato (F65). |
 
 ---
 

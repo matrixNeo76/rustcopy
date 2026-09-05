@@ -590,7 +590,7 @@ riusano quasi per intero logica **già scritta e testata**, solo mai esposta con
    di costruirci sopra. Se confermato, è il primo mattone naturale per il flusso di ripristino
    guidato già in cima al backlog (§5b, §8 Onda 3): elenco report → anteprima (questo comando) →
    conferma esplicita → avvio.
-4. **Controllo preventivo di spazio libero in destinazione** (ora [`F65`](ROADMAP.md)) — verificato: **non esiste in
+4. **Controllo preventivo di spazio libero in destinazione** (ora [`F65`](ROADMAP.md), ✅ completato 5 Set 2026) — verificato: **non esiste in
    nessuna forma** nel codice attuale (nessun riferimento a spazio libero/disco in tutto
    `rustcopy-core`/`rustcopy-cli`). Confrontare i byte totali del prescan con lo spazio libero a
    `--dest` prima di avviare il trasferimento eviterebbe una run di ore che fallisce a metà per
