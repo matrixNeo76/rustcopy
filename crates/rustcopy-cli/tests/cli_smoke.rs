@@ -1118,6 +1118,15 @@ fn purge_preview_path_without_mirror_is_rejected_by_clap() {
 /// through — 1 MB times a margin near `u32::MAX` requires tens of terabytes, which no CI runner
 /// or dev machine actually has free, making this deterministic without mocking the free-space
 /// query itself.
+///
+/// `#[cfg(windows)]`: `disk_space::free_bytes` has no non-Windows implementation and returns
+/// `Unsupported` there by design, which `ensure_enough_free_space` treats as "cannot determine,
+/// let the run proceed" — exactly the same non-fatal treatment `schedule::referencing_config`
+/// gives a query it cannot make. On Linux this test's run would pass the space check silently
+/// regardless of the margin and fail later for an unrelated reason (`robocopy.exe` not present,
+/// exit 2), asserting `Some(6)` against the wrong exit code — found by `ubuntu-latest` CI on this
+/// PR, the same class of gap D16 first caught in this project.
+#[cfg(windows)]
 #[test]
 fn an_enormous_safety_margin_aborts_with_the_dedicated_exit_code() {
     let source = fixture_tree(&[("a.csv", 1_000_000)]);
