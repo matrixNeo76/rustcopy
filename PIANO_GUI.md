@@ -551,9 +551,9 @@ cache di scan duplicata (P3) e SQLite (D19/D20): niente terza struttura quando l
 `session.svelte.js`). Risolve il problema reale — un MRU di 8 percorsi anonimi è scomodo appena si
 gestiscono più di due o tre destinazioni ricorrenti, che è esattamente il caso che i profili
 PowerShell testimoniano nel repository — senza introdurre un secondo formato di configurazione o
-toccare in alcun modo prestazioni, robustezza o potenza del motore. Non è ancora implementato: resta
-una proposta, ora anche una riga di backlog — [`F66`](ROADMAP.md) in `ROADMAP.md`, con la spec
-completa.
+toccare in alcun modo prestazioni, robustezza o potenza del motore. ✅ **Completato 5 Set 2026** —
+[`F66`](ROADMAP.md) in `ROADMAP.md`, con il dettaglio implementativo e la verifica manuale contro
+il binario compilato.
 
 **Effetto collaterale di questa analisi**: vale la pena che l'utente sappia che il repository ha
 oggi due sistemi di "profili" paralleli e disconnessi (PowerShell e, potenzialmente domani, i
