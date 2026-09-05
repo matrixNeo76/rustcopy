@@ -1027,6 +1027,92 @@ fn mirror_with_force_purge_proceeds() {
     );
 }
 
+/// F63 black-box test: `--purge-preview-path` writes the full candidate list and never deletes
+/// anything, exiting cleanly instead of asking for confirmation or aborting — the whole point of
+/// a preview being distinct from `check_mirror_safety`'s interactive path exercised above.
+#[test]
+fn purge_preview_path_writes_the_full_list_and_deletes_nothing() {
+    let source = fixture_tree(&[("a.csv", 10)]);
+    let workdir = tempfile::tempdir().expect("workdir");
+    let dest = workdir.path().join("out");
+    std::fs::create_dir_all(&dest).expect("create dest");
+    let extraneous = dest.join("do-not-delete-me.csv");
+    std::fs::write(&extraneous, b"precious data").expect("seed dest");
+    let preview_path = workdir.path().join("preview.json");
+
+    let output = run(&[
+        "--source",
+        source.path().to_str().expect("utf8"),
+        "--dest",
+        dest.to_str().expect("utf8"),
+        "--log-path",
+        workdir.path().join("ingest.log").to_str().expect("utf8"),
+        "--report-path",
+        workdir.path().join("report.json").to_str().expect("utf8"),
+        "--mirror",
+        "--purge-preview-path",
+        preview_path.to_str().expect("utf8"),
+    ]);
+
+    assert!(output.status.success(), "stderr: {}", stderr_of(&output));
+    assert!(
+        extraneous.exists(),
+        "a preview must never delete the file it reports"
+    );
+    let preview: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(&preview_path).expect("read preview"))
+            .expect("preview is valid json");
+    assert_eq!(preview["candidate_count"], 1);
+    let candidates = preview["candidates"].as_array().expect("array");
+    assert!(
+        candidates
+            .iter()
+            .any(|c| c.as_str().unwrap_or("").contains("do-not-delete-me.csv")),
+        "preview: {preview}"
+    );
+}
+
+/// F63 black-box test: with nothing extraneous at the destination, the preview still writes a
+/// valid (empty) report rather than silently doing nothing — the same "absence is a fact, not a
+/// blank" principle this codebase applies elsewhere (e.g. `integrity_status`).
+#[test]
+fn purge_preview_path_reports_zero_candidates_when_nothing_would_be_purged() {
+    let source = fixture_tree(&[("a.csv", 10)]);
+    let workdir = tempfile::tempdir().expect("workdir");
+    let dest = workdir.path().join("out");
+    std::fs::create_dir_all(&dest).expect("create dest");
+    let preview_path = workdir.path().join("preview.json");
+
+    let output = run(&[
+        "--source",
+        source.path().to_str().expect("utf8"),
+        "--dest",
+        dest.to_str().expect("utf8"),
+        "--log-path",
+        workdir.path().join("ingest.log").to_str().expect("utf8"),
+        "--report-path",
+        workdir.path().join("report.json").to_str().expect("utf8"),
+        "--mirror",
+        "--purge-preview-path",
+        preview_path.to_str().expect("utf8"),
+    ]);
+
+    assert!(output.status.success(), "stderr: {}", stderr_of(&output));
+    let preview: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(&preview_path).expect("read preview"))
+            .expect("preview is valid json");
+    assert_eq!(preview["candidate_count"], 0);
+    assert_eq!(preview["candidates"].as_array().expect("array").len(), 0);
+}
+
+/// F63 black-box test: clap's `requires = "mirror"` rejects `--purge-preview-path` without
+/// `--mirror` before any of this ever runs — there is nothing to preview otherwise.
+#[test]
+fn purge_preview_path_without_mirror_is_rejected_by_clap() {
+    let output = run(&["--purge-preview-path", "preview.json"]);
+    assert!(!output.status.success());
+}
+
 #[cfg(windows)]
 #[test]
 fn encrypt_aes256_actually_encrypts_destination_files() {

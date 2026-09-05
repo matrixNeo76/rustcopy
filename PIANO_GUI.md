@@ -575,7 +575,7 @@ riusano quasi per intero logica **già scritta e testata**, solo mai esposta con
    `robocopy_ingest.exe`, non solo quelle che citano un file preciso) chiuderebbe la lacuna CLI
    riusando lo stesso motore di parsing CSV già coperto da test contro output reale catturato. La
    GUI guadagnerebbe un vero elenco al posto del semplice badge booleano di oggi.
-2. **Anteprima di un mirror/purge, di sola lettura** (ora [`F63`](ROADMAP.md)) — `check_mirror_safety`
+2. **Anteprima di un mirror/purge, di sola lettura** (ora [`F63`](ROADMAP.md), ✅ metà mirror completata 5 Set 2026, retention non ancora fatta) — `check_mirror_safety`
    (`crates/rustcopy-cli/src/main.rs`) **calcola già** l'elenco esatto (`extraneous: Vec<&Path>`)
    dei file che `--mirror` cancellerebbe, ma oggi lo tronca a 5 voci e lo stampa solo su
    `stderr` quando sta per abortire in modo interattivo. L'avviso mirror della console

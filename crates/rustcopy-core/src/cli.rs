@@ -250,6 +250,13 @@ pub struct Args {
     #[arg(long, default_value_t = false)]
     pub force_purge: bool,
 
+    /// F63: write the full, untruncated list of files --mirror would delete to PATH as JSON, then
+    /// exit without copying or deleting anything. Requires --mirror (there is nothing to preview
+    /// otherwise). Unlike the interactive confirmation this never asks and never purges — a
+    /// preview is a read, not an authorization, and runs regardless of --force-purge.
+    #[arg(long, value_name = "PATH", requires = "mirror")]
+    pub purge_preview_path: Option<PathBuf>,
+
     // ── F4.1: Exclusion filters ─────────────────────────────────────────────
     /// Exclude files matching the given pattern(s) (repeatable, maps to /XF).
     /// Example: --exclude-files "*.tmp" --exclude-files "thumbs.db"
