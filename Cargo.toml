@@ -41,6 +41,11 @@ axum = { version = "0.8" }
 # aes-gcm and rustls, so declaring it directly adds no crate to the build.
 subtle = "2"
 windows-service = "0.8"
+# F65: GetDiskFreeSpaceExW for the preflight free-space check. Already the effective version in
+# the tree via windows-service/tokio/mio/tempfile/walkdir (verified: `cargo tree -i windows-sys`
+# resolves every one of them to 0.61.2) -- declaring it directly adds no new crate, only enables
+# the two Win32 modules this needs on top of what those already pull in.
+windows-sys = { version = "0.61", features = ["Win32_Storage_FileSystem", "Win32_Foundation"] }
 # F56: Windows Credential Manager (DPAPI) for `keyring:NAME` secrets. Only the native Windows
 # backend: the Linux one needs a running secret-service over D-Bus, which CI has not got and
 # which this Windows-native product does not need.

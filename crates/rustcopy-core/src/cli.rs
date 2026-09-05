@@ -294,6 +294,21 @@ pub struct Args {
     #[arg(long, default_value_t = false)]
     pub no_prescan: bool,
 
+    // ── F65: preflight free-space check ──────────────────────────────────────
+    /// Skip the preflight check that the destination volume has enough free space for what the
+    /// prescan found. On by default; needed for destinations where free space cannot be queried
+    /// reliably (some network shares) and for --no-prescan, which has no byte total to check
+    /// against — that combination behaves as if this flag were given, with a warning instead of
+    /// an error.
+    #[arg(long, default_value_t = false)]
+    pub skip_space_check: bool,
+
+    /// Extra slack required on top of the prescan's byte total before the free-space check
+    /// (above) passes — 5 means "require the total plus 5% more free". Has no effect with
+    /// --skip-space-check.
+    #[arg(long, default_value_t = 5, value_name = "PERCENT")]
+    pub space_safety_margin_percent: u32,
+
     // ── F6.1: Windows Long Path support ─────────────────────────────────────
     /// Prepend Windows long path prefix `\\?\` for deep path structures (> 260 chars).
     #[arg(long, default_value_t = false)]
@@ -679,6 +694,12 @@ impl Args {
         }
         if let Some(no_pre) = job.no_prescan {
             self.no_prescan = no_pre;
+        }
+        if let Some(skip) = job.skip_space_check {
+            self.skip_space_check = skip;
+        }
+        if let Some(margin) = job.space_safety_margin_percent {
+            self.space_safety_margin_percent = margin;
         }
         if let Some(lp) = job.long_paths {
             self.long_paths = lp;

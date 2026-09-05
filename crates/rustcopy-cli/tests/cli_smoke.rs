@@ -1113,6 +1113,114 @@ fn purge_preview_path_without_mirror_is_rejected_by_clap() {
     assert!(!output.status.success());
 }
 
+/// F65 black-box test: an absurdly large `--space-safety-margin-percent` on a real (small)
+/// transfer must abort with the dedicated exit code 6 rather than running out of disk partway
+/// through — 1 MB times a margin near `u32::MAX` requires tens of terabytes, which no CI runner
+/// or dev machine actually has free, making this deterministic without mocking the free-space
+/// query itself.
+///
+/// `#[cfg(windows)]`: `disk_space::free_bytes` has no non-Windows implementation and returns
+/// `Unsupported` there by design, which `ensure_enough_free_space` treats as "cannot determine,
+/// let the run proceed" — exactly the same non-fatal treatment `schedule::referencing_config`
+/// gives a query it cannot make. On Linux this test's run would pass the space check silently
+/// regardless of the margin and fail later for an unrelated reason (`robocopy.exe` not present,
+/// exit 2), asserting `Some(6)` against the wrong exit code — found by `ubuntu-latest` CI on this
+/// PR, the same class of gap D16 first caught in this project.
+#[cfg(windows)]
+#[test]
+fn an_enormous_safety_margin_aborts_with_the_dedicated_exit_code() {
+    let source = fixture_tree(&[("a.csv", 1_000_000)]);
+    let workdir = tempfile::tempdir().expect("workdir");
+    let dest = workdir.path().join("out");
+
+    let output = run(&[
+        "--source",
+        source.path().to_str().expect("utf8"),
+        "--dest",
+        dest.to_str().expect("utf8"),
+        "--log-path",
+        workdir.path().join("ingest.log").to_str().expect("utf8"),
+        "--report-path",
+        workdir.path().join("report.json").to_str().expect("utf8"),
+        "--space-safety-margin-percent",
+        "4000000000",
+    ]);
+
+    assert_eq!(
+        output.status.code(),
+        Some(6),
+        "stderr: {}",
+        stderr_of(&output)
+    );
+    assert!(
+        !dest.exists()
+            || std::fs::read_dir(&dest)
+                .map(|mut d| d.next().is_none())
+                .unwrap_or(true),
+        "the check must abort before any copying, not partway through"
+    );
+}
+
+/// F65 black-box test: `--skip-space-check` bypasses the check above entirely, even with the same
+/// enormous margin that would otherwise abort the run.
+#[test]
+fn skip_space_check_bypasses_an_enormous_margin() {
+    let source = fixture_tree(&[("a.csv", 10)]);
+    let workdir = tempfile::tempdir().expect("workdir");
+    let dest = workdir.path().join("out");
+
+    let output = run(&[
+        "--source",
+        source.path().to_str().expect("utf8"),
+        "--dest",
+        dest.to_str().expect("utf8"),
+        "--log-path",
+        workdir.path().join("ingest.log").to_str().expect("utf8"),
+        "--report-path",
+        workdir.path().join("report.json").to_str().expect("utf8"),
+        "--space-safety-margin-percent",
+        "4000000000",
+        "--skip-space-check",
+    ]);
+
+    assert_ne!(
+        output.status.code(),
+        Some(6),
+        "--skip-space-check must bypass the free-space check entirely; stderr: {}",
+        stderr_of(&output)
+    );
+}
+
+/// F65 black-box test: `--no-prescan` has no byte total to check a requirement against — the
+/// combination must warn and proceed, not fail, even with a margin that would otherwise abort.
+#[test]
+fn no_prescan_skips_the_space_check_with_a_warning_instead_of_failing() {
+    let source = fixture_tree(&[("a.csv", 10)]);
+    let workdir = tempfile::tempdir().expect("workdir");
+    let dest = workdir.path().join("out");
+
+    let output = run(&[
+        "--source",
+        source.path().to_str().expect("utf8"),
+        "--dest",
+        dest.to_str().expect("utf8"),
+        "--log-path",
+        workdir.path().join("ingest.log").to_str().expect("utf8"),
+        "--report-path",
+        workdir.path().join("report.json").to_str().expect("utf8"),
+        "--no-prescan",
+        "--space-safety-margin-percent",
+        "4000000000",
+    ]);
+
+    assert_ne!(
+        output.status.code(),
+        Some(6),
+        "--no-prescan must not fail the space check it cannot make; stderr: {}",
+        stderr_of(&output)
+    );
+}
+
 #[cfg(windows)]
 #[test]
 fn encrypt_aes256_actually_encrypts_destination_files() {
