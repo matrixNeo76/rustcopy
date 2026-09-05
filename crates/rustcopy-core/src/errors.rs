@@ -146,6 +146,12 @@ pub enum IngestError {
     )]
     RetentionPurgeAborted { count: usize },
 
+    /// F64: the `--restore-from --dry-run` preview subprocess did not exit cleanly, so the report
+    /// `read_report` was about to look for either doesn't exist or doesn't reflect the preview —
+    /// surfaces the CLI's own stderr rather than a bare "file not found" from that read.
+    #[error("the restore preview process exited with {code:?}: {stderr}")]
+    RestorePreviewFailed { code: Option<i32>, stderr: String },
+
     /// F65: the destination volume does not have enough free space for what the prescan found,
     /// plus the configured safety margin. `needed` already includes that margin — it is not the
     /// raw byte total, so the message states the number the destination actually has to clear.
@@ -236,6 +242,7 @@ impl IngestError {
             | IngestError::MirrorPurgeAborted { .. }
             | IngestError::RetentionPurgeAborted { .. }
             | IngestError::InsufficientDiskSpace { .. }
+            | IngestError::RestorePreviewFailed { .. }
             | IngestError::Crypto(_)
             | IngestError::EncryptAndDecryptConflict
             | IngestError::Vss(_)

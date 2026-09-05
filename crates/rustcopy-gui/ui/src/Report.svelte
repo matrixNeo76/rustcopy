@@ -4,7 +4,7 @@
   import EmptyState from "./EmptyState.svelte";
   import { session } from "./session.svelte.js";
   import { toCsv, downloadCsv } from "./csv.js";
-  import { FileText, CircleCheck, CircleX } from "@lucide/svelte";
+  import { FileText, CircleCheck, CircleX, RotateCcw } from "@lucide/svelte";
 
   // `read_report`/`read_report_page` existed in the core and on the IPC surface from F53 and no
   // pane ever called them: a complete report viewer with nothing attached to it. This is the pane.
@@ -20,6 +20,28 @@
   let query = $state("");
 
   const PAGE = 100;
+
+  // F64: the first building block of the guided restore flow (PIANO_GUI.md §5b/§8) — a read-only
+  // simulation of what --restore-from would do, reusing the same ReportView shape a real report
+  // uses (the preview subprocess writes a real report, just from a --dry-run and to its own
+  // scratch path — see `runner::restore_preview_arguments`). Kept apart from `report` above so
+  // loading a different report can never be mistaken for a preview of it, or vice versa.
+  let restorePreview = $state(null);
+  let restorePreviewError = $state(null);
+  let restorePreviewLoading = $state(false);
+
+  async function previewRestore() {
+    restorePreviewError = null;
+    restorePreviewLoading = true;
+    restorePreview = null;
+    try {
+      restorePreview = await invoke("preview_restore", { reportPath: session.reportPath });
+    } catch (e) {
+      restorePreviewError = String(e);
+    } finally {
+      restorePreviewLoading = false;
+    }
+  }
 
   // `report.integrity_status` is `format!("{:?}", IntegrityStatus)` from the core — a small,
   // stable, closed enum (`integrity.rs`: exactly Passed/Failed), so translating the label here is
@@ -44,6 +66,10 @@
       // A filter left over from a previous report, or from a page the operator just left, would
       // silently hide entries in the one just loaded.
       query = "";
+      // Same reasoning: a preview computed against the previous report must not linger and read
+      // as if it described this one.
+      restorePreview = null;
+      restorePreviewError = null;
     } catch (e) {
       error = String(e);
       report = null;
@@ -201,6 +227,62 @@
         </p>
       </div>
     </div>
+
+    <div class="mt-3 flex items-center gap-2">
+      <button
+        class="flex items-center gap-1.5 rounded border border-slate-300 px-2 py-1 text-xs
+               disabled:opacity-40 dark:border-slate-700"
+        onclick={previewRestore}
+        disabled={restorePreviewLoading}
+        title="Simula un --restore-from da questo report: nessun file viene copiato o eliminato"
+      >
+        <RotateCcw size={13} strokeWidth={2.25} aria-hidden="true" />
+        {restorePreviewLoading ? "Anteprima in corso…" : "Anteprima ripristino"}
+      </button>
+    </div>
+
+    {#if restorePreviewError}
+      <p class="mt-2 rounded border border-red-300 bg-red-50 px-2 py-1 text-xs text-red-800
+                dark:border-red-800 dark:bg-red-950 dark:text-red-200" role="alert">
+        {restorePreviewError}
+      </p>
+    {/if}
+
+    {#if restorePreview}
+      <!-- Same ReportView shape as `report` above, deliberately not the same markup: a preview
+           has no file-level error lists worth paginating (a --dry-run makes nothing to verify),
+           and rendering it identically to a real report risked the two being confused at a
+           glance — the heading and the closing note below exist to keep that from happening. -->
+      <div class="card mt-2 grid grid-cols-2 gap-x-6 gap-y-2 text-xs md:grid-cols-4">
+        <p class="col-span-2 text-xs font-semibold uppercase tracking-wide text-slate-500 md:col-span-4">
+          Anteprima ripristino — simulazione, nessun file toccato
+        </p>
+        <div class="col-span-2">
+          <p class="text-slate-500">Ripristinerebbe da</p>
+          <p class="truncate font-mono text-sm" title={restorePreview.source}>{restorePreview.source}</p>
+        </div>
+        <div class="col-span-2">
+          <p class="text-slate-500">Verso</p>
+          <p class="truncate font-mono text-sm" title={restorePreview.dest}>{restorePreview.dest}</p>
+        </div>
+        <div>
+          <p class="text-slate-500">File coinvolti</p>
+          <p class="font-mono text-sm">{restorePreview.files_copied} / {restorePreview.total_files}</p>
+        </div>
+        <div>
+          <p class="text-slate-500">Byte coinvolti</p>
+          <p class="font-mono text-sm">{bytes(restorePreview.bytes_copied)} / {bytes(restorePreview.total_bytes)}</p>
+        </div>
+        <div class="col-span-2">
+          <p class="text-slate-500">Esito robocopy</p>
+          <p class="font-mono text-sm">{restorePreview.exit_code_meaning ?? "—"}</p>
+        </div>
+      </div>
+      <p class="mt-1 text-[11px] text-slate-500">
+        Simulazione (<code>--dry-run</code>): nessun byte è stato copiato o eliminato. Per ripristinare
+        davvero, esegui <code>--restore-from</code> dalla CLI.
+      </p>
+    {/if}
 
     {#if report.copy_error}
       <p class="mt-3 rounded border border-red-300 bg-red-50 px-2 py-1 text-xs text-red-800

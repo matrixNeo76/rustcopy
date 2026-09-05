@@ -584,7 +584,7 @@ riusano quasi per intero logica **già scritta e testata**, solo mai esposta con
    mai eseguire il purge, chiuderebbe quella frase con un pulsante invece che con un rimando alla
    riga di comando. Il vincolo F61 resta intatto: leggere un elenco non è autorizzare una
    cancellazione, stessa distinzione già usata per il badge di pianificazione.
-3. **Anteprima di ripristino** (ora [`F64`](ROADMAP.md)) — `--restore-from` e `--dry-run` non risultano in conflitto in
+3. **Anteprima di ripristino** (ora [`F64`](ROADMAP.md), ✅ completato 5 Set 2026) — `--restore-from` e `--dry-run` non risultano in conflitto in
    `cli.rs` (nessun `conflicts_with` fra i due), quindi la combinazione **probabilmente** già
    funziona oggi — non verificato con un'esecuzione reale in questa sessione, va confermato prima
    di costruirci sopra. Se confermato, è il primo mattone naturale per il flusso di ripristino

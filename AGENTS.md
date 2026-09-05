@@ -98,7 +98,7 @@ crates/
 
 - **Never declare success without running `cargo test --workspace --exclude rustcopy-gui --locked --all-targets`** (and the same with `--features rustcopy-cli/notify-server` if you touched `notify_server.rs`, `notify_sink.rs`, or `crates/rustcopy-cli/src/notify_server_bin.rs`). These are the commands `ci.yml` runs.
 - **A green test run says nothing about the GUI.** No test in this repository opens a window; D22 shipped a console that could not render its own interface with every check passing. Anything touching `crates/rustcopy-gui` has to be verified by building it and looking at it.
-- All **479 unit and integration tests** (default build) MUST pass before committing changes. With `--features rustcopy-cli/notify-server`, **494** must pass. Exclude the GUI crate from the workspace run (`--exclude rustcopy-gui`), exactly as CI does; it has its own job.
+- All **482 unit and integration tests** (default build) MUST pass before committing changes. With `--features rustcopy-cli/notify-server`, **497** must pass. Exclude the GUI crate from the workspace run (`--exclude rustcopy-gui`), exactly as CI does; it has its own job.
 - Cross-Platform Constraint: Unit tests inside `src/engine/robocopy.rs`, `src/integrity.rs`, `src/notify.rs`, `src/notify_sink.rs`, etc. MUST pass on Linux and macOS using `ScriptedRunner`/scripted test doubles.
 
 ### Test Commands:
