@@ -282,6 +282,20 @@ async fn run(mut args: Args) -> Result<u8> {
         return Ok(0);
     }
 
+    // F63: a read-only preview of what --mirror would purge, computed from a real prescan against
+    // the real source — but never proceeding to VSS, logging setup or the transfer itself. clap's
+    // `requires = "mirror"` on the flag already guarantees --mirror is set whenever this runs.
+    if let Some(preview_path) = args.purge_preview_path.clone() {
+        let inventory = inventory_source(&args, args.source()).await?;
+        let count = write_mirror_purge_preview(&args, &inventory, &preview_path).await?;
+        println!(
+            "{count} file(s) at {} would be purged by --mirror. Preview written to {}.",
+            args.dest().display(),
+            preview_path.display()
+        );
+        return Ok(0);
+    }
+
     let log = logging::init(&args.log_path, &args.log_config())
         .context("cannot initialise the log file")?;
     let child_pid = Arc::new(AtomicU32::new(0));
@@ -1428,10 +1442,64 @@ async fn check_mirror_safety(args: &Args, inventory: &ScanSummary) -> Result<()>
     if !args.mirror || args.force_purge || !args.dest().exists() {
         return Ok(());
     }
+    let Some(extraneous) = mirror_purge_candidates(args, inventory).await? else {
+        return Ok(());
+    };
+
+    if extraneous.is_empty() {
+        return Ok(());
+    }
+
+    let count = extraneous.len();
+    tracing::warn!(
+        count,
+        dest = %args.dest().display(),
+        "mirror mode would purge destination files not present in the source"
+    );
+
+    if std::io::stdin().is_terminal() && std::io::stdout().is_terminal() {
+        eprintln!(
+            "\n--mirror would delete {count} file(s) from {} that are not in the source \
+             (first few: {}).",
+            args.dest().display(),
+            extraneous
+                .iter()
+                .take(5)
+                .map(|p| p.display().to_string())
+                .collect::<Vec<_>>()
+                .join(", ")
+        );
+        eprint!("Proceed with the purge? [y/N] ");
+        use std::io::Write;
+        std::io::stderr().flush().ok();
+        let mut answer = String::new();
+        std::io::stdin().read_line(&mut answer).ok();
+        if answer.trim().eq_ignore_ascii_case("y") {
+            return Ok(());
+        }
+    }
+
+    Err(IngestError::MirrorPurgeAborted { count }.into())
+}
+
+/// The diff itself, pulled out of `check_mirror_safety` so F63's `--purge-preview-path` can reuse
+/// exactly the same computation instead of a second, potentially-diverging implementation.
+///
+/// `Ok(None)` means "not applicable" (no `--mirror`, or the destination doesn't exist yet — a
+/// first run has nothing to purge). Unlike `check_mirror_safety`, this does **not** look at
+/// `--force-purge`: that flag decides whether to *ask* before deleting, which has no bearing on
+/// what a read-only preview shows.
+async fn mirror_purge_candidates(
+    args: &Args,
+    inventory: &ScanSummary,
+) -> Result<Option<Vec<PathBuf>>> {
+    if !args.mirror || !args.dest().exists() {
+        return Ok(None);
+    }
     if inventory.total_files_hint.is_some() {
         // --no-prescan: we don't have the source's per-file list to diff against. Erring toward
-        // caution, still require --force-purge explicitly rather than silently allowing purges
-        // whose scope we can't compute.
+        // caution, same as `check_mirror_safety`: a preview cannot honestly show a scope it never
+        // computed.
         return Err(IngestError::MirrorPurgeAborted { count: usize::MAX }.into());
     }
 
@@ -1469,47 +1537,43 @@ async fn check_mirror_safety(args: &Args, inventory: &ScanSummary) -> Result<()>
     .await
     .context("the mirror safety scan task panicked")?
     .context("cannot scan the destination for the mirror safety check")?;
-    let extraneous: Vec<&Path> = dest_all
+    let extraneous: Vec<PathBuf> = dest_all
         .files
         .iter()
         .map(|f| f.relative_path.as_path())
         .filter(|p| !source_relative.contains(&normalize_for_compare(p)))
+        .map(Path::to_path_buf)
         .collect();
 
-    if extraneous.is_empty() {
-        return Ok(());
-    }
+    Ok(Some(extraneous))
+}
 
-    let count = extraneous.len();
-    tracing::warn!(
-        count,
-        dest = %args.dest().display(),
-        "mirror mode would purge destination files not present in the source"
-    );
-
-    if std::io::stdin().is_terminal() && std::io::stdout().is_terminal() {
-        eprintln!(
-            "\n--mirror would delete {count} file(s) from {} that are not in the source \
-             (first few: {}).",
-            args.dest().display(),
-            extraneous
-                .iter()
-                .take(5)
-                .map(|p| p.display().to_string())
-                .collect::<Vec<_>>()
-                .join(", ")
-        );
-        eprint!("Proceed with the purge? [y/N] ");
-        use std::io::Write;
-        std::io::stderr().flush().ok();
-        let mut answer = String::new();
-        std::io::stdin().read_line(&mut answer).ok();
-        if answer.trim().eq_ignore_ascii_case("y") {
-            return Ok(());
-        }
-    }
-
-    Err(IngestError::MirrorPurgeAborted { count }.into())
+/// F63: writes the **full**, untruncated list of files `--mirror` would purge to `preview_path`,
+/// as JSON, then returns — never asks, never deletes. `check_mirror_safety`'s own interactive
+/// prompt only ever shows the first 5 candidates (a terminal message, not a machine-readable
+/// contract); this is the structured counterpart the console or a script can read in full.
+async fn write_mirror_purge_preview(
+    args: &Args,
+    inventory: &ScanSummary,
+    preview_path: &Path,
+) -> Result<usize> {
+    let candidates = mirror_purge_candidates(args, inventory)
+        .await?
+        .unwrap_or_default();
+    let payload = serde_json::json!({
+        "dest": args.dest().display().to_string(),
+        "candidate_count": candidates.len(),
+        "candidates": candidates.iter().map(|p| p.display().to_string()).collect::<Vec<_>>(),
+    });
+    let json =
+        serde_json::to_vec_pretty(&payload).context("cannot serialize the mirror purge preview")?;
+    robocopy_ingest::atomic_write(preview_path, &json).with_context(|| {
+        format!(
+            "cannot write the purge preview to {}",
+            preview_path.display()
+        )
+    })?;
+    Ok(candidates.len())
 }
 
 fn normalize_for_compare(path: &Path) -> PathBuf {

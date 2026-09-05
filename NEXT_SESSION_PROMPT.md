@@ -12,7 +12,7 @@ generated:
 
 ## Stato del progetto (4 Settembre 2026)
 
-`Cargo.toml` = **6.0.0**. Suite di test: **464** (`cargo test --workspace --exclude rustcopy-gui`), **479** con `--features rustcopy-cli/notify-server` (più test `#[ignore]` — round-trip reali dei servizi Windows che richiedono elevazione, più due probe di misurazione a scala reale). CI verde su `windows-latest` e `ubuntu-latest` per entrambe le configurazioni, più i job dedicati `gui`, `gui-npm-audit`, `versions` e `docs`.
+`Cargo.toml` = **6.0.0**. Suite di test: **467** (`cargo test --workspace --exclude rustcopy-gui`), **482** con `--features rustcopy-cli/notify-server` (più test `#[ignore]` — round-trip reali dei servizi Windows che richiedono elevazione, più due probe di misurazione a scala reale). CI verde su `windows-latest` e `ubuntu-latest` per entrambe le configurazioni, più i job dedicati `gui`, `gui-npm-audit`, `versions` e `docs`.
 
 **Ultimo lavoro: espansione ed rifacimento visivo della console, dopo la chiusura della milestone 7.0.0 (2 Set 2026).** Ordine cronologico delle PR #63-#83:
 
