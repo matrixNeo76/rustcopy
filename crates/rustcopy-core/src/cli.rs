@@ -94,7 +94,8 @@ pub struct Args {
             "uninstall_service",
             "advise",
             "set_credential",
-            "delete_credential"
+            "delete_credential",
+            "list_schedules"
         ]
     )]
     pub source: Option<PathBuf>,
@@ -113,7 +114,8 @@ pub struct Args {
             "uninstall_service",
             "advise",
             "set_credential",
-            "delete_credential"
+            "delete_credential",
+            "list_schedules"
         ]
     )]
     pub dest: Option<PathBuf>,
@@ -445,6 +447,19 @@ pub struct Args {
     )]
     pub advise: bool,
 
+    /// List every Windows Task Scheduler entry that invokes this binary, then exit.
+    ///
+    /// Closes a gap left by --install-schedule/--uninstall-schedule: neither one could previously
+    /// show what is already scheduled, short of running `schtasks /Query` directly and reading
+    /// its output by hand. Needs neither --source nor --dest, like --advise: it inspects the
+    /// scheduler and copies nothing. Read-only — never installs, updates or removes a schedule.
+    #[arg(
+        long,
+        default_value_t = false,
+        conflicts_with_all = ["restore_from", "resume_from", "install_service", "uninstall_service"]
+    )]
+    pub list_schedules: bool,
+
     /// Store a secret in the Windows Credential Manager under this name, then exit.
     ///
     /// The secret itself is read from **stdin**, never from the command line: an argument would be
@@ -463,6 +478,7 @@ pub struct Args {
         conflicts_with_all = [
             "delete_credential",
             "advise",
+            "list_schedules",
             "install_schedule",
             "uninstall_schedule",
             "install_service",
@@ -479,6 +495,7 @@ pub struct Args {
         value_name = "NAME",
         conflicts_with_all = [
             "advise",
+            "list_schedules",
             "install_schedule",
             "uninstall_schedule",
             "install_service",
@@ -714,6 +731,8 @@ impl Args {
             // --advise reads a history file and prints; none of the transfer-shaped checks below
             // (thread range, source exists, dest writable) describe anything it does.
             || self.advise
+            // --list-schedules queries the task scheduler and prints; same reasoning as --advise.
+            || self.list_schedules
             // Credential management touches no path: none of the transfer checks below apply.
             || self.set_credential.is_some()
             || self.delete_credential.is_some()

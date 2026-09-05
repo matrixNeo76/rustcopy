@@ -318,6 +318,17 @@ pub fn schedules_referencing(config_path: &Path) -> Result<Vec<String>, IngestEr
     crate::schedule::referencing_config(config_path)
 }
 
+/// Every scheduled task that invokes this binary, regardless of which config it targets — F62,
+/// the GUI half of `--list-schedules`. Read-only, same as `schedules_referencing` above: never
+/// installs, updates or removes a schedule.
+pub fn list_all_schedules() -> Result<Vec<crate::schedule::ScheduledTask>, IngestError> {
+    let exe_path = std::env::current_exe().map_err(|source| IngestError::SpawnFailed {
+        program: "<current executable>".to_string(),
+        source,
+    })?;
+    crate::schedule::list_installed(&exe_path)
+}
+
 /// A checkpoint (`checkpoint::Checkpoint`) found on disk, with the path it was read from — needed
 /// to resume it later, since [`Checkpoint`] itself carries no notion of where it lives.
 #[derive(Debug, Clone, Serialize, Deserialize)]

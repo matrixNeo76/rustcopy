@@ -194,6 +194,34 @@ async fn run(mut args: Args) -> Result<u8> {
         return Ok(0);
     }
 
+    // F62: closes the gap --install-schedule/--uninstall-schedule left — neither could previously
+    // show what is already scheduled. Filters by the current binary's own path, so it finds every
+    // schedule this tool installed regardless of which config each one targets (unlike
+    // `schedule::referencing_config`, used elsewhere for the console's per-file badge).
+    if args.list_schedules {
+        let exe_path =
+            std::env::current_exe().context("cannot determine the current executable path")?;
+        let tasks = robocopy_ingest::schedule::list_installed(&exe_path)
+            .context("cannot query the Windows Task Scheduler")?;
+        if tasks.is_empty() {
+            println!("no scheduled task invokes {}", exe_path.display());
+        } else {
+            println!(
+                "{} scheduled task(s) invoke {}:\n",
+                tasks.len(),
+                exe_path.display()
+            );
+            for task in &tasks {
+                println!("{}", task.name);
+                println!("  next run : {}", task.next_run);
+                println!("  status   : {}", task.status);
+                println!("  command  : {}", task.command);
+                println!();
+            }
+        }
+        return Ok(0);
+    }
+
     if let Some(restore_report) = args.restore_from.clone() {
         args = robocopy_ingest::restore::build_restore_args(&args, &restore_report, None)?;
     } else if let Some(checkpoint_path) = args.resume_from.clone() {
