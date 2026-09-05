@@ -117,6 +117,68 @@ async fn read_report_page(path: String, offset: usize, limit: usize) -> Result<R
     off_thread(move || gui_api::read_report_page(&PathBuf::from(path), offset, limit)).await
 }
 
+/// Previews what `--restore-from report_path` would do, without ever performing it (F64, the
+/// first building block of the guided restore flow — `PIANO_GUI.md` §5b/§8).
+///
+/// Not an exception to this file's own rule any more than [`start_job`] is: the argument list
+/// comes from `runner::restore_preview_arguments`, a fixed shape tested there to never carry a
+/// destructive flag, with `--dry-run` guaranteeing nothing is copied and its own scratch
+/// `--report-path` guaranteeing it can never overwrite a real run's report. This command spawns
+/// that exact invocation, waits for it, reads the resulting report, and deletes the scratch file
+/// — it decides nothing about what a restore means, only that it ran and what it said.
+#[tauri::command]
+async fn preview_restore(report_path: String) -> Result<ReportView, String> {
+    off_thread(move || {
+        let exe = std::env::current_exe().map_err(|source| {
+            robocopy_ingest::errors::IngestError::SpawnFailed {
+                program: "<current executable>".to_string(),
+                source,
+            }
+        })?;
+        let cli = robocopy_ingest::runner::cli_beside(&exe)?;
+        let report = std::path::absolute(PathBuf::from(&report_path)).map_err(|source| {
+            robocopy_ingest::errors::IngestError::io(std::path::Path::new(&report_path), source)
+        })?;
+        let preview_report_path = robocopy_ingest::runner::restore_preview_report_path()?;
+        let args =
+            robocopy_ingest::runner::restore_preview_arguments(&report, &preview_report_path);
+
+        let mut command = std::process::Command::new(&cli);
+        command.args(&args).stdin(std::process::Stdio::null());
+        // Same reasoning as `start_job`: a console-subsystem binary launched from a windowed
+        // process otherwise gets a fresh console Windows flashes on screen.
+        #[cfg(windows)]
+        {
+            use std::os::windows::process::CommandExt;
+            const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+            command.creation_flags(CREATE_NO_WINDOW);
+        }
+        let output = command.output().map_err(|source| {
+            robocopy_ingest::errors::IngestError::SpawnFailed {
+                program: cli.display().to_string(),
+                source,
+            }
+        })?;
+
+        let result = gui_api::read_report(&preview_report_path);
+        // Best-effort: this is scratch, not a report meant to persist, but a failed cleanup must
+        // never mask whether the preview itself succeeded.
+        let _ = std::fs::remove_file(&preview_report_path);
+
+        result.map_err(|error| {
+            if output.status.success() {
+                error
+            } else {
+                robocopy_ingest::errors::IngestError::RestorePreviewFailed {
+                    code: output.status.code(),
+                    stderr: String::from_utf8_lossy(&output.stderr).trim().to_string(),
+                }
+            }
+        })
+    })
+    .await
+}
+
 /// Reads the run history stored beside `report_path`.
 ///
 /// `limit` is clamped by the library, like the error pages: the boundary rule belongs where it is
@@ -642,7 +704,8 @@ fn main() {
             stop_job,
             run_status,
             list_checkpoints,
-            resume_job
+            resume_job,
+            preview_restore
         ])
         .run(tauri::generate_context!())
         .expect("error while running the rustcopy console");

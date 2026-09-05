@@ -190,6 +190,38 @@ pub fn resume_arguments(checkpoint: &Path, cancel_file: &Path) -> Vec<String> {
     ]
 }
 
+/// The complete argument list for previewing a `--restore-from` without ever performing it (F64,
+/// the first building block of the guided restore flow — `PIANO_GUI.md` §5b/§8). `--dry-run`
+/// guarantees nothing is copied; `--report-path preview_report_path` guarantees the preview
+/// writes its own scratch report rather than the caller's real one, so a preview can never
+/// overwrite (or race with) a report from a genuine run. Same fixed shape and reasoning as
+/// [`run_arguments`]/[`resume_arguments`] — the only two values that vary are the paths, and no
+/// parameter exists through which another flag could arrive.
+pub fn restore_preview_arguments(report: &Path, preview_report_path: &Path) -> Vec<String> {
+    vec![
+        "--restore-from".to_string(),
+        report.display().to_string(),
+        "--dry-run".to_string(),
+        "--report-path".to_string(),
+        preview_report_path.display().to_string(),
+    ]
+}
+
+/// Where a restore preview (F64) writes its scratch report — same temp directory as stop/progress
+/// files ([`cancel_file_dir`]), for the same reason: guaranteed writable, and never the operator's
+/// own report path.
+pub fn restore_preview_report_path() -> Result<PathBuf, IngestError> {
+    let dir = cancel_file_dir();
+    std::fs::create_dir_all(&dir).map_err(|error| IngestError::io(&dir, error))?;
+    let stamp = format!(
+        "{}-{}-{}",
+        chrono::Local::now().format("%Y%m%d-%H%M%S%.3f"),
+        std::process::id(),
+        CANCEL_FILE_SEQUENCE.fetch_add(1, Ordering::Relaxed)
+    );
+    Ok(dir.join(format!("restore-preview-{stamp}.json")))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -243,6 +275,57 @@ mod tests {
         }
         assert!(joined.starts_with("--resume-from run.checkpoint.json"));
         assert_eq!(args.len(), 6, "and nothing else may be added silently");
+    }
+
+    /// F64: same prohibition as the two argument builders above, for the preview path — a fixed
+    /// shape is what makes "the console can never authorise a purge" hold for a preview too.
+    #[test]
+    fn the_restore_preview_argument_list_cannot_carry_a_destructive_flag() {
+        let args =
+            restore_preview_arguments(Path::new("backup-report.json"), Path::new("preview.json"));
+        let joined = args.join(" ");
+
+        for forbidden in [
+            "--force-purge",
+            "--mirror",
+            "--install-service",
+            "--uninstall-service",
+            "--install-schedule",
+            "--uninstall-schedule",
+            "--keep-generations",
+            "--resume-from",
+            "--config",
+        ] {
+            assert!(
+                !joined.contains(forbidden),
+                "{forbidden} must never reach a restore preview: {joined}"
+            );
+        }
+        assert!(
+            joined.contains("--dry-run"),
+            "a preview must never actually restore: {joined}"
+        );
+        assert!(joined.starts_with("--restore-from backup-report.json"));
+        assert_eq!(args.len(), 5, "and nothing else may be added silently");
+    }
+
+    /// The preview must write its own report, never the path a real run would use — otherwise a
+    /// preview could silently clobber a genuine run's report sitting at a well-known default path.
+    #[test]
+    fn restore_preview_report_path_is_never_the_default_report_path() {
+        let path = restore_preview_report_path().expect("directory is created");
+        assert_ne!(path, PathBuf::from("./robocopy_ingest_report.json"));
+        assert_eq!(path.parent(), Some(cancel_file_dir().as_path()));
+    }
+
+    /// Two previews requested close together must not collide on the same scratch file, the same
+    /// reasoning `two_runs_started_in_the_same_instant_do_not_share_a_stop_file` already applies
+    /// to stop files.
+    #[test]
+    fn two_previews_requested_in_the_same_instant_do_not_share_a_report_path() {
+        let first = restore_preview_report_path().expect("created");
+        let second = restore_preview_report_path().expect("created");
+        assert_ne!(first, second);
     }
 
     /// One run, one identity: watching one run's progress while holding another's stop file would

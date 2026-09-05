@@ -379,5 +379,5 @@ tramite questo stesso comando, senza `--source`/`--dest`.
 | 📦 **[docs/installation.md](docs/installation.md)** | Requisiti, installer Windows, deploy silenzioso e notify-server. |
 | 📖 **[RUNBOOK.md](RUNBOOK.md)** | **[QUESTO DOCUMENTO]** Guida operativa, backup multi-sorgente e comandi reali testati. |
 | 📄 **[ARCHITECTURE.md](ARCHITECTURE.md)** | Architettura interna v6.0.0, diagrammi di flusso e mappa dei moduli Rust. |
-| 📊 **[ANALYSIS.md](ANALYSIS.md)** | Diagnosi di robustezza, tuning 3x performance e 479 test di validazione (494 con `notify-server`). |
+| 📊 **[ANALYSIS.md](ANALYSIS.md)** | Diagnosi di robustezza, tuning 3x performance e 482 test di validazione (497 con `notify-server`). |
 | 🗺️ **[ROADMAP.md](ROADMAP.md)** | Diagramma Gantt delle release (v1.0 → v8.0) e pianificazione futura. |
