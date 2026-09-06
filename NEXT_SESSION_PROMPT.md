@@ -5,16 +5,54 @@ description: Handoff di sessione — stato progetto, aree da investigare, conven
 status: draft
 generated:
   by: process:claude-code
-  at: 2026-09-04T00:00:00Z
+  at: 2026-09-05T00:00:00Z
 ---
 
 # Prompt per la prossima sessione — robocopy-ingest-cli (rustcopy)
 
-## Stato del progetto (4 Settembre 2026)
+## Stato del progetto (5 Settembre 2026)
 
 `Cargo.toml` = **6.0.0**. Suite di test: **482** (`cargo test --workspace --exclude rustcopy-gui`), **497** con `--features rustcopy-cli/notify-server` (più test `#[ignore]` — round-trip reali dei servizi Windows che richiedono elevazione, più due probe di misurazione a scala reale). CI verde su `windows-latest` e `ubuntu-latest` per entrambe le configurazioni, più i job dedicati `gui`, `gui-npm-audit`, `versions` e `docs`.
 
-**Ultimo lavoro: espansione ed rifacimento visivo della console, dopo la chiusura della milestone 7.0.0 (2 Set 2026).** Ordine cronologico delle PR #63-#83:
+**Ultimo lavoro: implementate e chiuse F62-F66 (5 Set 2026, PR #87-#91).** Nate da un'analisi
+richiesta dall'utente su una metodologia a workspace per la GUI e su funzionalità CLI non ancora
+valutate — formalizzata come backlog in `ROADMAP.md`, poi implementata su richiesta esplicita
+("procedi con il piano e punti creati da F62 a F66"):
+
+- **F62** `--list-schedules` (PR #87) — elenca ogni attività di Task Scheduler che invoca il
+  binario corrente, riusando il motore CSV già scritto per `schedule::referencing_config`.
+- **F63** `--purge-preview-path` (PR #88) — anteprima completa e non troncata di cosa `--mirror`
+  cancellerebbe, senza mai chiedere conferma né autorizzare nulla (vincolo F61). Solo la metà
+  mirror; la metà retention (`--keep-generations`) resta backlog per scelta deliberata.
+- **F65** controllo preventivo di spazio libero (PR #89) — nuovo `disk_space.rs`, nuovo exit code
+  `6`. **Bug reale trovato scrivendo i test**: `needed_bytes / 100 * percent` azzerava il margine
+  sotto i 100 byte; corretto moltiplicando prima di dividere. **Secondo difetto, dalla CI Linux**:
+  un test assumeva l'exit 6 su ogni piattaforma, ma `free_bytes` non ha implementazione non-Windows
+  — stessa classe di lacuna già vista in D16, corretto gating il test a `#[cfg(windows)]`.
+- **F64** anteprima di ripristino in console (PR #91) — verificato per primo, come da spec, che
+  `--restore-from --dry-run` componesse già correttamente; il comando Tauri `preview_restore` è un
+  involucro sottile su quello, nessuna nuova logica core.
+- **F66** preferiti nominati in console (PR #90) — quarta lista in `session.svelte.js` accanto a
+  "Recenti", interamente client-side, zero comandi Tauri nuovi.
+
+**Incidente di workflow, risolto**: PR #90 (F66) era stata branchata prima che PR #89 (F65) fosse
+mergiata, e le due toccavano la stessa riga di `ROADMAP.md` — merge conflict trovato e risolto
+manualmente (unite entrambe le righe "✅ completato" invece di sceglierne una), poi l'intera
+pipeline di verifica rieseguita sul branch risultante prima del push. **Lezione per la prossima
+volta**: quando più PR sequenziali toccano la stessa sezione di un file di documentazione condiviso
+(qui la tabella backlog di `ROADMAP.md`), aggiornare/rebasare il branch più vecchio *prima* di aprire
+la PR successiva evita il conflitto invece di doverlo risolvere dopo.
+
+**Lacune documentali trovate e corrette in una sessione successiva, sempre 5 Set 2026**:
+`CHANGELOG.md` non menzionava affatto F62-F66 (aggiunto sotto `## [Unreleased]`); `PIANO_GUI.md`
+§12.2 aveva ancora, sotto le intestazioni "✅ completato", un paragrafo di chiusura che diceva
+"nessuna di queste cinque voci è stata implementata" — contraddizione lasciata da un aggiornamento
+riga-per-riga che non aveva toccato il paragrafo finale. **Lezione**: quando un documento ha sia
+righe di stato per-voce sia un paragrafo di riepilogo, aggiornare entrambi nello stesso giro — un
+`grep` dei soli numeri (test/difetti) non li avrebbe trovati, serviva rileggere il paragrafo intero.
+
+**Lavoro precedente: espansione ed rifacimento visivo della console, dopo la chiusura della
+milestone 7.0.0 (2 Set 2026).** Ordine cronologico delle PR #63-#83:
 
 - **Onda 1 e 2** del piano di espansione (`PIANO_GUI.md`, ex `PIANO_GUI_ESPANSIONE.md`): progress bar con etichetta di batch, badge pianificazione, drag&drop su `PathBar`, export CSV, notifiche desktop a fine run, filtro Storico/Report, coda job durante un batch (F49), gestione credenziali dalla console (F56 metà GUI) — tutte chiuse.
 - **D23** (3 Set): `--bandwidth-limit-mbps` falliva sempre contro `robocopy.exe` reale per il conflitto `/IPG`+`/MT` mai gestito in `build_args` — risolto omettendo `/MT` quando il limite di banda è impostato.
@@ -25,7 +63,32 @@ generated:
 
 **Il difetto più istruttivo resta D22** (2 Set, non di questa sessione, ma da rileggere prima di toccare la GUI): la console installata caricava il server di sviluppo invece del proprio frontend, e `cargo build`/`clippy`/tutti i test erano verdi, perché nessuno di loro apre una finestra. **Per una GUI non esiste sostituto all'aprire la finestra e cliccarci dentro** — ogni bug di questa sessione (D23, D24, il bug dell'icona morta) è stato trovato così, mai leggendo solo il diff.
 
-Milestone 5.2.0/5.3.0/6.0.0/6.1.0/7.0.0 chiuse (7.0.0 a sette voci su otto: resta la metà in **scrittura** di F55 — script pre/post — e F57, i ruoli, fermo con raccomandazione esplicita di non farlo). Difetti storici: **D1-D25**, **un solo aperto (D25)**, non bloccante. Feature F1-F66 tutte classificate — **F62-F66 sono nuove**, aggiunte al backlog il 5 Set 2026 da un'analisi richiesta dall'utente su una metodologia a workspace e su funzionalità CLI non ancora valutate (`--list-schedules`, anteprima mirror/purge, anteprima restore, controllo spazio libero, preferiti nominati in GUI) — spec tecnica completa in `ROADMAP.md`, nessuna ancora implementata.
+Milestone 5.2.0/5.3.0/6.0.0/6.1.0/7.0.0 chiuse (7.0.0 a sette voci su otto: resta la metà in **scrittura** di F55 — script pre/post — e F57, i ruoli, fermo con raccomandazione esplicita di non farlo). Difetti storici: **D1-D26**, **un solo aperto (D25)**, non bloccante. Feature F1-F66 tutte classificate — **F62, F64, F65, F66 chiuse per intero; F63 chiusa per la sola metà mirror** (5-6 Set 2026, PR #87-#91) — spec tecnica completa e cronologia d'implementazione in `ROADMAP.md`.
+
+**Audit visivo/funzionale reale della console (6 Set 2026)**, richiesto dall'utente subito dopo la
+chiusura di F62-F66 ("controlla lo stato attuale delle funzionalità e aspetto della GUI"): console
+ricompilata da `main` aggiornato e riaperta con Windows-MCP, `demo-locale.toml` eseguito per davvero,
+non solo letto nel sorgente. **Trovato e corretto D26, P0, stesso giorno**: la prima prova reale di
+"Anteprima ripristino" (F64) contro il report appena scritto ha restituito "fatal error, no files
+copied" invece di un'anteprima — `preview_restore` non impostava alcuna cwd per il processo figlio, e
+un report a percorsi relativi (il caso di `examples/demo-locale.toml`, l'unico esempio pensato per
+essere eseguito così com'è) faceva fallire il ripristino. **Un primo tentativo di fix era sbagliato**:
+`command.current_dir(report.parent())`, lo stesso pattern di `run_arguments`/`resume_arguments`,
+ricompilato e riprovato ha riprodotto lo stesso identico fallimento — la cartella del *file* del
+report è spesso un livello più in profondità di quella da cui i suoi `source`/`dest` sono relativi.
+**Fix corretto**: un nuovo parametro `config_path` (da `session.configPath`) la cui cartella, non
+quella del report, è quella che la run originale ha davvero usato. Riverificato contro il binario
+ricompilato: anteprima reale, sorgente/destinazione invertite correttamente. **Lezione doppia**: (1)
+"verificato manualmente contro il binario compilato" non basta se il caso provato non è quello che
+rompe — la verifica originaria di F64 ha quasi certamente usato un report a percorsi assoluti; (2) un
+fix che sembra ovvio (stesso pattern già usato altrove nello stesso file) va riverificato dal vivo
+tanto quanto il difetto che corregge, non dato per corretto per analogia. Trovati anche tre problemi
+minori, non ancora corretti (dettaglio in `PIANO_GUI.md` §13): un conteggio "File copiati" che supera
+il totale nel report reale (dato del core, non del frontend — non isolata la causa esatta), un glitch
+visivo dove il pannello "Preferiti" si sovrappone all'intestazione della tabella Job sottostante
+(causa non isolata, serve il devtools del WebView), e il contenuto di Aiuto non aggiornato per
+F64/F66 (stessa causa già nota dal §9h per un'altra scheda). Dettaglio completo: `ANALYSIS.md` D26,
+`PIANO_GUI.md` §13, riga F64 di `ROADMAP.md`.
 
 ---
 
@@ -33,12 +96,12 @@ Milestone 5.2.0/5.3.0/6.0.0/6.1.0/7.0.0 chiuse (7.0.0 a sette voci su otto: rest
 
 Nessuna richiesta esplicita in sospeso all'apertura di questa sessione. Le aree con lavoro reale ancora da fare, in ordine di come il piano le prioritizza (`PIANO_GUI.md` §8/§11):
 
-1. **Flusso di ripristino guidato** (`--restore-from`, Onda 3) — la lacuna funzionale più sentita della console. Richiede un disegno di conferma esplicita (elenco report → anteprima → conferma → avvio) prima di qualunque riga, stessa disciplina che ha retto il mirror. Proporre con `AskUserQuestion` prima di implementare.
+1. **Flusso di ripristino guidato** (`--restore-from`, Onda 3) — la lacuna funzionale più sentita della console. **Il primo mattone (l'anteprima) è F64, chiuso, D26 corretto il 6 Set 2026**: resta da costruire il resto del flusso — elenco report → anteprima (pronta e verificata) → conferma esplicita → avvio. Proporre con `AskUserQuestion` prima di implementare il resto.
 2. **Due decisioni bloccate, entrambe spettano all'utente**:
    - Interruttore VSS in Modifica — serve prima `vss_snapshot: Option<bool>` su `JobConfig` lato core, non è lavoro di frontend.
    - Scrittura di webhook/script pre-post in Modifica (F55, metà scrittura) — morde il vincolo permanente 2 (§2.3 di `PIANO_GUI.md`): script configurabili + servizio privilegiato = escalation locale. Non procedere senza una decisione esplicita.
 3. **D25** (`checkpoint::build_resume_args` scarta la maggior parte della configurazione originale) — aperto ma non bloccante. Il fix corretto è un tipo dedicato per il checkpoint, non allargare `ConfigurationReport` (condiviso con i report di run completate). Non affrontarlo con una patch rapida.
-4. **F62-F66** (backlog, 5 Set 2026, spec completa in `ROADMAP.md`) — nessuno richiesto esplicitamente ancora, ma pronti se l'utente ne sceglie uno: `--list-schedules` (F62) e l'anteprima mirror/purge (F63) sono i più economici perché riusano quasi per intero logica già scritta e testata; l'anteprima di ripristino (F64) è il primo mattone del punto 1 sopra, ma richiede prima una verifica empirica se `--restore-from --dry-run` già funziona; il controllo spazio libero (F65) e i preferiti nominati in GUI (F66) sono indipendenti dal resto.
+4. **F63, metà retention** (`--keep-generations`/`GenerationIndex::generations_to_prune`) — lasciata deliberatamente fuori dalla PR #88 per tenerla rivedibile. Stesso disegno della metà mirror già fatta (scrivere l'elenco invece di contarlo), da riprendere quando serve o quando si costruisce il punto 1 sopra.
 
 In assenza di una richiesta, il modello resta quello delle sessioni precedenti: **verificare empiricamente prima di proporre un fix**, mai fix speculativi su ipotesi non confermate — e, per qualunque cosa tocchi la GUI, **aprire la finestra** contro il binario release compilato, non fidarsi di `cargo build`/test/clippy da soli.
 

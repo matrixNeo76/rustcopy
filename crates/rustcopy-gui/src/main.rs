@@ -120,6 +120,10 @@ async fn read_report_page(path: String, offset: usize, limit: usize) -> Result<R
 /// Previews what `--restore-from report_path` would do, without ever performing it (F64, the
 /// first building block of the guided restore flow — `PIANO_GUI.md` §5b/§8).
 ///
+/// `config_path` is the configuration currently loaded elsewhere in the console (shared session
+/// state, empty if none) — **not** where this report lives on disk. See the D26 note below for
+/// why the distinction matters.
+///
 /// Not an exception to this file's own rule any more than [`start_job`] is: the argument list
 /// comes from `runner::restore_preview_arguments`, a fixed shape tested there to never carry a
 /// destructive flag, with `--dry-run` guaranteeing nothing is copied and its own scratch
@@ -127,7 +131,7 @@ async fn read_report_page(path: String, offset: usize, limit: usize) -> Result<R
 /// that exact invocation, waits for it, reads the resulting report, and deletes the scratch file
 /// — it decides nothing about what a restore means, only that it ran and what it said.
 #[tauri::command]
-async fn preview_restore(report_path: String) -> Result<ReportView, String> {
+async fn preview_restore(report_path: String, config_path: String) -> Result<ReportView, String> {
     off_thread(move || {
         let exe = std::env::current_exe().map_err(|source| {
             robocopy_ingest::errors::IngestError::SpawnFailed {
@@ -145,6 +149,27 @@ async fn preview_restore(report_path: String) -> Result<ReportView, String> {
 
         let mut command = std::process::Command::new(&cli);
         command.args(&args).stdin(std::process::Stdio::null());
+        // D26 (found 6 Set 2026, first fix attempt wrong, corrected same day): a report's
+        // source/dest are stored exactly as the original run's `Args` held them
+        // (`report.rs::IngestReport::new`, verbatim from `args.source()`/`args.dest()`, never
+        // canonicalized) — commonly relative, resolved by the ORIGINAL run against the
+        // *configuration's* directory, the same convention `run_arguments`'s call site below
+        // uses. The report's own on-disk location is a different directory whenever
+        // `--report-path` nests it under the destination (the default for `demo-locale.toml`:
+        // `demo-out/report.json` lives one level *inside* the config's directory) — using
+        // `report.parent()` looks plausible but resolves one level too deep, which still failed
+        // this exact case on the first attempt. `config_path` is the console's own best-effort
+        // link between "the report on screen" and "the configuration that produced it" (true
+        // whenever the operator got here via "Apri il report di questa run", the documented
+        // path); left empty otherwise, in which case this matches today's behaviour rather than
+        // guess at a directory with no better basis than `report.parent()` already proved to be.
+        if !config_path.is_empty() {
+            if let Ok(config) = std::path::absolute(PathBuf::from(&config_path)) {
+                if let Some(parent) = config.parent().filter(|p| !p.as_os_str().is_empty()) {
+                    command.current_dir(parent);
+                }
+            }
+        }
         // Same reasoning as `start_job`: a console-subsystem binary launched from a windowed
         // process otherwise gets a fresh console Windows flashes on screen.
         #[cfg(windows)]

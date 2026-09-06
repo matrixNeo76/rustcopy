@@ -35,7 +35,14 @@
     restorePreviewLoading = true;
     restorePreview = null;
     try {
-      restorePreview = await invoke("preview_restore", { reportPath: session.reportPath });
+      restorePreview = await invoke("preview_restore", {
+        reportPath: session.reportPath,
+        // D26: the report's own relative source/dest resolve against the *configuration's*
+        // directory, not the report file's own — this is the console's best-effort link between
+        // the two, true whenever "Apri il report di questa run" (Esegui) brought the operator
+        // here. Empty when it doesn't hold (a report opened without any config ever loaded).
+        configPath: session.configPath,
+      });
     } catch (e) {
       restorePreviewError = String(e);
     } finally {

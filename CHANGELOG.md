@@ -65,6 +65,23 @@ For full technical detail behind any entry, see `ANALYSIS.md` (defect list, `D<N
 - `scripts/check-versions.sh` and a CI job behind it: four files declare the release version and no
   build step held them together. The installer script's own header had admitted the drift without
   preventing it.
+- **F62**: `--list-schedules` lists every Task Scheduler entry that invokes this binary (filtered on
+  the binary's own path, not a specific config), reusing the CSV query/parsing already built for
+  `schedule::referencing_config`. Exposed to the console as `gui_api::list_all_schedules`.
+- **F63**: `--purge-preview-path <PATH>` (requires `--mirror`) writes the complete, untruncated list
+  of files a mirror run would delete, without ever asking for confirmation or looking at
+  `--force-purge` — a preview is a read, never an authorization. The retention (`--keep-generations`)
+  half of this is deliberately not done yet.
+- **F64**: the console's *Report* pane can preview a restore before it happens — it runs
+  `--restore-from <report> --dry-run` against the real CLI in a throwaway report path and shows the
+  swapped source/destination, file/byte counts and robocopy's own outcome, then deletes the scratch
+  report. No new core logic: `--dry-run` already composed with `--restore-from`.
+- **F65**: a preflight free-space check runs after the prescan and aborts with a new dedicated exit
+  code (`6`) if the destination doesn't have enough room, plus a configurable safety margin
+  (`--space-safety-margin-percent`, default 5%) and an opt-out (`--skip-space-check`) for
+  destinations where free space can't be queried reliably (e.g. some network shares).
+- **F66**: the console can save named favorites (job configs and reports) above the existing
+  "Recent" list, entirely client-side — no new Tauri command, no new `JobConfig`/`Args` field.
 
 ### Changed
 - The installer is now a **single** setup with the console as an optional component, rather than a

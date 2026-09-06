@@ -1,7 +1,7 @@
 ---
 type: Log
 title: Analisi di Robustezza e Ottimizzazione Prestazioni
-description: Audit trail dei difetti D1-D25 e delle opportunità di miglioramento O1-O10.
+description: Audit trail dei difetti D1-D26 e delle opportunità di miglioramento O1-O10.
 status: stable
 generated:
   by: process:claude-code
@@ -1476,7 +1476,70 @@ configurazione originale non lo è.
 
 ---
 
-## 💡 3.2 Opportunità di miglioramento (non difetti)
+### D26 — l'anteprima di ripristino (F64) fallisce con "fatal error" su qualunque report con percorsi relativi ✅ CORRETTO (6 Set 2026)
+
+**Stato: corretto e verificato lo stesso giorno.**
+
+**Gravità: ALTA** — non un caso limite: `examples/demo-locale.toml`, l'unico esempio pensato per
+essere eseguito così com'è, registra `source`/`dest` come percorsi **relativi** proprio perché
+"funziona da qualunque cartella la console sia stata avviata" (commento del file stesso). Trovato
+nel primo tentativo reale di usare "Anteprima ripristino" appena aggiunta (F64, PR #91) durante un
+audit visivo della console richiesto dall'utente, non da un rapporto di un operatore.
+
+**Causa.** `preview_restore` (`crates/rustcopy-gui/src/main.rs:130-176`) costruisce ed esegue il
+processo CLI di anteprima ma **non chiama mai `command.current_dir(...)`** — a differenza degli
+altri due punti di spawn nello stesso file, `run_arguments`'s call site (righe 395-399) e
+`resume_arguments`'s call site (righe 491-495), che impostano esplicitamente la cwd del figlio sulla
+cartella del file (config o checkpoint) proprio perché **i percorsi in un TOML/report aperto dalla
+console valgono rispetto al file, non rispetto a dove il processo della console è stato avviato**
+(convenzione stabilita da F53, vedi `CLAUDE.md`). Un report con `source`/`dest` relativi, ripristinato
+con la cwd sbagliata (quella del processo `rustcopy-gui.exe`, non quella del report), fa cercare a
+robocopy una sorgente che lì non esiste: `0 file(s) matching *`, poi `exit code 16 (fatal error, no
+files copied)`. La GUI mostra fedelmente questo esito — non mente, esegue davvero un processo che
+fallisce per una ragione sbagliata.
+
+**Perché è passato inosservato.** La riga F64 di `ROADMAP.md` dichiarava una verifica manuale
+"contro il binario compilato" — quella verifica ha quasi certamente usato un report con percorsi già
+assoluti (o esiti diversi che non esercitano la risoluzione dei percorsi), scenario in cui l'assenza
+di `current_dir` non ha alcun effetto osservabile: robocopy risolve un percorso assoluto allo stesso
+modo indipendentemente dalla cwd del processo. Nessun test — né gli 8 unit test aggiunti da F64
+(`the_restore_preview_argument_list_cannot_carry_a_destructive_flag` e affini, tutti su
+`runner::restore_preview_arguments`, la sola costruzione della lista di argomenti) né una prova
+black-box end-to-end — esercita il comando reale contro un report a percorsi relativi.
+
+**Primo tentativo di rimedio, sbagliato.** L'ipotesi iniziale — leggere `report.parent()` e
+chiamare `command.current_dir(parent)`, lo stesso pattern usato da `run_arguments`/`resume_arguments`
+— **non ha funzionato**, riprodotto identico dopo la ricompilazione: il file del report finisce
+tipicamente **un livello sotto** la cartella da cui il `source`/`dest` del report sono relativi. Per
+`demo-locale.toml`, il default `--report-path` è `demo-out/report.json`, risolto dalla run originale
+contro la cartella del **config** (`examples/`) — il report vive quindi in `examples/demo-out/`, ma
+i suoi `source`/`dest` ("demo-data", "demo-out/copia") sono relativi a `examples/`, non a
+`examples/demo-out/`. `report.parent()` restituisce la cartella sbagliata, un livello troppo in
+profondità. Confermato: `report.rs::IngestReport::new` scrive `args.source()`/`args.dest()`
+verbatim, senza mai canonicalizzarli, e il report non registra da nessuna parte la cartella
+originale di lavoro o il percorso del config che lo ha prodotto — quell'informazione non è
+recuperabile dalla sola posizione su disco del report.
+
+**Rimedio corretto.** `preview_restore` accetta ora un secondo parametro, `config_path` — il config
+attualmente caricato altrove nella console (`session.configPath`, stato condiviso fra le schede),
+non il file del report. Se non vuoto, viene usata la cartella **del config** come cwd del processo
+figlio — la stessa convenzione di `run_arguments`, e la cartella corretta perché è da lì che la run
+originale ha risolto i propri percorsi relativi. `Report.svelte` lo passa insieme a `reportPath` ad
+ogni chiamata. Corretto solo nel caso più comune e documentato — l'operatore arriva al report tramite
+"Apri il report di questa run" (Esegui) con lo stesso config ancora caricato — non in generale: un
+report aperto senza che nessun config sia mai stato caricato in quella sessione della console lascia
+`config_path` vuoto, e il comportamento resta quello odierno (nessuna cwd impostata), onesto anziché
+indovinare una cartella senza base migliore di quella che ha già dimostrato di essere sbagliata.
+
+**Verifica.** Riprodotto il fallimento in modo deterministico fuori dalla GUI (stessa invocazione da
+due cwd diverse: dalla radice del repository, `0 file(s) matching *` → `exit code 16`; dalla cartella
+del config, 4 file trovati, `exit code 2`). Il primo tentativo di fix, ricompilato e riprovato dal
+vivo contro il binario reale, ha riprodotto **lo stesso identico fallimento** — la verifica ha colto
+l'errore di progettazione prima che venisse dichiarato corretto. Il rimedio finale, ricompilato e
+riprovato contro lo stesso identico scenario (stesso `demo-locale.toml`, stessa sequenza Esegui →
+"Apri il report di questa run" → "Anteprima ripristino"), produce ora un'anteprima reale: sorgente e
+destinazione invertite correttamente, "File coinvolti: 3 / 4", "Esito robocopy: extra files or
+directories detected" — non più un errore fatale.
 
 Proposte ordinate per rapporto valore/rischio, motivate da problemi osservati sul campo:
 
@@ -1499,8 +1562,8 @@ Proposte ordinate per rapporto valore/rischio, motivate da problemi osservati su
 
 | Priorità | Voci | Razionale |
 |---|---|---|
-| **P0** | ~~D1~~ ✅, ~~D3~~ ✅, ~~D4~~ ✅ | Tutte e tre risolte e verificate: D1 il 31 Luglio 2026 (F24), D3/D4 il 3 Agosto 2026 (F25a/F25b). Nessun difetto P0 aperto al momento. |
-| **P1** | D2, D5, D6, D7 | Correttezza e coerenza: flag muti, blocco del runtime, versionamento dello schema, semantica delle junction. |
+| **P0** | ~~D1~~ ✅, ~~D3~~ ✅, ~~D4~~ ✅, ~~D26~~ ✅ | Tutte e quattro risolte e verificate: D1 il 31 Luglio 2026 (F24), D3/D4 il 3 Agosto 2026 (F25a/F25b), D26 il 6 Set 2026 (stesso giorno della scoperta). Nessun difetto P0 aperto al momento. |
+| **P1** | D2, D5, D6, D7, D25 | Correttezza e coerenza: flag muti, blocco del runtime, versionamento dello schema, semantica delle junction, fedeltà della ripresa da checkpoint alla configurazione originale. |
 | **P2** | D8, D9, ~~D10~~ + O1-O10 | Debito tecnico, ergonomia operativa ed evoluzione funzionale. D10 non è più in questa lista: riclassificato il 23 Agosto 2026 come limite noto dello strumento, non come lavoro da pianificare. |
 
 **Lezione metodologica ricorrente**: D1 e D2 erano *invisibili ai test* perché i test verificavano
