@@ -153,7 +153,19 @@
   }}
 />
 
-<div class="relative" bind:this={root}>
+<!-- `mb-8`: found in a live GUI audit (6 Set 2026) — "Recenti"/"Preferiti" is a floating
+     `absolute` panel with no fixed height (it grows with however many entries exist), and every
+     pane places its next content right below this component with only its own `mt-*`. With as
+     little as one entry, the panel's bottom edge landed *inside* the following row's text instead
+     of above or below it — not a stacking-order bug (an `absolute`, `z-10` panel always paints
+     over static content, per spec), but a plain lack of clearance: the panel is tall enough to
+     slice through the first line of whatever follows. Owned here, once, rather than added to every
+     pane that renders something directly below a `PathBar`. **`mb-8`, not `mb-4`**: adjacent
+     margins between block siblings collapse to the larger one, not their sum — every consuming
+     pane already carries `mt-4` on its own next element, so `mb-4` here collapsed straight back
+     down to the same 16px gap that caused the bug, verified visually unchanged against the
+     compiled binary before landing on a value large enough to actually win the collapse. -->
+<div class="relative mb-8" bind:this={root}>
   <div class="flex gap-2">
     <label class="sr-only" for="pathbar-{kind}">{label}</label>
     <!-- `autocomplete="off"`: the WebView's own saved-values popup opened over this field and

@@ -12,7 +12,7 @@ generated:
 
 ## Stato del progetto (5 Settembre 2026)
 
-`Cargo.toml` = **6.0.0**. Suite di test: **482** (`cargo test --workspace --exclude rustcopy-gui`), **497** con `--features rustcopy-cli/notify-server` (più test `#[ignore]` — round-trip reali dei servizi Windows che richiedono elevazione, più due probe di misurazione a scala reale). CI verde su `windows-latest` e `ubuntu-latest` per entrambe le configurazioni, più i job dedicati `gui`, `gui-npm-audit`, `versions` e `docs`.
+`Cargo.toml` = **6.0.0**. Suite di test: **484** (`cargo test --workspace --exclude rustcopy-gui`), **499** con `--features rustcopy-cli/notify-server` (più test `#[ignore]` — round-trip reali dei servizi Windows che richiedono elevazione, più due probe di misurazione a scala reale). CI verde su `windows-latest` e `ubuntu-latest` per entrambe le configurazioni, più i job dedicati `gui`, `gui-npm-audit`, `versions` e `docs`.
 
 **Ultimo lavoro: implementate e chiuse F62-F66 (5 Set 2026, PR #87-#91).** Nate da un'analisi
 richiesta dall'utente su una metodologia a workspace per la GUI e su funzionalità CLI non ancora
@@ -63,32 +63,45 @@ milestone 7.0.0 (2 Set 2026).** Ordine cronologico delle PR #63-#83:
 
 **Il difetto più istruttivo resta D22** (2 Set, non di questa sessione, ma da rileggere prima di toccare la GUI): la console installata caricava il server di sviluppo invece del proprio frontend, e `cargo build`/`clippy`/tutti i test erano verdi, perché nessuno di loro apre una finestra. **Per una GUI non esiste sostituto all'aprire la finestra e cliccarci dentro** — ogni bug di questa sessione (D23, D24, il bug dell'icona morta) è stato trovato così, mai leggendo solo il diff.
 
-Milestone 5.2.0/5.3.0/6.0.0/6.1.0/7.0.0 chiuse (7.0.0 a sette voci su otto: resta la metà in **scrittura** di F55 — script pre/post — e F57, i ruoli, fermo con raccomandazione esplicita di non farlo). Difetti storici: **D1-D26**, **un solo aperto (D25)**, non bloccante. Feature F1-F66 tutte classificate — **F62, F64, F65, F66 chiuse per intero; F63 chiusa per la sola metà mirror** (5-6 Set 2026, PR #87-#91) — spec tecnica completa e cronologia d'implementazione in `ROADMAP.md`.
+Milestone 5.2.0/5.3.0/6.0.0/6.1.0/7.0.0 chiuse (7.0.0 a sette voci su otto: resta la metà in **scrittura** di F55 — script pre/post — e F57, i ruoli, fermo con raccomandazione esplicita di non farlo). Difetti storici: **D1-D27**, **un solo aperto (D25)**, non bloccante. Feature F1-F66 tutte classificate — **F62, F64, F65, F66 chiuse per intero; F63 chiusa per la sola metà mirror** (5-6 Set 2026, PR #87-#91) — spec tecnica completa e cronologia d'implementazione in `ROADMAP.md`.
 
 **Audit visivo/funzionale reale della console (6 Set 2026)**, richiesto dall'utente subito dopo la
 chiusura di F62-F66 ("controlla lo stato attuale delle funzionalità e aspetto della GUI"): console
 ricompilata da `main` aggiornato e riaperta con Windows-MCP, `demo-locale.toml` eseguito per davvero,
-non solo letto nel sorgente. **Trovato e corretto D26, P0, stesso giorno**: la prima prova reale di
-"Anteprima ripristino" (F64) contro il report appena scritto ha restituito "fatal error, no files
-copied" invece di un'anteprima — `preview_restore` non impostava alcuna cwd per il processo figlio, e
-un report a percorsi relativi (il caso di `examples/demo-locale.toml`, l'unico esempio pensato per
-essere eseguito così com'è) faceva fallire il ripristino. **Un primo tentativo di fix era sbagliato**:
-`command.current_dir(report.parent())`, lo stesso pattern di `run_arguments`/`resume_arguments`,
-ricompilato e riprovato ha riprodotto lo stesso identico fallimento — la cartella del *file* del
-report è spesso un livello più in profondità di quella da cui i suoi `source`/`dest` sono relativi.
-**Fix corretto**: un nuovo parametro `config_path` (da `session.configPath`) la cui cartella, non
-quella del report, è quella che la run originale ha davvero usato. Riverificato contro il binario
-ricompilato: anteprima reale, sorgente/destinazione invertite correttamente. **Lezione doppia**: (1)
-"verificato manualmente contro il binario compilato" non basta se il caso provato non è quello che
-rompe — la verifica originaria di F64 ha quasi certamente usato un report a percorsi assoluti; (2) un
-fix che sembra ovvio (stesso pattern già usato altrove nello stesso file) va riverificato dal vivo
-tanto quanto il difetto che corregge, non dato per corretto per analogia. Trovati anche tre problemi
-minori, non ancora corretti (dettaglio in `PIANO_GUI.md` §13): un conteggio "File copiati" che supera
-il totale nel report reale (dato del core, non del frontend — non isolata la causa esatta), un glitch
-visivo dove il pannello "Preferiti" si sovrappone all'intestazione della tabella Job sottostante
-(causa non isolata, serve il devtools del WebView), e il contenuto di Aiuto non aggiornato per
-F64/F66 (stessa causa già nota dal §9h per un'altra scheda). Dettaglio completo: `ANALYSIS.md` D26,
-`PIANO_GUI.md` §13, riga F64 di `ROADMAP.md`.
+non solo letto nel sorgente. Quattro difetti trovati, **tutti e quattro corretti lo stesso giorno**
+(dettaglio completo: `ANALYSIS.md` D26/D27, `PIANO_GUI.md` §13, riga F64 di `ROADMAP.md`):
+
+- **D26, P0**: "Anteprima ripristino" (F64) restituiva "fatal error, no files copied" invece di
+  un'anteprima su un report a percorsi relativi (il caso di `examples/demo-locale.toml`, l'unico
+  esempio pensato per essere eseguito così com'è) — `preview_restore` non impostava alcuna cwd per
+  il processo figlio. **Un primo tentativo di fix era sbagliato**: `command.current_dir(report.parent())`,
+  lo stesso pattern di `run_arguments`/`resume_arguments`, ricompilato e riprovato ha riprodotto lo
+  stesso identico fallimento — la cartella del *file* del report è spesso un livello più in
+  profondità di quella da cui i suoi `source`/`dest` sono relativi. **Fix corretto**: un nuovo
+  parametro `config_path` (da `session.configPath`) la cui cartella, non quella del report, è quella
+  che la run originale ha davvero usato.
+- **D27, P1**: lo stesso audit mostrava "File copiati: 6 / 4" — il copiato che supera il totale.
+  Isolato con `RUST_LOG=debug`, non per ipotesi: su un host non in lingua inglese, `parse_summary_row`
+  non riconosce le etichette italiane "File:"/"Byte:" (singolare, non "Files"/"Bytes"), quindi il
+  codice ricade su un conteggio riga-per-riga che a sua volta non riconosceva "Avviato:"/"Terminato:"
+  come intestazioni (nessuno spazio prima dei due punti nella loro localizzazione, a differenza
+  dell'inglese) — ciascuna contava come un file fantasma. Corretto in `is_labelled_line`
+  (`engine/robocopy.rs`): controlla ora se il testo dopo i due punti inizia con un separatore di
+  percorso, invece di richiedere uno spazio prima — robusto per costruzione rispetto alla lingua.
+- Glitch visivo: il pannello "Preferiti" si sovrapponeva all'intestazione della tabella Job — non un
+  bug di stacking CSS (verificato con coordinate reali via Snapshot: sovrapposizione geometrica vera,
+  non un artefatto), ma mancanza di spazio. Corretto dando a `PathBar.svelte` un proprio `mb-8` — non
+  `mb-4`: un primo tentativo con `mb-4` non ha spostato nulla, perché i margini fra fratelli di
+  blocco adiacenti collassano al maggiore dei due, non si sommano.
+- Aiuto non menzionava "preferiti" né "anteprima ripristino" (stessa causa già nota al §9h) —
+  aggiunte entrambe le voci, più l'esito `6` (F65) mancante dalla tabella degli esiti.
+
+**Lezione doppia da questo giro**: (1) "verificato manualmente contro il binario compilato" non
+basta se il caso provato non è quello che rompe — la verifica originaria di F64 ha quasi certamente
+usato un report a percorsi assoluti; (2) un fix che sembra ovvio (stesso pattern già usato altrove,
+o "basta un po' di margine") va riverificato dal vivo tanto quanto il difetto che corregge, mai dato
+per corretto per analogia — in entrambi i casi (D26 e il glitch del pannello) il primo tentativo era
+sbagliato e solo la riverifica contro il binario l'ha scoperto.
 
 ---
 

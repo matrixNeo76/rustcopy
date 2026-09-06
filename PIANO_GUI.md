@@ -502,6 +502,7 @@ Una tabella sola per la domanda "a che punto siamo", sulle due dimensioni di que
 | Difetto trovato per strada | D24 — console che lampeggiava (`schtasks.exe` senza `CREATE_NO_WINDOW`) | ✅ **corretto** | Non era nel piano: scoperto durante l'audit visivo, non una scelta di design |
 | Difetto trovato per strada | D25 — la ripresa non eredita quasi nessuna impostazione originale (solo mirror ne beneficia) | 🟡 **aperto, non bloccante** | Trovato verificando la ripresa contro un trasferimento reale; comportamento preesistente di `checkpoint.rs`, non introdotto dalla console |
 | Difetto trovato per strada | D26 — l'anteprima di ripristino (F64) falliva con "fatal error" su un report a percorsi relativi | ✅ **corretto il 6 Set 2026, stesso giorno della scoperta** | Trovato nel primo uso reale di F64 contro il demo eseguibile (§13a); il primo tentativo di fix (cwd sulla cartella del report) si è rivelato sbagliato ed è stato colto dalla stessa verifica — il fix corretto usa la cartella del config, non quella del report |
+| Difetto trovato per strada | D27 — `files_copied`/`bytes_copied` sovrastimati su host non in lingua inglese | ✅ **corretto il 6 Set 2026, stesso giorno della scoperta** | Trovato indagando l'anomalia di conteggio del §13b; `parse_summary_row` non riconosce le etichette italiane, il fallback in streaming contava "Avviato:"/"Terminato:" come file trasferiti per l'assenza di spazio prima dei due punti nella loro localizzazione |
 
 **In una frase**: la parte fondativa e funzionale a rischio basso/medio è quasi tutta fatta — Onda 1
 e 2 chiuse, e ora anche la ripresa da checkpoint (Onda 3); le due voci rimaste bloccate (VSS, script
@@ -638,31 +639,36 @@ binario ricompilato, stesso identico scenario (Esegui → "Apri il report di que
 ripristino"): anteprima reale, sorgente/destinazione invertite correttamente. Dettaglio, cronologia
 completa dei due tentativi e verifica: [`ANALYSIS.md`](ANALYSIS.md) D26, riga F64 di `ROADMAP.md`.
 
-### b) 🟠 Osservazione sui dati — conteggio "File copiati" che supera il totale
+### b) ✅ Corretto lo stesso giorno — D27: conteggio "File copiati" sovrastimato su host non inglese
 
-Il report della run reale eseguita durante questo audit mostra **"File copiati: 6 / 4"** — il
-numeratore supera il denominatore. Verificato che non è un calcolo del frontend: lo stesso rapporto
-compare identico in Report e in Storico, letto dallo stesso `report.json`
-(`robocopy_transfer.files_copied: 6` contro `total_files: 4`, il primo dal parsing dell'output di
-robocopy, il secondo dal prescan che esclude correttamente `*.tmp`). Non isolata la causa esatta nel
-core in questo audit (visivo, non un'indagine di `engine::robocopy::parse_file_bytes`) — ma
-un'etichetta "X / Y" che può eccedere il 100% legge come un difetto a un operatore anche quando il
-motore sottostante ha ragioni tecniche valide. **Miglioramento proposto**: o riconciliare le due
-fonti nel core, o smettere di presentarle come una frazione in `Report.svelte`/`History.svelte`
-finché non lo sono davvero (es. due etichette separate, "secondo robocopy" / "secondo il prescan").
-Non un difetto D-numerato: nessuna funzione rotta, un'interpretazione visiva ambigua di un dato vero.
+Il report della run reale eseguita durante questo audit mostrava **"File copiati: 6 / 4"** — il
+numeratore superava il denominatore. La causa **non** era, come ipotizzato inizialmente in questo
+stesso paragrafo, un'ambiguità fra due fonti "entrambe valide" (robocopy contro prescan): era un
+bug di parsing reale, isolato con certezza tramite log di debug (`RUST_LOG=debug`), non per ipotesi.
+`engine::robocopy::parse_summary_row` cerca le etichette inglesi "Files"/"Bytes"; sull'host italiano
+di questa sessione robocopy le stampa "File:"/"Byte:" (singolare), quindi il riepilogo autorevole
+non viene mai letto e il codice ricade su un conteggio riga-per-riga che, a sua volta, non
+riconosceva come intestazioni le righe "Avviato:"/"Terminato:" (Started/Ended, senza lo spazio
+prima dei due punti che la versione inglese ha sempre) — ciascuna contava come un "file" fantasma
+da un numero di byte pari al giorno del mese nella data. Corretto lo stesso giorno: dettaglio
+completo, causa esatta e verifica in [`ANALYSIS.md`](ANALYSIS.md) D27.
 
-### c) 🟡 Glitch visivo — il pannello "Preferiti"/"Recenti" si sovrappone all'intestazione della tabella sottostante
+### c) ✅ Corretto lo stesso giorno — il pannello "Preferiti"/"Recenti" si sovrapponeva all'intestazione della tabella sottostante
 
-Aperto "Preferiti" nella scheda Job con un file caricato: il testo delle colonne
-"Destinazione"/"Tipo"/"Verifica" dell'intestazione della tabella resta visibile attraverso il bordo
-inferiore del pannello a tendina, in tre catture indipendenti (compresa una dopo chiusura e
-riapertura del pannello) — riproducibile, non un artefatto di composizione transitorio. **Causa non
-isolata con certezza** in questo audit (visivo, senza accesso agli strumenti di sviluppo del
-WebView): il CSS del pannello ha `z-10` esplicito e `.card` (`app.css`) non introduce alcun nuovo
-stacking context che lo spiegherebbe a prima lettura — merita un'ispezione diretta col devtools del
-WebView, non un'altra ipotesi da schermata. **Probabile la stessa causa per "Recenti"**, stesso
-componente (`PathBar.svelte`), non riverificato separatamente in questo giro.
+Aperto "Preferiti" nella scheda Job con un file caricato, il testo delle colonne
+"Destinazione"/"Tipo"/"Verifica" restava visibile a metà, tagliato dal bordo inferiore del pannello
+a tendina. **Non era un bug di stacking CSS** — un pannello `absolute`/`z-10` occlude sempre un
+elemento statico sottostante, per specifica, e verificato con lo strumento Snapshot (coordinate
+reali degli elementi, non solo pixel): il pannello e la riga dell'intestazione si sovrapponevano
+davvero geometricamente, senza alcun margine di separazione. Il pannello copre correttamente ciò
+che sta sotto per la porzione che effettivamente sovrappone; il resto del testo, appena fuori da
+quella porzione, resta visibile — comportamento corretto di composizione, ma visivamente confuso
+perché tagliava una riga di testo a metà altezza invece di lasciarla del tutto sopra o del tutto
+sotto. Corretto dando al componente `PathBar` un proprio margine inferiore (`mb-8`, non `mb-4`: i
+margini fra fratelli di blocco adiacenti collassano al maggiore dei due, non si sommano — un primo
+tentativo con `mb-4` non ha spostato nulla, verificato dal vivo prima di capire perché e correggere
+il valore). Riverificato: la tabella ora appare chiaramente sotto il pannello, senza alcuna
+sovrapposizione, con 1-3 preferiti (il caso comune).
 
 ### d) 🟡 Frizione ripetuta — ogni scheda richiede un nuovo clic anche quando il percorso è già noto
 
@@ -676,20 +682,24 @@ proposto come fix immediato**: un auto-caricamento su ogni cambio scheda avrebbe
 lettura I/O per ogni clic di navigazione anche quando l'operatore sta solo guardando) da soppesare,
 non una correzione ovvia a costo zero come lo era il collegamento Esegui→Report.
 
-### e) 🟢 Minore — contenuto di Aiuto non aggiornato per F64/F66
+### e) ✅ Corretto lo stesso giorno — contenuto di Aiuto non aggiornato per F64/F66
 
-`Help.svelte` non menziona né "preferiti" né "anteprima ripristino": zero occorrenze di entrambi i
+`Help.svelte` non menzionava né "preferiti" né "anteprima ripristino": zero occorrenze di entrambi i
 termini, verificato con una ricerca diretta nel sorgente. Stessa causa già diagnosticata al §9h per
 un'altra scheda ("il contenuto statico non ha un proprietario che lo tenga aggiornato quando una
 scheda cambia comportamento") — non un'osservazione nuova nel meccanismo, solo nella ricorrenza:
-due funzionalità aggiunte nella stessa sessione hanno lasciato lo stesso tipo di traccia.
+due funzionalità aggiunte nella stessa sessione avevano lasciato lo stesso tipo di traccia. Aggiunta
+una voce "preferiti" ai termini, una frase su "Anteprima ripristino" alla descrizione della scheda
+Report, e — trovato leggendo lo stesso file per questo fix, non un'osservazione originale
+dell'audit — l'esito `6` (F65, spazio insufficiente) mancava dalla tabella degli esiti di una run,
+aggiunto anch'esso.
 
 ### f) Cosa invece regge bene, verificato dal vivo
 
 I Livelli 1-3 del rifacimento visivo (§10) restano solidi contro un caso reale con dati: layout
 contenuto, colonne esplicite, badge di provenienza accanto al valore, sidebar con icone, card. F66
-(preferiti) funziona correttamente end-to-end a parte il glitch (c) — aggiunta, rimozione, e il
-pulsante ★ che riflette subito lo stato — verificato aggiungendo e rimuovendo un preferito reale.
+(preferiti) funziona correttamente end-to-end, glitch (c) incluso ora corretto — aggiunta, rimozione,
+e il pulsante ★ che riflette subito lo stato — verificato aggiungendo e rimuovendo un preferito reale.
 F62 (`--list-schedules`) è confermato **non ancora agganciato a nessun elemento visibile della
 console** (`gui_api::list_all_schedules` esiste, nessuna scheda lo chiama) — coerente con quanto
 `ROADMAP.md` già dichiarava, non una sorpresa di questo audit.
@@ -697,12 +707,12 @@ console** (`gui_api::list_all_schedules` esiste, nessuna scheda lo chiama) — c
 ### Priorità consigliata
 
 1. ~~**D26** (P0)~~ ✅ **corretto il 6 Set 2026**, stesso giorno della scoperta — vedi (a) sopra.
-2. **(b)**, il conteggio file — decisione di design (dove riconciliare i due numeri) più che
-   implementazione; richiede prima capire la causa nel parser di `engine::robocopy`.
-3. **(c)**, il glitch del pannello — richiede l'ispezione diretta che questo audit non ha potuto
-   fare; a basso rischio una volta isolata la causa (probabile una riga di CSS).
-4. **(d)** e **(e)** — miglioramenti di rifinitura, nessuno bloccante, nessuno con un rischio di
-   sicurezza o di dati.
+2. ~~**(b)**, D27, il conteggio file~~ ✅ **corretto il 6 Set 2026** — vedi (b) sopra.
+3. ~~**(c)**, il glitch del pannello~~ ✅ **corretto il 6 Set 2026** — vedi (c) sopra.
+4. ~~**(e)**, il contenuto di Aiuto~~ ✅ **corretto il 6 Set 2026** — vedi (e) sopra.
+5. **(d)** resta l'unica voce non affrontata in questo giro — miglioramento di rifinitura, non
+   bloccante, nessun rischio di sicurezza o di dati; richiede una decisione sul costo di un
+   auto-caricamento per cambio scheda prima di implementarlo, non solo il tempo per scriverlo.
 
 ## Riferimenti
 
@@ -712,7 +722,7 @@ console** (`gui_api::list_all_schedules` esiste, nessuna scheda lo chiama) — c
 - `docs/archive/PIANO_GUI_TAURI.md` — il piano pre-implementazione
   che ha portato alla console attuale, archiviato perché eseguito per intero (§2 sopra ne riassume
   l'esito).
-- [`ANALYSIS.md`](ANALYSIS.md) — D1-D26, per il tipo di difetto che questo progetto trova più spesso
+- [`ANALYSIS.md`](ANALYSIS.md) — D1-D27, per il tipo di difetto che questo progetto trova più spesso
   (nel meccanismo di sicurezza attorno alla funzione, non nella funzione stessa) — la stessa cautela
   vale per ogni voce dell'Onda 3, e D26 (§13a sopra) è l'esempio più recente di quanto costi non
   verificare un'anteprima contro un caso con percorsi relativi, non solo assoluti — e di quanto costi

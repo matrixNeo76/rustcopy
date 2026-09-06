@@ -27,7 +27,7 @@
         ["Impostazioni", "Ogni impostazione risolta, raggruppata, con da quale strato viene il valore che vince e quali scelte portano una conseguenza. Le credenziali si salvano ed eliminano da qui."],
         ["Modifica", "L'unico punto che scrive una configurazione. Produce una proposta in un file nuovo: quella in uso non viene mai toccata."],
         ["Esegui", "Avvia la stessa CLI che eseguirebbe un'attività pianificata, come processo separato, e propone di riprendere una run interrotta se trova un checkpoint. Non può accendere il mirror, forzare un purge, installare servizi o pianificazioni."],
-        ["Report", "Il dettaglio di una singola run: esito, volumi, durata, e i file che la verifica ha segnalato, a blocchi di cento."],
+        ["Report", "Il dettaglio di una singola run: esito, volumi, durata, e i file che la verifica ha segnalato, a blocchi di cento. Da qui si può anche simulare un ripristino (\"Anteprima ripristino\"): mostra cosa --restore-from copierebbe, senza toccare nulla."],
         ["Storico", "Le run passate con il significato del loro esito, più l'analisi deterministica che la CLI stampa con --advise."],
       ],
     },
@@ -50,6 +50,10 @@
           "ereditato",
           "In un file con più job, un valore non scritto nel job viene dai valori di primo livello. La scheda Impostazioni dice per ogni voce se l'ha chiesta il job, se l'ha ereditata, o se nessuno l'ha impostata.",
         ],
+        [
+          "preferiti",
+          "Un elenco di percorsi (config o report) con un'etichetta a scelta, sopra \"Recenti\" in ogni scheda — a differenza di Recenti, che si riempie e svuota da solo, un preferito resta finché non lo rimuovi. Vive solo su questo computer, mai nel file TOML.",
+        ],
       ],
     },
     {
@@ -61,6 +65,7 @@
         ["3", "La cancellazione di --mirror è stata annullata."],
         ["4", "I dati sono stati copiati, ma la verifica ha trovato una differenza. Non è una copia fallita, ed è la distinzione per cui questo codice esiste."],
         ["5", "La cancellazione della retention è stata annullata."],
+        ["6", "Lo spazio libero in destinazione non basta: il trasferimento non è nemmeno iniziato."],
       ],
     },
   ];
