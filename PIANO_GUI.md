@@ -501,6 +501,7 @@ Una tabella sola per la domanda "a che punto siamo", sulle due dimensioni di que
 | Visivo — Livello 3 | Sidebar di navigazione, dimensione finestra, empty state con ancora visiva | ✅ **fatto, 4 Set 2026** | Sidebar libera la testata per il nome del file caricato (non "tipo/ultimo esito": nessuno stato condiviso li porta oggi); finestra 1440×900; icona per empty state |
 | Difetto trovato per strada | D24 — console che lampeggiava (`schtasks.exe` senza `CREATE_NO_WINDOW`) | ✅ **corretto** | Non era nel piano: scoperto durante l'audit visivo, non una scelta di design |
 | Difetto trovato per strada | D25 — la ripresa non eredita quasi nessuna impostazione originale (solo mirror ne beneficia) | 🟡 **aperto, non bloccante** | Trovato verificando la ripresa contro un trasferimento reale; comportamento preesistente di `checkpoint.rs`, non introdotto dalla console |
+| Difetto trovato per strada | D26 — l'anteprima di ripristino (F64) falliva con "fatal error" su un report a percorsi relativi | ✅ **corretto il 6 Set 2026, stesso giorno della scoperta** | Trovato nel primo uso reale di F64 contro il demo eseguibile (§13a); il primo tentativo di fix (cwd sulla cartella del report) si è rivelato sbagliato ed è stato colto dalla stessa verifica — il fix corretto usa la cartella del config, non quella del report |
 
 **In una frase**: la parte fondativa e funzionale a rischio basso/medio è quasi tutta fatta — Onda 1
 e 2 chiuse, e ora anche la ripresa da checkpoint (Onda 3); le due voci rimaste bloccate (VSS, script
@@ -605,12 +606,103 @@ riusano quasi per intero logica **già scritta e testata**, solo mai esposta con
    schema-driven generico: un cambio di paradigma sproporzionato rispetto al problema reale, che è
    un form manuale funzionante e senza segnalata difficoltà di manutenzione.
 
-**Nessuna di queste cinque voci è stata implementata in questa sessione**: sono proposte, verificate
-contro il codice reale dove possibile, in attesa di una decisione sulla priorità — stesso metodo
-già usato per l'Onda 3 (proporre con `AskUserQuestion` prima di scrivere codice). Le quattro
-costruibili (punti 1-4) hanno una spec tecnica completa in `ROADMAP.md` come F62-F65, più F66 per il
-punto sul workspace in §12.1 — il punto 5 resta solo qui, essendo stato scartato e non una voce di
+**Le quattro voci costruibili sono ora implementate** (F62, F64 e F65 chiuse per intero; F63 per la
+sola metà mirror, come annotato riga per riga sopra), e con esse F66 per il punto sul workspace in
+§12.1 — questo paragrafo descriveva lo stato al momento dell'analisi iniziale, prima della decisione
+di procedere con `AskUserQuestion` e della successiva implementazione. Le quattro costruibili
+(punti 1-4) hanno una spec tecnica completa in `ROADMAP.md` come F62-F65, più F66 per il punto sul
+workspace in §12.1 — il punto 5 resta solo qui, essendo stato scartato e non una voce di
 backlog.
+
+## 13. Audit reale post-F62–F66 (6 Set 2026): criticità e miglioramenti da implementare
+
+Richiesto dall'utente subito dopo la chiusura di F62-F66: "controlla lo stato attuale delle
+funzionalità e aspetto della GUI". Stesso metodo del §9 — non una rilettura del codice, ma la
+console compilata (`target/release/rustcopy-gui.exe`, ricompilata da `main` a `5ab39eb` per
+includere F62-F66 per intero) riaperta con Windows-MCP: `demo-locale.toml` caricato, un job eseguito
+per davvero, il report risultante aperto, l'anteprima di ripristino (F64) e i preferiti (F66)
+esercitati dal vivo, non solo letti nel sorgente.
+
+### a) ✅ Corretto lo stesso giorno — D26: l'anteprima di ripristino falliva sul caso d'uso documentato come standard
+
+Il primo utilizzo reale di "Anteprima ripristino" (F64) contro il report del demo eseguibile aveva
+restituito **"Esito robocopy: fatal error, no files copied"** invece di un'anteprima. Un primo
+tentativo di correzione (`command.current_dir(report.parent())`, lo stesso pattern già usato da
+`run_arguments`/`resume_arguments`) è stato **verificato sbagliato** dalla stessa disciplina che lo
+aveva trovato: ricompilato e riprovato, ha riprodotto lo stesso identico fallimento — la cartella
+del *file* del report è spesso un livello più in profondità di quella da cui i suoi `source`/`dest`
+sono relativi. Il fix corretto passa invece la cartella del **config** eventualmente già caricato
+nella console (`session.configPath`, un nuovo parametro `config_path` su `preview_restore`), la
+stessa da cui la run originale ha davvero risolto quei percorsi. Verificato di nuovo contro il
+binario ricompilato, stesso identico scenario (Esegui → "Apri il report di questa run" → "Anteprima
+ripristino"): anteprima reale, sorgente/destinazione invertite correttamente. Dettaglio, cronologia
+completa dei due tentativi e verifica: [`ANALYSIS.md`](ANALYSIS.md) D26, riga F64 di `ROADMAP.md`.
+
+### b) 🟠 Osservazione sui dati — conteggio "File copiati" che supera il totale
+
+Il report della run reale eseguita durante questo audit mostra **"File copiati: 6 / 4"** — il
+numeratore supera il denominatore. Verificato che non è un calcolo del frontend: lo stesso rapporto
+compare identico in Report e in Storico, letto dallo stesso `report.json`
+(`robocopy_transfer.files_copied: 6` contro `total_files: 4`, il primo dal parsing dell'output di
+robocopy, il secondo dal prescan che esclude correttamente `*.tmp`). Non isolata la causa esatta nel
+core in questo audit (visivo, non un'indagine di `engine::robocopy::parse_file_bytes`) — ma
+un'etichetta "X / Y" che può eccedere il 100% legge come un difetto a un operatore anche quando il
+motore sottostante ha ragioni tecniche valide. **Miglioramento proposto**: o riconciliare le due
+fonti nel core, o smettere di presentarle come una frazione in `Report.svelte`/`History.svelte`
+finché non lo sono davvero (es. due etichette separate, "secondo robocopy" / "secondo il prescan").
+Non un difetto D-numerato: nessuna funzione rotta, un'interpretazione visiva ambigua di un dato vero.
+
+### c) 🟡 Glitch visivo — il pannello "Preferiti"/"Recenti" si sovrappone all'intestazione della tabella sottostante
+
+Aperto "Preferiti" nella scheda Job con un file caricato: il testo delle colonne
+"Destinazione"/"Tipo"/"Verifica" dell'intestazione della tabella resta visibile attraverso il bordo
+inferiore del pannello a tendina, in tre catture indipendenti (compresa una dopo chiusura e
+riapertura del pannello) — riproducibile, non un artefatto di composizione transitorio. **Causa non
+isolata con certezza** in questo audit (visivo, senza accesso agli strumenti di sviluppo del
+WebView): il CSS del pannello ha `z-10` esplicito e `.card` (`app.css`) non introduce alcun nuovo
+stacking context che lo spiegherebbe a prima lettura — merita un'ispezione diretta col devtools del
+WebView, non un'altra ipotesi da schermata. **Probabile la stessa causa per "Recenti"**, stesso
+componente (`PathBar.svelte`), non riverificato separatamente in questo giro.
+
+### d) 🟡 Frizione ripetuta — ogni scheda richiede un nuovo clic anche quando il percorso è già noto
+
+Passando da Job (caricato) a Impostazioni, poi a Modifica, poi a Esegui — tutte con lo stesso
+`demo-locale.toml` — il campo percorso arriva già precompilato in ognuna (conferma che
+`session.configPath` è davvero condiviso), ma il contenuto della scheda resta vuoto finché non si
+preme di nuovo il proprio pulsante ("Apri impostazioni", "Apri per modifica", "Esamina"...). Il §9g
+aveva già trovato e risolto questo esatto problema per il solo salto Esegui→Report (Livello 1, punto
+5); questo audit lo trova **generalizzato a ogni coppia di schede**, non solo a quella. **Non
+proposto come fix immediato**: un auto-caricamento su ogni cambio scheda avrebbe un costo (una
+lettura I/O per ogni clic di navigazione anche quando l'operatore sta solo guardando) da soppesare,
+non una correzione ovvia a costo zero come lo era il collegamento Esegui→Report.
+
+### e) 🟢 Minore — contenuto di Aiuto non aggiornato per F64/F66
+
+`Help.svelte` non menziona né "preferiti" né "anteprima ripristino": zero occorrenze di entrambi i
+termini, verificato con una ricerca diretta nel sorgente. Stessa causa già diagnosticata al §9h per
+un'altra scheda ("il contenuto statico non ha un proprietario che lo tenga aggiornato quando una
+scheda cambia comportamento") — non un'osservazione nuova nel meccanismo, solo nella ricorrenza:
+due funzionalità aggiunte nella stessa sessione hanno lasciato lo stesso tipo di traccia.
+
+### f) Cosa invece regge bene, verificato dal vivo
+
+I Livelli 1-3 del rifacimento visivo (§10) restano solidi contro un caso reale con dati: layout
+contenuto, colonne esplicite, badge di provenienza accanto al valore, sidebar con icone, card. F66
+(preferiti) funziona correttamente end-to-end a parte il glitch (c) — aggiunta, rimozione, e il
+pulsante ★ che riflette subito lo stato — verificato aggiungendo e rimuovendo un preferito reale.
+F62 (`--list-schedules`) è confermato **non ancora agganciato a nessun elemento visibile della
+console** (`gui_api::list_all_schedules` esiste, nessuna scheda lo chiama) — coerente con quanto
+`ROADMAP.md` già dichiarava, non una sorpresa di questo audit.
+
+### Priorità consigliata
+
+1. ~~**D26** (P0)~~ ✅ **corretto il 6 Set 2026**, stesso giorno della scoperta — vedi (a) sopra.
+2. **(b)**, il conteggio file — decisione di design (dove riconciliare i due numeri) più che
+   implementazione; richiede prima capire la causa nel parser di `engine::robocopy`.
+3. **(c)**, il glitch del pannello — richiede l'ispezione diretta che questo audit non ha potuto
+   fare; a basso rischio una volta isolata la causa (probabile una riga di CSS).
+4. **(d)** e **(e)** — miglioramenti di rifinitura, nessuno bloccante, nessuno con un rischio di
+   sicurezza o di dati.
 
 ## Riferimenti
 
@@ -620,7 +712,8 @@ backlog.
 - `docs/archive/PIANO_GUI_TAURI.md` — il piano pre-implementazione
   che ha portato alla console attuale, archiviato perché eseguito per intero (§2 sopra ne riassume
   l'esito).
-- [`ANALYSIS.md`](ANALYSIS.md) — D1-D25, per il tipo di difetto che questo progetto trova più spesso
+- [`ANALYSIS.md`](ANALYSIS.md) — D1-D26, per il tipo di difetto che questo progetto trova più spesso
   (nel meccanismo di sicurezza attorno alla funzione, non nella funzione stessa) — la stessa cautela
-  vale per ogni voce dell'Onda 3, e D24 è l'esempio più recente di un difetto trovato mentre si
-  cercava altro.
+  vale per ogni voce dell'Onda 3, e D26 (§13a sopra) è l'esempio più recente di quanto costi non
+  verificare un'anteprima contro un caso con percorsi relativi, non solo assoluti — e di quanto costi
+  fidarsi di un primo tentativo di fix senza riverificarlo dal vivo.
