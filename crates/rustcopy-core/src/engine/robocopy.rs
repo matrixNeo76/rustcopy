@@ -256,11 +256,25 @@ pub fn parse_summary_row(line: &str, label: &str) -> Option<SummaryRow> {
 }
 
 fn is_labelled_line(trimmed: &str) -> bool {
-    // Summary/header rows look like `Bytes :`, `Options :`, `Started :`. Windows paths such as
-    // `C:\data\x.csv` must not match, hence the requirement of whitespace before the colon.
-    trimmed
-        .split_once(':')
-        .is_some_and(|(head, _)| !head.is_empty() && head.ends_with(char::is_whitespace))
+    // Summary/header rows look like `Bytes :`, `Options :`, `Started :` in English — but robocopy
+    // localizes these labels, and not always with a space before the colon (Italian: `Avviato:`,
+    // `Terminato:`, `Directory:`, all with none). Requiring whitespace before the colon, as this
+    // function once did, correctly rejects a drive letter (`C:\...`) but also rejects those
+    // unspaced localized labels — on an Italian-locale host, `Avviato:`/`Terminato:` then reached
+    // `parse_file_bytes` as ordinary data, and a `<label>: <weekday> <day> <month> <year> ...`
+    // timestamp line has a number (the day of the month) followed by non-numeric fields, exactly
+    // the shape `parse_file_bytes` treats as `<status>\t<bytes>\t<name>` (D27, found 6 Set 2026:
+    // every run counted two extra "files" of a few spurious bytes each, silently, on any locale
+    // whose header lines drop that space).
+    //
+    // A drive-letter colon, unlike a label's, is always immediately followed by a path separator
+    // in robocopy's output (`C:\...` or `C:/...`) — checking for that instead of the character
+    // *before* the colon is robust across locales, because it doesn't depend on how any given
+    // locale happens to space its labels.
+    match trimmed.split_once(':') {
+        Some((head, rest)) => !head.is_empty() && !rest.starts_with(['\\', '/']),
+        None => false,
+    }
 }
 
 fn split_fields(trimmed: &str) -> Vec<&str> {
@@ -637,6 +651,40 @@ mod tests {
         ] {
             assert_eq!(parse_file_bytes(line), None, "should ignore: {line:?}");
         }
+    }
+
+    #[test]
+    fn ignores_localized_headers_without_a_space_before_the_colon() {
+        // D27: real robocopy output on an Italian-locale host, captured verbatim — several
+        // header/footer labels omit the space before the colon that the English original always
+        // has. `Avviato:`/`Terminato:` (Started/Ended) were the two that actually corrupted
+        // `files_copied`/`bytes_copied` in practice: the day-of-month number in the timestamp,
+        // followed by non-numeric month/year fields, has exactly the shape of a copied-file line.
+        for line in [
+            "Avviato: domenica 6 settembre 2026 14:43:19",
+            "Terminato: domenica 6 settembre 2026 14:43:19",
+            "Directory:         3         3         0         0         0         0",
+            "     File:         5         4         1         0         0         0",
+            "     Byte:       209       160        49         0         0         0",
+            "   Durata:   0:00:00   0:00:00                       0:00:00   0:00:00",
+            " Velocità:              22.857 Byte/sec.",
+            "         File: *.*",
+            "     File exc: *.tmp",
+            "      Opzioni: *.* /BYTES /S /E /DCOPY:DA /COPY:DAT /NP /R:1000000 /W:30",
+        ] {
+            assert_eq!(parse_file_bytes(line), None, "should ignore: {line:?}");
+        }
+    }
+
+    #[test]
+    fn drive_letter_paths_are_never_mistaken_for_a_label() {
+        // The fix for D27 replaced "is there whitespace before the colon" with "is the colon
+        // immediately followed by a path separator" — this must still let a real transferred-file
+        // line through when its first colon is the drive letter of the destination path.
+        assert_eq!(
+            parse_file_bytes("\t    New File  \t\t     19\tC:\\Users\\demo-data\\leggimi.txt"),
+            Some(19)
+        );
     }
 
     #[test]

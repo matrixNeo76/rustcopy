@@ -1,7 +1,7 @@
 ---
 type: Log
 title: Analisi di Robustezza e Ottimizzazione Prestazioni
-description: Audit trail dei difetti D1-D26 e delle opportunità di miglioramento O1-O10.
+description: Audit trail dei difetti D1-D27 e delle opportunità di miglioramento O1-O10.
 status: stable
 generated:
   by: process:claude-code
@@ -1541,6 +1541,72 @@ riprovato contro lo stesso identico scenario (stesso `demo-locale.toml`, stessa 
 destinazione invertite correttamente, "File coinvolti: 3 / 4", "Esito robocopy: extra files or
 directories detected" — non più un errore fatale.
 
+---
+
+### D27 — `files_copied`/`bytes_copied` sovrastimati su un host non in lingua inglese ✅ CORRETTO (6 Set 2026)
+
+**Stato: corretto e verificato lo stesso giorno.**
+
+**Gravità: MEDIA** — non corrompe alcun dato reale (il trasferimento stesso è corretto; solo la sua
+*contabilità* nel report è sbagliata), ma è sistematico: capita su **ogni** run su un host la cui
+localizzazione di `robocopy.exe` non è l'inglese. Trovato indagando un'anomalia osservata durante
+l'audit visivo della console (6 Set 2026): un report reale mostrava "File copiati: 6 / 4" — il
+copiato che supera il totale, un numero che si presenta a un operatore come chiaramente rotto.
+
+**Causa, isolata con certezza tramite log di debug reali (`RUST_LOG=debug`), non per ipotesi.**
+`engine::robocopy::parse_summary_row(line, "Files")`/`"Bytes"` cerca il prefisso inglese letterale
+("Files", "Bytes") nella riga di riepilogo di robocopy — sull'host italiano di questa sessione
+robocopy stampa `"     File:..."`/`"     Byte:..."` (singolare, non plurale), quindi il riepilogo
+autorevole non viene **mai** riconosciuto e il codice ricade sul conteggio "in streaming" riga per
+riga (`streamed_files`/`streamed_bytes`), pensato come *fallback* solo per un output troncato
+(processo terminato a metà), non come percorso normale. Quel fallback, a sua volta, si appoggiiava a
+`is_labelled_line` per escludere le righe di intestazione/riepilogo dal conteggio — funzione che
+richiedeva uno spazio **prima** dei due punti per riconoscere un'etichetta (`"Bytes :"`, inglese),
+per distinguerla da una lettera di unità (`"C:\..."`). La localizzazione italiana di **alcune**
+etichette omette quello spazio (`"Avviato:"`, `"Terminato:"` — Started/Ended, senza spazio; altre
+come `"Origine :"` invece ce l'hanno, un'incoerenza della sola localizzazione di robocopy, non del
+codice). `"Avviato: domenica 6 settembre 2026 14:43:19"` non veniva quindi riconosciuta come
+etichetta, e `parse_file_bytes` la leggeva come se fosse una riga di trasferimento file: il giorno
+del mese ("6"), seguito da campi non numerici (mese, anno), ha esattamente la forma
+`<stato>\t<byte>\t<nome>` che la funzione cerca. Ogni run contava così **due** "file" fantasma in
+più (uno per "Avviato", uno per "Terminato"), per un numero di byte pari al giorno del mese di
+ciascuna riga — 4 file reali (160 B) diventavano "6 file copiati" (172 B), esattamente il caso
+osservato.
+
+**Perché è passato inosservato.** L'intera suite di test di `parse_file_bytes`/`is_labelled_line`
+usa fixture in inglese, copiate dal formato che il progetto ha sempre assunto come l'unico reale.
+Nessun test aveva mai catturato output di robocopy da un host non inglese — il progetto stesso, pur
+scrivendo tutta la propria documentazione in italiano, non aveva mai verificato il proprio parser
+contro l'output italiano dello stesso strumento che orchestra.
+
+**Rimedio.** `is_labelled_line` non richiede più uno spazio prima dei due punti; verifica invece se
+ciò che segue i due punti inizia con un separatore di percorso (`\` o `/`) — una lettera di unità,
+a differenza di un'etichetta, è **sempre** seguita da un percorso in questo output
+(`"C:\Users\..."`), indipendentemente da come una data localizzazione spazia le proprie etichette.
+Robusto per costruzione rispetto alla lingua, perché non dipende più da una convenzione di
+spaziatura specifica dell'inglese.
+
+**Non risolto in questa stessa PR, deliberatamente**: `parse_summary_row` continua a cercare solo le
+etichette inglesi "Files"/"Bytes" — il riepilogo autorevole di robocopy resta quindi invisibile su un
+host italiano (e su ogni altra localizzazione), e il codice continua a fare affidamento sul
+conteggio in streaming per **ogni** run, non solo per quelle troncate. Il fix di `is_labelled_line`
+rende quel fallback corretto, il che risolve il sintomo osservato — ma generalizzare
+`parse_summary_row` a più localizzazioni richiederebbe conoscere le etichette di riepilogo di
+robocopy in ogni lingua supportata da Windows, un lavoro reale e più ampio, non una riga di questo
+fix.
+
+**Verifica.** Riprodotto e isolato con `RUST_LOG=debug`, leggendo `ingest.log` riga per riga: prima
+del fix, esattamente le righe "Avviato:"/"Terminato:" comparivano fra le righe "trasferite" con
+byte pari al giorno del mese. Aggiunti 2 unit test (`ignores_localized_headers_without_a_space_before_the_colon`,
+con le righe italiane reali catturate verbatim; `drive_letter_paths_are_never_mistaken_for_a_label`,
+a guardia che il nuovo controllo non scambi una vera riga di trasferimento per un'etichetta).
+Riverificato contro il binario reale su una destinazione pulita: `files_copied: 4` ora coincide con
+`total_files: 4`, `bytes_copied: 160` con `total_bytes: 160` — nessuna discrepanza.
+
+---
+
+## 💡 3.2 Opportunità di miglioramento (non difetti)
+
 Proposte ordinate per rapporto valore/rischio, motivate da problemi osservati sul campo:
 
 | # | Proposta | Motivazione operativa |
@@ -1563,7 +1629,7 @@ Proposte ordinate per rapporto valore/rischio, motivate da problemi osservati su
 | Priorità | Voci | Razionale |
 |---|---|---|
 | **P0** | ~~D1~~ ✅, ~~D3~~ ✅, ~~D4~~ ✅, ~~D26~~ ✅ | Tutte e quattro risolte e verificate: D1 il 31 Luglio 2026 (F24), D3/D4 il 3 Agosto 2026 (F25a/F25b), D26 il 6 Set 2026 (stesso giorno della scoperta). Nessun difetto P0 aperto al momento. |
-| **P1** | D2, D5, D6, D7, D25 | Correttezza e coerenza: flag muti, blocco del runtime, versionamento dello schema, semantica delle junction, fedeltà della ripresa da checkpoint alla configurazione originale. |
+| **P1** | D2, D5, D6, D7, D25, ~~D27~~ ✅ | Correttezza e coerenza: flag muti, blocco del runtime, versionamento dello schema, semantica delle junction, fedeltà della ripresa da checkpoint alla configurazione originale. D27 (conteggio file/byte sovrastimato su host non inglese) risolto il 6 Set 2026, stesso giorno della scoperta. |
 | **P2** | D8, D9, ~~D10~~ + O1-O10 | Debito tecnico, ergonomia operativa ed evoluzione funzionale. D10 non è più in questa lista: riclassificato il 23 Agosto 2026 come limite noto dello strumento, non come lavoro da pianificare. |
 
 **Lezione metodologica ricorrente**: D1 e D2 erano *invisibili ai test* perché i test verificavano
