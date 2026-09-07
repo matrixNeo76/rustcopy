@@ -84,6 +84,16 @@ For full technical detail behind any entry, see `ANALYSIS.md` (defect list, `D<N
   destinations where free space can't be queried reliably (e.g. some network shares).
 - **F66**: the console can save named favorites (job configs and reports) above the existing
   "Recent" list, entirely client-side — no new Tauri command, no new `JobConfig`/`Args` field.
+- **F67**: the editor's job tabs gained move-up/move-down controls to reorder `[[jobs]]` before
+  a batch runs (run order follows file order, fixed once a batch starts).
+- **F68**: native folder pickers for the editor's *Sorgente*/*Destinazione* fields, replacing
+  hand-typed paths — the console's last remaining path field without one.
+- **F69**: the editor's `keep_generations` field is now editable to **raise** an existing value
+  (never to introduce or lower one — the core already permitted raising it, the console just
+  didn't expose it).
+- **F70**: `backup_type` (full/incremental/differential) is now selectable in the editor,
+  disabled whenever the job mirrors. Closed a real gap in the core along the way: `apply_draft`
+  had no check at all for the `mirror`+`backup_type` combination.
 
 ### Changed
 - The installer is now a **single** setup with the console as an optional component, rather than a
