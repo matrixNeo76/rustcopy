@@ -1,7 +1,7 @@
 ---
 type: Reference
 title: Piano della console rustcopy
-description: Documento unico e vivo per la console (F52-F60) — consolida il piano pre-implementazione (stack, ambito, distribuzione, vincoli permanenti) con l'inventario di ciò che espone oggi rispetto alla CLI, le lacune funzionali con un piano in tre onde, un audit visivo/di usabilità con un piano di rifacimento a tre livelli (chiuso), una valutazione di una metodologia a workspace più cinque funzionalità CLI non ancora costruite (implementate), un audit visivo/funzionale reale post-implementazione, un confronto con TeraCopy/Cobian Reflector sulle capacità della GUI, l'analisi di rischio del motore pilotabile (sospesa), e un piano per la selezione di percorsi e i campi di configurazione ancora irraggiungibili dalla GUI. Sostituisce PIANO_GUI_TAURI.md (archiviato) e PIANO_GUI_ESPANSIONE.md (questo stesso file, rinominato).
+description: Documento unico e vivo per la console (F52-F60) — consolida il piano pre-implementazione (stack, ambito, distribuzione, vincoli permanenti) con l'inventario di ciò che espone oggi rispetto alla CLI, le lacune funzionali con un piano in tre onde, un audit visivo/di usabilità con un piano di rifacimento a tre livelli (chiuso), una valutazione di una metodologia a workspace più cinque funzionalità CLI non ancora costruite (implementate), un audit visivo/funzionale reale post-implementazione, un confronto con TeraCopy/Cobian Reflector sulle capacità della GUI, l'analisi di rischio del motore pilotabile (sospesa), un piano per la selezione di percorsi e i campi di configurazione ancora irraggiungibili dalla GUI, e una sincronizzazione rapida senza un file di configurazione esistente. Sostituisce PIANO_GUI_TAURI.md (archiviato) e PIANO_GUI_ESPANSIONE.md (questo stesso file, rinominato).
 status: draft
 generated:
   by: process:claude-code
@@ -1010,6 +1010,82 @@ impatto. Entrambi corretti nella stessa riga di `ROADMAP.md`.
    motore e la loro raggiungibilità dalla GUI.
 4. Gli altri 13 campi (§16.2, ultimo paragrafo) — nessun F-number dedicato finché uno di questi non
    emerge come richiesta concreta, stesso criterio già applicato a F38/F40/F42 nel backlog storico.
+
+## 17. Sincronizzazione rapida senza un file di configurazione esistente (analisi del 7 Set 2026)
+
+Richiesta dall'utente: "una semplice copia con controllo dei file originali e copia solo di quelli
+aggiornati, dalla GUI" — con il sospetto giusto che esistesse già nella CLI. Verificato prima di
+proporre qualunque cosa, non assunto.
+
+### 17.1 La capacità esiste già — il gap è solo nel raggiungerla dalla GUI
+
+"Copia solo i file nuovi/aggiornati" **è** il comportamento di default di ogni copia senza
+`--mirror`: robocopy stesso salta i file identici per dimensione e data — non una funzionalità di
+rustcopy, un comportamento nativo dello strumento che orchestra. Verificato empiricamente più volte
+in questa stessa sessione (D26/D27), non per sentito dire: una run su una destinazione già
+sincronizzata produce "no files copied, source and destination already in sync".
+
+Il gap reale è diverso: la GUI non permette di raggiungere nemmeno questo caso più semplice senza
+avere già un file TOML pronto. `Editor.svelte::load()` chiama `read_drafts` (`job_editor.rs`, riga
+537), che chiama `IngestConfig::load_from` (`config.rs`, riga 176) — `fs::read_to_string(path)`
+fallisce su un percorso che non esiste. Modifica può solo **modificare** un file già presente, mai
+crearne uno da zero: un operatore senza alcun TOML esistente non ha alcun punto d'ingresso.
+
+### 17.2 Il core già supporta la creazione da zero — verificato, non assunto
+
+`job_editor::build_proposal` (righe 412-434) gestisce esplicitamente `existing: None`: un singolo
+draft con nome/sorgente/destinazione produce una `IngestConfig` valida a job singolo (i campi vivono
+a livello di primo piano, non in `[[jobs]]` — la forma più semplice possibile di file). Le regole di
+sicurezza di F54 restano intere anche partendo da zero: `effective.mirror` per un draft senza nulla
+da cui ereditare parte da `None`, quindi un tentativo di attivare `mirror` in un draft "vuoto" viene
+comunque rifiutato da `apply_draft` con lo stesso `EditorCannotEnableMirror` di ogni altro caso — non
+serve una nuova eccezione, la protezione esistente copre già questo scenario.
+
+### 17.3 Implementazione proposta — interamente lato GUI
+
+Un modulo minimo, **non dentro `Jobs.svelte`**: solo un collegamento nell'empty state della scheda
+Job (oggi rimanda solo a `examples/demo-locale.toml`, un secondo invito accanto ad esso:
+"Sincronizza due cartelle adesso") che porta a un pannello a sé — vedi §17.5 sul perché questa
+distinzione non è pedanteria. Il pannello: solo Sorgente e Destinazione, con i selettori di cartella
+nativi di F68 — **deliberatamente nessuna opzione per mirror, backup_type o retention**, per restare
+più semplice del form completo di Modifica, non un modo per aggirarlo. Un pulsante "Sincronizza" che:
+
+1. Chiede dove salvare il job (stesso dialogo di salvataggio già usato in Modifica per l'output
+   della proposta) — non un file "usa e getta" come lo scratch di F64: qui il backup è reale, non
+   una simulazione, e l'operatore deve poterlo ritrovare per rilanciarlo o modificarlo in seguito.
+2. Chiama `write_proposal` (già esistente) con quel percorso.
+3. Chiama `start_job` (già esistente) sullo stesso percorso appena scritto.
+
+**Zero nuovi comandi Tauri, zero nuove righe di core** — la funzionalità è la concatenazione di due
+percorsi già scritti, testati e in uso, non un terzo meccanismo di scrittura o di esecuzione. Dopo
+l'avvio, riusa il collegamento "Apri il report di questa run" già esistente (Livello 1, §10) per
+portare l'operatore al risultato senza un passaggio manuale. **Per rilanciarlo in seguito**: nessun
+meccanismo nuovo — il file scritto al punto 1 è un job come ogni altro, si riapre in Job/Esegui/
+Modifica esattamente come un TOML scritto a mano.
+
+### 17.4 Criticità considerate
+
+- **Un file introvabile in seguito**: risolto chiedendo dove salvarlo prima di eseguire (punto 1
+  sopra), non scegliendo una cartella temporanea per conto dell'operatore.
+- **Il modulo minimo che diventa una scorciatoia attorno a Modifica**: mitigato non offrendo affatto
+  i campi distruttivi nel modulo — chi ha bisogno di mirror o generazioni passa comunque da Modifica,
+  questo resta il percorso per il caso più comune e più sicuro (una copia semplice).
+- **Una scheda nuova per una funzionalità che si appoggia solo a due comandi già esistenti**: evitata
+  deliberatamente — nessuna voce nuova nella barra laterale, solo un collegamento scoperto dall'empty
+  state di Job già esistente.
+
+### 17.5 Criticità trovata rileggendo questa stessa sezione
+
+Stesso metodo di §14.4/§16.3. La prima stesura di §17.3 metteva l'intera logica (scrittura +
+esecuzione) **dentro `Jobs.svelte`**, raggiungibile dal suo empty state. Rileggendo contro §3 di
+questo stesso documento — la tabella "Cosa la console fa oggi" caratterizza esplicitamente Job come
+"Scrive? No" — mettere lì un'azione che scrive un file e ne avvia l'esecuzione avrebbe contraddetto
+quella caratterizzazione già dichiarata, anche se i due comandi sottostanti (`write_proposal`,
+`start_job`) restano individualmente sicuri: non un rischio di sicurezza, ma un'imprecisione di
+confine che avrebbe reso falsa una riga di documentazione già esistente il giorno stesso in cui
+sarebbe stata implementata. Corretto in §17.3: l'empty state di Job resta solo un **collegamento**
+verso un pannello a sé, che possiede la logica di scrittura/esecuzione — `Jobs.svelte` continua a
+non scrivere né eseguire nulla di suo, esattamente come la tabella di §3 dichiara.
 
 ## Riferimenti
 
