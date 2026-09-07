@@ -344,6 +344,34 @@
         value={draft.report_path ?? ""}
         oninput={(e) => (draft.report_path = e.currentTarget.value.trim() === "" ? null : e.currentTarget.value)}
       />
+
+      <label for="f-backup-type">Tipo di backup</label>
+      <div>
+        <!-- F70: incompatibile con Mirror (`Args::validate()`, e ora anche `job_editor::apply_draft`
+             -- il core rifiuterebbe comunque la combinazione, questa disabilitazione evita solo che
+             l'editor la offra). Nessuna opzione qui non è "cancella backup_type": il valore
+             `null`/stringa vuota è la stessa copia semplice pre-F34, la scelta di sempre. -->
+        <select
+          id="f-backup-type"
+          class="w-48 rounded border border-slate-300 px-2 py-1 disabled:bg-slate-100
+                 disabled:text-slate-500 dark:border-slate-700 dark:bg-slate-900
+                 dark:disabled:bg-slate-800"
+          value={draft.backup_type ?? ""}
+          disabled={draft.mirror}
+          onchange={(e) => (draft.backup_type = e.currentTarget.value === "" ? null : e.currentTarget.value)}
+        >
+          <option value="">Nessuno (copia semplice)</option>
+          <option value="full">Full</option>
+          <option value="incremental">Incremental</option>
+          <option value="differential">Differential</option>
+        </select>
+        {#if draft.mirror}
+          <p class="mt-0.5 text-[11px] text-slate-500">
+            Non selezionabile insieme a Mirror: le due destinazioni sono incompatibili (copia
+            speculare 1:1 contro manifest e sottocartelle per generazione).
+          </p>
+        {/if}
+      </div>
     </div>
 
     <div class="mt-3 flex flex-wrap gap-x-5 gap-y-2 text-xs">
