@@ -1166,6 +1166,13 @@ per caratteri vietati, non un'euristica. Proposto in due metà, stesso schema di
 core lo rifiuta comunque un giorno se qualcuno modifica il TOML a mano) più la disabilitazione
 lato form con un messaggio immediato.
 
+**✅ Implementato e verificato 7 Set 2026**, esattamente come proposto: `validate_job_name` accanto
+a `namespaced_path` in `lib.rs`, chiamato come primissimo controllo di `apply_draft`. **Perimetro
+tenuto deliberatamente identico a F70/F80**: "Scrivi proposta" non scansiona tutti i job del batch
+per un nome non valido in un job non visualizzato al momento — solo il campo corrente ha un
+messaggio immediato, il core resta l'unico vero backstop. Dettaglio completo nella riga F72 di
+`ROADMAP.md`.
+
 ### 18.3/18.4 Sorgente e Destinazione — verifica esistenza e conteggio (stesso F-number, due campi)
 
 Verificato: **non esiste oggi alcun comando Tauri** che ispezioni un percorso arbitrario (elenco
@@ -1317,7 +1324,7 @@ In ordine di rapporto valore/rischio, non di apparizione nella lista originale:
    le richieste originali di solo-GUI, zero nuova logica di scansione da scrivere.
    ✅ Completato 7 Set 2026.
 4. **F72** — validazione Nome. Piccolo, ma previene un errore che altrimenti si scopre solo ore
-   dopo, alla prima esecuzione pianificata.
+   dopo, alla prima esecuzione pianificata. ✅ Completato 7 Set 2026.
 5. **F76** — placeholder Report col default reale. Costo quasi nullo.
 6. **F74/F75/F77** — suggerimenti Pattern/Escludi file/Thread/Tentativi/backup_type/checkbox. Stesso
    tipo di intervento (didascalie/tooltip), raggruppabile in un solo giro di lavoro.

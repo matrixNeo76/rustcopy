@@ -127,6 +127,83 @@ pub fn namespaced_path(path: &Path, name: &str) -> PathBuf {
     path.with_file_name(file_name)
 }
 
+/// Characters [`namespaced_path`] cannot carry into a filename on Windows.
+const WINDOWS_RESERVED_FILENAME_CHARS: &[char] = &['\\', '/', ':', '*', '?', '"', '<', '>', '|'];
+
+/// Device names Windows reserves regardless of extension -- `CON.txt` is just as unusable as
+/// `CON`. Checked against the bare name, matching how a job name is actually used here: alone,
+/// interpolated between two dots (`report.{name}.json`), never as a full filename with its own
+/// extension. Includes the superscript-digit legacy forms `COM¹`/`COM²`/`COM³`/`LPT¹`/`LPT²`/`LPT³`
+/// -- Windows treats these identically to `COM1`-`3`/`LPT1`-`3` (a compatibility carryover from
+/// OEM code pages), confirmed against Microsoft's own "Naming Files, Paths, and Namespaces" docs.
+const WINDOWS_RESERVED_DEVICE_NAMES: &[&str] = &[
+    "CON",
+    "PRN",
+    "AUX",
+    "NUL",
+    "COM1",
+    "COM2",
+    "COM3",
+    "COM4",
+    "COM5",
+    "COM6",
+    "COM7",
+    "COM8",
+    "COM9",
+    "LPT1",
+    "LPT2",
+    "LPT3",
+    "LPT4",
+    "LPT5",
+    "LPT6",
+    "LPT7",
+    "LPT8",
+    "LPT9",
+    "COM\u{b9}",
+    "COM\u{b2}",
+    "COM\u{b3}",
+    "LPT\u{b9}",
+    "LPT\u{b2}",
+    "LPT\u{b3}",
+];
+
+/// F72: rejects a job `name` [`namespaced_path`] cannot safely interpolate into a filename --
+/// without this, a name containing a Windows reserved character, control character, or one of the
+/// reserved device names, surfaces only as a cryptic I/O error at the job's first scheduled run
+/// (the first time its report/cache/manifest is actually written), not when the name was chosen.
+/// Deliberately narrow: forbidden characters and reserved names only, not a broader
+/// filename-safety heuristic.
+pub fn validate_job_name(name: &str) -> Result<(), errors::IngestError> {
+    if let Some(bad) = name
+        .chars()
+        .find(|c| WINDOWS_RESERVED_FILENAME_CHARS.contains(c))
+    {
+        return Err(errors::IngestError::InvalidJobName {
+            name: name.to_string(),
+            reason: format!("cannot contain '{bad}' (reserved in a Windows filename)"),
+        });
+    }
+    // Windows also forbids the C0 control range (U+0001-U+001F) in filenames -- confirmed against
+    // Microsoft's own docs, found by CodeRabbit rather than by reading them first.
+    if name.chars().any(|c| ('\u{1}'..='\u{1f}').contains(&c)) {
+        return Err(errors::IngestError::InvalidJobName {
+            name: name.to_string(),
+            reason: "cannot contain a control character (reserved in a Windows filename)"
+                .to_string(),
+        });
+    }
+    if WINDOWS_RESERVED_DEVICE_NAMES
+        .iter()
+        .any(|reserved| reserved.eq_ignore_ascii_case(name))
+    {
+        return Err(errors::IngestError::InvalidJobName {
+            name: name.to_string(),
+            reason: "is a Windows reserved device name".to_string(),
+        });
+    }
+    Ok(())
+}
+
 /// Writes `contents` to `path` by streaming to a same-directory sibling temp file and atomically
 /// renaming over the original, so a crash, a forced kill, or a dropped network share mid-write
 /// never leaves a truncated/corrupt file at `path` — same safety property `crypto.rs`'s
@@ -229,6 +306,51 @@ mod tests {
             namespaced_path(Path::new(".rustcopy_generations.json"), "photos"),
             PathBuf::from(".rustcopy_generations.photos.json")
         );
+    }
+
+    #[test]
+    fn validate_job_name_accepts_an_ordinary_name() {
+        assert!(validate_job_name("photos").is_ok());
+        assert!(validate_job_name("backup-nas_2026").is_ok());
+    }
+
+    #[test]
+    fn validate_job_name_rejects_every_reserved_character() {
+        for bad in WINDOWS_RESERVED_FILENAME_CHARS {
+            let name = format!("job{bad}name");
+            assert!(
+                validate_job_name(&name).is_err(),
+                "{name:?} should have been rejected"
+            );
+        }
+    }
+
+    #[test]
+    fn validate_job_name_rejects_reserved_device_names_case_insensitively() {
+        assert!(validate_job_name("CON").is_err());
+        assert!(validate_job_name("con").is_err());
+        assert!(validate_job_name("Lpt3").is_err());
+        // A device name only as a substring is fine -- the check is on the whole name.
+        assert!(validate_job_name("connections").is_ok());
+    }
+
+    /// CodeRabbit finding on the PR that introduced this function: Windows also reserves the
+    /// legacy superscript-digit forms, identically to the plain-digit ones.
+    #[test]
+    fn validate_job_name_rejects_superscript_com_and_lpt_variants() {
+        assert!(validate_job_name("COM\u{b9}").is_err());
+        assert!(validate_job_name("com\u{b2}").is_err());
+        assert!(validate_job_name("LPT\u{b3}").is_err());
+    }
+
+    /// CodeRabbit finding on the same PR: Windows also forbids the C0 control range in filenames,
+    /// not just the nine punctuation characters this already rejected.
+    #[test]
+    fn validate_job_name_rejects_control_characters() {
+        assert!(validate_job_name("job\u{1}name").is_err());
+        assert!(validate_job_name("job\u{1f}name").is_err());
+        assert!(validate_job_name("job\tname").is_err());
+        assert!(validate_job_name("job\nname").is_err());
     }
 
     fn fixed_now() -> DateTime<Utc> {

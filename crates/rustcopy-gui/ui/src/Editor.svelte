@@ -101,6 +101,37 @@
   // refuses the same edit whatever this frontend sends.
   const mirrorLocked = $derived(draft ? !draft.mirror : true);
   const nameLocked = $derived(draft ? existingNames.has(draft.name) : true);
+
+  // F72: mirrors `validate_job_name` (`lib.rs`) -- `namespaced_path` interpolates a job name
+  // literally into a filename, so a Windows reserved character or reserved device name would
+  // otherwise surface only as a cryptic I/O error hours later, at the job's first scheduled run.
+  // `apply_draft` rejects the same thing; this is the immediate affordance, not the enforcement.
+  const WINDOWS_RESERVED_FILENAME_CHARS = ["\\", "/", ":", "*", "?", '"', "<", ">", "|"];
+  // Legacy superscript-digit forms (COM¹/COM²/COM³/LPT¹/LPT²/LPT³) are reserved identically to
+  // the plain-digit ones -- confirmed against Microsoft's own docs, added after CodeRabbit found
+  // the omission on the PR that introduced this list.
+  const WINDOWS_RESERVED_DEVICE_NAMES = new Set([
+    "CON", "PRN", "AUX", "NUL",
+    "COM1", "COM2", "COM3", "COM4", "COM5", "COM6", "COM7", "COM8", "COM9",
+    "LPT1", "LPT2", "LPT3", "LPT4", "LPT5", "LPT6", "LPT7", "LPT8", "LPT9",
+    "COM¹", "COM²", "COM³", "LPT¹", "LPT²", "LPT³",
+  ]);
+  // Windows also forbids the C0 control range (U+0001-U+001F) in filenames -- same CodeRabbit
+  // finding as the superscript variants above.
+  const WINDOWS_CONTROL_CHAR_PATTERN = /[\u0001-\u001f]/;
+  function invalidNameReason(name) {
+    const bad = WINDOWS_RESERVED_FILENAME_CHARS.find((c) => name.includes(c));
+    if (bad) return `Non può contenere '${bad}' (riservato in un nome di file Windows).`;
+    if (WINDOWS_CONTROL_CHAR_PATTERN.test(name)) {
+      return "Non può contenere caratteri di controllo (riservati in un nome di file Windows).";
+    }
+    if (WINDOWS_RESERVED_DEVICE_NAMES.has(name.toUpperCase())) {
+      return "È un nome di dispositivo riservato da Windows.";
+    }
+    return null;
+  }
+  const nameInvalidReason = $derived(draft && !nameLocked ? invalidNameReason(draft.name) : null);
+
   const stale = $derived(loadedFrom !== "" && loadedFrom !== session.configPath);
 
   async function load() {
@@ -345,6 +376,10 @@
             Il nome è l'identità del job: report, cache e manifest delle generazioni sono
             namespacizzati su di esso. Rinominarlo orfanerebbe la catena delle generazioni, quindi
             l'editor non lo consente.
+          </p>
+        {:else if nameInvalidReason}
+          <p class="mt-0.5 text-[11px] font-medium text-red-700 dark:text-red-400">
+            {nameInvalidReason}
           </p>
         {/if}
       </div>
