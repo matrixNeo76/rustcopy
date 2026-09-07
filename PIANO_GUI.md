@@ -1,7 +1,7 @@
 ---
 type: Reference
 title: Piano della console rustcopy
-description: Documento unico e vivo per la console (F52-F60) — consolida il piano pre-implementazione (stack, ambito, distribuzione, vincoli permanenti) con l'inventario di ciò che espone oggi rispetto alla CLI, le lacune funzionali con un piano in tre onde, un audit visivo/di usabilità con un piano di rifacimento a tre livelli (chiuso), una valutazione di una metodologia a workspace più cinque funzionalità CLI non ancora costruite (implementate), un audit visivo/funzionale reale post-implementazione, e un confronto con TeraCopy/Cobian Reflector sulle capacità della GUI. Sostituisce PIANO_GUI_TAURI.md (archiviato) e PIANO_GUI_ESPANSIONE.md (questo stesso file, rinominato).
+description: Documento unico e vivo per la console (F52-F60) — consolida il piano pre-implementazione (stack, ambito, distribuzione, vincoli permanenti) con l'inventario di ciò che espone oggi rispetto alla CLI, le lacune funzionali con un piano in tre onde, un audit visivo/di usabilità con un piano di rifacimento a tre livelli (chiuso), una valutazione di una metodologia a workspace più cinque funzionalità CLI non ancora costruite (implementate), un audit visivo/funzionale reale post-implementazione, un confronto con TeraCopy/Cobian Reflector sulle capacità della GUI, l'analisi di rischio del motore pilotabile (sospesa), e un piano per la selezione di percorsi e i campi di configurazione ancora irraggiungibili dalla GUI. Sostituisce PIANO_GUI_TAURI.md (archiviato) e PIANO_GUI_ESPANSIONE.md (questo stesso file, rinominato).
 status: draft
 generated:
   by: process:claude-code
@@ -827,6 +827,189 @@ imporrebbe.
    richiederebbe prima riaprire quella decisione con l'utente, non implementarli.
 5. Visualizzatore di log grezzo **rimosso dal piano**: nessun bisogno concreto dimostrato, stessa
    barra di F38/F40.
+
+## 15. Motore pilotabile (F47/F48/F58): analisi di rischio, sospesa (7 Set 2026)
+
+Richiesta dall'utente prima di impegnarsi sul punto 2 di §14.5. Non un'implementazione: un'analisi
+per decidere se e come procedere, che si è conclusa con la sospensione esplicita di entrambi i
+livelli — registrata qui perché la decisione di **non** procedere ha bisogno della stessa
+motivazione scritta di una decisione di procedere, altrimenti la prossima sessione la riapre da
+zero senza sapere che è già stata valutata.
+
+### 15.1 Due livelli, non uno
+
+- **Livello A — pausa/riprendi l'intero trasferimento**, senza sostituire il motore. Il PID di
+  robocopy è già tracciato oggi (`child_pid: Arc<AtomicU32>`, popolato da
+  `RobocopyEngine::new_with_pid_slot`, usato oggi solo da `kill_active_child`). Sospensione a
+  livello di processo (`NtSuspendProcess`/`NtResumeProcess`, non `SuspendThread` per-thread — vedi
+  §15.2) congelerebbe tutti i thread del processo, ripristinabile esattamente da dove si trovava.
+- **Livello B — salta/riprova un file specifico**. Richiede il motore naive
+  (`engine::naive::NaiveCopyEngine`, già esistente e usato da incrementale/differenziale) al posto
+  di robocopy per i job interattivi, perché solo un ciclo file-per-file scritto da noi può decidere
+  di abbandonare un file a metà. Robocopy, come processo esterno, non offre alcun modo di
+  comunicargli "salta questo file".
+
+### 15.2 Livello A — criticità reali, non ipotetiche
+
+- **Meccanismo corretto**: `NtSuspendProcess`/`NtResumeProcess` (chiamata NTAPI singola e atomica),
+  non l'enumerazione dei thread via `CreateToolhelp32Snapshot`+`SuspendThread` — quest'ultima, pur
+  essendo l'API pubblica e documentata, introduce una finestra non atomica fra thread diversi, ed è
+  esplicitamente sconsigliata da Microsoft per la sincronizzazione ("primarily for debuggers")
+  proprio per il rischio di deadlock descritto sotto. Con `/MT` (il default di questo progetto salvo
+  limite di banda, D23) robocopy ha un pool di thread: sospenderli uno alla volta non è atomico.
+  `NtSuspendProcess` lo è, congela tutto nel kernel in una sola chiamata — lo stesso meccanismo con
+  cui Task Manager sospende un processo da Windows 8 in poi. **Non documentata da Microsoft**
+  (esposta da `ntdll.dll`, stabile da NT4, nessuna garanzia formale) — prima volta che questo
+  progetto dipenderebbe da un'API non pubblica, diverso da `GetDiskFreeSpaceExW` (F65) o dagli
+  shell-out a strumenti nativi (vssadmin/schtasks/taskkill, tutti pubblici e documentati).
+- **Rischio di deadlock, non eliminabile**: se un thread di robocopy viene sospeso nell'istante
+  esatto in cui tiene una lock (una critical section, anche solo l'heap lock del CRT durante
+  un'allocazione qualunque) necessaria a un altro thread per proseguire, alla ripresa il processo
+  può restare bloccato per sempre — non un bug nostro, come funziona la sospensione di un processo
+  qualunque a livello di sistema operativo. Mitigabile, non eliminabile: un timeout sulla ripresa
+  (se il contatore di byte non avanza entro N secondi da "Riprendi", trattarlo come processo
+  bloccato, terminarlo, proporre la ripresa da checkpoint — F31, già esistente, nessun meccanismo
+  nuovo da inventare per la rete di sicurezza).
+- **Rischio di rete, non verificabile da qui**: una pausa lunga su una condivisione SMB (lo
+  scenario di `examples/smb-nas-mirror.toml`) rischia che il server rilasci l'oplock o chiuda la
+  sessione per inattività — alla ripresa la prima syscall potrebbe fallire. Richiede un test reale
+  contro un'infrastruttura di rete vera, con pause di durata crescente, prima di dichiararlo sicuro.
+- **Incoerenza fra motori**: per robocopy la pausa è istantanea ma rischiosa (sopra); per il motore
+  naive sarebbe invece un controllo cooperativo fra un file e l'altro — sicuro per costruzione (zero
+  rischio di deadlock) ma a grana più grossa (mai a metà di un file). Il Livello A non è quindi un
+  meccanismo uniforme fra i due motori, e questo va dichiarato esplicitamente se mai implementato,
+  non presentato come una sola funzionalità.
+- **Performance, verificata nel codice, non assunta**: `ProcessRunner::run` legge lo stdout di
+  robocopy con un `read_until` bloccante su un thread dedicato — durante una sospensione nessun
+  nuovo byte arriva sulla pipe, quel thread resta bloccato in attesa, zero CPU consumata, nessun
+  errore spurio. Il costo del solo controllo del segnale di pausa (stesso ciclo di poll del file di
+  stop già esistente) è trascurabile. Nessuna criticità di prestazioni qui — l'unica reale è di
+  correttezza (sopra), non di velocità.
+- **Cosa comporterebbe per la CLI**: un nuovo `--pause-file <PATH>`, simmetrico a `--cancel-file`,
+  utilizzabile anche da terminale (coerente con "la GUI è un livello sottile sopra la CLI, mai il
+  contrario") — non un flag GUI-only. Un nuovo task asincrono, separato dal thread bloccante che
+  legge lo stdout, che sorveglia il file e agisce sul PID già tracciato. Una razza da gestire
+  esplicitamente: una richiesta di pausa arrivata prima che il PID sia disponibile (durante il
+  prescan) deve restare pendente e applicarsi non appena il processo parte, non essere persa.
+
+### 15.3 Verdetto
+
+**Nessuno dei due livelli viene implementato ora.** Non per mancanza di fattibilità tecnica — il
+meccanismo di base del Livello A è collaudato in produzione su milioni di macchine — ma perché il
+rischio di deadlock non è eliminabile, solo mitigabile, e la validazione contro rete reale non è
+stata fatta. Se ripreso in futuro: **Livello A prima**, come funzionalità **opt-in** con la rete di
+sicurezza del checkpoint già descritta, mai come "pausa garantita"; un vero prototipo (non solo
+questa analisi) prima di qualunque stima di sforzo; il Livello B resta una decisione separata e più
+grande, condizionata all'uso reale del Livello A. `ROADMAP.md` (righe F47/F48/F58) rimanda qui.
+
+## 16. Selezione di percorsi e campi di configurazione irraggiungibili dalla GUI (analisi del 7 Set 2026)
+
+Richiesta dall'utente dopo la sospensione del motore pilotabile (§15): messo da parte il gap più
+costoso, cosa migliora davvero l'esperienza dell'operatore senza toccare `runner.rs` o il confine
+F61? Ogni affermazione qui è stata verificata contro il sorgente reale, non assunta — stesso metodo
+di §12/§14.
+
+### 16.1 Sorgente e Destinazione si digitano, non si scelgono
+
+`Editor.svelte`, righe 242-246: `Sorgente` e `Destinazione` sono due `<input>` di solo testo,
+`bind:value={draft.source}`/`{draft.dest}`. Verificato con una ricerca diretta: zero occorrenze di
+"Sfoglia" nelle vicinanze, contro l'unico "Sfoglia…" di tutto il file — quello del percorso della
+*proposta in uscita* (riga 365), non di sorgente o destinazione. È l'unico punto della console dove
+un percorso va digitato a mano: `PathBar.svelte`, usata in ogni altra scheda, ha già sia un
+selettore nativo sia recenti/preferiti.
+
+**Tecnicamente a costo quasi zero**: `@tauri-apps/plugin-dialog` (già in uso) espone `directory:
+true` nei propri tipi (`node_modules/@tauri-apps/plugin-dialog/dist-js/index.d.ts`, riga 57) — un
+selettore di cartella nativo, zero dipendenze nuove, due chiamate dirette `open({ directory: true })`
+in `Editor.svelte`, stesso *meccanismo* di `PathBar.svelte::browse()`. **Non** `PathBar` come
+componente riusato: i suoi elenchi recenti/preferiti sono per percorsi di *file* (config/report, con
+un `kind` che li distingue), non per cartelle sorgente/destinazione di un job — mescolarli
+confonderebbe due liste concettualmente diverse. Nessuna nuova superficie di sicurezza: scegliere da
+un dialogo non è un rischio diverso dal digitare, è il contrario — "un percorso digitato male è
+indistinguibile da uno assente" (commento già presente nel codice, la stessa ragione per cui
+`PathBar` esiste). Spec tecnica completa: **F68**, riga corrispondente in `ROADMAP.md`.
+
+### 16.2 Un confronto diretto: 34 campi, 16 raggiungibili dalla GUI
+
+`JobConfig` ha 34 campi (contati nel sorgente, `crates/rustcopy-core/src/config.rs`). `Editor.svelte`
+ne referenzia 16 (`grep -oE "draft\.[a-z_]+" Editor.svelte`): `name, source, dest, pattern, threads,
+retries, exclude_files, exclude_dirs, report_path, verify_integrity, fast_verify, dry_run,
+exclude_junctions, preserve_acl, mirror, keep_generations` — gli ultimi due bloccati/sola-lettura per
+un motivo di sicurezza già scritto (F54), `webhook_url`/`pre_command`/`post_command` esclusi con nota
+esplicita (F55 non deciso, §5a). **Restano 15 campi mai renderizzati, in nessuna forma, senza alcuna
+nota**: `retry_wait_seconds`, `ignore_transient_missing`, `html_report_path`, `hash_algo`,
+`compare_baseline`, `log_path`, `backup_type`, `min_age_days`, `max_age_days`,
+`bandwidth_limit_mbps`, `no_prescan`, `skip_space_check`, `space_safety_margin_percent`,
+`long_paths`, `preserve_timestamps`.
+
+Due di questi meritano una voce a sé, verificata più a fondo, non solo elencati:
+
+- **`keep_generations` è più restrittivo in GUI di quanto il core richieda.** Mostrato in sola
+  lettura in Modifica, ma `job_editor.rs` accetta già di **alzarlo** — verificato nel test esistente
+  `retention_can_be_neither_introduced_nor_lowered`: `raise.keep_generations = Some(12)` da un
+  valore di partenza di 7 è esplicitamente atteso come accettato ("keeping more deletes less"), solo
+  introdurlo da zero o abbassarlo sono rifiutati. La regola F54 ("restringere il rischio, mai
+  allargarlo") è già interamente rispettata dal core per ogni valore ≥ quello attuale — la GUI non
+  offre il campo per omissione, non per un vincolo mancante. **La UI non deve però permettere di
+  svuotare il campo** una volta impostato — vedi §16.3, un controllo che aggirerebbe il divieto
+  esistente senza toccare alcun codice del core. Spec tecnica: **F69**.
+- **`backup_type` è il più vistoso dei 15**: full/incremental/differential è una delle feature
+  bandiera del motore (F34) e oggi non è raggiungibile dalla GUI in alcun modo — impostarla richiede
+  modificare il file a mano. Spec tecnica: **F70**.
+
+Gli altri 13 campi restano backlog senza F-number dedicato, in ordine di valore stimato per un
+operatore reale (non misurato, giudizio): `min_age_days`/`max_age_days` (filtro comune) e
+`hash_algo` (scelta dell'algoritmo di verifica) sopra `bandwidth_limit_mbps` (già proposto come
+slider in §14.5 punto 3) e `retry_wait_seconds` (naturale accanto a "Tentativi", già presente);
+`long_paths`/`preserve_timestamps` sono interruttori semplici, stesso pattern già in uso, a basso
+costo ma basso valore; `no_prescan`/`skip_space_check`/`space_safety_margin_percent` sono gli unici
+due campi di F65 (la settimana scorsa) mai collegati all'editor — un'omissione propria, non
+ereditata; `compare_baseline`/`html_report_path`/`log_path` restano niche/diagnostici.
+
+### 16.3 Criticità trovate rileggendo questa stessa sezione
+
+Prima di scrivere il piano di priorità, la prima stesura di questa sezione (e delle righe
+corrispondenti in `ROADMAP.md`) è stata riletta cercando errori — stesso metodo di §14.4, per lo
+stesso motivo: una sezione che propone lavoro futuro merita lo stesso scetticismo di una già
+implementata, prima che qualcuno la usi come base per scrivere codice.
+
+**Trovata una criticità reale, di sicurezza, non solo editoriale.** F69 come proposto inizialmente
+diceva "un campo numerico che accetta valori ≥ al corrente, o vuoto per ereditare". Rileggendo
+`apply_draft`/`pin()` (`job_editor.rs`) più a fondo: il controllo `EditorCannotLowerRetention`
+confronta solo la coppia `(Some(from), Some(to))` con `to < from` — la coppia `(Some(from), None)`
+(il caso "svuota il campo") cade nel ramo di default e **passa senza errore**. Una UI che permettesse
+di svuotare il campo aggirerebbe il divieto silenziosamente: svuotare produce lo stesso effetto di
+digitare un numero minore (retention ridotta), senza mai passare dal ramo che lo rifiuta. Non un
+difetto nel core da correggere — il core non ha mai promesso di intercettare ogni possibile input di
+una UI non ancora scritta — ma un vincolo che la **spec** di F69 deve dichiarare esplicitamente:
+nessuna opzione per svuotare una volta che il campo risolve a un valore impostato. Corretto nella
+riga F69 di `ROADMAP.md` e nel punto corrispondente sopra (§16.2).
+
+**Trovato un errore aritmetico**: la prima stesura diceva "33 campi" — il conteggio reale nel
+sorgente (`awk '/pub struct JobConfig \{/,/^\}/' | grep -c "pub [a-z_]*:"`) è **34**. Il totale dei
+16 raggiungibili più i 3 esclusi deliberatamente più i 15 mancanti tornava già a 34 nella lista
+dettagliata — solo l'affermazione del totale era sbagliata, non l'inventario che la seguiva.
+Corretto ovunque comparisse, sia qui sia in `ROADMAP.md`.
+
+**Due chiarimenti, non errori**: F68 diceva "stesso pattern di `PathBar.svelte::browse()`" in un
+modo che si poteva leggere come "riusa il componente `PathBar`" — non è l'intenzione: gli elenchi
+recenti/preferiti di `PathBar` sono per percorsi di file, non per cartelle di un job, e vanno
+tenuti distinti. F70 affermava "nessun conflitto con F54" senza affrontare l'obiezione più seria
+(attivare `backup_type` cambia dove finiscono i file, non è neutro) — la risposta resta la stessa
+conclusione, ma ora con la motivazione esplicita: il confine F54 riguarda la cancellazione, non ogni
+cambio di comportamento, e `source`/`dest` sono già liberamente modificabili con lo stesso tipo di
+impatto. Entrambi corretti nella stessa riga di `ROADMAP.md`.
+
+### 16.4 Priorità
+
+1. **F68** — selettori di cartella per Sorgente/Destinazione. Il gap più visibile, il più semplice
+   tecnicamente (nessuna dipendenza nuova).
+2. **F69** — `keep_generations` editabile per alzarlo. Non una funzionalità nuova: allinea la GUI a
+   un permesso che il core ha già.
+3. **F70** — `backup_type` selezionabile. Chiude la lacuna più vistosa fra le feature bandiera del
+   motore e la loro raggiungibilità dalla GUI.
+4. Gli altri 13 campi (§16.2, ultimo paragrafo) — nessun F-number dedicato finché uno di questi non
+   emerge come richiesta concreta, stesso criterio già applicato a F38/F40/F42 nel backlog storico.
 
 ## Riferimenti
 
