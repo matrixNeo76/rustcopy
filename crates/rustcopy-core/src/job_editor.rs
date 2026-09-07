@@ -433,20 +433,41 @@ pub fn build_proposal(
         }
     }
 
-    let mut jobs = stored_jobs;
     let defaults = config.defaults.clone();
+    // Built in `drafts`' order, not `stored_jobs`' — the console's job-reorder controls
+    // (Editor.svelte, PIANO_GUI.md §14.5 point 1) send `drafts` already arranged the way the
+    // operator wants `[[jobs]]` to read, and the whole point is moot if the proposal silently
+    // writes every *existing* job back at its original position regardless. A `Vec<bool>` instead
+    // of removing matched entries from `stored_jobs` as they're consumed: `stored_jobs` is indexed
+    // by `label_of(job, index)`, which for an unnamed job depends on its original position, so
+    // removing entries mid-loop would shift later indices and change what "unnamed job N" refers
+    // to for a still-unprocessed draft.
+    let mut consumed = vec![false; stored_jobs.len()];
+    let mut jobs = Vec::with_capacity(drafts.len().max(stored_jobs.len()));
     for draft in drafts {
         // Matched on the label `list_jobs` shows, so the name the operator saw is the name that
         // finds the job — including the positional fallback for an unnamed entry.
-        match jobs
+        match stored_jobs
             .iter()
             .enumerate()
             .position(|(index, job)| label_of(job, index) == draft.name)
         {
-            Some(index) => jobs[index] = apply_draft(Some(&jobs[index]), &defaults, draft)?,
-            // A name matching nothing stored is a new job, appended. Jobs already there and not
-            // named by any draft stay exactly as they were: omission never deletes.
+            Some(index) => {
+                jobs.push(apply_draft(Some(&stored_jobs[index]), &defaults, draft)?);
+                consumed[index] = true;
+            }
+            // A name matching nothing stored is a new job, placed where the draft is in this
+            // list — normally the end, since that's where the editor's own "+ Nuovo job" appends
+            // it, but not assumed here: a new job the operator then moved earlier belongs there.
             None => jobs.push(apply_draft(None, &defaults, draft)?),
+        }
+    }
+    // Any stored job no draft named stays exactly as it was, appended after everything the
+    // operator actually touched — omission never deletes, and an untouched job was never given a
+    // position to honor in the first place.
+    for (index, job) in stored_jobs.into_iter().enumerate() {
+        if !consumed[index] {
+            jobs.push(job);
         }
     }
 
@@ -731,7 +752,41 @@ mod tests {
         );
     }
 
-    /// A name matching no stored job is a new job, not a silent no-op.
+    /// The console's job-reorder controls (Editor.svelte, PIANO_GUI.md §14.5 point 1) work by
+    /// swapping entries in the `drafts` array the frontend holds and sending the whole array back
+    /// — the fix relies on `build_proposal` actually honoring that order for jobs it already knew
+    /// about, not just for genuinely new ones. Caught by writing a real proposal and reading the
+    /// file back, not by reasoning about the frontend alone: an earlier version of this function
+    /// silently discarded the reorder for every *existing* job, always writing them back at their
+    /// original stored position regardless of what order `drafts` arrived in.
+    #[test]
+    fn reordering_existing_jobs_changes_the_order_they_are_written_in() {
+        let config = config_from(
+            "source = \"D:/src\"\n\n[[jobs]]\nname = \"progetti\"\ndest = \"E:/p\"\n\n\
+             [[jobs]]\nname = \"archivio\"\ndest = \"E:/a\"\n",
+        );
+        let progetti = draft_for(&config, "progetti");
+        let archivio = draft_for(&config, "archivio");
+
+        // Same two drafts as `read_drafts` would return, but reversed — exactly what the editor's
+        // move-up/move-down buttons produce.
+        let proposal = build_proposal(Some(&config), &[archivio, progetti]).expect("builds");
+        let jobs = proposal.jobs.expect("jobs");
+
+        assert_eq!(jobs.len(), 2);
+        assert_eq!(
+            jobs[0].name.as_deref(),
+            Some("archivio"),
+            "the reordered job is written first"
+        );
+        assert_eq!(jobs[1].name.as_deref(), Some("progetti"));
+    }
+
+    /// A name matching no stored job is a new job, not a silent no-op. Its position in the
+    /// output follows its position in `drafts` (here, the only draft given, so index 0) — not
+    /// "always appended after every stored job" as an earlier version of `build_proposal` did;
+    /// the untouched stored job ("uno") lands after it precisely because nothing in `drafts`
+    /// claimed a position for it.
     #[test]
     fn an_unknown_name_appends_a_job() {
         let config =
@@ -743,9 +798,14 @@ mod tests {
         let proposal = build_proposal(Some(&config), &[draft]).expect("builds");
         let jobs = proposal.jobs.clone().expect("jobs");
         assert_eq!(jobs.len(), 2);
-        assert_eq!(jobs[1].name.as_deref(), Some("due"));
+        assert_eq!(jobs[0].name.as_deref(), Some("due"));
+        assert_eq!(
+            jobs[1].name.as_deref(),
+            Some("uno"),
+            "the untouched job is still there, after the one the draft named"
+        );
         assert!(
-            !jobs[1]
+            !jobs[0]
                 .merged_over(&proposal.defaults)
                 .mirror
                 .unwrap_or(false),

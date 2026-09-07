@@ -4,6 +4,7 @@
   import PathBar from "./PathBar.svelte";
   import EmptyState from "./EmptyState.svelte";
   import { session } from "./session.svelte.js";
+  import { ChevronUp, ChevronDown } from "@lucide/svelte";
 
   // The only pane that writes. It never writes in place: it produces a proposal in a new file and
   // the operator decides whether it replaces the running configuration.
@@ -66,6 +67,21 @@
     base.keep_generations = null;
     drafts = [...drafts, base];
     selected = drafts.length - 1;
+  }
+
+  // Run order matters: `run_jobs` (CLI) executes `[[jobs]]` sequentially in file order, and that
+  // order is fixed for the whole batch the moment the process starts — nothing outside can reorder
+  // a batch already running (PIANO_GUI.md §14.4). This is therefore the only point where reordering
+  // is actually cheap: before the file is even written. `write_proposal` already serializes
+  // `drafts` in whatever order this array holds, so swapping two entries here is the entire
+  // implementation — no new core surface, no new IPC command.
+  function moveJob(delta) {
+    const target = selected + delta;
+    if (target < 0 || target >= drafts.length) return;
+    const next = [...drafts];
+    [next[selected], next[target]] = [next[target], next[selected]];
+    drafts = next;
+    selected = target;
   }
 
   async function pickTarget() {
@@ -174,6 +190,33 @@
         class="rounded px-2 py-0.5 text-xs text-blue-700 dark:text-blue-300"
         onclick={addJob}
       >+ Nuovo job</button>
+
+      {#if drafts.length > 1}
+        <!-- Reorders the job selected above, not a drag target of its own — one pair of controls
+             for the whole strip, not one per tab, so adding jobs never adds visual noise with them.
+             Order here is the order `write_proposal` writes: this changes only the sequence
+             `[[jobs]]` runs in, nothing else about any job. -->
+        <span class="ml-1 flex items-center gap-0.5 border-l border-slate-300 pl-1 dark:border-slate-700">
+          <button
+            class="rounded p-0.5 text-slate-500 hover:bg-slate-100 disabled:opacity-30
+                   dark:text-slate-400 dark:hover:bg-slate-800"
+            onclick={() => moveJob(-1)}
+            disabled={selected === 0}
+            title="Sposta questo job prima nell'ordine di esecuzione"
+          >
+            <ChevronUp size={14} strokeWidth={2.25} aria-hidden="true" />
+          </button>
+          <button
+            class="rounded p-0.5 text-slate-500 hover:bg-slate-100 disabled:opacity-30
+                   dark:text-slate-400 dark:hover:bg-slate-800"
+            onclick={() => moveJob(1)}
+            disabled={selected === drafts.length - 1}
+            title="Sposta questo job dopo nell'ordine di esecuzione"
+          >
+            <ChevronDown size={14} strokeWidth={2.25} aria-hidden="true" />
+          </button>
+        </span>
+      {/if}
     </div>
 
     <div class="mt-3 grid grid-cols-[10rem_1fr] items-center gap-x-3 gap-y-2 text-xs">
