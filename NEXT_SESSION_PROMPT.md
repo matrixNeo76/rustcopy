@@ -14,7 +14,7 @@ generated:
 
 `Cargo.toml` = **7.0.0** (bump da 6.0.0, 7 Set 2026 — v6.0.0 era stato taggato 216 commit prima
 ancora che la milestone 7.0.0/console partisse; mai più aggiornato da allora, corretto su decisione
-esplicita dell'utente). Suite di test: **488** (`cargo test --locked --workspace --exclude rustcopy-gui --all-targets`), **503** con `--features rustcopy-cli/notify-server` (più test `#[ignore]` — round-trip reali dei servizi Windows che richiedono elevazione, più due probe di misurazione a scala reale). CI verde su `windows-latest` e `ubuntu-latest` per entrambe le configurazioni, più i job dedicati `gui`, `gui-npm-audit`, `versions` e `docs`.
+esplicita dell'utente). Suite di test: **490** (`cargo test --locked --workspace --exclude rustcopy-gui --all-targets`), **505** con `--features rustcopy-cli/notify-server` (più test `#[ignore]` — round-trip reali dei servizi Windows che richiedono elevazione, più due probe di misurazione a scala reale). CI verde su `windows-latest` e `ubuntu-latest` per entrambe le configurazioni, più i job dedicati `gui`, `gui-npm-audit`, `versions` e `docs`.
 
 **Prima GitHub Release pubblicata, v7.0.0 (7 Set 2026)**: tag e Release annotati sul commit di
 `main` dopo il merge di F70 (F62-F70 tutte incluse), installer `rustcopy-7.0.0-setup.exe` allegato
@@ -217,18 +217,21 @@ priorità, poi autorizzata l'implementazione in sequenza:
   correzione dei due rimandi rotti a `examples/demo-locale.toml` (mai installato — `installer/
   rustcopy.iss` non lo impacchetta, la lacuna più seria trovata in tutta l'analisi). Verificato
   end-to-end contro il binario ricompilato. Dettaglio: riga F79 di `ROADMAP.md`.
-- **F80 è il prossimo**: `encrypt_aes256` per job in `JobConfig`, raggiungibile da Modifica —
-  l'unica voce che tocca il core in modo sostanziale (nuovo campo, wiring `run_jobs`, validazione
-  per-job), non solo la GUI. Vincolo di sicurezza da rispettare nell'implementazione: il campo in
-  Modifica deve accettare **solo** `keyring:NOME`, mai una chiave letterale.
-- Poi, nell'ordine confermato: F73 (verifica Sorgente/Destinazione, `scan::inventory` già esiste),
-  F72 (validazione Nome), F76 (placeholder Report), F81 (colorazione/`EXIT_MEANING` di
-  `History.svelte`), F74/F75/F77 (tooltip Pattern/Escludi file/Thread/Tentativi/backup_type), F78
-  (messaggio migliore per l'errore di split job singolo), F82 (avviso Anteprima ripristino senza
-  config in sessione).
+- **F80 chiuso, stesso giorno**: `encrypt_aes256` per job in `JobConfig`, raggiungibile da Modifica.
+  Il wiring in `run_jobs`/la validazione per-job ipotizzati come lavoro extra nel piano si sono
+  rivelati già coperti dal punto unico condiviso `Args::apply_job_config` e da `job_args.validate()`
+  (già chiamato per ogni job) — nessuna modifica a `main.rs` è servita, solo `config.rs`/`cli.rs`/
+  `job_editor.rs`. `Editor.svelte` accetta in scrittura solo `keyring:NOME`; un valore già impostato
+  a mano in `env:`/`file:`/forma letterale resta read-only e sopravvive intatto a modifiche non
+  correlate — verificato dal vivo in entrambi gli scenari contro il binario ricompilato. Dettaglio:
+  riga F80 di `ROADMAP.md`.
+- **F73 è il prossimo**, poi nell'ordine confermato: F72 (validazione Nome), F76 (placeholder
+  Report), F81 (colorazione/`EXIT_MEANING` di `History.svelte`), F74/F75/F77 (tooltip Pattern/
+  Escludi file/Thread/Tentativi/backup_type), F78 (messaggio migliore per l'errore di split job
+  singolo), F82 (avviso Anteprima ripristino senza config in sessione).
 
 Se questa sessione riprende a metà sequenza (compattazione, nuova sessione), continuare da dove
-`ROADMAP.md` segna l'ultima riga passata da 🟡 a ✅ — non ripartire da F79 se è già chiuso.
+`ROADMAP.md` segna l'ultima riga passata da 🟡 a ✅ — non ripartire da F79/F80 se sono già chiusi.
 
 **Lavoro precedente, non urgente ma non dimenticato** (aree con lavoro reale trovate prima di
 questo giro, non ancora affrontate):

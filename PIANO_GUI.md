@@ -1299,6 +1299,7 @@ In ordine di rapporto valore/rischio, non di apparizione nella lista originale:
    è irraggiungibile dalla GUI e dal TOML per qualunque job in un batch — non attrito, un'assenza
    totale. Priorità alta ma **richiede una decisione esplicita** (§18.14): tocca il core
    (`JobConfig`, `run_jobs`), non solo la GUI, a differenza di ogni altra riga di questa lista.
+   ✅ Completato 7 Set 2026.
 3. **F73** — verifica Sorgente/Destinazione (esistenza + conteggio). Il valore pratico più alto fra
    le richieste originali di solo-GUI, zero nuova logica di scansione da scrivere.
 4. **F72** — validazione Nome. Piccolo, ma previene un errore che altrimenti si scopre solo ore
@@ -1355,6 +1356,17 @@ vanificherebbe l'intero scopo di F56, che esiste apposta perché una chiave lett
 nella process list e ora anche in un file su disco. Non è una decisione da prendere implicitamente
 insieme alle altre migliorie: cambia la forma di `JobConfig`, tocca `run_jobs`, e introduce la prima
 vera dipendenza visibile fra Impostazioni e Modifica — merita una conferma esplicita a sé, come F79.
+
+**✅ Implementato e verificato 7 Set 2026.** Punto (3) sopra si è rivelato non necessario: `run_jobs`
+già passa per `Args::apply_job_config`, lo stesso punto unico condiviso dalla pipeline a singolo job
+— una volta che `encrypt_aes256` è in `JobConfig`, quella funzione lo copia già sull'`Args` per-job
+corretto, senza bisogno di toccare `run_jobs` stesso. Stesso discorso per (4): `job_args.validate()`
+è già chiamato per ogni job (non solo una volta per l'intera invocazione), quindi
+`EncryptAndDecryptConflict` si applica già per job senza una nuova regola. Il vincolo di sicurezza
+sulla UI è rispettato: `Editor.svelte` scrive solo `keyring:NOME`, un valore già impostato a mano in
+una delle altre tre forme resta in sola lettura e sopravvive intatto a una modifica non correlata —
+verificato dal vivo contro il binario ricompilato in entrambi gli scenari. Dettaglio completo e i due
+nuovi unit test nella riga F80 di `ROADMAP.md`.
 
 ### 18.15 Audit completo delle sette schede (richiesto dall'utente dopo §18.1-§18.14)
 
