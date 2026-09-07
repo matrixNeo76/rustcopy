@@ -70,15 +70,28 @@
   }
 
   // F73: a check is only shown while it still describes the field it was run against -- editing
-  // the path afterward, or switching to a different job, discards it rather than displaying a
-  // now-stale answer next to a path it no longer matches.
+  // the path afterward, switching job, or loading a different configuration file discards it
+  // rather than displaying a now-stale answer next to a path it no longer matches (or, worse, one
+  // resolved against a different file's anchor). `configPath` matters here even though `jobName`
+  // and `path` are also compared: two different configuration files can each declare a job named
+  // "job1" with the same relative `source`, and without this a check from one could appear valid
+  // for the other, showing counts resolved against the wrong anchor -- caught by CodeRabbit on
+  // this PR, not by the live verification that had only ever loaded one file at a time.
   const sourceCheckValid = $derived(
-    sourceCheck && draft && sourceCheck.jobName === draft.name && sourceCheck.path === draft.source
+    sourceCheck &&
+      draft &&
+      sourceCheck.configPath === loadedFrom &&
+      sourceCheck.jobName === draft.name &&
+      sourceCheck.path === draft.source
       ? sourceCheck
       : null,
   );
   const destCheckValid = $derived(
-    destCheck && draft && destCheck.jobName === draft.name && destCheck.path === draft.dest
+    destCheck &&
+      draft &&
+      destCheck.configPath === loadedFrom &&
+      destCheck.jobName === draft.name &&
+      destCheck.path === draft.dest
       ? destCheck
       : null,
   );
@@ -156,15 +169,16 @@
   // every keystroke would make the field feel broken rather than helpful.
   async function checkPath(field) {
     if (!draft) return;
+    const configPath = loadedFrom;
     const jobName = draft.name;
     const path = draft[field];
     const set = field === "source" ? (v) => (sourceCheck = v) : (v) => (destCheck = v);
-    set({ jobName, path, loading: true, result: null, error: null });
+    set({ configPath, jobName, path, loading: true, result: null, error: null });
     try {
-      const result = await invoke("inspect_path", { path, configPath: loadedFrom });
-      set({ jobName, path, loading: false, result, error: null });
+      const result = await invoke("inspect_path", { path, configPath });
+      set({ configPath, jobName, path, loading: false, result, error: null });
     } catch (e) {
-      set({ jobName, path, loading: false, result: null, error: String(e) });
+      set({ configPath, jobName, path, loading: false, result: null, error: String(e) });
     }
   }
 
