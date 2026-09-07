@@ -2,6 +2,7 @@
   import { invoke } from "@tauri-apps/api/core";
   import PathBar from "./PathBar.svelte";
   import EmptyState from "./EmptyState.svelte";
+  import QuickSync from "./QuickSync.svelte";
   import { session } from "./session.svelte.js";
   import { ShieldAlert, FileQuestionMark, ListChecks } from "@lucide/svelte";
 
@@ -11,6 +12,11 @@
   let error = $state(null);
   let loading = $state(false);
   let loaded = $state(false);
+  // F71: local to this pane, not a `session.activeTab` entry -- this stays a link discovered from
+  // Job's own empty state, not a sixth sidebar tab. Job's own characterization in PIANO_GUI.md §3
+  // ("Scrive? No") stays true: the write/start logic lives in QuickSync.svelte, this pane only
+  // decides whether to show it (PIANO_GUI.md §17.3/§17.5).
+  let showQuickSync = $state(false);
 
   async function load() {
     error = null;
@@ -132,5 +138,17 @@
         "Non hai un file? Prova examples/demo-locale.toml: copia qualche file finto del repository in una cartella accanto, quindi non può toccare nulla di tuo.",
       ]}
     />
+    {#if showQuickSync}
+      <QuickSync />
+      <button
+        class="mt-2 text-xs text-slate-500 hover:text-slate-700 dark:hover:text-slate-300"
+        onclick={() => (showQuickSync = false)}
+      >← Torna</button>
+    {:else}
+      <button
+        class="mt-3 text-xs text-blue-700 dark:text-blue-300"
+        onclick={() => (showQuickSync = true)}
+      >Oppure sincronizza due cartelle adesso, senza scrivere prima un file →</button>
+    {/if}
   {/if}
 </section>
