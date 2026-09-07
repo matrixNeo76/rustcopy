@@ -929,6 +929,17 @@ un dialogo non è un rischio diverso dal digitare, è il contrario — "un perco
 indistinguibile da uno assente" (commento già presente nel codice, la stessa ragione per cui
 `PathBar` esiste). Spec tecnica completa: **F68**, riga corrispondente in `ROADMAP.md`.
 
+**✅ Implementato e verificato 7 Set 2026** contro il binario compilato: entrambi i pulsanti
+"Sfoglia…" aprono il dialogo nativo e la selezione aggiorna correttamente `draft.source`/
+`draft.dest` (letto nel campo dopo la conferma). Un comportamento non anticipato in fase di
+proposta, scoperto proprio durante questa verifica: il dialogo nativo di Windows rifiuta un
+percorso non ancora esistente ("Percorso non esistente" su `examples\demo-out\copia`, una
+destinazione tipica per una prima sincronizzazione) — comportamento standard del selettore di
+cartelle, identico in Explorer, non un difetto di questa implementazione. Il campo di testo resta
+sempre editabile in parallelo al pulsante, quindi una destinazione non ancora creata si digita
+come prima o si crea con "Nuova cartella" dentro il dialogo. Dettaglio completo: riga F68 in
+`ROADMAP.md`.
+
 ### 16.2 Un confronto diretto: 34 campi, 16 raggiungibili dalla GUI
 
 `JobConfig` ha 34 campi (contati nel sorgente, `crates/rustcopy-core/src/config.rs`). `Editor.svelte`
@@ -1003,7 +1014,7 @@ impatto. Entrambi corretti nella stessa riga di `ROADMAP.md`.
 ### 16.4 Priorità
 
 1. **F68** — selettori di cartella per Sorgente/Destinazione. Il gap più visibile, il più semplice
-   tecnicamente (nessuna dipendenza nuova).
+   tecnicamente (nessuna dipendenza nuova). ✅ Completato 7 Set 2026.
 2. **F69** — `keep_generations` editabile per alzarlo. Non una funzionalità nuova: allinea la GUI a
    un permesso che il core ha già.
 3. **F70** — `backup_type` selezionabile. Chiude la lacuna più vistosa fra le feature bandiera del
