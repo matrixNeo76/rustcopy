@@ -956,17 +956,19 @@ nota**: `retry_wait_seconds`, `ignore_transient_missing`, `html_report_path`, `h
 
 Due di questi meritano una voce a sé, verificata più a fondo, non solo elencati:
 
-- **`keep_generations` è più restrittivo in GUI di quanto il core richieda. ✅ Implementato e
+- **`keep_generations` era più restrittivo in GUI di quanto il core richiedesse. ✅ Implementato e
   verificato 7 Set 2026** (dettaglio completo, incluso il verificato "mai vuoto": riga F69 di
-  `ROADMAP.md`). Mostrato in sola
+  `ROADMAP.md`). **Prima di F69 (analisi originale — stato storico, superato dall'implementazione)**:
+  mostrato in sola
   lettura in Modifica, ma `job_editor.rs` accetta già di **alzarlo** — verificato nel test esistente
   `retention_can_be_neither_introduced_nor_lowered`: `raise.keep_generations = Some(12)` da un
   valore di partenza di 7 è esplicitamente atteso come accettato ("keeping more deletes less"), solo
   introdurlo da zero o abbassarlo sono rifiutati. La regola F54 ("restringere il rischio, mai
   allargarlo") è già interamente rispettata dal core per ogni valore ≥ quello attuale — la GUI non
-  offre il campo per omissione, non per un vincolo mancante. **La UI non deve però permettere di
+  offriva il campo per omissione, non per un vincolo mancante. **La UI non deve però permettere di
   svuotare il campo** una volta impostato — vedi §16.3, un controllo che aggirerebbe il divieto
-  esistente senza toccare alcun codice del core. Spec tecnica: **F69**.
+  esistente senza toccare alcun codice del core. Ora implementato esattamente così: un input che
+  compare solo quando il job risolve già a un valore, mai svuotabile. Spec tecnica: **F69**.
 - **`backup_type` è il più vistoso dei 15**: full/incremental/differential è una delle feature
   bandiera del motore (F34) e oggi non è raggiungibile dalla GUI in alcun modo — impostarla richiede
   modificare il file a mano. Spec tecnica: **F70**.

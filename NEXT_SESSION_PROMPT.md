@@ -10,14 +10,17 @@ generated:
 
 # Prompt per la prossima sessione — robocopy-ingest-cli (rustcopy)
 
-## Stato del progetto (5 Settembre 2026)
+## Stato del progetto (7 Settembre 2026)
 
 `Cargo.toml` = **6.0.0**. Suite di test: **485** (`cargo test --workspace --exclude rustcopy-gui`), **500** con `--features rustcopy-cli/notify-server` (più test `#[ignore]` — round-trip reali dei servizi Windows che richiedono elevazione, più due probe di misurazione a scala reale). CI verde su `windows-latest` e `ubuntu-latest` per entrambe le configurazioni, più i job dedicati `gui`, `gui-npm-audit`, `versions` e `docs`.
 
-**Ultimo lavoro: implementate e chiuse F62-F66 (5 Set 2026, PR #87-#91).** Nate da un'analisi
-richiesta dall'utente su una metodologia a workspace per la GUI e su funzionalità CLI non ancora
-valutate — formalizzata come backlog in `ROADMAP.md`, poi implementata su richiesta esplicita
-("procedi con il piano e punti creati da F62 a F66"):
+**Ultimo lavoro: F68/F69 chiuse (7 Set 2026, PR #97-#98), dopo F62-F67 (5-7 Set 2026, PR #87-#96).**
+Selettori di cartella nativi per Sorgente/Destinazione (F68) e `keep_generations` editabile per
+alzarlo (F69) in Modifica — dettaglio completo più sotto, in "F68, selettori di cartella..." e "F69,
+`keep_generations` editabile...". Il paragrafo che segue racconta invece l'origine più a monte,
+F62-F66, nate da un'analisi richiesta dall'utente su una metodologia a workspace per la GUI e su
+funzionalità CLI non ancora valutate — formalizzata come backlog in `ROADMAP.md`, poi implementata
+su richiesta esplicita ("procedi con il piano e punti creati da F62 a F66"):
 
 - **F62** `--list-schedules` (PR #87) — elenca ogni attività di Task Scheduler che invoca il
   binario corrente, riusando il motore CSV già scritto per `schedule::referencing_config`.
