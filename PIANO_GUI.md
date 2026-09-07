@@ -941,16 +941,17 @@ sempre editabile in parallelo al pulsante, quindi una destinazione non ancora cr
 come prima o si crea con "Nuova cartella" dentro il dialogo. Dettaglio completo: riga F68 in
 `ROADMAP.md`.
 
-### 16.2 Un confronto diretto: 34 campi, 16 raggiungibili dalla GUI
+### 16.2 Un confronto diretto: 34 campi, 17 raggiungibili dalla GUI
 
-`JobConfig` ha 34 campi (contati nel sorgente, `crates/rustcopy-core/src/config.rs`). `Editor.svelte`
-ne referenzia 16 (`grep -oE "draft\.[a-z_]+" Editor.svelte`): `name, source, dest, pattern, threads,
-retries, exclude_files, exclude_dirs, report_path, verify_integrity, fast_verify, dry_run,
-exclude_junctions, preserve_acl, mirror, keep_generations` — gli ultimi due bloccati/sola-lettura per
-un motivo di sicurezza già scritto (F54), `webhook_url`/`pre_command`/`post_command` esclusi con nota
-esplicita (F55 non deciso, §5a). **Restano 15 campi mai renderizzati, in nessuna forma, senza alcuna
-nota**: `retry_wait_seconds`, `ignore_transient_missing`, `html_report_path`, `hash_algo`,
-`compare_baseline`, `log_path`, `backup_type`, `min_age_days`, `max_age_days`,
+`JobConfig` ha 34 campi (contati nel sorgente, `crates/rustcopy-core/src/config.rs`). **Stato al 7
+Set 2026, dopo F68/F69/F70** — `Editor.svelte` ne referenzia 17 (`grep -oE "draft\.[a-z_]+"
+Editor.svelte`): `name, source, dest, pattern, threads, retries, exclude_files, exclude_dirs,
+report_path, verify_integrity, fast_verify, dry_run, exclude_junctions, preserve_acl, mirror,
+keep_generations, backup_type` — i due precedenti (`mirror`/`keep_generations`) bloccati/sola-lettura
+o vincolati per un motivo di sicurezza già scritto (F54), `webhook_url`/`pre_command`/`post_command`
+esclusi con nota esplicita (F55 non deciso, §5a). **Restano 14 campi mai renderizzati, in nessuna
+forma, senza alcuna nota**: `retry_wait_seconds`, `ignore_transient_missing`, `html_report_path`,
+`hash_algo`, `compare_baseline`, `log_path`, `min_age_days`, `max_age_days`,
 `bandwidth_limit_mbps`, `no_prescan`, `skip_space_check`, `space_safety_margin_percent`,
 `long_paths`, `preserve_timestamps`.
 
@@ -969,9 +970,12 @@ Due di questi meritano una voce a sé, verificata più a fondo, non solo elencat
   svuotare il campo** una volta impostato — vedi §16.3, un controllo che aggirerebbe il divieto
   esistente senza toccare alcun codice del core. Ora implementato esattamente così: un input che
   compare solo quando il job risolve già a un valore, mai svuotabile. Spec tecnica: **F69**.
-- **`backup_type` è il più vistoso dei 15**: full/incremental/differential è una delle feature
-  bandiera del motore (F34) e oggi non è raggiungibile dalla GUI in alcun modo — impostarla richiede
-  modificare il file a mano. Spec tecnica: **F70**.
+- **`backup_type` era il più vistoso dei 15. ✅ Implementato e verificato 7 Set 2026**: full/
+  incremental/differential è una delle feature bandiera del motore (F34) e non era raggiungibile
+  dalla GUI in alcun modo — impostarla richiedeva modificare il file a mano. La verifica ha trovato
+  una lacuna reale nel core stesso (non solo nella GUI): `apply_draft` non controllava affatto la
+  combinazione `mirror`+`backup_type`, colmata con lo stesso pattern già usato per `no_prescan`.
+  Spec tecnica: **F70**, dettaglio completo (incluso il fix del core) in `ROADMAP.md`.
 
 Gli altri 13 campi restano backlog senza F-number dedicato, in ordine di valore stimato per un
 operatore reale (non misurato, giudizio): `min_age_days`/`max_age_days` (filtro comune) e
@@ -1023,7 +1027,7 @@ impatto. Entrambi corretti nella stessa riga di `ROADMAP.md`.
 2. **F69** — `keep_generations` editabile per alzarlo. Non una funzionalità nuova: allinea la GUI a
    un permesso che il core ha già. ✅ Completato 7 Set 2026.
 3. **F70** — `backup_type` selezionabile. Chiude la lacuna più vistosa fra le feature bandiera del
-   motore e la loro raggiungibilità dalla GUI.
+   motore e la loro raggiungibilità dalla GUI. ✅ Completato 7 Set 2026.
 4. Gli altri 13 campi (§16.2, ultimo paragrafo) — nessun F-number dedicato finché uno di questi non
    emerge come richiesta concreta, stesso criterio già applicato a F38/F40/F42 nel backlog storico.
 

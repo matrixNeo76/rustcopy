@@ -12,12 +12,12 @@ generated:
 
 ## Stato del progetto (7 Settembre 2026)
 
-`Cargo.toml` = **6.0.0**. Suite di test: **485** (`cargo test --workspace --exclude rustcopy-gui`), **500** con `--features rustcopy-cli/notify-server` (più test `#[ignore]` — round-trip reali dei servizi Windows che richiedono elevazione, più due probe di misurazione a scala reale). CI verde su `windows-latest` e `ubuntu-latest` per entrambe le configurazioni, più i job dedicati `gui`, `gui-npm-audit`, `versions` e `docs`.
+`Cargo.toml` = **6.0.0**. Suite di test: **486** (`cargo test --workspace --exclude rustcopy-gui`), **501** con `--features rustcopy-cli/notify-server` (più test `#[ignore]` — round-trip reali dei servizi Windows che richiedono elevazione, più due probe di misurazione a scala reale). CI verde su `windows-latest` e `ubuntu-latest` per entrambe le configurazioni, più i job dedicati `gui`, `gui-npm-audit`, `versions` e `docs`.
 
-**Ultimo lavoro: F68/F69 chiuse (7 Set 2026, PR #97-#98), dopo F62-F67 (5-7 Set 2026, PR #87-#96).**
-Selettori di cartella nativi per Sorgente/Destinazione (F68) e `keep_generations` editabile per
-alzarlo (F69) in Modifica — dettaglio completo più sotto, in "F68, selettori di cartella..." e "F69,
-`keep_generations` editabile...". Il paragrafo che segue racconta invece l'origine più a monte,
+**Ultimo lavoro: F68/F69/F70 chiuse (7 Set 2026, PR #97-#99), dopo F62-F67 (5-7 Set 2026, PR #87-#96).**
+Selettori di cartella nativi per Sorgente/Destinazione (F68), `keep_generations`
+editabile per alzarlo (F69) e `backup_type` selezionabile (F70) in Modifica — dettaglio completo più
+sotto. Il paragrafo che segue racconta invece l'origine più a monte,
 F62-F66, nate da un'analisi richiesta dall'utente su una metodologia a workspace per la GUI e su
 funzionalità CLI non ancora valutate — formalizzata come backlog in `ROADMAP.md`, poi implementata
 su richiesta esplicita ("procedi con il piano e punti creati da F62 a F66"):
@@ -157,6 +157,20 @@ tentativo di svuotare il campo durante la verifica è scattato nel ripristino im
 valore valido, mai un vuoto o un valore sotto il floor visibile nemmeno per un istante. Dettaglio:
 riga F69 di `ROADMAP.md`, `PIANO_GUI.md` §16.2.
 
+**F70, `backup_type` selezionabile, implementato e verificato 7 Set 2026** (priorità 3 di §16.4,
+ultima del gruppo F68-F70): nuovo `<select>` in `Editor.svelte` con le tre opzioni più "Nessuno
+(copia semplice)". **Criticità reale trovata prima della verifica dal vivo**: `job_editor::apply_draft`
+non aveva alcun controllo proattivo sulla combinazione `mirror`+`backup_type` — solo
+`Args::validate()` la intercettava, ore dopo, al prossimo avvio pianificato del job. Aggiunto un
+controllo analogo a quello già esistente per `no_prescan` (stessa disciplina "valore risultante, non
+quello memorizzato": un job che spegne mirror nella stessa modifica non è in conflitto), riusando
+`IngestError::BackupTypeAndMirrorConflict` condiviso con la CLI. Lato UI il selettore si disabilita
+quando `draft.mirror` è vero, con una nota — un'affordance, l'enforcement reale resta nel core.
+Verificato dal vivo con un file a due job: quello senza mirror scrive `backup_type = "full"`
+correttamente nella proposta (confermato leggendo il TOML su disco); quello con `mirror = true`
+mostra il selettore disabilitato, invariato. Dettaglio: riga F70 di `ROADMAP.md`, `PIANO_GUI.md`
+§16.2.
+
 **Lezione doppia da questo giro**: (1) "verificato manualmente contro il binario compilato" non
 basta se il caso provato non è quello che rompe — la verifica originaria di F64 ha quasi certamente
 usato un report a percorsi assoluti; (2) un fix che sembra ovvio (stesso pattern già usato altrove,
@@ -168,20 +182,19 @@ sbagliato e solo la riverifica contro il binario l'ha scoperto.
 
 ## 🎯 Obiettivo per la prossima sessione
 
-**Standing: "procedi seguendo il piano" (§16.4 di `PIANO_GUI.md`)** — F68 e F69 chiusi il 7 Set 2026,
-F70 è la prossima voce in ordine di priorità. Le aree con lavoro reale ancora da fare, in ordine:
+**Standing: "procedi seguendo il piano" (§16.4 di `PIANO_GUI.md`)** — F68/F69/F70 chiusi il 7 Set
+2026 (tutte e tre le priorità di §16.4), F71 (speccata dopo, in §17) è la prossima voce con lavoro
+reale. Le aree con lavoro reale ancora da fare, in ordine:
 
-1. **F70** — `backup_type` selezionabile in Modifica (full/incremental/differential). Priorità 3
-   di §16.4.
-2. **F71** — pannello di sincronizzazione rapida senza config esistente, collegato dall'empty state
+1. **F71** — pannello di sincronizzazione rapida senza config esistente, collegato dall'empty state
    di Job, **non** dentro `Jobs.svelte`. Dipende dal pattern di selettori di cartella di F68 (chiuso).
-3. **Flusso di ripristino guidato** (`--restore-from`, Onda 3) — la lacuna funzionale più sentita della console. **Il primo mattone (l'anteprima) è F64, chiuso, D26 corretto il 6 Set 2026**: resta da costruire il resto del flusso — elenco report → anteprima (pronta e verificata) → conferma esplicita → avvio. Proporre con `AskUserQuestion` prima di implementare il resto.
-4. **Due decisioni bloccate, entrambe spettano all'utente**:
+2. **Flusso di ripristino guidato** (`--restore-from`, Onda 3) — la lacuna funzionale più sentita della console. **Il primo mattone (l'anteprima) è F64, chiuso, D26 corretto il 6 Set 2026**: resta da costruire il resto del flusso — elenco report → anteprima (pronta e verificata) → conferma esplicita → avvio. Proporre con `AskUserQuestion` prima di implementare il resto.
+3. **Due decisioni bloccate, entrambe spettano all'utente**:
    - Interruttore VSS in Modifica — serve prima `vss_snapshot: Option<bool>` su `JobConfig` lato core, non è lavoro di frontend.
    - Scrittura di webhook/script pre-post in Modifica (F55, metà scrittura) — morde il vincolo permanente 2 (§2.3 di `PIANO_GUI.md`): script configurabili + servizio privilegiato = escalation locale. Non procedere senza una decisione esplicita.
-5. **D25** (`checkpoint::build_resume_args` scarta la maggior parte della configurazione originale) — aperto ma non bloccante. Il fix corretto è un tipo dedicato per il checkpoint, non allargare `ConfigurationReport` (condiviso con i report di run completate). Non affrontarlo con una patch rapida.
-6. **F63, metà retention** (`--keep-generations`/`GenerationIndex::generations_to_prune`) — lasciata deliberatamente fuori dalla PR #88 per tenerla rivedibile. Stesso disegno della metà mirror già fatta (scrivere l'elenco invece di contarlo), da riprendere quando serve o quando si costruisce il punto 3 sopra.
-7. **F47/F48/F58 (motore pilotabile)** — sospesi in roadmap, analisi di rischio completa in `PIANO_GUI.md` §15. Non riprendere senza un vero prototipo del Livello A.
+4. **D25** (`checkpoint::build_resume_args` scarta la maggior parte della configurazione originale) — aperto ma non bloccante. Il fix corretto è un tipo dedicato per il checkpoint, non allargare `ConfigurationReport` (condiviso con i report di run completate). Non affrontarlo con una patch rapida.
+5. **F63, metà retention** (`--keep-generations`/`GenerationIndex::generations_to_prune`) — lasciata deliberatamente fuori dalla PR #88 per tenerla rivedibile. Stesso disegno della metà mirror già fatta (scrivere l'elenco invece di contarlo), da riprendere quando serve o quando si costruisce il punto 2 sopra.
+6. **F47/F48/F58 (motore pilotabile)** — sospesi in roadmap, analisi di rischio completa in `PIANO_GUI.md` §15. Non riprendere senza un vero prototipo del Livello A.
 
 In assenza di una richiesta, il modello resta quello delle sessioni precedenti: **verificare empiricamente prima di proporre un fix**, mai fix speculativi su ipotesi non confermate — e, per qualunque cosa tocchi la GUI, **aprire la finestra** contro il binario release compilato, non fidarsi di `cargo build`/test/clippy da soli.
 

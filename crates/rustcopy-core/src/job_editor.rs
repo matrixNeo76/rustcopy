@@ -225,6 +225,16 @@ pub fn apply_draft(
         ));
     }
 
+    // F70: same "resulting, not stored" reasoning as the `no_prescan` check above -- a job whose
+    // draft turns mirror off in this same edit is no longer mirroring, so pairing it with a
+    // `backup_type` here is not the conflict `Args::validate()` rejects. The CLI would reject the
+    // combination at startup anyway (`IngestError::BackupTypeAndMirrorConflict`, checked per job in
+    // `run_jobs`) -- catching it here, like `InvalidThreads` below, means the editor cannot write a
+    // file that only fails hours later, on a scheduled run.
+    if draft.mirror && draft.backup_type.is_some() {
+        return Err(IngestError::BackupTypeAndMirrorConflict);
+    }
+
     // The CLI rejects this range at startup (`IngestError::InvalidThreads`). Catching it here
     // means the editor cannot write a file that only fails hours later, on a scheduled run.
     if let Some(threads) = draft.threads {
@@ -641,6 +651,31 @@ mod tests {
 
         let result = apply_draft(Some(&config.defaults), &JobConfig::default(), &draft)
             .expect("narrowing is allowed");
+        assert_eq!(result.mirror, Some(false));
+    }
+
+    /// F70: `--mirror`'s destination layout (a 1:1 mirrored tree) and `--backup-type`'s (a manifest
+    /// plus per-generation subfolders) cannot coexist -- `Args::validate()` rejects the combination
+    /// at startup, and the editor must not write a proposal that only fails hours later.
+    #[test]
+    fn mirror_and_backup_type_cannot_combine() {
+        let config = config_from("source = \"D:/src\"\ndest = \"E:/dst\"\nmirror = true\n");
+        let mut draft = draft_for(&config, "job1");
+        draft.backup_type = Some(BackupType::Full);
+
+        let error = apply_draft(Some(&config.defaults), &JobConfig::default(), &draft)
+            .expect_err("must be refused");
+        assert!(
+            matches!(error, IngestError::BackupTypeAndMirrorConflict),
+            "got {error:?}"
+        );
+
+        // Checked against the *resulting* mirror value, same reasoning as the `no_prescan` check
+        // above: a job turning mirror off in this same edit is no longer mirroring.
+        draft.mirror = false;
+        let result = apply_draft(Some(&config.defaults), &JobConfig::default(), &draft)
+            .expect("no longer mirroring, so no conflict");
+        assert_eq!(result.backup_type, Some(BackupType::Full));
         assert_eq!(result.mirror, Some(false));
     }
 
