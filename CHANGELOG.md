@@ -21,6 +21,8 @@ For full technical detail behind any entry, see `ANALYSIS.md` (defect list, `D<N
 
 ## [Unreleased]
 
+## [7.0.0] - 2026-09-07
+
 ### Added
 - The console can now **resume an interrupted run from a checkpoint**: the *Run* pane finds any
   `*.checkpoint.json` beside the loaded config and offers to continue it, going through the same
@@ -260,7 +262,8 @@ For full technical detail behind any entry, see `ANALYSIS.md` (defect list, `D<N
 
 Initial commit.
 
-[Unreleased]: https://github.com/matrixNeo76/rustcopy/compare/v6.0.0...HEAD
+[Unreleased]: https://github.com/matrixNeo76/rustcopy/compare/v7.0.0...HEAD
+[7.0.0]: https://github.com/matrixNeo76/rustcopy/compare/v6.0.0...v7.0.0
 [6.0.0]: https://github.com/matrixNeo76/rustcopy/compare/v5.4.2...v6.0.0
 [5.4.2]: https://github.com/matrixNeo76/rustcopy/compare/v5.4.1...v5.4.2
 [5.4.1]: https://github.com/matrixNeo76/rustcopy/compare/v5.4.0...v5.4.1

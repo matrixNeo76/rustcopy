@@ -23,7 +23,7 @@
 ; this repo before, and the previous wording of this comment admitted it without preventing it.
 
 #define MyAppName "rustcopy (robocopy-ingest-cli)"
-#define MyAppVersion "6.0.0"
+#define MyAppVersion "7.0.0"
 #define MyAppPublisher "matrixNeo76"
 #define MyAppURL "https://github.com/matrixNeo76/rustcopy"
 #define MyAppExeName "robocopy_ingest.exe"

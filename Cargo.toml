@@ -52,7 +52,7 @@ windows-sys = { version = "0.61", features = ["Win32_Storage_FileSystem", "Win32
 keyring = { version = "3", default-features = false, features = ["windows-native"] }
 
 [workspace.package]
-version = "6.0.0"
+version = "7.0.0"
 edition = "2021"
 # Verified in CI by the `msrv` job, not asserted: 1.74 was declared here for months
 # while the dependency tree had long since moved past it (time@0.3.54 requires 1.88).
