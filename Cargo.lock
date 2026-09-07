@@ -3624,6 +3624,7 @@ dependencies = [
 name = "rustcopy-gui"
 version = "7.0.0"
 dependencies = [
+ "dirs",
  "rustcopy-core",
  "serde",
  "serde_json",

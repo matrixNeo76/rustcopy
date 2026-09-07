@@ -24,6 +24,7 @@ pub mod crypto;
 pub mod disk_space;
 pub mod engine;
 pub mod errors;
+pub mod example_workspace;
 pub mod exit_code;
 pub mod generations;
 pub mod gui_api;

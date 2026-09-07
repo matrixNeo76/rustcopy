@@ -64,6 +64,7 @@ compile_error!(
 use std::path::PathBuf;
 
 use robocopy_ingest::advise::Advice;
+use robocopy_ingest::example_workspace;
 use robocopy_ingest::gui_api::{self, HistoryView, JobSettings, JobSummary, ReportView};
 use robocopy_ingest::job_editor::{self, JobDraft};
 
@@ -265,6 +266,23 @@ async fn set_credential(name: String, secret: String) -> Result<(), String> {
 #[tauri::command]
 async fn delete_credential(name: String) -> Result<(), String> {
     off_thread(move || gui_api::delete_credential(&name)).await
+}
+
+/// Generates a working example (F79) under `Documenti\rustcopy-demo` and returns the TOML's path.
+///
+/// The one part of this command that is not a thin wrapper: resolving the real "Documents" folder
+/// is inherently a desktop-environment concern, not a backup one, so it stays here rather than
+/// pulling a `dirs` dependency into `rustcopy-core` for a CLI that never needs to know what
+/// "Documents" means. Everything that actually writes lives in
+/// `robocopy_ingest::example_workspace`, tested there with a tempdir standing in for this path.
+#[tauri::command]
+async fn create_example_workspace() -> Result<String, String> {
+    let documents = dirs::document_dir()
+        .ok_or_else(|| "impossibile trovare la cartella Documenti".to_string())?;
+    let target = documents.join("rustcopy-demo");
+    off_thread(move || example_workspace::create_example_workspace(&target))
+        .await
+        .map(|path| path.display().to_string())
 }
 
 /// Reads every job of a config file as an editable draft (F54).
@@ -722,6 +740,7 @@ fn main() {
             schedules_referencing,
             set_credential,
             delete_credential,
+            create_example_workspace,
             read_job_drafts,
             suggest_proposal_path,
             write_proposal,

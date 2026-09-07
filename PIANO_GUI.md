@@ -1,7 +1,7 @@
 ---
 type: Reference
 title: Piano della console rustcopy
-description: Documento unico e vivo per la console (F52-F60) — consolida il piano pre-implementazione (stack, ambito, distribuzione, vincoli permanenti) con l'inventario di ciò che espone oggi rispetto alla CLI, le lacune funzionali con un piano in tre onde, un audit visivo/di usabilità con un piano di rifacimento a tre livelli (chiuso), una valutazione di una metodologia a workspace più cinque funzionalità CLI non ancora costruite (implementate), un audit visivo/funzionale reale post-implementazione, un confronto con TeraCopy/Cobian Reflector sulle capacità della GUI, l'analisi di rischio del motore pilotabile (sospesa), un piano per la selezione di percorsi e i campi di configurazione ancora irraggiungibili dalla GUI, e una sincronizzazione rapida senza un file di configurazione esistente. Sostituisce PIANO_GUI_TAURI.md (archiviato) e PIANO_GUI_ESPANSIONE.md (questo stesso file, rinominato).
+description: Documento unico e vivo per la console (F52-F60) — consolida il piano pre-implementazione (stack, ambito, distribuzione, vincoli permanenti) con l'inventario di ciò che espone oggi rispetto alla CLI, le lacune funzionali con un piano in tre onde, un audit visivo/di usabilità con un piano di rifacimento a tre livelli (chiuso), una valutazione di una metodologia a workspace più cinque funzionalità CLI non ancora costruite (implementate), un audit visivo/funzionale reale post-implementazione, un confronto con TeraCopy/Cobian Reflector sulle capacità della GUI, l'analisi di rischio del motore pilotabile (sospesa), un piano per la selezione di percorsi e i campi di configurazione ancora irraggiungibili dalla GUI, una sincronizzazione rapida senza un file di configurazione esistente, e un'analisi di usabilità della scheda Modifica (validazione, verifica percorsi, suggerimenti, esempio funzionante) da un uso estensivo reale. Sostituisce PIANO_GUI_TAURI.md (archiviato) e PIANO_GUI_ESPANSIONE.md (questo stesso file, rinominato).
 status: draft
 generated:
   by: process:claude-code
@@ -1119,6 +1119,338 @@ confine che avrebbe reso falsa una riga di documentazione già esistente il gior
 sarebbe stata implementata. Corretto in §17.3: l'empty state di Job resta solo un **collegamento**
 verso un pannello a sé, che possiede la logica di scrittura/esecuzione — `Jobs.svelte` continua a
 non scrivere né eseguire nulla di suo, esattamente come la tabella di §3 dichiara.
+
+## 18. Modifica: usabilità per un operatore che non conosce già il form (analisi del 7 Set 2026)
+
+Richiesta puntuale dall'utente dopo aver usato la console per la prima volta in modo estensivo:
+undici osservazioni concrete su Modifica (righe 18.1-18.10 sotto), più una lacuna trasversale
+(§18.11) e la richiesta di controllare se le altre schede hanno bisogno delle stesse migliorie
+(§18.12). Ogni punto è stato verificato contro il sorgente reale prima di essere valutato fattibile
+o meno — stesso metodo di ogni altra sezione di questo documento, non un'accettazione alla lettera
+della lista. **Analisi soltanto**: nessuna riga di codice è stata toccata scrivendo questa sezione,
+come richiesto esplicitamente.
+
+### 18.1 L'errore "cannot split the single-job configuration" — cosa significa e perché esiste
+
+Riprodotto: `job1` di `examples/demo-locale.toml` non ha `[[jobs]]` — è un file **a job singolo**,
+i cui campi vivono a livello di primo piano del TOML. `job_editor::build_proposal` (righe 420-434)
+tratta esplicitamente questo caso: un solo draft il cui nome coincide con quello del job esistente
+resta nella forma a job singolo; **qualunque altra combinazione** (compreso "+ Nuovo job" seguito da
+"Scrivi proposta", che produce due draft) viene rifiutata con
+`IngestError::EditorCannotSplitSingleJobConfig`. Non è un bug: il commento del modulo lo dichiara
+("turning it into a multi-job file changes what every one of those fields means, so the editor
+declines rather than doing it silently") ed è coerente con la regola F54 — un cambiamento di
+struttura del file così ampio non deve accadere in silenzio dietro un click. **La criticità reale è
+nella comunicazione, non nella regola**: il messaggio ("add the [[jobs]] section by hand first") è
+in inglese tecnico e presume che l'operatore sappia già cosa significhi "aggiungere `[[jobs]]` a
+mano" — esattamente il tipo di conoscenza che una GUI dovrebbe evitare di richiedere. Verificato che
+**non esiste oggi alcun percorso nel core** per convertire esplicitamente un file a job singolo in
+formato `[[jobs]]` (il `match` in `build_proposal` è esaustivo: vuoto, singolo-che-combacia, o
+rifiuto) — offrire un pulsante "Converti" richiederebbe una nuova capacità del core, non solo un
+messaggio migliore, ed è una decisione di design a sé (vedi F78 sotto: solo la metà "messaggio
+comprensibile" è proposta ora).
+
+### 18.2 Campo Nome — nessuna validazione
+
+Verificato in `job_editor::apply_draft`: `draft.name` viene usato letteralmente (`.clone()`) senza
+alcun controllo sui caratteri, e finisce dentro `lib.rs::namespaced_path` che lo interpola
+direttamente in un nome di file (`format!("{stem}.{name}.{ext}")`). Un nome contenente `\ / : * ? "
+< > |` (caratteri riservati Windows) o uno dei nomi di dispositivo riservati (`CON`, `PRN`, `AUX`,
+`NUL`, `COM1`-`9`, `LPT1`-`9`) produce un errore di I/O criptico al primo report/cache/manifest
+scritto — non alla scrittura della proposta, ma ore dopo, alla prima esecuzione pianificata: esattamente
+la classe di problema che il commento di `InvalidThreads` in questo stesso file (`job_editor.rs`)
+avverte di non lasciare aperta. **Fattibile e a basso rischio**: nessun helper di sanificazione esiste
+già nel progetto (verificato, `grep` vuoto), quindi va scritto da zero, ma è un controllo puramente
+per caratteri vietati, non un'euristica. Proposto in due metà, stesso schema di F70
+(`BackupTypeAndMirrorConflict`): un controllo proattivo in `apply_draft` (nuovo `IngestError`, il
+core lo rifiuta comunque un giorno se qualcuno modifica il TOML a mano) più la disabilitazione
+lato form con un messaggio immediato.
+
+### 18.3/18.4 Sorgente e Destinazione — verifica esistenza e conteggio (stesso F-number, due campi)
+
+Verificato: **non esiste oggi alcun comando Tauri** che ispezioni un percorso arbitrario (elenco
+completo in `main.rs`, 17 comandi, nessuno fa statistica su una cartella scelta a mano) — andrebbe
+scritto da zero, ma senza nuova logica di scansione: `scan::inventory(root, pattern, follow_links,
+exclude_dirs, exclude_files, min_age_days, max_age_days) -> InventorySummary { total_files,
+total_bytes }` esiste già e cammina l'albero **senza materializzare la lista dei file** — esattamente
+lo scopo con cui F2.2/F2.6 lo hanno scritto (il conteggio per la barra di progresso). Un comando
+`inspect_path` è un involucro sottile, stesso pattern `off_thread(move || scan::inventory(...))`
+di ogni altro comando bloccante in `main.rs`. **Criticità reale, esplicitamente anticipata
+dall'utente stesso** ("se non richiede troppo tempo"): questo progetto ha un profilo reale a 1.34M
+file (`_ops_reports/full-profile-test.json`) su cui una scansione completa richiede minuti, non
+secondi — il pulsante deve essere un'azione manuale esplicita (mai automatica ad ogni tasto premuto),
+mostrare uno stato di attesa onesto, e la copia deve dire chiaramente che un albero molto grande può
+richiedere tempo, non implicare un risultato istantaneo. **Asimmetria da tenere nella scrittura dei
+testi**: una Destinazione inesistente è il caso **normale** per un primo backup (F68 lo ha già
+mostrato per il picker di cartelle) — "non esiste" lì è un'informazione neutra, non un avviso; per la
+Sorgente invece un percorso inesistente è quasi sempre un errore reale da segnalare con più
+enfasi. Nessun conteggio di *cartelle* separato da quello dei file: `InventorySummary` espone solo
+`total_files`/`total_bytes` — aggiungerlo è un contatore in più nello stesso walk, a costo marginale,
+non una lacuna che blocca l'implementazione.
+
+### 18.5/18.9 Pattern ed Escludi file — suggerimenti
+
+Nessun ostacolo tecnico: un `title=""` sul campo più una didascalia statica sotto, stesso linguaggio
+visivo già in uso per `keep_generations`/Mirror. Pattern: valori comuni da mostrare come suggerimento
+(`*` tutti i file, `*.pdf`, `*.jpg;*.png;*.gif`, per estensione singola/multipla). Escludi file:
+pattern comuni da offrire come scorciatoie cliccabili oltre alla didascalia, non solo testo statico
+— `*.tmp`, `*.log`, `Thumbs.db`, `desktop.ini`, `~$*` (file temporanei Office) — senza costringere a
+digitarli, un click li aggiunge alla lista già presente (mai sostituisce quanto scritto a mano).
+
+### 18.6/18.7 Thread e Tentativi — default e guida
+
+Verificato in `cli.rs`: `--threads` di default è il conteggio di CPU logiche (`default_threads()`,
+clampato a 1-128), `--retries` è `3`, `--retry-wait-seconds` è `5` — nessuno di questi default è
+oggi visibile nel form (il campo è vuoto quando `draft.threads`/`draft.retries` sono `None`, che
+significa "usa il default", ma un campo vuoto non comunica quale sia quel default). **Fattibile e a
+costo quasi zero**: un `placeholder` che mostra il valore di default reale (letto una volta dal
+comando `read_job_drafts` esistente, non serve un nuovo comando) invece di un campo che sembra
+"niente" — coerente con come `report_path` dovrebbe comportarsi (§18.8 sotto). **Riserva sulla
+richiesta di un `<select>` con preset per Thread**: il valore giusto dipende dal tipo di destinazione
+(un NAS/condivisione SMB spesso *peggiora* con più thread, un disco locale SSD ne beneficia) — un
+menu con preset del tipo "aggressivo/conservativo" darebbe una falsa sicurezza su un valore che la
+GUI non può conoscere con certezza (non sa se la destinazione è locale o di rete). Proposta più onesta:
+tenere il campo numerico libero, aggiungere una didascalia con la guida testuale che le note esistenti
+già danno altrove (`scripts/benchmark-threads.ps1`, `RUNBOOK.md`) — "verificato empiricamente meglio"
+resta una misura, non un default che la GUI può indovinare. Tentativi: stessa idea, placeholder con
+`3` più una riga che spiega quando alzarlo (destinazioni di rete instabili) o abbassarlo (velocità
+di fallimento su un errore reale, non transitorio).
+
+### 18.8 Campo Report — non comunica il proprio default
+
+`report_path` vuoto (`null`) è già il comportamento corretto — significa "usa il default del core"
+(`./robocopy_ingest_report.json`, risolto contro la cartella del file di configurazione una volta
+avviato) — ma un campo visivamente vuoto non lo dice. **Non riempirlo con un valore letterale**:
+scrivere un valore esplicito nella proposta cambierebbe la semantica da "eredita/usa il default" a
+"questo job impone questo percorso", una differenza reale che `pin()` distingue apposta. Il fix
+corretto è solo di presentazione: un `placeholder` col percorso di default reale, il campo resta
+vuoto finché l'operatore non digita qualcosa di suo.
+
+### 18.10 backup_type e le checkbox — nessun aiuto inline
+
+Le spiegazioni **esistono già**, ma solo in Aiuto (`Help.svelte`, sezione "Termini che la console
+usa": mirror, generazione/ciclo, verifica rapida) — un operatore che non ha mai aperto quella scheda
+non le vede mai mentre compila il form. Fattibile a costo quasi zero: `title=""` su ciascun controllo
+con lo stesso testo già scritto per Aiuto (non va riscritto da zero, va **riusato** — la stessa
+disciplina di F71 verso `Run.svelte`), più una riga di didascalia per `backup_type` che dice in una
+frase la differenza fra full/incremental/differential (oggi assente sia in Modifica che in Aiuto:
+anche Aiuto non spiega i tre valori, solo il concetto generale di "generazione, ciclo").
+
+### 18.11 Nessuna cartella d'esempio raggiungibile per chi ha installato il prodotto
+
+**✅ Implementato e verificato 7 Set 2026** — esattamente coi vincoli descritti sotto: cartella
+fissa (`Documenti\rustcopy-demo`), rifiuto atomico di sovrascrittura (`std::fs::create_dir`, non
+`create_dir_all`), contenuto fisso e dichiarato, nessun parametro che lo generalizzi. Un modulo core
+a sé (`example_workspace.rs`), non dentro `gui_api.rs` che è documentato read-only nel proprio
+header — stessa ragione per cui `crypto.rs` (F56) è separato. Dettaglio completo: riga F79 di
+`ROADMAP.md`.
+
+**Prima di F79 (analisi originale — stato storico, superato dall'implementazione):**
+Verificato in `installer/rustcopy.iss`, sezione `[Files]`: l'installer impacchetta **solo** i tre
+eseguibili più `README.md`/`RUNBOOK.md`/`CLAUDE.md` (come `NOTES.md`) — `examples/` non compare da
+nessuna parte (`grep -n "examples\|demo" installer/rustcopy.iss` non trova nulla). Questo significa
+che **ogni** riferimento a `examples/demo-locale.toml` nel prodotto installato punta a un file che
+non esiste su quella macchina:
+- L'empty state di Job (`Jobs.svelte`): "Non hai un file? Prova examples/demo-locale.toml...".
+- La prima voce di `Help.svelte`, sezione "Da dove si comincia": la identica indicazione, con
+  istruzioni su come lanciarlo dalla CLI.
+
+Per chiunque abbia scaricato l'installer (non un checkout del repository) questo è un vicolo cieco:
+il prodotto stesso indica un punto di partenza che non può raggiungere. È la causa diretta
+dell'osservazione dell'utente ("non si sa come iniziare"). **Fattibile**: un pulsante "Crea un
+esempio in Documenti" che genera, in una cartella fissa e dedicata (`Documenti\rustcopy-demo\`, mai
+la cartella Documenti stessa), una manciata di file finti di pochi byte più un TOML che li punta
+l'uno all'altro — stesso spirito di `examples/demo-locale.toml` ma generato invece di distribuito.
+**Categoria di azione nuova rispetto a tutto il resto della console**: ogni altra scrittura della
+console (`write_proposal`, F56 credenziali, F71 QuickSync) scrive **un file che l'operatore ha
+scelto**, mai contenuto arbitrario scelto dalla console stessa — questo pulsante creerebbe file *e*
+cartelle il cui contenuto non è mai stato negoziato con l'operatore, per quanto minuscolo e innocuo.
+Non è vietato da F61 (non cancella, non pianifica, non installa, non richiede privilegi), ma merita
+di essere trattato come una decisione a sé, non incluso implicitamente in una riga di "migliorie
+varie" — per questo resta proposto con vincoli espliciti nella riga F79 di `ROADMAP.md`, non deciso
+qui: cartella fissa, mai sovrascrive (stesso `create_new` rifiuta-se-esiste di `write_proposal`),
+contenuto fisso e dichiarato, nessun parametro che lo generalizzi.
+
+### 18.12 Le altre schede hanno bisogno delle stesse migliorie?
+
+Controllate `Settings.svelte`, `Run.svelte`, `Jobs.svelte`, `Report.svelte`/`History.svelte` (già
+lette per intero in sessioni precedenti di questo documento) contro lo stesso criterio — un campo o
+un concetto senza alcuna spiegazione raggiungibile senza aprire Aiuto. **Risultato per lo più
+negativo, non per pigrizia della verifica**: `Settings.svelte` mostra già una didascalia (`caution`)
+per ogni impostazione che ha una conseguenza, letta dal core (`gui_api::read_settings`), non
+inventata lato frontend; `Run.svelte` ha già testo esplicativo sopra i pulsanti (fermare non uccide
+il processo, spiegato inline) e l'empty state di Job già lo dichiara ("Non può accendere il mirror,
+forzare un purge..."). Nessuna di queste schede ha campi di **immissione libera** paragonabili a
+quelli di Modifica (Pattern, Thread, Escludi file...) — sono tutte lettura o, per Esegui, un solo
+percorso già gestito da `PathBar`. **La vera eccezione è proprio `Jobs.svelte`**, per il motivo di
+§18.11: la sua stessa didascalia rimanda a un file che l'installer non porta. Non trovata alcuna
+seconda scheda con lo stesso genere di lacuna di Modifica — l'istinto dell'utente ("tutta la sezione
+Modifica mi sembra da rivedere") era corretto nel puntare lì come area concentrata di intervento,
+non generalizzabile automaticamente al resto della console.
+
+### 18.13 Priorità proposta
+
+In ordine di rapporto valore/rischio, non di apparizione nella lista originale:
+
+1. **F79** — generatore di esempio in Documenti + correzione dei due rimandi rotti (`Jobs.svelte`,
+   `Help.svelte`). Sblocca "come inizio" per chiunque non sia uno sviluppatore col repository
+   clonato — il gap più bloccante di tutti quelli trovati. ✅ Completato 7 Set 2026.
+2. **F80** — `encrypt_aes256` per job in `JobConfig`, raggiungibile da Modifica. Oggi la cifratura
+   è irraggiungibile dalla GUI e dal TOML per qualunque job in un batch — non attrito, un'assenza
+   totale. Priorità alta ma **richiede una decisione esplicita** (§18.14): tocca il core
+   (`JobConfig`, `run_jobs`), non solo la GUI, a differenza di ogni altra riga di questa lista.
+3. **F73** — verifica Sorgente/Destinazione (esistenza + conteggio). Il valore pratico più alto fra
+   le richieste originali di solo-GUI, zero nuova logica di scansione da scrivere.
+4. **F72** — validazione Nome. Piccolo, ma previene un errore che altrimenti si scopre solo ore
+   dopo, alla prima esecuzione pianificata.
+5. **F76** — placeholder Report col default reale. Costo quasi nullo.
+6. **F74/F75/F77** — suggerimenti Pattern/Escludi file/Thread/Tentativi/backup_type/checkbox. Stesso
+   tipo di intervento (didascalie/tooltip), raggruppabile in un solo giro di lavoro.
+7. **F78** — messaggio comprensibile per l'errore di split job singolo. Non blocca nessun flusso
+   esistente (l'errore compare solo tentando l'azione non supportata), ma chiude il punto di
+   partenza di questa stessa analisi (§18.1).
+
+### 18.14 Le credenziali di Impostazioni non sono raggiungibili da alcun job
+
+Osservazione aggiuntiva dell'utente, arrivata dopo aver già letto la prima stesura di questa
+sezione (§18.1-§18.13): la numerazione qui sotto continua da dove l'analisi era arrivata, non
+riparte da zero. Verificato prima di rispondere, stesso metodo di ogni altro punto sopra.
+
+Aprendo `job1` in Modifica non c'è alcuna correlazione visibile con le credenziali salvate in
+Impostazioni ("Gestione credenziali", F56). aprendo `job1` in Modifica non c'è alcuna
+correlazione visibile con le credenziali salvate in Impostazioni ("Gestione credenziali", F56).
+Verificato il motivo esatto, non assunto: **`JobConfig` non ha affatto un campo `encrypt_aes256`
+o `decrypt`** (i 34 campi della struct, contati in `config.rs`, non li includono — verificato
+leggendone l'elenco completo). `--encrypt-aes256`/`--decrypt` esistono **solo** su `cli.rs::Args`,
+popolati dalla riga di comando reale con cui il processo è stato invocato. Questo non è
+un'omissione della sola GUI: è vero anche scrivendo il TOML a mano. Conseguenza pratica, verificata
+in `main.rs`: `run_jobs` (la pipeline `[[jobs]]`) ricostruisce l'`Args` di ogni job da un clone
+dell'invocazione CLI **originale**, e poiché `encrypt_aes256`/`decrypt` non sono in `JobConfig`,
+`merged_over` non ha nulla da cui popolarli per job — restano quindi quelli dell'invocazione
+originale, **identici per ogni job del batch**. Oggi non esiste alcun modo, né da GUI né a mano nel
+TOML, di cifrare `job1` con una chiave e `job2` con un'altra nello stesso file: la cifratura è
+un'impostazione dell'intera invocazione, non del singolo job. Una credenziale salvata in
+Impostazioni è quindi raggiungibile **solo** digitando `--encrypt-aes256 keyring:NOME` sulla riga
+di comando ad ogni lancio — mai da un campo di Modifica, perché quel campo non esiste in nessuna
+scheda della console oggi.
+
+**Da non confondere con un gap già noto e già deciso**: `webhook_url`/`pre_command`/`post_command`
+**sono** già in `JobConfig` (per job, non condivisi) ma volutamente esclusi da `JobDraft` — F55,
+metà scrittura, decisione ancora aperta per il rischio di iniezione di comandi (§2.3, vincolo
+permanente 2). Questo è un caso diverso e più a monte: qui il campo non esiste proprio nel formato
+TOML, non è solo escluso dal form.
+
+**Fattibilità**: richiede una modifica reale del core, non solo della GUI — a differenza di F72-F79
+sopra. Servirebbe: (1) aggiungere `encrypt_aes256: Option<String>` a `JobConfig` (probabilmente
+**non** `decrypt`: quel flag è concepito per accompagnare `--restore-from`, un'operazione singola e
+deliberata, non una voce di routine in un batch `[[jobs]]` — estenderlo per-job aggiungerebbe
+complessità senza un caso d'uso chiaro, a differenza di "cifra il backup di questo job con questa
+chiave" che è un bisogno reale e ricorrente); (2) wiring in `merged_over`/`apply_draft`, stesso
+schema di `backup_type` (F70); (3) in `run_jobs`, usare il valore effettivo **del job**, non più
+quello condiviso dell'invocazione, per la chiamata a `encrypt_destination`; (4) validazione
+equivalente a `Args::validate()`'s `EncryptAndDecryptConflict`, per job invece che per invocazione.
+**Vincolo di sicurezza da preservare nel disegno della UI**: il campo in Modifica dovrebbe accettare
+**solo** la forma `keyring:NOME` (mai una chiave letterale) — scrivere una chiave in chiaro nel TOML
+vanificherebbe l'intero scopo di F56, che esiste apposta perché una chiave letterale è visibile
+nella process list e ora anche in un file su disco. Non è una decisione da prendere implicitamente
+insieme alle altre migliorie: cambia la forma di `JobConfig`, tocca `run_jobs`, e introduce la prima
+vera dipendenza visibile fra Impostazioni e Modifica — merita una conferma esplicita a sé, come F79.
+
+### 18.15 Audit completo delle sette schede (richiesto dall'utente dopo §18.1-§18.14)
+
+Rilette per intero, riga per riga, con la lente più ampia di "qualunque criticità", non solo la
+lente originale "manca un aiuto inline": `Jobs.svelte`, `Settings.svelte`, `Run.svelte`,
+`Report.svelte`, `History.svelte`, `PathBar.svelte` (condiviso da tutte le schede con un percorso).
+Due criticità reali trovate, entrambe verificate leggendo il codice, non ipotizzate:
+
+**`History.svelte` colora di rosso un codice di uscita che il suo stesso commento dichiara non
+essere un errore.** Riga 63-64: *"Exit codes are a contract with schedulers... so the console
+shows what each one means rather than colouring non-zero red. A 4 is not a failed copy."* Riga
+230-232, poche righe sotto lo stesso commento: `run.exit_code === 0 ? 'emerald' : 'red'` — **ogni**
+codice diverso da zero, incluso il 4 (copiato ma verifica fallita, l'esempio che il commento cita
+esplicitamente), diventa rosso, la stessa colorazione di un fallimento totale. Confronto diretto con
+`Run.svelte` (riga 386-388): lì lo stesso schema usa **amber**, non rosso, per "diverso da zero" —
+`History.svelte` non è coerente nemmeno con la convenzione che il resto della console già segue.
+Non un'osservazione stilistica: un operatore che scorre lo storico e vede una riga rossa la legge
+come "questo backup non è andato bene", quando l'esito 4 significa "i dati sono arrivati, solo la
+verifica ha trovato una differenza" — l'esatta distinzione che questo progetto ripete più volte
+essere la ragione per cui l'exit code 4 esiste (`Help.svelte`, la tabella degli esiti). **Legata a un
+debito già tracciato**: `EXIT_MEANING` (riga 65-73 dello stesso file) è una seconda copia hardcoded
+della mappa exit-code→significato che vive nel core (`runner::exit_code_meaning`), già segnalata in
+`CLAUDE.md` ("va tenuta manualmente sincronizzata ad ogni nuovo exit code finché non viene sostituita
+con una vera chiamata... esposta via `gui_api`") ma mai risolta. Le due criticità condividono la
+stessa causa (questo file reinventa localmente ciò che il core già sa) e la stessa correzione:
+esporre `runner::exit_code_meaning` a un nuovo comando Tauri, usarlo al posto della mappa locale, e
+allineare la colorazione alla convenzione già stabilita da `Run.svelte` (amber per "diverso da zero
+ma non necessariamente un fallimento", non rosso).
+
+**`Report.svelte`: "Anteprima ripristino" può fallire senza spiegazione se non è mai stato aperto un
+config in questa sessione.** Verificato in `previewRestore()` (riga 33-51): passa `session.
+configPath` al comando `preview_restore` — e per D26 (già corretto, riga corrispondente in
+`ROADMAP.md`) la cartella di quel config è la cwd che rende leggibili i percorsi relativi di un
+report. Se l'operatore ha aperto Report direttamente (mai toccato Job/Esegui/Modifica in questa
+sessione), `session.configPath` è vuoto — l'anteprima parte comunque, senza cwd, e su un report a
+percorsi relativi fallisce con lo stesso "fatal error, no files copied" che D26 aveva già trovato,
+stavolta non per un bug del codice ma per l'assenza silenziosa del prerequisito. Nessun avviso nella
+scheda lo dice prima del click. Fattibile a basso costo: un avviso quando `session.configPath` è
+vuoto ("l'anteprima potrebbe fallire su percorsi relativi: apri prima il file di configurazione di
+questa run in un'altra scheda"), o mostrare quale config verrà usato quando non è vuoto — coerente
+con quanto già fa D26 stesso, solo reso visibile prima del click invece che scoperto dopo.
+
+**Nessun'altra criticità di rilievo trovata** in `Jobs.svelte`, `Settings.svelte`, `PathBar.svelte`:
+`PathBar.svelte` in particolare è il componente più curato dell'intera console (drag&drop, chiusura
+al click esterno, tasto Escape, collasso dei margini già risolto — §16.1/F68) e non ha mostrato
+alcuna lacuna nuova alla rilettura. `Settings.svelte` ha già una didascalia per ogni impostazione
+che porta una conseguenza, letta dal core. Coerente con quanto già concluso in §18.12: Modifica resta
+l'area con la concentrazione più alta di criticità reali, non l'unica, ma le uniche altre due trovate
+in questo giro (`History.svelte`, `Report.svelte`) sono comunque puntuali e isolate, non sistemiche
+come in Modifica.
+
+### 18.16 Priorità aggiornata con F81/F82
+
+Entrambe le nuove voci sono isolate e a basso rischio — non richiedono la stessa cautela di F80
+(che tocca `JobConfig`/`run_jobs`). Inserite nella sequenza già proposta in §18.13:
+
+- **F81** (colorazione/`EXIT_MEANING` di `History.svelte`) — stesso ordine di grandezza di F76,
+  subito dopo.
+- **F82** (avviso "Anteprima ripristino" senza config) — stesso ordine di grandezza di F78, in coda
+  al gruppo di didascalie/messaggi.
+
+Ordine complessivo aggiornato: F79 → F80 → F73 → F72 → F76 → **F81** → F74/F75/F77 → F78 → **F82**.
+
+### 18.17 Criticità trovate rileggendo questa stessa sezione
+
+Stesso metodo di §14.4/§16.3/§17.5, applicato prima di presentare l'analisi. Quattro correzioni,
+le prime due dal primo giro (§18.1-§18.14), le ultime due dal giro di audit completo (§18.15-18.16):
+
+- La prima stesura di §18.6 proponeva senza riserve il `<select>` con preset di thread richiesto
+  dall'utente. Rileggendo insieme alla nota già scritta altrove in questo stesso documento sul
+  throughput SMB/NAS (§1, `RUNBOOK.md`), un preset fisso avrebbe dato una falsa certezza su un
+  valore che dipende dal tipo di destinazione, non deducibile lato GUI — corretto in una
+  raccomandazione esplicita di **non** implementarlo come richiesto alla lettera, con la
+  motivazione, lasciando la decisione finale all'utente invece di implementare silenziosamente
+  quanto sembrava più comodo.
+- La prima stesura di §18.11 non specificava alcun vincolo per il generatore di esempio, trattandolo
+  come un'estensione naturale di F71 (QuickSync). Riletta contro la disciplina F61/F54 di questo
+  stesso documento ("l'editor scrive solo ciò che l'operatore ha scelto"), è una categoria diversa
+  — genera contenuto, non solo un file di configurazione — e va proposta con vincoli espliciti
+  (cartella fissa, mai sovrascrive, contenuto dichiarato) invece che come una riga in più nella
+  stessa lista di migliorie a basso rischio.
+- **Errore di processo, non di contenuto**: la prima stesura di §18.15/§18.16 (l'audit completo
+  richiesto dall'utente) è stata scritta fisicamente **prima** di §18.15 già esistente (la sezione
+  "Criticità" di questo stesso paragrafo), risultando in un file con `### 18.16` e `### 18.17` che
+  comparivano prima di `### 18.15` nell'ordine fisico — lo stesso identico errore già commesso e
+  corretto scrivendo F68 in questa stessa sessione (vedi la nota corrispondente in `CLAUDE.md`).
+  Corretto rinumerando in ordine fisico prima di presentare l'analisi, non dopo che qualcuno lo
+  notasse. Non un errore che si autocorregge da solo: va controllato esplicitamente ogni volta che
+  un inserimento avviene "prima di" una sezione esistente invece che in coda al documento.
+- **Limite dichiarato della proposta F81**: allineare `History.svelte` alla convenzione amber/
+  emerald di `Run.svelte` è una correzione di **coerenza interna**, non un'affermazione che quello
+  schema binario (0 contro diverso-da-zero) sia il migliore possibile — `Run.svelte` stesso non
+  distingue un 2 (errore d'uso) da un 4 (verifica fallita), li tratta entrambi come "attenzione".
+  Un'eventuale colorazione per-codice più fine (rosso solo per 1/2, amber per 3/4/5/6) sarebbe una
+  proposta diversa e più ampia, non fatta qui: F81 chiude solo la contraddizione fra il commento e
+  il codice nello stesso file, non ridisegna la semantica dei colori per l'intera console.
 
 ## Riferimenti
 

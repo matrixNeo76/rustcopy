@@ -17,6 +17,28 @@
   // ("Scrive? No") stays true: the write/start logic lives in QuickSync.svelte, this pane only
   // decides whether to show it (PIANO_GUI.md §17.3/§17.5).
   let showQuickSync = $state(false);
+  // F79: the installer never ships `examples/` (PIANO_GUI.md §18.11) -- "prova
+  // examples/demo-locale.toml" below only ever meant something for a repository checkout. This
+  // generates the same kind of thing under the operator's own Documents folder instead, so the
+  // empty state has a real answer regardless of how rustcopy got onto the machine.
+  let exampleError = $state(null);
+  let exampleBusy = $state(false);
+
+  async function createExample() {
+    exampleError = null;
+    exampleBusy = true;
+    try {
+      // Loading it straight away is the success signal: the empty state this button lives in
+      // disappears the moment `jobs` is non-empty, replaced by the table showing what was just
+      // generated -- no separate "fatto!" banner needed on top of that.
+      session.configPath = await invoke("create_example_workspace");
+      await load();
+    } catch (e) {
+      exampleError = String(e);
+    } finally {
+      exampleBusy = false;
+    }
+  }
 
   async function load() {
     error = null;
@@ -135,9 +157,30 @@
       lines={[
         "Questa scheda elenca i job che un file TOML descrive: sorgente, destinazione, tipo di backup e se la verifica è attiva.",
         "Un job che cancella in destinazione (mirror) viene segnalato in modo distinto, perché è l'impostazione più distruttiva che possa avere.",
-        "Non hai un file? Prova examples/demo-locale.toml: copia qualche file finto del repository in una cartella accanto, quindi non può toccare nulla di tuo.",
+        "Hai clonato il repository? Prova examples/demo-locale.toml: copia qualche file finto in una cartella accanto, quindi non può toccare nulla di tuo.",
       ]}
     />
+
+    <div class="mt-3 flex items-center gap-2">
+      <button
+        class="rounded border border-slate-300 px-2 py-1 text-xs disabled:opacity-40
+               dark:border-slate-700"
+        onclick={createExample}
+        disabled={exampleBusy}
+      >{exampleBusy ? "Creazione…" : "Crea un esempio in Documenti"}</button>
+      <span class="text-[11px] text-slate-500">
+        Genera pochi file finti e un file di configurazione già pronto in
+        <code>Documenti\rustcopy-demo</code>, poi lo apre qui.
+      </span>
+    </div>
+    {#if exampleError}
+      <p
+        class="mt-2 rounded border border-red-300 bg-red-50 px-2 py-1 text-xs text-red-800
+               dark:border-red-800 dark:bg-red-950 dark:text-red-200"
+        role="alert"
+      >{exampleError}</p>
+    {/if}
+
     {#if showQuickSync}
       <QuickSync />
       <button

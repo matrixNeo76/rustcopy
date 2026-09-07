@@ -72,6 +72,7 @@ crates/
 │       ├── schedule.rs      # Windows Task Scheduler integration (--install-schedule/--uninstall-schedule, F36).
 │       ├── service.rs       # Generic Windows Service SCM integration (F37/F41), shared by both binaries.
 │       ├── crypto.rs        # Zero-Trust AES-256-GCM streaming encryption manager (RCE1 container).
+│       ├── example_workspace.rs # F79: generates a working demo under the operator's own Documents folder.
 │       ├── exit_code.rs     # Robocopy bitmask exit code decoder & status rules.
 │       ├── errors.rs        # IngestError enum & retry classification.
 │       ├── oem_codec.rs     # CP850 decode table + GetOEMCP() runtime check.
@@ -98,7 +99,7 @@ crates/
 
 - **Never declare success without running `cargo test --workspace --exclude rustcopy-gui --locked --all-targets`** (and the same with `--features rustcopy-cli/notify-server` if you touched `notify_server.rs`, `notify_sink.rs`, or `crates/rustcopy-cli/src/notify_server_bin.rs`). These are the commands `ci.yml` runs.
 - **A green test run says nothing about the GUI.** No test in this repository opens a window; D22 shipped a console that could not render its own interface with every check passing. Anything touching `crates/rustcopy-gui` has to be verified by building it and looking at it.
-- All **486 unit and integration tests** (default build) MUST pass before committing changes. With `--features rustcopy-cli/notify-server`, **501** must pass. Exclude the GUI crate from the workspace run (`--exclude rustcopy-gui`), exactly as CI does; it has its own job.
+- All **488 unit and integration tests** (default build) MUST pass before committing changes. With `--features rustcopy-cli/notify-server`, **503** must pass. Exclude the GUI crate from the workspace run (`--exclude rustcopy-gui`), exactly as CI does; it has its own job.
 - Cross-Platform Constraint: Unit tests inside `src/engine/robocopy.rs`, `src/integrity.rs`, `src/notify.rs`, `src/notify_sink.rs`, etc. MUST pass on Linux and macOS using `ScriptedRunner`/scripted test doubles.
 
 ### Test Commands:
