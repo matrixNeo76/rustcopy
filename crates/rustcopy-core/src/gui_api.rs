@@ -441,6 +441,66 @@ pub fn delete_credential(name: &str) -> Result<(), IngestError> {
     }
 }
 
+/// What the F73 "check" button in Modifica shows for a Sorgente/Destinazione field: whether the
+/// path exists, and, for an existing directory, how much is under it.
+#[derive(Debug, Clone, Serialize)]
+pub struct PathInspection {
+    pub exists: bool,
+    pub is_dir: bool,
+    pub total_files: u64,
+    pub total_dirs: u64,
+    pub total_bytes: u64,
+}
+
+/// Inspects `path`: existence, and — for an existing directory — file/folder counts and total
+/// size via the same lightweight walk `--no-prescan` uses (`scan::inventory`), deliberately no
+/// new scanning logic. This project has a measured 1.34M-file profile where a full walk takes
+/// minutes, not seconds (`_ops_reports/full-profile-test.json`) — the caller is expected to run
+/// this only on an explicit button press, never on every keystroke, and to show an honest
+/// waiting state rather than implying an instant result.
+///
+/// A missing path or an existing non-directory reports `exists`/`is_dir` plainly with zero
+/// counts, rather than erroring: for Destinazione especially, "does not exist yet" is the normal
+/// case for a first backup (F68), not a failure.
+///
+/// Unfiltered on purpose (`*` pattern, no excludes, no age bounds): this answers "what is
+/// actually at this path", not "what would this specific job's current draft select" — the two
+/// diverge while a job is still being edited, and the check should not appear to fail just
+/// because the pattern field is empty or mid-edit.
+///
+/// `anchor` resolves a relative `path` the same way [`list_jobs`]/`start_job` already do: a
+/// relative Sorgente/Destinazione in the TOML means relative to the config file, not to whatever
+/// directory the console process happens to have as its own working directory (Desktop, for a
+/// Start Menu shortcut). Without this, the very first live check of this feature failed with "il
+/// percorso non esiste" against a real, existing `demo-data` — found by clicking the button, not
+/// by reading the code, the same way `report_path_for_summary`'s identical anchor bug was found.
+pub fn inspect_path(path: &Path, anchor: &Path) -> Result<PathInspection, IngestError> {
+    let resolved = if path.is_relative() {
+        anchor.join(path)
+    } else {
+        path.to_path_buf()
+    };
+    let exists = resolved.exists();
+    let is_dir = exists && resolved.is_dir();
+    if !is_dir {
+        return Ok(PathInspection {
+            exists,
+            is_dir,
+            total_files: 0,
+            total_dirs: 0,
+            total_bytes: 0,
+        });
+    }
+    let summary = crate::scan::inventory(&resolved, "*", true, &[], &[], None, None)?;
+    Ok(PathInspection {
+        exists,
+        is_dir,
+        total_files: summary.total_files,
+        total_dirs: summary.total_dirs,
+        total_bytes: summary.total_bytes,
+    })
+}
+
 /// Lists the jobs a config file declares, resolved the same way `run_jobs` resolves them.
 ///
 /// Single-job configs (no `[[jobs]]`) yield one entry, so a UI does not need two code paths.
@@ -1778,6 +1838,71 @@ webhook_url = \"https://u:p@notify.internal\"
         let back: Vec<CheckpointSummary> = serde_json::from_str(&json).expect("round-trip");
         assert_eq!(back.len(), 1);
         assert_eq!(back[0].dest, "E:/dst");
+    }
+
+    /// A path that has never existed reports plainly, not as an error -- the ordinary case for a
+    /// first-time Destinazione (F68).
+    #[test]
+    fn inspect_path_reports_a_missing_path_without_erroring() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let missing = dir.path().join("not-yet-created");
+
+        let result =
+            inspect_path(&missing, Path::new(".")).expect("must not error on a missing path");
+        assert!(!result.exists);
+        assert!(!result.is_dir);
+        assert_eq!(result.total_files, 0);
+        assert_eq!(result.total_dirs, 0);
+        assert_eq!(result.total_bytes, 0);
+    }
+
+    /// An existing plain file (not a directory) is a real, distinct answer -- not folded into
+    /// either "missing" or "directory with zero contents".
+    #[test]
+    fn inspect_path_reports_an_existing_file_as_not_a_directory() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let file = dir.path().join("a.txt");
+        std::fs::write(&file, b"hello").expect("write");
+
+        let result =
+            inspect_path(&file, Path::new(".")).expect("must not error on an existing file");
+        assert!(result.exists);
+        assert!(!result.is_dir);
+        assert_eq!(result.total_files, 0);
+    }
+
+    /// An existing directory is walked unfiltered: every file counts, regardless of extension,
+    /// and nested subfolders are counted too.
+    #[test]
+    fn inspect_path_counts_files_dirs_and_bytes_in_an_existing_directory() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        std::fs::create_dir_all(dir.path().join("nested")).expect("mkdir");
+        std::fs::write(dir.path().join("a.txt"), b"12345").expect("write");
+        std::fs::write(dir.path().join("nested/b.dat"), b"1234567890").expect("write");
+
+        let result = inspect_path(dir.path(), Path::new(".")).expect("reads");
+        assert!(result.exists);
+        assert!(result.is_dir);
+        assert_eq!(result.total_files, 2);
+        assert_eq!(result.total_dirs, 1);
+        assert_eq!(result.total_bytes, 15);
+    }
+
+    /// D26-style bug, found live the first time this feature was clicked (not by reading the
+    /// code): a relative Sorgente/Destinazione must resolve against the config file's directory,
+    /// not the console process's own working directory. Regression test for exactly that.
+    #[test]
+    fn inspect_path_resolves_a_relative_path_against_the_anchor() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        std::fs::write(dir.path().join("a.txt"), b"12345").expect("write");
+
+        let result = inspect_path(Path::new("."), dir.path()).expect("reads");
+        assert!(result.exists);
+        assert!(result.is_dir);
+        assert_eq!(result.total_files, 1);
+
+        let result = inspect_path(Path::new("not-here"), dir.path()).expect("reads");
+        assert!(!result.exists);
     }
 
     fn write_config(body: &str) -> (tempfile::TempDir, std::path::PathBuf) {

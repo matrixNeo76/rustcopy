@@ -14,7 +14,7 @@ generated:
 
 `Cargo.toml` = **7.0.0** (bump da 6.0.0, 7 Set 2026 — v6.0.0 era stato taggato 216 commit prima
 ancora che la milestone 7.0.0/console partisse; mai più aggiornato da allora, corretto su decisione
-esplicita dell'utente). Suite di test: **492** (`cargo test --locked --workspace --exclude rustcopy-gui --all-targets`), **507** con `--features rustcopy-cli/notify-server` (più test `#[ignore]` — round-trip reali dei servizi Windows che richiedono elevazione, più due probe di misurazione a scala reale). CI verde su `windows-latest` e `ubuntu-latest` per entrambe le configurazioni, più i job dedicati `gui`, `gui-npm-audit`, `versions` e `docs`.
+esplicita dell'utente). Suite di test: **497** (`cargo test --locked --workspace --exclude rustcopy-gui --all-targets`), **512** con `--features rustcopy-cli/notify-server` (più test `#[ignore]` — round-trip reali dei servizi Windows che richiedono elevazione, più due probe di misurazione a scala reale). CI verde su `windows-latest` e `ubuntu-latest` per entrambe le configurazioni, più i job dedicati `gui`, `gui-npm-audit`, `versions` e `docs`.
 
 **Prima GitHub Release pubblicata, v7.0.0 (7 Set 2026)**: tag e Release annotati sul commit di
 `main` dopo il merge di F70 (F62-F70 tutte incluse), installer `rustcopy-7.0.0-setup.exe` allegato
@@ -225,13 +225,25 @@ priorità, poi autorizzata l'implementazione in sequenza:
   a mano in `env:`/`file:`/forma letterale resta read-only e sopravvive intatto a modifiche non
   correlate — verificato dal vivo in entrambi gli scenari contro il binario ricompilato. Dettaglio:
   riga F80 di `ROADMAP.md`.
-- **F73 è il prossimo**, poi nell'ordine confermato: F72 (validazione Nome), F76 (placeholder
-  Report), F81 (colorazione/`EXIT_MEANING` di `History.svelte`), F74/F75/F77 (tooltip Pattern/
-  Escludi file/Thread/Tentativi/backup_type), F78 (messaggio migliore per l'errore di split job
-  singolo), F82 (avviso Anteprima ripristino senza config in sessione).
+- **F73 chiuso, stesso giorno**: pulsante "Verifica" su Sorgente/Destinazione in Modifica. Nuovo
+  `gui_api::inspect_path`, involucro sottile su `scan::inventory` come previsto — zero nuova logica
+  di scansione, solo un contatore `total_dirs` aggiunto allo stesso walk esistente. Deliberatamente
+  non filtrato: risponde "cosa c'è a questo percorso", non "cosa selezionerebbe il job", le due
+  domande divergono mentre il form è a metà. Il risultato di un controllo si scarta da solo se il
+  campo o il job cambiano dopo il click, invece di restare visibile accanto a un percorso che non
+  descrive più — non previsto dall'analisi originale, emerso durante l'implementazione. **Bug reale
+  trovato al primo click dal vivo** (non in review, non leggendo il codice): il percorso veniva
+  controllato contro la working directory del processo della console, non contro la cartella del
+  file di configurazione — stesso identico difetto già corretto una volta in
+  `report_path_for_summary`. Corretto aggiungendo un parametro `anchor` a `inspect_path`. Dettaglio:
+  riga F73 di `ROADMAP.md`.
+- **F72 è il prossimo**, poi nell'ordine confermato: F76 (placeholder Report), F81 (colorazione/
+  `EXIT_MEANING` di `History.svelte`), F74/F75/F77 (tooltip Pattern/Escludi file/Thread/Tentativi/
+  backup_type), F78 (messaggio migliore per l'errore di split job singolo), F82 (avviso Anteprima
+  ripristino senza config in sessione).
 
 Se questa sessione riprende a metà sequenza (compattazione, nuova sessione), continuare da dove
-`ROADMAP.md` segna l'ultima riga passata da 🟡 a ✅ — non ripartire da F79/F80 se sono già chiusi.
+`ROADMAP.md` segna l'ultima riga passata da 🟡 a ✅ — non ripartire da F79/F80/F73 se sono già chiusi.
 
 **Lavoro precedente, non urgente ma non dimenticato** (aree con lavoro reale trovate prima di
 questo giro, non ancora affrontate):

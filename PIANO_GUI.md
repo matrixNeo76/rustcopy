@@ -1188,6 +1188,19 @@ enfasi. Nessun conteggio di *cartelle* separato da quello dei file: `InventorySu
 `total_files`/`total_bytes` — aggiungerlo è un contatore in più nello stesso walk, a costo marginale,
 non una lacuna che blocca l'implementazione.
 
+**✅ Implementato e verificato 7 Set 2026.** Il conteggio cartelle è stato aggiunto (`total_dirs`),
+esattamente come previsto — costo marginale nello stesso walk. Il risultato di un controllo è
+tenuto valido solo finché descrive ancora il percorso e il job per cui è stato lanciato: modificare
+il campo o cambiare job dopo un click su Verifica scarta silenziosamente la risposta invece di
+mostrarla accanto a un percorso che non descrive più — non previsto esplicitamente in questa
+analisi, emerso durante l'implementazione come la conseguenza ovvia di un controllo manuale su un
+form che il resto del tempo resta modificabile. **Bug reale trovato al primo click dal vivo**: il
+percorso veniva controllato contro la working directory del processo della console, non contro la
+cartella del file di configurazione — su `demo-locale.toml` (percorsi relativi per convenzione)
+"Verifica" rispondeva "non esiste" per `demo-data`, presente e corretto. Stesso difetto già visto
+una volta in `report_path_for_summary`; corretto con lo stesso schema (un parametro `anchor`).
+Dettaglio completo nella riga F73 di `ROADMAP.md`.
+
 ### 18.5/18.9 Pattern ed Escludi file — suggerimenti
 
 Nessun ostacolo tecnico: un `title=""` sul campo più una didascalia statica sotto, stesso linguaggio
@@ -1302,6 +1315,7 @@ In ordine di rapporto valore/rischio, non di apparizione nella lista originale:
    di questa lista — decisione presa e implementazione chiusa. ✅ Completato 7 Set 2026.
 3. **F73** — verifica Sorgente/Destinazione (esistenza + conteggio). Il valore pratico più alto fra
    le richieste originali di solo-GUI, zero nuova logica di scansione da scrivere.
+   ✅ Completato 7 Set 2026.
 4. **F72** — validazione Nome. Piccolo, ma previene un errore che altrimenti si scopre solo ore
    dopo, alla prima esecuzione pianificata.
 5. **F76** — placeholder Report col default reale. Costo quasi nullo.

@@ -32,6 +32,12 @@
   // control itself mutates as the operator types -- using the live draft value as its own floor
   // would let every keystroke redefine the minimum.
   let originalKeepGenerations = $state(new Map());
+  // F73: result of the last "Verifica" click for Sorgente/Destinazione, keyed by which path it
+  // was run against -- so editing the field after a check discards the now-stale answer instead
+  // of showing it next to a path it no longer describes. `null` means "never checked" (or
+  // discarded); never auto-run on every keystroke -- see `gui_api::inspect_path` for why.
+  let sourceCheck = $state(null);
+  let destCheck = $state(null);
 
   // The whole draft is loaded, edited in part, and sent back whole. That is deliberate: a field
   // this form does not render still round-trips untouched, so rendering a subset can never drop a
@@ -62,6 +68,20 @@
     const trimmed = name.trim();
     draft.encrypt_aes256 = trimmed === "" ? null : `keyring:${trimmed}`;
   }
+
+  // F73: a check is only shown while it still describes the field it was run against -- editing
+  // the path afterward, or switching to a different job, discards it rather than displaying a
+  // now-stale answer next to a path it no longer matches.
+  const sourceCheckValid = $derived(
+    sourceCheck && draft && sourceCheck.jobName === draft.name && sourceCheck.path === draft.source
+      ? sourceCheck
+      : null,
+  );
+  const destCheckValid = $derived(
+    destCheck && draft && destCheck.jobName === draft.name && destCheck.path === draft.dest
+      ? destCheck
+      : null,
+  );
 
   // Mirrors a rule the core owns and enforces (`job_editor`): the editor may narrow risk, never
   // widen it. Disabling the control here is an affordance, not the enforcement — `write_proposal`
@@ -129,6 +149,35 @@
     if (typeof picked === "string" && picked.length > 0) {
       draft[field] = picked;
     }
+  }
+
+  // F73: manual "Verifica" button, never run automatically -- a real profile in this project
+  // takes minutes to walk in full (`gui_api::inspect_path`'s own doc comment), so checking on
+  // every keystroke would make the field feel broken rather than helpful.
+  async function checkPath(field) {
+    if (!draft) return;
+    const jobName = draft.name;
+    const path = draft[field];
+    const set = field === "source" ? (v) => (sourceCheck = v) : (v) => (destCheck = v);
+    set({ jobName, path, loading: true, result: null, error: null });
+    try {
+      const result = await invoke("inspect_path", { path, configPath: loadedFrom });
+      set({ jobName, path, loading: false, result, error: null });
+    } catch (e) {
+      set({ jobName, path, loading: false, result: null, error: String(e) });
+    }
+  }
+
+  function bytes(value) {
+    if (value < 1024) return `${value} B`;
+    const units = ["KB", "MB", "GB", "TB"];
+    let n = value / 1024;
+    let i = 0;
+    while (n >= 1024 && i < units.length - 1) {
+      n /= 1024;
+      i += 1;
+    }
+    return `${n.toFixed(n < 10 ? 1 : 0)} ${units[i]}`;
   }
 
   async function pickTarget() {
@@ -287,23 +336,85 @@
       </div>
 
       <label for="f-source">Sorgente</label>
-      <div class="flex gap-2">
-        <input id="f-source" class="flex-1 rounded border border-slate-300 px-2 py-1 font-mono dark:border-slate-700 dark:bg-slate-900" bind:value={draft.source} />
-        <button
-          type="button"
-          class="shrink-0 rounded border border-slate-300 px-2 py-1 text-sm dark:border-slate-700"
-          onclick={() => browseFolder("source")}
-        >Sfoglia…</button>
+      <div>
+        <div class="flex gap-2">
+          <input id="f-source" class="flex-1 rounded border border-slate-300 px-2 py-1 font-mono dark:border-slate-700 dark:bg-slate-900" bind:value={draft.source} />
+          <button
+            type="button"
+            class="shrink-0 rounded border border-slate-300 px-2 py-1 text-sm dark:border-slate-700"
+            onclick={() => browseFolder("source")}
+          >Sfoglia…</button>
+          <button
+            type="button"
+            class="shrink-0 rounded border border-slate-300 px-2 py-1 text-sm disabled:opacity-50 dark:border-slate-700"
+            disabled={!draft.source || sourceCheckValid?.loading}
+            onclick={() => checkPath("source")}
+          >Verifica</button>
+        </div>
+        {#if sourceCheckValid?.loading}
+          <p class="mt-0.5 text-[11px] text-slate-500">
+            Verifica in corso… su un albero molto grande può richiedere qualche minuto.
+          </p>
+        {:else if sourceCheckValid?.error}
+          <p class="mt-0.5 text-[11px] text-red-700 dark:text-red-400">{sourceCheckValid.error}</p>
+        {:else if sourceCheckValid?.result}
+          {#if !sourceCheckValid.result.exists}
+            <p class="mt-0.5 text-[11px] font-medium text-red-700 dark:text-red-400">
+              Il percorso non esiste.
+            </p>
+          {:else if !sourceCheckValid.result.is_dir}
+            <p class="mt-0.5 text-[11px] font-medium text-amber-700 dark:text-amber-400">
+              Esiste, ma non è una cartella.
+            </p>
+          {:else}
+            <p class="mt-0.5 text-[11px] text-slate-500">
+              {sourceCheckValid.result.total_files} file, {sourceCheckValid.result.total_dirs} cartelle,
+              {bytes(sourceCheckValid.result.total_bytes)}.
+            </p>
+          {/if}
+        {/if}
       </div>
 
       <label for="f-dest">Destinazione</label>
-      <div class="flex gap-2">
-        <input id="f-dest" class="flex-1 rounded border border-slate-300 px-2 py-1 font-mono dark:border-slate-700 dark:bg-slate-900" bind:value={draft.dest} />
-        <button
-          type="button"
-          class="shrink-0 rounded border border-slate-300 px-2 py-1 text-sm dark:border-slate-700"
-          onclick={() => browseFolder("dest")}
-        >Sfoglia…</button>
+      <div>
+        <div class="flex gap-2">
+          <input id="f-dest" class="flex-1 rounded border border-slate-300 px-2 py-1 font-mono dark:border-slate-700 dark:bg-slate-900" bind:value={draft.dest} />
+          <button
+            type="button"
+            class="shrink-0 rounded border border-slate-300 px-2 py-1 text-sm dark:border-slate-700"
+            onclick={() => browseFolder("dest")}
+          >Sfoglia…</button>
+          <button
+            type="button"
+            class="shrink-0 rounded border border-slate-300 px-2 py-1 text-sm disabled:opacity-50 dark:border-slate-700"
+            disabled={!draft.dest || destCheckValid?.loading}
+            onclick={() => checkPath("dest")}
+          >Verifica</button>
+        </div>
+        {#if destCheckValid?.loading}
+          <p class="mt-0.5 text-[11px] text-slate-500">
+            Verifica in corso… su un albero molto grande può richiedere qualche minuto.
+          </p>
+        {:else if destCheckValid?.error}
+          <p class="mt-0.5 text-[11px] text-red-700 dark:text-red-400">{destCheckValid.error}</p>
+        {:else if destCheckValid?.result}
+          {#if !destCheckValid.result.exists}
+            <!-- Deliberately neutral, not a warning: an inexistent Destinazione is the ordinary
+                 case for a first backup (F68), not a problem to flag. -->
+            <p class="mt-0.5 text-[11px] text-slate-500">
+              Non esiste ancora — normale per un primo backup.
+            </p>
+          {:else if !destCheckValid.result.is_dir}
+            <p class="mt-0.5 text-[11px] font-medium text-amber-700 dark:text-amber-400">
+              Esiste, ma non è una cartella.
+            </p>
+          {:else}
+            <p class="mt-0.5 text-[11px] text-slate-500">
+              {destCheckValid.result.total_files} file, {destCheckValid.result.total_dirs} cartelle,
+              {bytes(destCheckValid.result.total_bytes)}.
+            </p>
+          {/if}
+        {/if}
       </div>
 
       <label for="f-pattern">Pattern</label>
