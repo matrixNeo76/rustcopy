@@ -1037,6 +1037,19 @@ Richiesta dall'utente: "una semplice copia con controllo dei file originali e co
 aggiornati, dalla GUI" — con il sospetto giusto che esistesse già nella CLI. Verificato prima di
 proporre qualunque cosa, non assunto.
 
+**✅ Implementato e verificato 7 Set 2026** — esattamente come speccato in §17.3/§17.5 sotto: nuovo
+`QuickSync.svelte`, collegato da un link nell'empty state iniziale di `Jobs.svelte` (nessuna sesta
+scheda in sidebar, `Jobs.svelte` continua a non scrivere/eseguire nulla di suo). Un'unica scelta non
+anticipata in fase di analisi: dopo `start_job`, il pannello **non** reimplementa il poll/notifica di
+`Run.svelte` (un `setTimeout` incatenato con contatore di generazione per evitare risposte fuori
+ordine, oltre alla notifica desktop di fine run) — naviga invece a Esegui con `session.configPath`
+già impostato, lasciando che sia quella scheda, già scritta e verificata, a occuparsene con un
+"Esamina" in più. Un secondo motore di polling per lo stesso stato avrebbe rischiato di divergere da
+quello esistente, un rischio giudicato peggiore del click in più. Verificato end-to-end contro il
+binario ricompilato: job creato da zero, scritto, avviato, 5/5 file copiati; stesso file rieseguito
+dalla scheda Esegui, secondo run "no files copied, source and destination already in sync" —
+confermato dal vivo, non solo per costruzione. Dettaglio completo: riga F71 di `ROADMAP.md`.
+
 ### 17.1 La capacità esiste già — il gap è solo nel raggiungerla dalla GUI
 
 "Copia solo i file nuovi/aggiornati" **è** il comportamento di default di ogni copia senza

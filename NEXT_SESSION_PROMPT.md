@@ -12,11 +12,18 @@ generated:
 
 ## Stato del progetto (7 Settembre 2026)
 
-`Cargo.toml` = **6.0.0**. Suite di test: **486** (`cargo test --workspace --exclude rustcopy-gui`), **501** con `--features rustcopy-cli/notify-server` (più test `#[ignore]` — round-trip reali dei servizi Windows che richiedono elevazione, più due probe di misurazione a scala reale). CI verde su `windows-latest` e `ubuntu-latest` per entrambe le configurazioni, più i job dedicati `gui`, `gui-npm-audit`, `versions` e `docs`.
+`Cargo.toml` = **7.0.0** (bump da 6.0.0, 7 Set 2026 — v6.0.0 era stato taggato 216 commit prima
+ancora che la milestone 7.0.0/console partisse; mai più aggiornato da allora, corretto su decisione
+esplicita dell'utente). Suite di test: **486** (`cargo test --workspace --exclude rustcopy-gui`), **501** con `--features rustcopy-cli/notify-server` (più test `#[ignore]` — round-trip reali dei servizi Windows che richiedono elevazione, più due probe di misurazione a scala reale). CI verde su `windows-latest` e `ubuntu-latest` per entrambe le configurazioni, più i job dedicati `gui`, `gui-npm-audit`, `versions` e `docs`.
 
-**Ultimo lavoro: F68/F69/F70 chiuse (7 Set 2026, PR #97-#99), dopo F62-F67 (5-7 Set 2026, PR #87-#96).**
+**Prima GitHub Release pubblicata, v7.0.0 (7 Set 2026)**: tag e Release annotati sul commit di
+`main` dopo il merge di F70 (F62-F70 tutte incluse), installer `rustcopy-7.0.0-setup.exe` allegato
+come asset. Vedi https://github.com/matrixNeo76/rustcopy/releases/tag/v7.0.0.
+
+**Ultimo lavoro: F68/F69/F70/F71 chiuse (7 Set 2026, PR #97-#99 più F71), dopo F62-F67 (5-7 Set 2026, PR #87-#96).**
 Selettori di cartella nativi per Sorgente/Destinazione (F68), `keep_generations`
-editabile per alzarlo (F69) e `backup_type` selezionabile (F70) in Modifica — dettaglio completo più
+editabile per alzarlo (F69), `backup_type` selezionabile (F70) in Modifica, e sincronizzazione
+rapida senza config esistente (F71, chiude il piano di §16.4+§17) — dettaglio completo più
 sotto. Il paragrafo che segue racconta invece l'origine più a monte,
 F62-F66, nate da un'analisi richiesta dall'utente su una metodologia a workspace per la GUI e su
 funzionalità CLI non ancora valutate — formalizzata come backlog in `ROADMAP.md`, poi implementata
@@ -171,6 +178,21 @@ correttamente nella proposta (confermato leggendo il TOML su disco); quello con 
 mostra il selettore disabilitato, invariato. Dettaglio: riga F70 di `ROADMAP.md`, `PIANO_GUI.md`
 §16.2.
 
+**F71, sincronizzazione rapida senza config esistente, implementato e verificato 7 Set 2026**
+(chiude il piano — dopo §16.4, l'ultima voce restava §17): nuovo `QuickSync.svelte`, collegato da
+un link nell'empty state iniziale di `Jobs.svelte` — nessuna sesta scheda in sidebar, `Jobs.svelte`
+continua a non scrivere/eseguire nulla di suo (`showQuickSync` è solo stato locale che decide cosa
+mostrare). Zero codice nuovo nel core: `job_editor::build_proposal`'s `existing: None` branch
+gestiva già la creazione da zero. **Una scelta non anticipata in fase di analisi**: dopo
+`start_job`, il pannello non reimplementa il poll/notifica di `Run.svelte` (`setTimeout` incatenato
+con contatore di generazione, notifica desktop di fine run) — naviga a Esegui con
+`session.configPath` già impostato e lascia che sia quella scheda, già scritta e verificata, a
+occuparsene con un "Esamina" in più; un secondo motore di polling per lo stesso stato rischiava di
+divergere da quello esistente. Verificato end-to-end contro il binario ricompilato: job creato da
+zero, scritto, avviato, 5/5 file copiati; stesso file rieseguito dalla scheda Esegui, secondo run
+"no files copied, source and destination already in sync" — il comportamento "solo nuovi/cambiati"
+confermato dal vivo. Dettaglio: riga F71 di `ROADMAP.md`, `PIANO_GUI.md` §17.
+
 **Lezione doppia da questo giro**: (1) "verificato manualmente contro il binario compilato" non
 basta se il caso provato non è quello che rompe — la verifica originaria di F64 ha quasi certamente
 usato un report a percorsi assoluti; (2) un fix che sembra ovvio (stesso pattern già usato altrove,
@@ -182,19 +204,18 @@ sbagliato e solo la riverifica contro il binario l'ha scoperto.
 
 ## 🎯 Obiettivo per la prossima sessione
 
-**Standing: "procedi seguendo il piano" (§16.4 di `PIANO_GUI.md`)** — F68/F69/F70 chiusi il 7 Set
-2026 (tutte e tre le priorità di §16.4), F71 (speccata dopo, in §17) è la prossima voce con lavoro
-reale. Le aree con lavoro reale ancora da fare, in ordine:
+**Il piano di §16.4/§17 di `PIANO_GUI.md` è chiuso per intero**: F68/F69/F70/F71 tutte completate il
+7 Set 2026, prima Release pubblica (v7.0.0) fatta lo stesso giorno. Nessuna richiesta esplicita in
+sospeso all'apertura della prossima sessione. Le aree con lavoro reale ancora da fare, in ordine:
 
-1. **F71** — pannello di sincronizzazione rapida senza config esistente, collegato dall'empty state
-   di Job, **non** dentro `Jobs.svelte`. Dipende dal pattern di selettori di cartella di F68 (chiuso).
-2. **Flusso di ripristino guidato** (`--restore-from`, Onda 3) — la lacuna funzionale più sentita della console. **Il primo mattone (l'anteprima) è F64, chiuso, D26 corretto il 6 Set 2026**: resta da costruire il resto del flusso — elenco report → anteprima (pronta e verificata) → conferma esplicita → avvio. Proporre con `AskUserQuestion` prima di implementare il resto.
-3. **Due decisioni bloccate, entrambe spettano all'utente**:
+1. **Flusso di ripristino guidato** (`--restore-from`, Onda 3) — la lacuna funzionale più sentita della console. **Il primo mattone (l'anteprima) è F64, chiuso, D26 corretto il 6 Set 2026**: resta da costruire il resto del flusso — elenco report → anteprima (pronta e verificata) → conferma esplicita → avvio. Proporre con `AskUserQuestion` prima di implementare il resto.
+2. **Due decisioni bloccate, entrambe spettano all'utente**:
    - Interruttore VSS in Modifica — serve prima `vss_snapshot: Option<bool>` su `JobConfig` lato core, non è lavoro di frontend.
    - Scrittura di webhook/script pre-post in Modifica (F55, metà scrittura) — morde il vincolo permanente 2 (§2.3 di `PIANO_GUI.md`): script configurabili + servizio privilegiato = escalation locale. Non procedere senza una decisione esplicita.
-4. **D25** (`checkpoint::build_resume_args` scarta la maggior parte della configurazione originale) — aperto ma non bloccante. Il fix corretto è un tipo dedicato per il checkpoint, non allargare `ConfigurationReport` (condiviso con i report di run completate). Non affrontarlo con una patch rapida.
-5. **F63, metà retention** (`--keep-generations`/`GenerationIndex::generations_to_prune`) — lasciata deliberatamente fuori dalla PR #88 per tenerla rivedibile. Stesso disegno della metà mirror già fatta (scrivere l'elenco invece di contarlo), da riprendere quando serve o quando si costruisce il punto 2 sopra.
-6. **F47/F48/F58 (motore pilotabile)** — sospesi in roadmap, analisi di rischio completa in `PIANO_GUI.md` §15. Non riprendere senza un vero prototipo del Livello A.
+3. **D25** (`checkpoint::build_resume_args` scarta la maggior parte della configurazione originale) — aperto ma non bloccante. Il fix corretto è un tipo dedicato per il checkpoint, non allargare `ConfigurationReport` (condiviso con i report di run completate). Non affrontarlo con una patch rapida.
+4. **F63, metà retention** (`--keep-generations`/`GenerationIndex::generations_to_prune`) — lasciata deliberatamente fuori dalla PR #88 per tenerla rivedibile. Stesso disegno della metà mirror già fatta (scrivere l'elenco invece di contarlo), da riprendere quando serve o quando si costruisce il punto 1 sopra.
+5. **F47/F48/F58 (motore pilotabile)** — sospesi in roadmap, analisi di rischio completa in `PIANO_GUI.md` §15. Non riprendere senza un vero prototipo del Livello A.
+6. **Manutenzione release**: nessun workflow CI costruisce/pubblica automaticamente una Release — v7.0.0 è stata fatta interamente a mano (build locale, `ISCC.exe`, `gh release create`). Se le release diventano un'abitudine, vale la pena automatizzarle in un workflow dedicato; non fatto in questa sessione perché non richiesto.
 
 In assenza di una richiesta, il modello resta quello delle sessioni precedenti: **verificare empiricamente prima di proporre un fix**, mai fix speculativi su ipotesi non confermate — e, per qualunque cosa tocchi la GUI, **aprire la finestra** contro il binario release compilato, non fidarsi di `cargo build`/test/clippy da soli.
 
