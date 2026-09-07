@@ -72,6 +72,11 @@ pub enum IngestError {
     #[error("refusing to overwrite {0}: the editor writes a proposal and leaves it to you to put it in place")]
     EditorWouldOverwrite(PathBuf),
 
+    /// F79. Same "never silently overwrite" discipline as `EditorWouldOverwrite`: a second click
+    /// must not discard an edited copy of the example the first click produced.
+    #[error("{0} already exists: remove it or choose a different location, an example is never written over one that exists")]
+    ExampleWorkspaceAlreadyExists(PathBuf),
+
     #[error("source directory does not exist: {0}")]
     SourceMissing(PathBuf),
 
@@ -258,6 +263,7 @@ impl IngestError {
             | IngestError::EditorCannotDisablePrescanOnMirror(_)
             | IngestError::EditorCannotSplitSingleJobConfig(_)
             | IngestError::EditorWouldOverwrite(_)
+            | IngestError::ExampleWorkspaceAlreadyExists(_)
             | IngestError::CancelFileAlreadyExists(_)
             | IngestError::CliBinaryNotFound(_) => false,
         }

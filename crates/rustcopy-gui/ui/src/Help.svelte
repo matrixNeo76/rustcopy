@@ -8,6 +8,10 @@
       items: [
         [
           "Non hai ancora niente da aprire",
+          "Nella scheda Job, «Crea un esempio in Documenti» genera pochi file finti più un file di configurazione già pronto in Documenti\\rustcopy-demo, e lo apre subito — funziona anche se hai installato rustcopy invece di clonare il repository, l'unico caso in cui questa console arriva su una macchina.",
+        ],
+        [
+          "Hai invece clonato il repository",
           "Nel repository c'è examples/demo-locale.toml: copia cinque file finti in una cartella accanto e scrive lì report e log, quindi non può toccare dati veri. Lanciala dalla CLI (`robocopy_ingest.exe --config examples/demo-locale.toml`), poi apri il report che ha prodotto nella scheda Report. Gli altri esempi di quella cartella sono modelli da adattare: la scheda Job li segnala come tali.",
         ],
         [

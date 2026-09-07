@@ -14,7 +14,7 @@ generated:
 
 `Cargo.toml` = **7.0.0** (bump da 6.0.0, 7 Set 2026 — v6.0.0 era stato taggato 216 commit prima
 ancora che la milestone 7.0.0/console partisse; mai più aggiornato da allora, corretto su decisione
-esplicita dell'utente). Suite di test: **486** (`cargo test --workspace --exclude rustcopy-gui`), **501** con `--features rustcopy-cli/notify-server` (più test `#[ignore]` — round-trip reali dei servizi Windows che richiedono elevazione, più due probe di misurazione a scala reale). CI verde su `windows-latest` e `ubuntu-latest` per entrambe le configurazioni, più i job dedicati `gui`, `gui-npm-audit`, `versions` e `docs`.
+esplicita dell'utente). Suite di test: **488** (`cargo test --locked --workspace --exclude rustcopy-gui --all-targets`), **503** con `--features rustcopy-cli/notify-server` (più test `#[ignore]` — round-trip reali dei servizi Windows che richiedono elevazione, più due probe di misurazione a scala reale). CI verde su `windows-latest` e `ubuntu-latest` per entrambe le configurazioni, più i job dedicati `gui`, `gui-npm-audit`, `versions` e `docs`.
 
 **Prima GitHub Release pubblicata, v7.0.0 (7 Set 2026)**: tag e Release annotati sul commit di
 `main` dopo il merge di F70 (F62-F70 tutte incluse), installer `rustcopy-7.0.0-setup.exe` allegato
@@ -204,9 +204,34 @@ sbagliato e solo la riverifica contro il binario l'ha scoperto.
 
 ## 🎯 Obiettivo per la prossima sessione
 
-**Il piano di §16.4/§17 di `PIANO_GUI.md` è chiuso per intero**: F68/F69/F70/F71 tutte completate il
-7 Set 2026, prima Release pubblica (v7.0.0) fatta lo stesso giorno. Nessuna richiesta esplicita in
-sospeso all'apertura della prossima sessione. Le aree con lavoro reale ancora da fare, in ordine:
+**Standing, attivo: "procedi con l'ordine di priorità e segui il piano".** Dopo la chiusura di
+F68-F71 (7 Set 2026) l'utente ha chiesto un'analisi di usabilità estensiva della scheda Modifica
+(undici osservazioni concrete da un uso reale) più un audit completo delle sette schede — scritta
+in `PIANO_GUI.md` §18 (18.1-18.17), righe **F72-F82** in `ROADMAP.md`. Confermato ambito e ordine di
+priorità, poi autorizzata l'implementazione in sequenza:
+
+**F79 → F80 → F73 → F72 → F76 → F81 → F74/F75/F77 → F78 → F82** (§18.16 di `PIANO_GUI.md`).
+
+- **F79 chiuso, stesso giorno**: generatore di esempio in Documenti (nuovo modulo `example_workspace.rs`,
+  non dentro `gui_api.rs` che è documentato read-only — stessa ragione di `crypto.rs`), più la
+  correzione dei due rimandi rotti a `examples/demo-locale.toml` (mai installato — `installer/
+  rustcopy.iss` non lo impacchetta, la lacuna più seria trovata in tutta l'analisi). Verificato
+  end-to-end contro il binario ricompilato. Dettaglio: riga F79 di `ROADMAP.md`.
+- **F80 è il prossimo**: `encrypt_aes256` per job in `JobConfig`, raggiungibile da Modifica —
+  l'unica voce che tocca il core in modo sostanziale (nuovo campo, wiring `run_jobs`, validazione
+  per-job), non solo la GUI. Vincolo di sicurezza da rispettare nell'implementazione: il campo in
+  Modifica deve accettare **solo** `keyring:NOME`, mai una chiave letterale.
+- Poi, nell'ordine confermato: F73 (verifica Sorgente/Destinazione, `scan::inventory` già esiste),
+  F72 (validazione Nome), F76 (placeholder Report), F81 (colorazione/`EXIT_MEANING` di
+  `History.svelte`), F74/F75/F77 (tooltip Pattern/Escludi file/Thread/Tentativi/backup_type), F78
+  (messaggio migliore per l'errore di split job singolo), F82 (avviso Anteprima ripristino senza
+  config in sessione).
+
+Se questa sessione riprende a metà sequenza (compattazione, nuova sessione), continuare da dove
+`ROADMAP.md` segna l'ultima riga passata da 🟡 a ✅ — non ripartire da F79 se è già chiuso.
+
+**Lavoro precedente, non urgente ma non dimenticato** (aree con lavoro reale trovate prima di
+questo giro, non ancora affrontate):
 
 1. **Flusso di ripristino guidato** (`--restore-from`, Onda 3) — la lacuna funzionale più sentita della console. **Il primo mattone (l'anteprima) è F64, chiuso, D26 corretto il 6 Set 2026**: resta da costruire il resto del flusso — elenco report → anteprima (pronta e verificata) → conferma esplicita → avvio. Proporre con `AskUserQuestion` prima di implementare il resto.
 2. **Due decisioni bloccate, entrambe spettano all'utente**:
