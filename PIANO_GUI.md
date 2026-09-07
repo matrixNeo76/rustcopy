@@ -911,7 +911,8 @@ di §12/§14.
 
 ### 16.1 Sorgente e Destinazione si digitano, non si scelgono
 
-`Editor.svelte`, righe 242-246: `Sorgente` e `Destinazione` sono due `<input>` di solo testo,
+**Prima di F68 (analisi originale, 7 Set 2026 — stato storico, superato dall'implementazione più
+sotto):** `Editor.svelte`, righe 242-246: `Sorgente` e `Destinazione` sono due `<input>` di solo testo,
 `bind:value={draft.source}`/`{draft.dest}`. Verificato con una ricerca diretta: zero occorrenze di
 "Sfoglia" nelle vicinanze, contro l'unico "Sfoglia…" di tutto il file — quello del percorso della
 *proposta in uscita* (riga 365), non di sorgente o destinazione. È l'unico punto della console dove
