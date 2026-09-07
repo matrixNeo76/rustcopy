@@ -36,6 +36,13 @@ pub enum IngestError {
     #[error("--backup-type and --encrypt-aes256 cannot both be given: the generation backup pipeline does not encrypt its output yet")]
     BackupTypeAndEncryptionConflict,
 
+    /// F72: `namespaced_path` interpolates a job name literally into a filename
+    /// (`format!("{stem}.{name}.{ext}")`) -- a name containing a Windows reserved filename
+    /// character or one of the reserved device names would otherwise surface as a cryptic I/O
+    /// error hours later, at the job's first scheduled run, not when the proposal is written.
+    #[error("job name {name:?} is not usable as a filename: {reason}")]
+    InvalidJobName { name: String, reason: String },
+
     /// F54. The editor may narrow risk, never widen it: a job that purges the destination cannot
     /// be born in a user interface. See `job_editor`'s module header for why the field is still
     /// writable in the other direction.
@@ -243,6 +250,7 @@ impl IngestError {
             | IngestError::SourceOrDestMissingFromConfig
             | IngestError::BackupTypeAndMirrorConflict
             | IngestError::BackupTypeAndEncryptionConflict
+            | IngestError::InvalidJobName { .. }
             | IngestError::KeepGenerationsWithoutBackupType
             | IngestError::SourceMissing(_)
             | IngestError::SourceNotADirectory(_)

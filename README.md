@@ -148,8 +148,8 @@ I flag essenziali per l'uso quotidiano:
 ## 🧪 Sviluppo
 
 ```bash
-cargo test --locked --workspace --exclude rustcopy-gui --all-targets                                   # 497 test
-cargo test --locked --workspace --exclude rustcopy-gui --all-targets --features rustcopy-cli/notify-server  # 512 test
+cargo test --locked --workspace --exclude rustcopy-gui --all-targets                                   # 501 test
+cargo test --locked --workspace --exclude rustcopy-gui --all-targets --features rustcopy-cli/notify-server  # 516 test
 ```
 
 CI su Windows e Linux, `clippy -D warnings` e `cargo fmt --check` su entrambe le configurazioni di

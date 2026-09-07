@@ -200,6 +200,10 @@ pub fn apply_draft(
     draft: &JobDraft,
 ) -> Result<JobConfig, IngestError> {
     let base = own.cloned().unwrap_or_default();
+    // The CLI would reject an unusable name at the job's first scheduled run anyway (`namespaced_path`
+    // interpolates it literally into a filename) -- catching it here, like `InvalidThreads` below,
+    // means the editor cannot write a proposal that only fails hours later.
+    crate::validate_job_name(&draft.name)?;
     // The rules below are about what the job *effectively* does, so they read the merged view: a
     // job inheriting `mirror = true` is a mirroring job even though its own entry says nothing.
     let effective = base.merged_over(inherited);
@@ -757,6 +761,23 @@ mod tests {
             .expect_err("must be refused");
         assert!(
             matches!(error, IngestError::BackupTypeAndEncryptionConflict),
+            "got {error:?}"
+        );
+    }
+
+    /// F72: `namespaced_path` interpolates the name literally into a filename -- the CLI would
+    /// reject an unusable one at the job's first scheduled run anyway, and the editor must not
+    /// write a proposal that only fails hours later.
+    #[test]
+    fn a_name_that_cannot_be_a_filename_is_rejected() {
+        let config = config_from("source = \"D:/src\"\ndest = \"E:/dst\"\n");
+        let mut draft = draft_for(&config, "job1");
+        draft.name = "back/up".to_string();
+
+        let error = apply_draft(Some(&config.defaults), &JobConfig::default(), &draft)
+            .expect_err("must be refused");
+        assert!(
+            matches!(error, IngestError::InvalidJobName { .. }),
             "got {error:?}"
         );
     }

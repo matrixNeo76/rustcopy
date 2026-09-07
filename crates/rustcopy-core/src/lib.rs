@@ -127,6 +127,45 @@ pub fn namespaced_path(path: &Path, name: &str) -> PathBuf {
     path.with_file_name(file_name)
 }
 
+/// Characters [`namespaced_path`] cannot carry into a filename on Windows.
+const WINDOWS_RESERVED_FILENAME_CHARS: &[char] = &['\\', '/', ':', '*', '?', '"', '<', '>', '|'];
+
+/// Device names Windows reserves regardless of extension -- `CON.txt` is just as unusable as
+/// `CON`. Checked against the bare name, matching how a job name is actually used here: alone,
+/// interpolated between two dots (`report.{name}.json`), never as a full filename with its own
+/// extension.
+const WINDOWS_RESERVED_DEVICE_NAMES: &[&str] = &[
+    "CON", "PRN", "AUX", "NUL", "COM1", "COM2", "COM3", "COM4", "COM5", "COM6", "COM7", "COM8",
+    "COM9", "LPT1", "LPT2", "LPT3", "LPT4", "LPT5", "LPT6", "LPT7", "LPT8", "LPT9",
+];
+
+/// F72: rejects a job `name` [`namespaced_path`] cannot safely interpolate into a filename --
+/// without this, a name containing a Windows reserved character, or one of the reserved device
+/// names, surfaces only as a cryptic I/O error at the job's first scheduled run (the first time
+/// its report/cache/manifest is actually written), not when the name was chosen. Deliberately
+/// narrow: forbidden characters and reserved names only, not a broader filename-safety heuristic.
+pub fn validate_job_name(name: &str) -> Result<(), errors::IngestError> {
+    if let Some(bad) = name
+        .chars()
+        .find(|c| WINDOWS_RESERVED_FILENAME_CHARS.contains(c))
+    {
+        return Err(errors::IngestError::InvalidJobName {
+            name: name.to_string(),
+            reason: format!("cannot contain '{bad}' (reserved in a Windows filename)"),
+        });
+    }
+    if WINDOWS_RESERVED_DEVICE_NAMES
+        .iter()
+        .any(|reserved| reserved.eq_ignore_ascii_case(name))
+    {
+        return Err(errors::IngestError::InvalidJobName {
+            name: name.to_string(),
+            reason: "is a Windows reserved device name".to_string(),
+        });
+    }
+    Ok(())
+}
+
 /// Writes `contents` to `path` by streaming to a same-directory sibling temp file and atomically
 /// renaming over the original, so a crash, a forced kill, or a dropped network share mid-write
 /// never leaves a truncated/corrupt file at `path` — same safety property `crypto.rs`'s
@@ -229,6 +268,32 @@ mod tests {
             namespaced_path(Path::new(".rustcopy_generations.json"), "photos"),
             PathBuf::from(".rustcopy_generations.photos.json")
         );
+    }
+
+    #[test]
+    fn validate_job_name_accepts_an_ordinary_name() {
+        assert!(validate_job_name("photos").is_ok());
+        assert!(validate_job_name("backup-nas_2026").is_ok());
+    }
+
+    #[test]
+    fn validate_job_name_rejects_every_reserved_character() {
+        for bad in WINDOWS_RESERVED_FILENAME_CHARS {
+            let name = format!("job{bad}name");
+            assert!(
+                validate_job_name(&name).is_err(),
+                "{name:?} should have been rejected"
+            );
+        }
+    }
+
+    #[test]
+    fn validate_job_name_rejects_reserved_device_names_case_insensitively() {
+        assert!(validate_job_name("CON").is_err());
+        assert!(validate_job_name("con").is_err());
+        assert!(validate_job_name("Lpt3").is_err());
+        // A device name only as a substring is fine -- the check is on the whole name.
+        assert!(validate_job_name("connections").is_ok());
     }
 
     fn fixed_now() -> DateTime<Utc> {
