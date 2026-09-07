@@ -12,7 +12,7 @@ generated:
 
 ## Stato del progetto (5 Settembre 2026)
 
-`Cargo.toml` = **6.0.0**. Suite di test: **484** (`cargo test --workspace --exclude rustcopy-gui`), **499** con `--features rustcopy-cli/notify-server` (più test `#[ignore]` — round-trip reali dei servizi Windows che richiedono elevazione, più due probe di misurazione a scala reale). CI verde su `windows-latest` e `ubuntu-latest` per entrambe le configurazioni, più i job dedicati `gui`, `gui-npm-audit`, `versions` e `docs`.
+`Cargo.toml` = **6.0.0**. Suite di test: **485** (`cargo test --workspace --exclude rustcopy-gui`), **500** con `--features rustcopy-cli/notify-server` (più test `#[ignore]` — round-trip reali dei servizi Windows che richiedono elevazione, più due probe di misurazione a scala reale). CI verde su `windows-latest` e `ubuntu-latest` per entrambe le configurazioni, più i job dedicati `gui`, `gui-npm-audit`, `versions` e `docs`.
 
 **Ultimo lavoro: implementate e chiuse F62-F66 (5 Set 2026, PR #87-#91).** Nate da un'analisi
 richiesta dall'utente su una metodologia a workspace per la GUI e su funzionalità CLI non ancora
@@ -63,7 +63,27 @@ milestone 7.0.0 (2 Set 2026).** Ordine cronologico delle PR #63-#83:
 
 **Il difetto più istruttivo resta D22** (2 Set, non di questa sessione, ma da rileggere prima di toccare la GUI): la console installata caricava il server di sviluppo invece del proprio frontend, e `cargo build`/`clippy`/tutti i test erano verdi, perché nessuno di loro apre una finestra. **Per una GUI non esiste sostituto all'aprire la finestra e cliccarci dentro** — ogni bug di questa sessione (D23, D24, il bug dell'icona morta) è stato trovato così, mai leggendo solo il diff.
 
-Milestone 5.2.0/5.3.0/6.0.0/6.1.0/7.0.0 chiuse (7.0.0 a sette voci su otto: resta la metà in **scrittura** di F55 — script pre/post — e F57, i ruoli, fermo con raccomandazione esplicita di non farlo). Difetti storici: **D1-D27**, **un solo aperto (D25)**, non bloccante. Feature F1-F66 tutte classificate — **F62, F64, F65, F66 chiuse per intero; F63 chiusa per la sola metà mirror** (5-6 Set 2026, PR #87-#91) — spec tecnica completa e cronologia d'implementazione in `ROADMAP.md`.
+Milestone 5.2.0/5.3.0/6.0.0/6.1.0/7.0.0 chiuse (7.0.0 a sette voci su otto: resta la metà in **scrittura** di F55 — script pre/post — e F57, i ruoli, fermo con raccomandazione esplicita di non farlo). Difetti storici: **D1-D27**, **un solo aperto (D25)**, non bloccante. Feature F1-F67 tutte classificate — **F62, F64, F65, F66, F67 chiuse per intero; F63 chiusa per la sola metà mirror** (5-7 Set 2026, PR #87-#93 più F67) — spec tecnica completa e cronologia d'implementazione in `ROADMAP.md`.
+
+**Confronto GUI con TeraCopy/Cobian Reflector (6 Set 2026, `PIANO_GUI.md` §14)**, richiesto
+dall'utente dopo l'audit di §13: non un confronto di motore (già in `ROADMAP.md`) ma "cosa può fare
+un operatore dalla finestra". Tre categorie: costruibile ora (riordino job pre-esecuzione, slider
+banda), bloccato da una decisione già presa (motore non pilotabile, F47/F48/F58), e presente negli
+altri strumenti ma **deliberatamente escluso** da un confine di sicurezza già scritto (wizard di
+pianificazione dalla GUI, ruoli admin/operatore — non sono gap, sono limiti voluti). **Rianalisi
+critica della prima stesura (§14.4)** ha corretto due errori: F49 ("coda gestibile") mescolava due
+capacità di costo diverso — riordinare *prima* di eseguire è economico, riordinare *durante* un
+batch sbatte contro lo stesso muro di F47/F58 (verificato in `run_jobs`, `main.rs`: l'elenco job è
+un `for` letto una volta sola all'avvio del processo); un visualizzatore di log grezzo proposto come
+gap è stato retrocesso — nessun bisogno concreto dimostrato, stessa barra già usata per F38/F40.
+
+**F67, riordino job in Modifica, implementato e verificato 7 Set 2026**: due pulsanti sposta-su/giù
+in `Editor.svelte` sulla scheda selezionata. **Bug reale trovato scrivendo il file e rileggendolo,
+non fidandosi della sola UI**: `job_editor::build_proposal` ignorava l'ordine di `drafts` per i job
+già noti, riscrivendoli sempre alla posizione originale nel file — le schede si scambiavano
+correttamente a schermo, il file no. Corretto ricostruendo l'elenco nell'ordine dei draft; un test
+esistente codificava l'ordinamento vecchio ed è stato aggiornato, uno nuovo scrive una proposta
+reale e ne rilegge l'ordine. Dettaglio completo: riga F67 di `ROADMAP.md`, `PIANO_GUI.md` §14.5.
 
 **Audit visivo/funzionale reale della console (6 Set 2026)**, richiesto dall'utente subito dopo la
 chiusura di F62-F66 ("controlla lo stato attuale delle funzionalità e aspetto della GUI"): console

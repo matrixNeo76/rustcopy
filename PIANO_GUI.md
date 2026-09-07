@@ -1,7 +1,7 @@
 ---
 type: Reference
 title: Piano della console rustcopy
-description: Documento unico e vivo per la console (F52-F60) — consolida il piano pre-implementazione (stack, ambito, distribuzione, vincoli permanenti) con l'inventario di ciò che espone oggi rispetto alla CLI, le lacune funzionali con un piano in tre onde, un audit visivo/di usabilità con un piano di rifacimento a tre livelli (chiuso), e una valutazione di una metodologia a workspace più cinque funzionalità CLI non ancora costruite. Sostituisce PIANO_GUI_TAURI.md (archiviato) e PIANO_GUI_ESPANSIONE.md (questo stesso file, rinominato).
+description: Documento unico e vivo per la console (F52-F60) — consolida il piano pre-implementazione (stack, ambito, distribuzione, vincoli permanenti) con l'inventario di ciò che espone oggi rispetto alla CLI, le lacune funzionali con un piano in tre onde, un audit visivo/di usabilità con un piano di rifacimento a tre livelli (chiuso), una valutazione di una metodologia a workspace più cinque funzionalità CLI non ancora costruite (implementate), un audit visivo/funzionale reale post-implementazione, e un confronto con TeraCopy/Cobian Reflector sulle capacità della GUI. Sostituisce PIANO_GUI_TAURI.md (archiviato) e PIANO_GUI_ESPANSIONE.md (questo stesso file, rinominato).
 status: draft
 generated:
   by: process:claude-code
@@ -713,6 +713,120 @@ console** (`gui_api::list_all_schedules` esiste, nessuna scheda lo chiama) — c
 5. **(d)** resta l'unica voce non affrontata in questo giro — miglioramento di rifinitura, non
    bloccante, nessun rischio di sicurezza o di dati; richiede una decisione sul costo di un
    auto-caricamento per cambio scheda prima di implementarlo, non solo il tempo per scriverlo.
+
+## 14. Confronto con TeraCopy e Cobian Reflector: cosa manca alla GUI (analisi del 6 Set 2026)
+
+Richiesta dall'utente dopo l'audit di §13, con una domanda specifica: guardando le GUI reali di
+TeraCopy (copia interattiva) e Cobian Reflector (backup schedulato), cosa manca alla nostra console
+per essere altrettanto funzionale? `ROADMAP.md` ha già un confronto di parità a livello di **motore**
+(righe 157-204, F38/F40/F42-F51/F57/F58) — questa sezione lo rilegge da un angolo diverso: non "cosa
+sa fare il motore" ma "cosa può fare un operatore dalla finestra", verificato contro il codice
+attuale della console, non contro la memoria di quando quel confronto fu scritto.
+
+### 14.1 Cosa offre la GUI di TeraCopy
+
+Un dialogo di copia interattivo: barra di progresso globale, nome del file in corso, velocità
+istantanea/media ed ETA; pulsanti **Pausa/Riprendi/Stop** attivi durante il trasferimento; una
+finestra **Salta/Riprova/Salta tutto/Interrompi** quando un file fallisce; una **coda** di copie
+visibile e riordinabile; un interruttore Copia/Sposta; integrazione nel menu contestuale di
+Explorer; una cronologia dei trasferimenti; un limitatore di banda con slider nelle impostazioni;
+un'icona in system tray.
+
+### 14.2 Cosa offre la GUI di Cobian Reflector
+
+Un elenco di Task con icona di stato (riuscito/fallito/avviso); un wizard multi-scheda per
+crearne/modificarne uno (Generale, File, **Pianificazione con calendario**, Avanzate —
+compressione/cifratura/numero copie da conservare, **Eventi** pre/post, FTP/cloud); un pulsante
+"Esegui ora" per task; un visualizzatore di log colorato; notifiche a icona tray; impostazioni SMTP
+per le notifiche via email.
+
+### 14.3 Confronto, per categoria
+
+**Genuinamente mancante, costruibile ora, nessun conflitto architetturale:**
+- Nessun controllo di riordino dei job **nel file**, prima di eseguirlo — verificato in
+  `Editor.svelte`: `drafts` è già un array multi-job (`+ Nuovo job` lo estende), ma non esiste alcun
+  controllo sposta-su/sposta-giù sulle schede esistenti. `job_editor.rs`/`write_proposal` serializza
+  l'array nell'ordine in cui la GUI glielo passa, quindi il percorso di scrittura già esiste — manca
+  solo l'interazione lato Svelte.
+- Nessun limitatore di banda con slider in Modifica — il campo (`bandwidth_limit_mbps`) esiste ed è
+  scrivibile, ma come input testuale, non come controllo dedicato.
+
+**Genuinamente mancante, bloccato da una decisione architetturale già presa e motivata:**
+- **Pausa/Riprendi/Salta-per-file durante un trasferimento** (F47/F48/F58, `ROADMAP.md` righe
+  383-385) — robocopy è un processo esterno opaco, non pilotabile a runtime dopo l'avvio.
+  Richiederebbe un motore di copia nativo per i job interattivi. Segnato "da prototipare prima di
+  impegnarsi", milestone 8.0.0 condizionale.
+- **Estensione shell in Explorer** (F51) — deliverable separato (DLL COM registrata + installer
+  proprio), il costo più alto della roadmap.
+
+**Presente in TeraCopy/Cobian ma deliberatamente escluso dalla nostra GUI per un confine di
+sicurezza già scritto, non per lavoro mancante — qui la differenza conta, non va confusa con un
+gap:**
+- **Un wizard che crea pianificazioni/servizi dalla GUI** — Cobian lo fa liberamente; la nostra
+  console non può, per il vincolo esplicito di `runner.rs` ("la console può riferire un'operazione,
+  mai autorizzarla" — installare un servizio o una pianificazione è nell'elenco esplicito dei
+  divieti, §7). F62 mostra le pianificazioni esistenti apposta senza offrire di crearne di nuove: non
+  è un gap, è la ragione per cui F62 è stato disegnato così.
+- **Ruoli admin/operatore** (F57) — presenti in Cobian, valutati e scartati qui (§6): "utile come
+  prevenzione degli errori, non come confine di sicurezza" in un'app desktop dove chi ha la sessione
+  può comunque eseguire l'eseguibile direttamente.
+
+### 14.4 Rianalisi critica — dove la prima lettura era imprecisa
+
+Rileggendo il confronto appena scritto contro il codice reale, due affermazioni non reggevano:
+
+**F49 ("coda di job gestibile") non è una voce sola — la sua stessa formulazione in `ROADMAP.md`
+("riordinare/accodare job **prima o durante** l'esecuzione") mescola due capacità di costo
+completamente diverso.** Riordinare **prima** di premere Avvia è a buon mercato (§14.3, sopra: manca
+solo l'interazione in `Editor.svelte`). Riordinare **durante** un batch già in esecuzione, invece,
+sbatte contro lo stesso muro architetturale di F47/F58: verificato in
+`crates/rustcopy-cli/src/main.rs::run_jobs` (righe 335+), l'elenco dei job è un semplice `for` letto
+una volta all'avvio del processo CLI — non esiste alcun canale con cui la console, che ha solo
+avviato quel processo e può soltanto fermarlo (scrivendo il file di stop), possa fargli rileggere un
+ordine diverso a metà corsa. La prima stesura di questa sezione presentava "coda gestibile" come il
+secondo candidato più economico dopo il pulsante di ripristino — falso per la metà "durante
+l'esecuzione": quella metà è cara quanto F47/F58, non a buon mercato.
+
+**Un visualizzatore di log grezzo colorato (proposto nella prima stesura come gap da chiudere) non è
+chiaramente un miglioramento, riletto contro il principio che questo progetto ha già applicato altrove
+(`ANALYSIS.md`/`ROADMAP.md`, il rifiuto di `--print-schema` in §12.2 punto 5: "scartata perché
+sposterebbe... verso uno schema-driven generico, un cambio di paradigma sproporzionato rispetto al
+problema reale").** Cobian e TeraCopy hanno un log grezzo perché i loro motori non producono altro;
+questo progetto produce già un report JSON strutturato più un'analisi deterministica (`--advise`) —
+un log grezzo scorrevole sarebbe parità di forma con uno strumento diverso, non una capacità che
+manca davvero. Retrocesso da "gap da colmare" a "nessun bisogno concreto dimostrato", stessa barra
+già applicata a F38 (compressione) e F40 (cloud/FTP) nel backlog esistente.
+
+Una terza cosa, verificata e **non** un errore della prima stesura ma degna di nota qui perché il
+dubbio era legittimo: la velocità di trasferimento **dal vivo** (non solo nel report finale) è già
+mostrata — `ProgressSample.throughput_mbps` esiste da prima di questa sessione e `Run.svelte` (riga
+433) la rende come "— N MB/s" accanto a file/byte in corso. Non un gap. L'assenza reale, verificata,
+è solo il **nome del file in corso** (TeraCopy lo mostra, la console no) — deliberata, non
+dimenticata: `PIANO_GUI.md` §2.1 documenta che il campionamento a 200ms tramite contatori atomici
+evita apposta un evento IPC per file, proprio per non pagare il costo che un nome-file dal vivo
+imporrebbe.
+
+### 14.5 Priorità raffinata
+
+1. ~~**Riordino dei job prima dell'esecuzione**~~ ✅ **completato 7 Set 2026 (F67)** — due pulsanti
+   sposta-su/sposta-giù alle schede di `Editor.svelte`, un solo controllo per l'intera striscia
+   (opera sul job selezionato, non uno per scheda). **Il percorso di scrittura non "esisteva già"
+   come previsto qui**: `job_editor::build_proposal` ignorava del tutto l'ordine di `drafts` per i
+   job già noti, aggiornandoli sempre sul posto alla loro posizione originale nel file — trovato
+   scrivendo davvero il file e rileggendolo, non fidandosi della sola UI (le schede si scambiavano
+   correttamente a schermo, il file no). Corretto in `build_proposal`; dettaglio completo, causa e
+   verifica nella riga F67 di `ROADMAP.md`. Resta backlog, deliberatamente, solo la metà "durante
+   l'esecuzione" — vedi punto 2.
+2. **Motore pilotabile** (F47/F48/F58, e con esso la metà "durante l'esecuzione" di F49) — il gap
+   che pesa di più sull'esperienza utente reale rispetto a TeraCopy, ma il più costoso: richiede un
+   prototipo prima di una decisione, come già scritto in `ROADMAP.md`. Non affrontarlo con una stima
+   di sforzo prima di quel prototipo.
+3. **Limitatore di banda con slider** — rifinitura di poco valore, nessun rischio; non prioritaria.
+4. Wizard di pianificazione/servizio dalla GUI e ruoli admin/operatore **non entrano in questa
+   lista**: non sono lavoro rimandato, sono confini già decisi e motivati altrove (§6, §7). Riproporli
+   richiederebbe prima riaprire quella decisione con l'utente, non implementarli.
+5. Visualizzatore di log grezzo **rimosso dal piano**: nessun bisogno concreto dimostrato, stessa
+   barra di F38/F40.
 
 ## Riferimenti
 
