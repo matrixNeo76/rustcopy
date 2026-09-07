@@ -941,16 +941,17 @@ sempre editabile in parallelo al pulsante, quindi una destinazione non ancora cr
 come prima o si crea con "Nuova cartella" dentro il dialogo. Dettaglio completo: riga F68 in
 `ROADMAP.md`.
 
-### 16.2 Un confronto diretto: 34 campi, 16 raggiungibili dalla GUI
+### 16.2 Un confronto diretto: 34 campi, 17 raggiungibili dalla GUI
 
-`JobConfig` ha 34 campi (contati nel sorgente, `crates/rustcopy-core/src/config.rs`). `Editor.svelte`
-ne referenzia 16 (`grep -oE "draft\.[a-z_]+" Editor.svelte`): `name, source, dest, pattern, threads,
-retries, exclude_files, exclude_dirs, report_path, verify_integrity, fast_verify, dry_run,
-exclude_junctions, preserve_acl, mirror, keep_generations` — gli ultimi due bloccati/sola-lettura per
-un motivo di sicurezza già scritto (F54), `webhook_url`/`pre_command`/`post_command` esclusi con nota
-esplicita (F55 non deciso, §5a). **Restano 15 campi mai renderizzati, in nessuna forma, senza alcuna
-nota**: `retry_wait_seconds`, `ignore_transient_missing`, `html_report_path`, `hash_algo`,
-`compare_baseline`, `log_path`, `backup_type`, `min_age_days`, `max_age_days`,
+`JobConfig` ha 34 campi (contati nel sorgente, `crates/rustcopy-core/src/config.rs`). **Stato al 7
+Set 2026, dopo F68/F69/F70** — `Editor.svelte` ne referenzia 17 (`grep -oE "draft\.[a-z_]+"
+Editor.svelte`): `name, source, dest, pattern, threads, retries, exclude_files, exclude_dirs,
+report_path, verify_integrity, fast_verify, dry_run, exclude_junctions, preserve_acl, mirror,
+keep_generations, backup_type` — i due precedenti (`mirror`/`keep_generations`) bloccati/sola-lettura
+o vincolati per un motivo di sicurezza già scritto (F54), `webhook_url`/`pre_command`/`post_command`
+esclusi con nota esplicita (F55 non deciso, §5a). **Restano 14 campi mai renderizzati, in nessuna
+forma, senza alcuna nota**: `retry_wait_seconds`, `ignore_transient_missing`, `html_report_path`,
+`hash_algo`, `compare_baseline`, `log_path`, `min_age_days`, `max_age_days`,
 `bandwidth_limit_mbps`, `no_prescan`, `skip_space_check`, `space_safety_margin_percent`,
 `long_paths`, `preserve_timestamps`.
 

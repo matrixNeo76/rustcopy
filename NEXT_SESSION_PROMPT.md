@@ -14,8 +14,8 @@ generated:
 
 `Cargo.toml` = **6.0.0**. Suite di test: **486** (`cargo test --workspace --exclude rustcopy-gui`), **501** con `--features rustcopy-cli/notify-server` (più test `#[ignore]` — round-trip reali dei servizi Windows che richiedono elevazione, più due probe di misurazione a scala reale). CI verde su `windows-latest` e `ubuntu-latest` per entrambe le configurazioni, più i job dedicati `gui`, `gui-npm-audit`, `versions` e `docs`.
 
-**Ultimo lavoro: F68/F69/F70 chiuse (7 Set 2026, PR #97-#99), dopo F62-F67 (5-7 Set 2026, PR
-#87-#96).** Selettori di cartella nativi per Sorgente/Destinazione (F68), `keep_generations`
+**Ultimo lavoro: F68/F69/F70 chiuse (7 Set 2026, PR #97-#99), dopo F62-F67 (5-7 Set 2026, PR #87-#96).**
+Selettori di cartella nativi per Sorgente/Destinazione (F68), `keep_generations`
 editabile per alzarlo (F69) e `backup_type` selezionabile (F70) in Modifica — dettaglio completo più
 sotto. Il paragrafo che segue racconta invece l'origine più a monte,
 F62-F66, nate da un'analisi richiesta dall'utente su una metodologia a workspace per la GUI e su
