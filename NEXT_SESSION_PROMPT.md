@@ -255,14 +255,21 @@ priorità, poi autorizzata l'implementazione in sequenza:
   (`./robocopy_ingest_report.json`). Fix puramente di presentazione come previsto — il campo non
   scrive mai il placeholder nel draft, resta `null` finché l'operatore non digita qualcosa di suo.
   Zero cambi al core, interamente frontend. Dettaglio: riga F76 di `ROADMAP.md`.
-- **F81 è il prossimo** (colorazione/`EXIT_MEANING` di `History.svelte`), poi nell'ordine
-  confermato: F74/F75/F77 (tooltip Pattern/Escludi file/Thread/Tentativi/backup_type), F78
-  (messaggio migliore per l'errore di split job singolo), F82 (avviso Anteprima ripristino senza
-  config in sessione).
+- **F81 chiuso, 8 Set 2026**: colorazione esito e `EXIT_MEANING` duplicato in `History.svelte`.
+  Nuovo comando Tauri sincrono `exit_code_meaning` (nessun `off_thread`, unica funzione pura del
+  file), involucro su `runner::exit_code_meaning` — la stessa fonte già usata da `Run.svelte`.
+  `History.svelte` lo chiama una volta per codice distinto nella cronologia caricata, sostituendo
+  la mappa hardcoded; colorazione allineata all'amber di `Run.svelte` (non più rosso per ogni
+  codice diverso da zero). Chiude un debito già tracciato in `CLAUDE.md` da F65. Zero nuovi test
+  Rust (comando puro, `exit_code_meaning` già coperto in `runner.rs`). Dettaglio: riga F81 di
+  `ROADMAP.md`.
+- **F74/F75/F77 sono i prossimi** (tooltip Pattern/Escludi file/Thread/Tentativi/backup_type), poi
+  F78 (messaggio migliore per l'errore di split job singolo), F82 (avviso Anteprima ripristino
+  senza config in sessione).
 
 Se questa sessione riprende a metà sequenza (compattazione, nuova sessione), continuare da dove
-`ROADMAP.md` segna l'ultima riga passata da 🟡 a ✅ — non ripartire da F79/F80/F73/F72/F76 se sono
-già chiusi.
+`ROADMAP.md` segna l'ultima riga passata da 🟡 a ✅ — non ripartire da F79/F80/F73/F72/F76/F81 se
+sono già chiusi.
 
 **Lavoro precedente, non urgente ma non dimenticato** (aree con lavoro reale trovate prima di
 questo giro, non ancora affrontate):

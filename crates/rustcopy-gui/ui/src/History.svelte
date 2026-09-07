@@ -19,6 +19,11 @@
   // fixed `limit: 100` above, not a further server-side page), so filtering it here drops nothing
   // the operator hasn't already been told about via the "le più recenti" label.
   let outcomeFilter = $state("all");
+  // F81: what an exit code means, fetched from the core (`runner::exit_code_meaning`) rather than
+  // a second, hand-maintained copy of the table -- keyed by code, filled in as `load()` discovers
+  // which codes actually appear in this history. Missing entries render as "…" briefly while the
+  // lookups for a freshly loaded history are still in flight.
+  let meaningByCode = $state({});
 
   const SEVERITY_ORDER = { ATTENZIONE: 0, PROPOSTA: 1, INFO: 2 };
 
@@ -43,6 +48,11 @@
       const job = session.jobName.trim() === "" ? null : session.jobName.trim();
       history = await invoke("read_history", { reportPath: session.reportPath, jobName: job, limit: 100 });
       advice = await invoke("read_advice", { reportPath: session.reportPath, jobName: job });
+      const codes = [...new Set((history?.runs ?? []).map((run) => run.exit_code))];
+      const entries = await Promise.all(
+        codes.map(async (code) => [code, await invoke("exit_code_meaning", { code })]),
+      );
+      meaningByCode = Object.fromEntries(entries);
     } catch (e) {
       error = String(e);
       history = null;
@@ -60,17 +70,14 @@
     return h > 0 ? `${h}h ${String(m).padStart(2, "0")}m` : `${m}m ${String(total % 60).padStart(2, "0")}s`;
   }
 
-  // Exit codes are a contract with schedulers (AGENTS.md rule 12), so the console shows what each
-  // one means rather than colouring "non-zero" red. A 4 is not a failed copy.
-  const EXIT_MEANING = {
-    0: "riuscito",
-    1: "trasferimento fallito",
-    2: "errore d'uso",
-    3: "purge mirror annullata",
-    4: "copiato, verifica fallita",
-    5: "purge retention annullata",
-    6: "spazio libero insufficiente",
-  };
+  // F81: exit codes are a contract with schedulers (AGENTS.md rule 12), so the console shows what
+  // each one means rather than colouring every non-zero code the same. What a code means is read
+  // from the core (`meaningByCode`, above), not a second copy of that table kept here -- the
+  // hand-maintained version this file used to carry drifted out of sync with a real exit code
+  // once (F65's `6`), which is exactly the failure mode a single source of truth prevents.
+  function meaningFor(code) {
+    return meaningByCode[code] ?? "…";
+  }
 
   const filteredRuns = $derived(
     history
@@ -88,7 +95,7 @@
     const rows = [...filteredRuns].reverse().map((run) => [
       new Date(run.timestamp).toISOString(),
       run.exit_code,
-      EXIT_MEANING[run.exit_code] ?? "sconosciuto",
+      meaningFor(run.exit_code),
       run.files_copied,
       run.total_files,
       run.elapsed_seconds.toFixed(2),
@@ -229,14 +236,14 @@
                     class="inline-flex items-center gap-1 rounded px-1 text-[10px] font-semibold
                            {run.exit_code === 0
                              ? 'bg-emerald-100 text-emerald-900 dark:bg-emerald-950 dark:text-emerald-200'
-                             : 'bg-red-100 text-red-900 dark:bg-red-950 dark:text-red-200'}"
+                             : 'bg-amber-100 text-amber-900 dark:bg-amber-950 dark:text-amber-200'}"
                   >
                     {#if run.exit_code === 0}
                       <CircleCheck size={11} strokeWidth={2.25} aria-hidden="true" />
                     {:else}
                       <CircleX size={11} strokeWidth={2.25} aria-hidden="true" />
                     {/if}
-                    {run.exit_code} — {EXIT_MEANING[run.exit_code] ?? "sconosciuto"}
+                    {run.exit_code} — {meaningFor(run.exit_code)}
                   </span>
                   {#if run.dry_run}
                     <span class="ml-1 text-[10px] text-slate-500">dry-run</span>

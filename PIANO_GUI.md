@@ -1421,6 +1421,11 @@ esporre `runner::exit_code_meaning` a un nuovo comando Tauri, usarlo al posto de
 allineare la colorazione alla convenzione già stabilita da `Run.svelte` (amber per "diverso da zero
 ma non necessariamente un fallimento", non rosso).
 
+**✅ Implementato e verificato 8 Set 2026**, esattamente come proposto: nuovo comando Tauri
+`exit_code_meaning`, `History.svelte` lo chiama per ogni codice distinto nella cronologia appena
+caricata invece di tenere una copia locale, colorazione allineata all'amber di `Run.svelte`.
+Dettaglio completo nella riga F81 di `ROADMAP.md`.
+
 **`Report.svelte`: "Anteprima ripristino" può fallire senza spiegazione se non è mai stato aperto un
 config in questa sessione.** Verificato in `previewRestore()` (riga 33-51): passa `session.
 configPath` al comando `preview_restore` — e per D26 (già corretto, riga corrispondente in
@@ -1449,7 +1454,7 @@ Entrambe le nuove voci sono isolate e a basso rischio — non richiedono la stes
 (che tocca `JobConfig`/`run_jobs`). Inserite nella sequenza già proposta in §18.13:
 
 - **F81** (colorazione/`EXIT_MEANING` di `History.svelte`) — stesso ordine di grandezza di F76,
-  subito dopo.
+  subito dopo. ✅ Completato 8 Set 2026.
 - **F82** (avviso "Anteprima ripristino" senza config) — stesso ordine di grandezza di F78, in coda
   al gruppo di didascalie/messaggi.
 
