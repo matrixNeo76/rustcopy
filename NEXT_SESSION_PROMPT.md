@@ -116,6 +116,29 @@ non solo letto nel sorgente. Quattro difetti trovati, **tutti e quattro corretti
 - Aiuto non menzionava "preferiti" né "anteprima ripristino" (stessa causa già nota al §9h) —
   aggiunte entrambe le voci, più l'esito `6` (F65) mancante dalla tabella degli esiti.
 
+**Analisi dei gap GUI dopo la sospensione del motore pilotabile (7 Set 2026, `PIANO_GUI.md` §16)**:
+confronto diretto fra i 34 campi di `JobConfig` e i 16 raggiungibili da `Editor.svelte` — 15 campi
+mai renderizzati, in nessuna forma. Speccati **F68** (selettori di cartella), **F69**
+(`keep_generations` editabile per alzarlo — il core lo permette già, la GUI no) e **F70**
+(`backup_type` selezionabile), più **F71** (sincronizzazione rapida senza un config esistente,
+`PIANO_GUI.md` §17) dopo aver verificato che "copia solo i file nuovi/aggiornati" è già il
+comportamento di default di robocopy senza `--mirror` — il gap è solo che la GUI non può iniziare
+senza un file TOML già presente. Rilettura critica di entrambi i documenti appena scritti (stesso
+metodo di §14.4) ha trovato due criticità reali prima di scrivere codice: F69 avrebbe permesso di
+svuotare il campo per "ereditare", aggirando silenziosamente `EditorCannotLowerRetention` (che
+intercetta solo `Some→Some` più basso, non `Some→None`); F71 metteva scrittura+esecuzione dentro
+`Jobs.svelte`, contraddicendo la sua stessa caratterizzazione "Scrive? No" in `PIANO_GUI.md` §3.
+Entrambe corrette nella spec prima di ogni implementazione.
+
+**F68, selettori di cartella, implementato e verificato 7 Set 2026** (priorità 1 di §16.4):
+`browseFolder(field)` in `Editor.svelte`, due pulsanti "Sfoglia…" accanto a Sorgente/Destinazione,
+stesso plugin già in uso (`@tauri-apps/plugin-dialog`, zero dipendenze nuove). Verificato dal vivo
+contro il binario ricompilato: entrambi i pulsanti aggiornano correttamente `draft.source`/
+`draft.dest`. **Comportamento scoperto solo in verifica, non anticipato in spec**: il dialogo
+nativo di Windows rifiuta un percorso non ancora esistente (tipico per una destinazione a prima
+sincronizzazione) — comportamento standard di Explorer, non un difetto; il campo di testo resta
+comunque editabile in parallelo. Dettaglio: riga F68 di `ROADMAP.md`, `PIANO_GUI.md` §16.1.
+
 **Lezione doppia da questo giro**: (1) "verificato manualmente contro il binario compilato" non
 basta se il caso provato non è quello che rompe — la verifica originaria di F64 ha quasi certamente
 usato un report a percorsi assoluti; (2) un fix che sembra ovvio (stesso pattern già usato altrove,
@@ -127,14 +150,21 @@ sbagliato e solo la riverifica contro il binario l'ha scoperto.
 
 ## 🎯 Obiettivo per la prossima sessione
 
-Nessuna richiesta esplicita in sospeso all'apertura di questa sessione. Le aree con lavoro reale ancora da fare, in ordine di come il piano le prioritizza (`PIANO_GUI.md` §8/§11):
+**Standing: "procedi seguendo il piano" (§16.4 di `PIANO_GUI.md`)** — F68 chiuso il 7 Set 2026, F69
+è la prossima voce in ordine di priorità. Le aree con lavoro reale ancora da fare, in ordine:
 
-1. **Flusso di ripristino guidato** (`--restore-from`, Onda 3) — la lacuna funzionale più sentita della console. **Il primo mattone (l'anteprima) è F64, chiuso, D26 corretto il 6 Set 2026**: resta da costruire il resto del flusso — elenco report → anteprima (pronta e verificata) → conferma esplicita → avvio. Proporre con `AskUserQuestion` prima di implementare il resto.
-2. **Due decisioni bloccate, entrambe spettano all'utente**:
+1. **F69** — `keep_generations` editabile in Modifica per alzarlo, **mai** per svuotarlo (vedi
+   criticità già trovata e corretta in spec, sopra). Priorità 2 di §16.4.
+2. **F70** — `backup_type` selezionabile in Modifica (full/incremental/differential). Priorità 3.
+3. **F71** — pannello di sincronizzazione rapida senza config esistente, collegato dall'empty state
+   di Job, **non** dentro `Jobs.svelte`. Dipende dal pattern di selettori di cartella di F68 (chiuso).
+4. **Flusso di ripristino guidato** (`--restore-from`, Onda 3) — la lacuna funzionale più sentita della console. **Il primo mattone (l'anteprima) è F64, chiuso, D26 corretto il 6 Set 2026**: resta da costruire il resto del flusso — elenco report → anteprima (pronta e verificata) → conferma esplicita → avvio. Proporre con `AskUserQuestion` prima di implementare il resto.
+5. **Due decisioni bloccate, entrambe spettano all'utente**:
    - Interruttore VSS in Modifica — serve prima `vss_snapshot: Option<bool>` su `JobConfig` lato core, non è lavoro di frontend.
    - Scrittura di webhook/script pre-post in Modifica (F55, metà scrittura) — morde il vincolo permanente 2 (§2.3 di `PIANO_GUI.md`): script configurabili + servizio privilegiato = escalation locale. Non procedere senza una decisione esplicita.
-3. **D25** (`checkpoint::build_resume_args` scarta la maggior parte della configurazione originale) — aperto ma non bloccante. Il fix corretto è un tipo dedicato per il checkpoint, non allargare `ConfigurationReport` (condiviso con i report di run completate). Non affrontarlo con una patch rapida.
-4. **F63, metà retention** (`--keep-generations`/`GenerationIndex::generations_to_prune`) — lasciata deliberatamente fuori dalla PR #88 per tenerla rivedibile. Stesso disegno della metà mirror già fatta (scrivere l'elenco invece di contarlo), da riprendere quando serve o quando si costruisce il punto 1 sopra.
+6. **D25** (`checkpoint::build_resume_args` scarta la maggior parte della configurazione originale) — aperto ma non bloccante. Il fix corretto è un tipo dedicato per il checkpoint, non allargare `ConfigurationReport` (condiviso con i report di run completate). Non affrontarlo con una patch rapida.
+7. **F63, metà retention** (`--keep-generations`/`GenerationIndex::generations_to_prune`) — lasciata deliberatamente fuori dalla PR #88 per tenerla rivedibile. Stesso disegno della metà mirror già fatta (scrivere l'elenco invece di contarlo), da riprendere quando serve o quando si costruisce il punto 4 sopra.
+8. **F47/F48/F58 (motore pilotabile)** — sospesi in roadmap, analisi di rischio completa in `PIANO_GUI.md` §15. Non riprendere senza un vero prototipo del Livello A.
 
 In assenza di una richiesta, il modello resta quello delle sessioni precedenti: **verificare empiricamente prima di proporre un fix**, mai fix speculativi su ipotesi non confermate — e, per qualunque cosa tocchi la GUI, **aprire la finestra** contro il binario release compilato, non fidarsi di `cargo build`/test/clippy da soli.
 

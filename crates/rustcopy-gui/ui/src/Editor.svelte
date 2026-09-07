@@ -1,6 +1,6 @@
 <script>
   import { invoke } from "@tauri-apps/api/core";
-  import { save } from "@tauri-apps/plugin-dialog";
+  import { open, save } from "@tauri-apps/plugin-dialog";
   import PathBar from "./PathBar.svelte";
   import EmptyState from "./EmptyState.svelte";
   import { session } from "./session.svelte.js";
@@ -82,6 +82,20 @@
     [next[selected], next[target]] = [next[target], next[selected]];
     drafts = next;
     selected = target;
+  }
+
+  // F68: `Sorgente`/`Destinazione` were the one place left where a path had to be typed instead
+  // of chosen — every other path field in the console already goes through a native picker
+  // (`PathBar.svelte`, this pane's own proposal-output field below). Not routed through `PathBar`
+  // itself: its recent/favorite lists are for *files* (config/report, keyed by `kind`), and a
+  // job's source/destination are folders with no comparable notion of "recently opened" here —
+  // mixing the two would blur lists that answer different questions. Two direct calls to the same
+  // plugin `PathBar` already depends on, nothing shared beyond the mechanism.
+  async function browseFolder(field) {
+    const picked = await open({ directory: true, multiple: false });
+    if (typeof picked === "string" && picked.length > 0) {
+      draft[field] = picked;
+    }
   }
 
   async function pickTarget() {
@@ -240,10 +254,24 @@
       </div>
 
       <label for="f-source">Sorgente</label>
-      <input id="f-source" class="rounded border border-slate-300 px-2 py-1 font-mono dark:border-slate-700 dark:bg-slate-900" bind:value={draft.source} />
+      <div class="flex gap-2">
+        <input id="f-source" class="flex-1 rounded border border-slate-300 px-2 py-1 font-mono dark:border-slate-700 dark:bg-slate-900" bind:value={draft.source} />
+        <button
+          type="button"
+          class="shrink-0 rounded border border-slate-300 px-2 py-1 text-sm dark:border-slate-700"
+          onclick={() => browseFolder("source")}
+        >Sfoglia…</button>
+      </div>
 
       <label for="f-dest">Destinazione</label>
-      <input id="f-dest" class="rounded border border-slate-300 px-2 py-1 font-mono dark:border-slate-700 dark:bg-slate-900" bind:value={draft.dest} />
+      <div class="flex gap-2">
+        <input id="f-dest" class="flex-1 rounded border border-slate-300 px-2 py-1 font-mono dark:border-slate-700 dark:bg-slate-900" bind:value={draft.dest} />
+        <button
+          type="button"
+          class="shrink-0 rounded border border-slate-300 px-2 py-1 text-sm dark:border-slate-700"
+          onclick={() => browseFolder("dest")}
+        >Sfoglia…</button>
+      </div>
 
       <label for="f-pattern">Pattern</label>
       <input
