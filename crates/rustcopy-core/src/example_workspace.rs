@@ -34,6 +34,11 @@ const CONFIG_TEMPLATE: &str = "\
 # Copia solo i file nuovi o cambiati dalla cartella \"source\" qui accanto verso \"dest\" -- nessun
 # mirror, non cancella mai nulla. Riesegui questo file una seconda volta: non ricopia nulla, perché
 # sorgente e destinazione sono già allineate.
+#
+# Percorsi relativi a questa cartella, non a quella da cui lanci il comando -- se lo esegui dalla
+# console funziona sempre (la console imposta la cartella di lavoro su quella del file), dalla CLI
+# lancialo da qui: cd nella cartella che contiene questo file, poi robocopy_ingest.exe --config
+# esempio.toml
 
 source = \"source\"
 dest   = \"dest\"
@@ -48,6 +53,13 @@ verify_integrity = true
 /// `create_new` rather than a separate exists-check-then-write that could race. A second click
 /// here must never quietly discard what the first one produced -- an operator who has since edited
 /// the generated example loses nothing.
+///
+/// If a write after that point fails partway (disk full, a permission error on one of the nested
+/// paths), the freshly-created `target_dir` is removed again rather than left behind half-written
+/// -- otherwise every retry would hit `ExampleWorkspaceAlreadyExists` against a workspace that can
+/// never be completed, the one case this function's own overwrite refusal was not meant to cover.
+/// Best-effort: if the cleanup itself fails (e.g. a file the operator has open), the original
+/// write error still propagates rather than being swallowed by a second one.
 pub fn create_example_workspace(target_dir: &Path) -> Result<PathBuf, IngestError> {
     std::fs::create_dir(target_dir).map_err(|error| {
         if error.kind() == std::io::ErrorKind::AlreadyExists {
@@ -57,6 +69,12 @@ pub fn create_example_workspace(target_dir: &Path) -> Result<PathBuf, IngestErro
         }
     })?;
 
+    write_contents(target_dir).inspect_err(|_| {
+        let _ = std::fs::remove_dir_all(target_dir);
+    })
+}
+
+fn write_contents(target_dir: &Path) -> Result<PathBuf, IngestError> {
     let source_dir = target_dir.join("source");
     for (relative, contents) in SOURCE_FILES {
         let path = source_dir.join(relative);
