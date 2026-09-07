@@ -25,11 +25,24 @@
   // progress here -- A's jobs applied over B's configuration. The shared path is what made the
   // console usable; this is the hole it opened, and the two have to be held apart.
   let loadedFrom = $state("");
+  // F69: the floor a job's `keep_generations` may never go below, captured once at load time by
+  // job name (existing jobs only -- `addJob` sets `keep_generations = null` on a new one, so it
+  // never gets a floor and the raise-only control stays hidden for it, same as the core's own
+  // "cannot introduce" rule). Read separately from `draft.keep_generations`, which the raise
+  // control itself mutates as the operator types -- using the live draft value as its own floor
+  // would let every keystroke redefine the minimum.
+  let originalKeepGenerations = $state(new Map());
 
   // The whole draft is loaded, edited in part, and sent back whole. That is deliberate: a field
   // this form does not render still round-trips untouched, so rendering a subset can never drop a
   // setting the file had.
   const draft = $derived(drafts[selected] ?? null);
+  // `read_drafts` (core) already merges each job over the file's top-level defaults before handing
+  // it to the form (`job_editor::draft_from(&job.merged_over(&config.defaults), ...)`), so this is
+  // the *effective* starting value -- inheritance already accounted for, not just this job's own
+  // field. `null` means "not set here": the raise control stays hidden and the read-only line below
+  // explains why, exactly like `mirrorLocked` does for Mirror.
+  const keepGenerationsFloor = $derived(draft ? (originalKeepGenerations.get(draft.name) ?? null) : null);
 
   // Mirrors a rule the core owns and enforces (`job_editor`): the editor may narrow risk, never
   // widen it. Disabling the control here is an affordance, not the enforcement — `write_proposal`
@@ -46,6 +59,7 @@
       const source = session.configPath;
       drafts = await invoke("read_job_drafts", { configPath: source });
       existingNames = new Set(drafts.map((entry) => entry.name));
+      originalKeepGenerations = new Map(drafts.map((entry) => [entry.name, entry.keep_generations]));
       selected = 0;
       outPath = await invoke("suggest_proposal_path", { configPath: source });
       loadedFrom = source;
@@ -369,11 +383,44 @@
         {/if}
       </p>
 
-      <p class="mt-2 text-[11px] text-slate-600 dark:text-slate-400">
-        <code>keep_generations</code>: {draft.keep_generations ?? "non impostato"} — la retention si
-        modifica nel file di configurazione. L'editor non può introdurla né abbassarla, perché tenere
-        meno cicli significa cancellarne di più.
-      </p>
+      <!-- F69: the core already permits raising `keep_generations` on a job that has one (verified
+           in `job_editor::apply_draft` -- only `(None, Some)` "introduce" and `(Some(from),
+           Some(to)) if to < from` "lower" are rejected; keeping more deletes less). What it does
+           not catch is emptying the field, which has the same effect as lowering it without ever
+           reaching that check -- so this control offers no way to clear it, only to raise it. -->
+      {#if keepGenerationsFloor === null}
+        <p class="mt-2 text-[11px] text-slate-600 dark:text-slate-400">
+          <code>keep_generations</code>: non impostato — la retention si introduce nel file di
+          configurazione. L'editor non può introdurla, perché non tenerne alcuna significa
+          cancellarle tutte.
+        </p>
+      {:else}
+        <div class="mt-2 flex items-center gap-2 text-[11px] text-slate-600 dark:text-slate-400">
+          <label for="f-keep-generations"><code>keep_generations</code></label>
+          <input
+            id="f-keep-generations"
+            type="number"
+            min={keepGenerationsFloor}
+            step="1"
+            class="w-20 rounded border border-slate-300 px-2 py-0.5 dark:border-slate-700 dark:bg-slate-900"
+            value={draft.keep_generations}
+            oninput={(e) => {
+              const raw = e.currentTarget.value.trim();
+              const value = Number(raw);
+              if (raw !== "" && Number.isInteger(value) && value >= keepGenerationsFloor) {
+                draft.keep_generations = value;
+              } else {
+                // Reject blank / non-numeric / below-floor input rather than accept it and let the
+                // core reject the write later -- svuotare il campo avrebbe lo stesso effetto di
+                // abbassarlo, che qui non deve mai essere raggiungibile.
+                e.currentTarget.value = String(draft.keep_generations);
+              }
+            }}
+          />
+          <span>puoi solo alzarlo (minimo {keepGenerationsFloor}, il valore già in uso): tenere
+            meno cicli significa cancellarne di più.</span>
+        </div>
+      {/if}
 
       <p class="mt-2 text-[11px] text-slate-600 dark:text-slate-400">
         Webhook e comandi pre/post non sono modificabili qui e restano invariati nella proposta.
@@ -409,7 +456,7 @@
       title="Scegli un file di configurazione per modificarne i job"
       lines={[
         "Questa è l'unica scheda che scrive, e scrive sempre altrove: produce una proposta in un file nuovo e non tocca la configurazione in uso.",
-        "Non può accendere il mirror né introdurre o abbassare la retention: un job che cancella va scritto a mano nel file. Può però spegnerli, perché ridurre una cancellazione non ha bisogno di cancelli.",
+        "Non può accendere il mirror né introdurre la retention: un job che cancella va scritto a mano nel file. Può spegnere il mirror e alzare (mai abbassare) una retention già impostata, perché ridurre una cancellazione non ha bisogno di cancelli.",
         "Webhook e comandi pre/post non sono modificabili qui e restano invariati nella proposta.",
       ]}
     />
