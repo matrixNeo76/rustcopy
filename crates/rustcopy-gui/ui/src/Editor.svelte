@@ -6,6 +6,14 @@
   import { session } from "./session.svelte.js";
   import { ChevronUp, ChevronDown } from "@lucide/svelte";
 
+  // F76: an empty Report field is already correct -- it means "use the core's default", resolved
+  // against the configuration file's directory once the job actually runs -- but a visually empty
+  // field doesn't say so. Shown only as a placeholder, never written into the draft: writing it
+  // literally would change the semantics from "inherit/use the default" to "this job pins this
+  // path", a real difference `job_editor::pin` distinguishes on purpose. Mirrors
+  // `gui_api::DEFAULT_REPORT_PATH` -- keep the two in sync if that default ever changes.
+  const DEFAULT_REPORT_PATH_PLACEHOLDER = "./robocopy_ingest_report.json";
+
   // The only pane that writes. It never writes in place: it produces a proposal in a new file and
   // the operator decides whether it replaces the running configuration.
   let drafts = $state([]);
@@ -517,12 +525,18 @@
       />
 
       <label for="f-report">Report</label>
-      <input
-        id="f-report"
-        class="rounded border border-slate-300 px-2 py-1 font-mono dark:border-slate-700 dark:bg-slate-900"
-        value={draft.report_path ?? ""}
-        oninput={(e) => (draft.report_path = e.currentTarget.value.trim() === "" ? null : e.currentTarget.value)}
-      />
+      <div>
+        <input
+          id="f-report"
+          class="w-full rounded border border-slate-300 px-2 py-1 font-mono dark:border-slate-700 dark:bg-slate-900"
+          placeholder={DEFAULT_REPORT_PATH_PLACEHOLDER}
+          value={draft.report_path ?? ""}
+          oninput={(e) => (draft.report_path = e.currentTarget.value.trim() === "" ? null : e.currentTarget.value)}
+        />
+        <p class="mt-0.5 text-[11px] text-slate-500">
+          Vuoto = usa questo default, risolto rispetto alla cartella del file di configurazione.
+        </p>
+      </div>
 
       <label for="f-backup-type">Tipo di backup</label>
       <div>

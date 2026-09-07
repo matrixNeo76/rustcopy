@@ -1246,6 +1246,10 @@ scrivere un valore esplicito nella proposta cambierebbe la semantica da "eredita
 corretto è solo di presentazione: un `placeholder` col percorso di default reale, il campo resta
 vuoto finché l'operatore non digita qualcosa di suo.
 
+**✅ Implementato e verificato 7 Set 2026**, esattamente come proposto: `placeholder` HTML col
+percorso letterale (duplicato in JS, stesso schema di F72 per le liste di validazione), campo mai
+riempito con un valore letterale. Dettaglio completo nella riga F76 di `ROADMAP.md`.
+
 ### 18.10 backup_type e le checkbox — nessun aiuto inline
 
 Le spiegazioni **esistono già**, ma solo in Aiuto (`Help.svelte`, sezione "Termini che la console
@@ -1325,7 +1329,7 @@ In ordine di rapporto valore/rischio, non di apparizione nella lista originale:
    ✅ Completato 7 Set 2026.
 4. **F72** — validazione Nome. Piccolo, ma previene un errore che altrimenti si scopre solo ore
    dopo, alla prima esecuzione pianificata. ✅ Completato 7 Set 2026.
-5. **F76** — placeholder Report col default reale. Costo quasi nullo.
+5. **F76** — placeholder Report col default reale. Costo quasi nullo. ✅ Completato 7 Set 2026.
 6. **F74/F75/F77** — suggerimenti Pattern/Escludi file/Thread/Tentativi/backup_type/checkbox. Stesso
    tipo di intervento (didascalie/tooltip), raggruppabile in un solo giro di lavoro.
 7. **F78** — messaggio comprensibile per l'errore di split job singolo. Non blocca nessun flusso

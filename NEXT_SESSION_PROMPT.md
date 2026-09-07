@@ -246,14 +246,23 @@ priorità, poi autorizzata l'implementazione in sequenza:
   rigetta i caratteri riservati Windows e i nomi di dispositivo riservati, stesso schema di F70/F80
   (controllo proattivo in `apply_draft` + duplicato in JS per un messaggio immediato). Perimetro
   tenuto identico a F70/F80: "Scrivi proposta" non scansiona l'intero batch, solo il campo corrente
-  ha l'affordance. Dettaglio: riga F72 di `ROADMAP.md`.
-- **F76 è il prossimo**, poi nell'ordine confermato: F81 (colorazione/`EXIT_MEANING` di
-  `History.svelte`), F74/F75/F77 (tooltip Pattern/Escludi file/Thread/Tentativi/backup_type), F78
+  ha l'affordance. Dettaglio: riga F72 di `ROADMAP.md`. **CodeRabbit ha trovato un difetto reale
+  sulla PR**: mancavano i caratteri di controllo Windows (U+0001-U+001F) e le forme legacy a cifra
+  apice dei nomi dispositivo (`COM¹`/`COM²`/`COM³`/`LPT¹`/`LPT²`/`LPT³`), che Windows tratta
+  identicamente alle forme numeriche — corretto in entrambe le implementazioni (Rust e JS),
+  verificato dal vivo con "COM¹".
+- **F76 chiuso, stesso giorno**: placeholder per il campo Report col default reale
+  (`./robocopy_ingest_report.json`). Fix puramente di presentazione come previsto — il campo non
+  scrive mai il placeholder nel draft, resta `null` finché l'operatore non digita qualcosa di suo.
+  Zero cambi al core, interamente frontend. Dettaglio: riga F76 di `ROADMAP.md`.
+- **F81 è il prossimo** (colorazione/`EXIT_MEANING` di `History.svelte`), poi nell'ordine
+  confermato: F74/F75/F77 (tooltip Pattern/Escludi file/Thread/Tentativi/backup_type), F78
   (messaggio migliore per l'errore di split job singolo), F82 (avviso Anteprima ripristino senza
   config in sessione).
 
 Se questa sessione riprende a metà sequenza (compattazione, nuova sessione), continuare da dove
-`ROADMAP.md` segna l'ultima riga passata da 🟡 a ✅ — non ripartire da F79/F80/F73/F72 se sono già chiusi.
+`ROADMAP.md` segna l'ultima riga passata da 🟡 a ✅ — non ripartire da F79/F80/F73/F72/F76 se sono
+già chiusi.
 
 **Lavoro precedente, non urgente ma non dimenticato** (aree con lavoro reale trovate prima di
 questo giro, non ancora affrontate):
