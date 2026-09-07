@@ -956,7 +956,9 @@ nota**: `retry_wait_seconds`, `ignore_transient_missing`, `html_report_path`, `h
 
 Due di questi meritano una voce a sé, verificata più a fondo, non solo elencati:
 
-- **`keep_generations` è più restrittivo in GUI di quanto il core richieda.** Mostrato in sola
+- **`keep_generations` è più restrittivo in GUI di quanto il core richieda. ✅ Implementato e
+  verificato 7 Set 2026** (dettaglio completo, incluso il verificato "mai vuoto": riga F69 di
+  `ROADMAP.md`). Mostrato in sola
   lettura in Modifica, ma `job_editor.rs` accetta già di **alzarlo** — verificato nel test esistente
   `retention_can_be_neither_introduced_nor_lowered`: `raise.keep_generations = Some(12)` da un
   valore di partenza di 7 è esplicitamente atteso come accettato ("keeping more deletes less"), solo
@@ -1017,7 +1019,7 @@ impatto. Entrambi corretti nella stessa riga di `ROADMAP.md`.
 1. **F68** — selettori di cartella per Sorgente/Destinazione. Il gap più visibile, il più semplice
    tecnicamente (nessuna dipendenza nuova). ✅ Completato 7 Set 2026.
 2. **F69** — `keep_generations` editabile per alzarlo. Non una funzionalità nuova: allinea la GUI a
-   un permesso che il core ha già.
+   un permesso che il core ha già. ✅ Completato 7 Set 2026.
 3. **F70** — `backup_type` selezionabile. Chiude la lacuna più vistosa fra le feature bandiera del
    motore e la loro raggiungibilità dalla GUI.
 4. Gli altri 13 campi (§16.2, ultimo paragrafo) — nessun F-number dedicato finché uno di questi non

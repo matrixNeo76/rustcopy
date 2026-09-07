@@ -139,6 +139,21 @@ nativo di Windows rifiuta un percorso non ancora esistente (tipico per una desti
 sincronizzazione) — comportamento standard di Explorer, non un difetto; il campo di testo resta
 comunque editabile in parallelo. Dettaglio: riga F68 di `ROADMAP.md`, `PIANO_GUI.md` §16.1.
 
+**F69, `keep_generations` editabile per alzarlo, implementato e verificato 7 Set 2026** (priorità 2
+di §16.4, dopo F68): `draft.keep_generations` arriva dal core già come valore **effettivo**
+(`job_editor::read_drafts` fonde il job sui default di primo livello prima di passarlo alla form),
+quindi la GUI non deve ricalcolare l'ereditarietà. Il floor da non superare al ribasso è catturato
+una sola volta al caricamento in una mappa separata (`originalKeepGenerations`, per nome job) — mai
+dal valore live che l'input stesso muta, altrimenti il vincolo varrebbe zero ad ogni tasto premuto.
+**Nessuna via per svuotare il campo**: `EditorCannotLowerRetention` lato core intercetta solo
+`Some(from)→Some(to)` con `to<from`, non `Some(from)→None` — l'unico presidio contro lo svuotamento
+è l'`oninput` della form stessa, che rifiuta e ripristina l'ultimo valore valido. Verificato dal vivo
+con un file di test a due stati (job con retention già impostata alzata e scritta correttamente
+nella proposta; `demo-locale.toml`, senza retention, mostra ancora il testo di sola lettura). Ogni
+tentativo di svuotare il campo durante la verifica è scattato nel ripristino immediato all'ultimo
+valore valido, mai un vuoto o un valore sotto il floor visibile nemmeno per un istante. Dettaglio:
+riga F69 di `ROADMAP.md`, `PIANO_GUI.md` §16.2.
+
 **Lezione doppia da questo giro**: (1) "verificato manualmente contro il binario compilato" non
 basta se il caso provato non è quello che rompe — la verifica originaria di F64 ha quasi certamente
 usato un report a percorsi assoluti; (2) un fix che sembra ovvio (stesso pattern già usato altrove,
@@ -150,21 +165,20 @@ sbagliato e solo la riverifica contro il binario l'ha scoperto.
 
 ## 🎯 Obiettivo per la prossima sessione
 
-**Standing: "procedi seguendo il piano" (§16.4 di `PIANO_GUI.md`)** — F68 chiuso il 7 Set 2026, F69
-è la prossima voce in ordine di priorità. Le aree con lavoro reale ancora da fare, in ordine:
+**Standing: "procedi seguendo il piano" (§16.4 di `PIANO_GUI.md`)** — F68 e F69 chiusi il 7 Set 2026,
+F70 è la prossima voce in ordine di priorità. Le aree con lavoro reale ancora da fare, in ordine:
 
-1. **F69** — `keep_generations` editabile in Modifica per alzarlo, **mai** per svuotarlo (vedi
-   criticità già trovata e corretta in spec, sopra). Priorità 2 di §16.4.
-2. **F70** — `backup_type` selezionabile in Modifica (full/incremental/differential). Priorità 3.
-3. **F71** — pannello di sincronizzazione rapida senza config esistente, collegato dall'empty state
+1. **F70** — `backup_type` selezionabile in Modifica (full/incremental/differential). Priorità 3
+   di §16.4.
+2. **F71** — pannello di sincronizzazione rapida senza config esistente, collegato dall'empty state
    di Job, **non** dentro `Jobs.svelte`. Dipende dal pattern di selettori di cartella di F68 (chiuso).
-4. **Flusso di ripristino guidato** (`--restore-from`, Onda 3) — la lacuna funzionale più sentita della console. **Il primo mattone (l'anteprima) è F64, chiuso, D26 corretto il 6 Set 2026**: resta da costruire il resto del flusso — elenco report → anteprima (pronta e verificata) → conferma esplicita → avvio. Proporre con `AskUserQuestion` prima di implementare il resto.
-5. **Due decisioni bloccate, entrambe spettano all'utente**:
+3. **Flusso di ripristino guidato** (`--restore-from`, Onda 3) — la lacuna funzionale più sentita della console. **Il primo mattone (l'anteprima) è F64, chiuso, D26 corretto il 6 Set 2026**: resta da costruire il resto del flusso — elenco report → anteprima (pronta e verificata) → conferma esplicita → avvio. Proporre con `AskUserQuestion` prima di implementare il resto.
+4. **Due decisioni bloccate, entrambe spettano all'utente**:
    - Interruttore VSS in Modifica — serve prima `vss_snapshot: Option<bool>` su `JobConfig` lato core, non è lavoro di frontend.
    - Scrittura di webhook/script pre-post in Modifica (F55, metà scrittura) — morde il vincolo permanente 2 (§2.3 di `PIANO_GUI.md`): script configurabili + servizio privilegiato = escalation locale. Non procedere senza una decisione esplicita.
-6. **D25** (`checkpoint::build_resume_args` scarta la maggior parte della configurazione originale) — aperto ma non bloccante. Il fix corretto è un tipo dedicato per il checkpoint, non allargare `ConfigurationReport` (condiviso con i report di run completate). Non affrontarlo con una patch rapida.
-7. **F63, metà retention** (`--keep-generations`/`GenerationIndex::generations_to_prune`) — lasciata deliberatamente fuori dalla PR #88 per tenerla rivedibile. Stesso disegno della metà mirror già fatta (scrivere l'elenco invece di contarlo), da riprendere quando serve o quando si costruisce il punto 4 sopra.
-8. **F47/F48/F58 (motore pilotabile)** — sospesi in roadmap, analisi di rischio completa in `PIANO_GUI.md` §15. Non riprendere senza un vero prototipo del Livello A.
+5. **D25** (`checkpoint::build_resume_args` scarta la maggior parte della configurazione originale) — aperto ma non bloccante. Il fix corretto è un tipo dedicato per il checkpoint, non allargare `ConfigurationReport` (condiviso con i report di run completate). Non affrontarlo con una patch rapida.
+6. **F63, metà retention** (`--keep-generations`/`GenerationIndex::generations_to_prune`) — lasciata deliberatamente fuori dalla PR #88 per tenerla rivedibile. Stesso disegno della metà mirror già fatta (scrivere l'elenco invece di contarlo), da riprendere quando serve o quando si costruisce il punto 3 sopra.
+7. **F47/F48/F58 (motore pilotabile)** — sospesi in roadmap, analisi di rischio completa in `PIANO_GUI.md` §15. Non riprendere senza un vero prototipo del Livello A.
 
 In assenza di una richiesta, il modello resta quello delle sessioni precedenti: **verificare empiricamente prima di proporre un fix**, mai fix speculativi su ipotesi non confermate — e, per qualunque cosa tocchi la GUI, **aprire la finestra** contro il binario release compilato, non fidarsi di `cargo build`/test/clippy da soli.
 
