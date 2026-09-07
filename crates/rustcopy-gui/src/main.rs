@@ -61,11 +61,13 @@ compile_error!(
     "a release build without the `custom-protocol` feature loads devUrl instead of the embedded frontend; build with default features"
 );
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use robocopy_ingest::advise::Advice;
 use robocopy_ingest::example_workspace;
-use robocopy_ingest::gui_api::{self, HistoryView, JobSettings, JobSummary, ReportView};
+use robocopy_ingest::gui_api::{
+    self, HistoryView, JobSettings, JobSummary, PathInspection, ReportView,
+};
 use robocopy_ingest::job_editor::{self, JobDraft};
 
 /// Runs a blocking library call off the IPC thread.
@@ -83,6 +85,25 @@ where
         .await
         .map_err(|error| format!("the task panicked: {error}"))?
         .map_err(|error| error.to_string())
+}
+
+/// F73: checks a Sorgente/Destinazione path on demand -- existence plus, for an existing
+/// directory, file/folder counts and total size. A manual button press, never triggered on every
+/// keystroke: see [`gui_api::inspect_path`] for why (a real profile in this project takes minutes
+/// to walk in full).
+///
+/// `config_path` anchors a relative `path` against the configuration's own directory, same as
+/// [`list_jobs`]/[`start_job`] -- found necessary the first time this was clicked live: `path` is
+/// checked in this process, which has no reason to share the config's directory as its own
+/// working directory.
+#[tauri::command]
+async fn inspect_path(path: String, config_path: String) -> Result<PathInspection, String> {
+    off_thread(move || {
+        let anchor = PathBuf::from(&config_path);
+        let anchor = anchor.parent().unwrap_or(Path::new("."));
+        gui_api::inspect_path(&PathBuf::from(path), anchor)
+    })
+    .await
 }
 
 /// Lists the jobs a TOML config declares.
@@ -731,6 +752,7 @@ fn main() {
         // `run_status`, so no new command is needed here.
         .plugin(tauri_plugin_notification::init())
         .invoke_handler(tauri::generate_handler![
+            inspect_path,
             list_jobs,
             read_settings,
             read_report,
