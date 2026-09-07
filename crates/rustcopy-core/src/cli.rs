@@ -754,6 +754,13 @@ impl Args {
         if self.backup_type.is_some() && self.mirror {
             return Err(IngestError::BackupTypeAndMirrorConflict);
         }
+        // F80: `execute_generation_backup` never calls `encrypt_destination` (declared scope gap,
+        // see CLAUDE.md's F34 note) -- without this check, `encrypt_aes256` set alongside
+        // `backup_type` (now reachable per-job from JobConfig, not just on the CLI) would silently
+        // produce an unencrypted generation backup while the operator believes it is encrypted.
+        if self.backup_type.is_some() && self.encrypt_aes256.is_some() {
+            return Err(IngestError::BackupTypeAndEncryptionConflict);
+        }
         // F35: nothing to rotate without a generation history in the first place.
         if self.keep_generations.is_some() && self.backup_type.is_none() {
             return Err(IngestError::KeepGenerationsWithoutBackupType);
@@ -1095,6 +1102,22 @@ mod tests {
         assert!(matches!(
             args.validate(),
             Err(IngestError::BackupTypeAndMirrorConflict)
+        ));
+    }
+
+    /// F80: the generation pipeline doesn't call `encrypt_destination` yet, so accepting both
+    /// would silently produce an unencrypted backup the operator believes is encrypted.
+    #[test]
+    fn backup_type_and_encrypt_aes256_together_are_rejected() {
+        use crate::generations::BackupType;
+        let mut args =
+            Args::try_parse_from(["robocopy_ingest", "--source", ".", "--dest", "./out"])
+                .expect("parse");
+        args.backup_type = Some(BackupType::Full);
+        args.encrypt_aes256 = Some("keyring:backup-nas".to_string());
+        assert!(matches!(
+            args.validate(),
+            Err(IngestError::BackupTypeAndEncryptionConflict)
         ));
     }
 

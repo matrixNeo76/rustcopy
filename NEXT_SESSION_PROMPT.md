@@ -14,7 +14,7 @@ generated:
 
 `Cargo.toml` = **7.0.0** (bump da 6.0.0, 7 Set 2026 — v6.0.0 era stato taggato 216 commit prima
 ancora che la milestone 7.0.0/console partisse; mai più aggiornato da allora, corretto su decisione
-esplicita dell'utente). Suite di test: **490** (`cargo test --locked --workspace --exclude rustcopy-gui --all-targets`), **505** con `--features rustcopy-cli/notify-server` (più test `#[ignore]` — round-trip reali dei servizi Windows che richiedono elevazione, più due probe di misurazione a scala reale). CI verde su `windows-latest` e `ubuntu-latest` per entrambe le configurazioni, più i job dedicati `gui`, `gui-npm-audit`, `versions` e `docs`.
+esplicita dell'utente). Suite di test: **492** (`cargo test --locked --workspace --exclude rustcopy-gui --all-targets`), **507** con `--features rustcopy-cli/notify-server` (più test `#[ignore]` — round-trip reali dei servizi Windows che richiedono elevazione, più due probe di misurazione a scala reale). CI verde su `windows-latest` e `ubuntu-latest` per entrambe le configurazioni, più i job dedicati `gui`, `gui-npm-audit`, `versions` e `docs`.
 
 **Prima GitHub Release pubblicata, v7.0.0 (7 Set 2026)**: tag e Release annotati sul commit di
 `main` dopo il merge di F70 (F62-F70 tutte incluse), installer `rustcopy-7.0.0-setup.exe` allegato

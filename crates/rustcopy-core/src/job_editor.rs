@@ -243,6 +243,14 @@ pub fn apply_draft(
         return Err(IngestError::BackupTypeAndMirrorConflict);
     }
 
+    // F80: same reasoning as the mirror check above -- the CLI would reject this combination at
+    // startup anyway (`IngestError::BackupTypeAndEncryptionConflict`, `Args::validate()`), so
+    // catching it here means the editor cannot write a job that only fails hours later, at the
+    // next scheduled run.
+    if draft.backup_type.is_some() && draft.encrypt_aes256.is_some() {
+        return Err(IngestError::BackupTypeAndEncryptionConflict);
+    }
+
     // The CLI rejects this range at startup (`IngestError::InvalidThreads`). Catching it here
     // means the editor cannot write a file that only fails hours later, on a scheduled run.
     if let Some(threads) = draft.threads {
@@ -732,6 +740,25 @@ mod tests {
             .expect("no longer mirroring, so no conflict");
         assert_eq!(result.backup_type, Some(BackupType::Full));
         assert_eq!(result.mirror, Some(false));
+    }
+
+    /// F80: the generation pipeline doesn't call `encrypt_destination` yet -- writing a proposal
+    /// with both fields set would let an operator believe a generation backup is encrypted when
+    /// it never is. `Args::validate()` rejects the combination at startup; the editor must not
+    /// write a proposal that only fails hours later, at the next scheduled run.
+    #[test]
+    fn backup_type_and_encrypt_aes256_cannot_combine() {
+        let config = config_from("source = \"D:/src\"\ndest = \"E:/dst\"\n");
+        let mut draft = draft_for(&config, "job1");
+        draft.backup_type = Some(BackupType::Full);
+        draft.encrypt_aes256 = Some("keyring:backup-nas".to_string());
+
+        let error = apply_draft(Some(&config.defaults), &JobConfig::default(), &draft)
+            .expect_err("must be refused");
+        assert!(
+            matches!(error, IngestError::BackupTypeAndEncryptionConflict),
+            "got {error:?}"
+        );
     }
 
     /// Retention deletes whole generation cycles. Introducing it is widening; so is lowering it,

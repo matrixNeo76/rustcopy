@@ -30,6 +30,12 @@ pub enum IngestError {
     #[error("--keep-generations requires --backup-type: there is nothing to rotate without a generation history")]
     KeepGenerationsWithoutBackupType,
 
+    /// F80: `execute_generation_backup` never calls `encrypt_destination` (declared scope gap,
+    /// see `CLAUDE.md`'s F34 note) -- accepting both silently would let an operator believe a
+    /// generation backup is encrypted when it never is.
+    #[error("--backup-type and --encrypt-aes256 cannot both be given: the generation backup pipeline does not encrypt its output yet")]
+    BackupTypeAndEncryptionConflict,
+
     /// F54. The editor may narrow risk, never widen it: a job that purges the destination cannot
     /// be born in a user interface. See `job_editor`'s module header for why the field is still
     /// writable in the other direction.
@@ -236,6 +242,7 @@ impl IngestError {
             | IngestError::InvalidThreads(_)
             | IngestError::SourceOrDestMissingFromConfig
             | IngestError::BackupTypeAndMirrorConflict
+            | IngestError::BackupTypeAndEncryptionConflict
             | IngestError::KeepGenerationsWithoutBackupType
             | IngestError::SourceMissing(_)
             | IngestError::SourceNotADirectory(_)

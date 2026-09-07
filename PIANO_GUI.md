@@ -1295,11 +1295,11 @@ In ordine di rapporto valore/rischio, non di apparizione nella lista originale:
 1. **F79** — generatore di esempio in Documenti + correzione dei due rimandi rotti (`Jobs.svelte`,
    `Help.svelte`). Sblocca "come inizio" per chiunque non sia uno sviluppatore col repository
    clonato — il gap più bloccante di tutti quelli trovati. ✅ Completato 7 Set 2026.
-2. **F80** — `encrypt_aes256` per job in `JobConfig`, raggiungibile da Modifica. Oggi la cifratura
-   è irraggiungibile dalla GUI e dal TOML per qualunque job in un batch — non attrito, un'assenza
-   totale. Priorità alta ma **richiede una decisione esplicita** (§18.14): tocca il core
-   (`JobConfig`, `run_jobs`), non solo la GUI, a differenza di ogni altra riga di questa lista.
-   ✅ Completato 7 Set 2026.
+2. **F80** — `encrypt_aes256` per job in `JobConfig`, raggiungibile da Modifica. Prima
+   dell'implementazione la cifratura era irraggiungibile dalla GUI e dal TOML per qualunque job in
+   un batch — non attrito, un'assenza totale. Priorità alta e richiedeva una decisione esplicita
+   (§18.14) perché toccava il core (`JobConfig`), non solo la GUI, a differenza di ogni altra riga
+   di questa lista — decisione presa e implementazione chiusa. ✅ Completato 7 Set 2026.
 3. **F73** — verifica Sorgente/Destinazione (esistenza + conteggio). Il valore pratico più alto fra
    le richieste originali di solo-GUI, zero nuova logica di scansione da scrivere.
 4. **F72** — validazione Nome. Piccolo, ma previene un errore che altrimenti si scopre solo ore

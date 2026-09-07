@@ -402,16 +402,26 @@
             <span class="text-xs text-slate-500">keyring:</span>
             <input
               id="f-encrypt"
-              class="w-48 rounded border border-slate-300 px-2 py-1 font-mono dark:border-slate-700 dark:bg-slate-900"
+              class="w-48 rounded border border-slate-300 px-2 py-1 font-mono disabled:bg-slate-100
+                     disabled:text-slate-500 dark:border-slate-700 dark:bg-slate-900
+                     dark:disabled:bg-slate-800"
               placeholder="nome credenziale"
               value={encryptCredentialName}
+              disabled={!!draft.backup_type}
               oninput={(e) => setEncryptCredential(e.currentTarget.value)}
             />
           </div>
-          <p class="mt-0.5 text-[11px] text-slate-500">
-            Nome di una credenziale salvata in Impostazioni → Gestione credenziali. Vuoto = nessuna
-            cifratura per questo job.
-          </p>
+          {#if draft.backup_type}
+            <p class="mt-0.5 text-[11px] text-slate-500">
+              Non selezionabile insieme a Tipo di backup: la pipeline a generazioni non cifra
+              ancora il proprio output (`Args::validate()` rifiuterebbe comunque la combinazione).
+            </p>
+          {:else}
+            <p class="mt-0.5 text-[11px] text-slate-500">
+              Nome di una credenziale salvata in Impostazioni → Gestione credenziali. Vuoto =
+              nessuna cifratura per questo job.
+            </p>
+          {/if}
         {:else}
           <p
             id="f-encrypt"
