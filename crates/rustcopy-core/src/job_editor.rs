@@ -102,6 +102,13 @@ pub struct JobDraft {
     pub mirror: bool,
     /// Constrained: cannot be introduced, cannot be lowered (rule 2).
     pub keep_generations: Option<usize>,
+    /// F80. Not constrained by any of the four rules above -- encrypting or not encrypting a job
+    /// deletes nothing, so raising or lowering this carries none of `mirror`/`keep_generations`'
+    /// risk. The console's own form (`Editor.svelte`) only ever writes `keyring:NAME` here, never
+    /// a literal key -- but that restriction lives in the frontend, not here: a value already set
+    /// in another of `crypto::resolve_key`'s forms (`env:`/`file:`/literal, written by hand) is
+    /// carried through unchanged like any field this draft does not touch.
+    pub encrypt_aes256: Option<String>,
 }
 
 fn optional_string(value: &Option<PathBuf>) -> Option<String> {
@@ -143,6 +150,7 @@ pub fn draft_from(job: &JobConfig, name: &str) -> JobDraft {
         html_report_path: optional_string(&job.html_report_path),
         mirror: job.mirror.unwrap_or(false),
         keep_generations: job.keep_generations,
+        encrypt_aes256: job.encrypt_aes256.clone(),
     }
 }
 
@@ -233,6 +241,14 @@ pub fn apply_draft(
     // file that only fails hours later, on a scheduled run.
     if draft.mirror && draft.backup_type.is_some() {
         return Err(IngestError::BackupTypeAndMirrorConflict);
+    }
+
+    // F80: same reasoning as the mirror check above -- the CLI would reject this combination at
+    // startup anyway (`IngestError::BackupTypeAndEncryptionConflict`, `Args::validate()`), so
+    // catching it here means the editor cannot write a job that only fails hours later, at the
+    // next scheduled run.
+    if draft.backup_type.is_some() && draft.encrypt_aes256.is_some() {
+        return Err(IngestError::BackupTypeAndEncryptionConflict);
     }
 
     // The CLI rejects this range at startup (`IngestError::InvalidThreads`). Catching it here
@@ -387,6 +403,15 @@ pub fn apply_draft(
             base.preserve_acl,
             inherited.preserve_acl,
             draft.preserve_acl,
+        ),
+        // F80: unlike webhook_url/pre_command/post_command below, this one *is* owned by the
+        // editor -- JobDraft carries it, so a value the operator did not touch resolves to the
+        // same value it already had (pin()'s ordinary "no real change" case), and a value already
+        // set in a non-`keyring:` form by hand round-trips through unchanged for the same reason.
+        encrypt_aes256: pin(
+            base.encrypt_aes256.as_ref(),
+            inherited.encrypt_aes256.as_ref(),
+            draft.encrypt_aes256.clone(),
         ),
         // Not owned by this editor, therefore carried through rather than dropped. See the module
         // header: dropping them would be a silent semantic change, which is the failure mode this
@@ -642,6 +667,44 @@ mod tests {
         assert_eq!(result.retries, Some(9));
     }
 
+    /// F80: `encrypt_aes256` is an ordinary editable field (unlike `mirror`/`keep_generations`,
+    /// nothing about encrypting deletes anything), so an explicit change simply takes effect --
+    /// and a value already set by hand in a non-`keyring:` form (the console's own form only ever
+    /// writes that one) survives an unrelated edit exactly like `mirror` does above, because the
+    /// editor never touches a field the draft did not change.
+    #[test]
+    fn encrypt_aes256_is_editable_and_survives_an_unrelated_edit_when_untouched() {
+        let config = config_from("source = \"D:/src\"\ndest = \"E:/dst\"\n");
+        let mut draft = draft_for(&config, "job1");
+        assert_eq!(draft.encrypt_aes256, None);
+
+        draft.encrypt_aes256 = Some("keyring:backup-nas".to_string());
+        let result = apply_draft(Some(&config.defaults), &JobConfig::default(), &draft)
+            .expect("setting a key is an ordinary edit");
+        assert_eq!(
+            result.encrypt_aes256,
+            Some("keyring:backup-nas".to_string())
+        );
+
+        // A value set by hand in a form the editor never writes itself (env:) must round-trip
+        // through an unrelated edit untouched -- the editor does not know or care what form it
+        // is in, only whether the draft's own value differs from what the job already resolves to.
+        let config = config_from(
+            "source = \"D:/src\"\ndest = \"E:/dst\"\nencrypt_aes256 = \"env:BACKUP_KEY\"\n",
+        );
+        let mut draft = draft_for(&config, "job1");
+        assert_eq!(draft.encrypt_aes256, Some("env:BACKUP_KEY".to_string()));
+
+        draft.retries = Some(9);
+        let result = apply_draft(Some(&config.defaults), &JobConfig::default(), &draft)
+            .expect("an unrelated edit");
+        assert_eq!(
+            result.encrypt_aes256,
+            Some("env:BACKUP_KEY".to_string()),
+            "a hand-written non-keyring value must not be disturbed by an unrelated edit"
+        );
+    }
+
     /// Turning a deletion off needs no gate.
     #[test]
     fn the_editor_may_turn_mirroring_off() {
@@ -677,6 +740,25 @@ mod tests {
             .expect("no longer mirroring, so no conflict");
         assert_eq!(result.backup_type, Some(BackupType::Full));
         assert_eq!(result.mirror, Some(false));
+    }
+
+    /// F80: the generation pipeline doesn't call `encrypt_destination` yet -- writing a proposal
+    /// with both fields set would let an operator believe a generation backup is encrypted when
+    /// it never is. `Args::validate()` rejects the combination at startup; the editor must not
+    /// write a proposal that only fails hours later, at the next scheduled run.
+    #[test]
+    fn backup_type_and_encrypt_aes256_cannot_combine() {
+        let config = config_from("source = \"D:/src\"\ndest = \"E:/dst\"\n");
+        let mut draft = draft_for(&config, "job1");
+        draft.backup_type = Some(BackupType::Full);
+        draft.encrypt_aes256 = Some("keyring:backup-nas".to_string());
+
+        let error = apply_draft(Some(&config.defaults), &JobConfig::default(), &draft)
+            .expect_err("must be refused");
+        assert!(
+            matches!(error, IngestError::BackupTypeAndEncryptionConflict),
+            "got {error:?}"
+        );
     }
 
     /// Retention deletes whole generation cycles. Introducing it is widening; so is lowering it,

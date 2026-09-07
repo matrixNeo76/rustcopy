@@ -719,6 +719,13 @@ impl Args {
         if let Some(post) = &job.post_command {
             self.post_command = Some(post.clone());
         }
+        // F80: does not run inside `execute_generation_backup` -- `encrypt_destination` is only
+        // ever called from the plain-sync pipeline (`execute()`), same declared limitation as
+        // `--compare-baseline`/`--verify-integrity`/VSS-on-the-destination-side for a job that
+        // also sets `backup_type`. Accepted and stored regardless; silently has no effect there.
+        if let Some(key) = &job.encrypt_aes256 {
+            self.encrypt_aes256 = Some(key.clone());
+        }
     }
     /// Rejects a `--cancel-file` that already exists, once, before any job starts.
     ///
@@ -746,6 +753,13 @@ impl Args {
         // subfolders, not a single mirrored tree).
         if self.backup_type.is_some() && self.mirror {
             return Err(IngestError::BackupTypeAndMirrorConflict);
+        }
+        // F80: `execute_generation_backup` never calls `encrypt_destination` (declared scope gap,
+        // see CLAUDE.md's F34 note) -- without this check, `encrypt_aes256` set alongside
+        // `backup_type` (now reachable per-job from JobConfig, not just on the CLI) would silently
+        // produce an unencrypted generation backup while the operator believes it is encrypted.
+        if self.backup_type.is_some() && self.encrypt_aes256.is_some() {
+            return Err(IngestError::BackupTypeAndEncryptionConflict);
         }
         // F35: nothing to rotate without a generation history in the first place.
         if self.keep_generations.is_some() && self.backup_type.is_none() {
@@ -989,6 +1003,24 @@ mod tests {
         assert_eq!(args.pattern, "*.csv");
     }
 
+    /// F80: `--encrypt-aes256` was CLI-only; this is the one line that makes a per-job
+    /// `[[jobs]]` value actually reach the invocation `execute()` reads (`config::JobConfig`'s
+    /// own field and `merged_over` only build the resolved value -- this call site is what
+    /// copies it onto `Args`, the same as every other job-config field).
+    #[test]
+    fn apply_job_config_applies_encrypt_aes256() {
+        let mut args =
+            Args::try_parse_from(["robocopy_ingest", "--source", ".", "--dest", "./out"])
+                .expect("parses");
+        let job = crate::config::JobConfig {
+            encrypt_aes256: Some("keyring:backup-nas".to_string()),
+            ..crate::config::JobConfig::default()
+        };
+        args.apply_job_config(&job);
+
+        assert_eq!(args.encrypt_aes256, Some("keyring:backup-nas".to_string()));
+    }
+
     /// Deliberate asymmetry between the two exclude-merge call sites (documented in
     /// `ROADMAP.md` and `PIANO_MIGLIORAMENTI.md`, not a bug): `apply_job_config` (this call
     /// site, shared by single-job `merge_config` and multi-job mode) ACCUMULATES CLI-provided
@@ -1070,6 +1102,22 @@ mod tests {
         assert!(matches!(
             args.validate(),
             Err(IngestError::BackupTypeAndMirrorConflict)
+        ));
+    }
+
+    /// F80: the generation pipeline doesn't call `encrypt_destination` yet, so accepting both
+    /// would silently produce an unencrypted backup the operator believes is encrypted.
+    #[test]
+    fn backup_type_and_encrypt_aes256_together_are_rejected() {
+        use crate::generations::BackupType;
+        let mut args =
+            Args::try_parse_from(["robocopy_ingest", "--source", ".", "--dest", "./out"])
+                .expect("parse");
+        args.backup_type = Some(BackupType::Full);
+        args.encrypt_aes256 = Some("keyring:backup-nas".to_string());
+        assert!(matches!(
+            args.validate(),
+            Err(IngestError::BackupTypeAndEncryptionConflict)
         ));
     }
 

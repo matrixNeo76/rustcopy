@@ -44,6 +44,25 @@
   // explains why, exactly like `mirrorLocked` does for Mirror.
   const keepGenerationsFloor = $derived(draft ? (originalKeepGenerations.get(draft.name) ?? null) : null);
 
+  // F80: `crypto::resolve_key` accepts four forms (`keyring:NAME`/`env:NAME`/`file:PATH`/
+  // literal), but this form only ever writes `keyring:NAME` -- a literal key here would defeat
+  // F56's entire point (a secret visible in a file on disk instead of the credential manager),
+  // and env:/file: name something on the machine running the job, not something this form can
+  // usefully offer a picker for. A value already set by hand in one of those other three forms is
+  // shown read-only instead of forced into a text box that would silently rewrite it the moment
+  // the operator touched an unrelated field.
+  const encryptKeyringForm = $derived(
+    !draft || draft.encrypt_aes256 == null || draft.encrypt_aes256.startsWith("keyring:"),
+  );
+  const encryptCredentialName = $derived(
+    draft && encryptKeyringForm && draft.encrypt_aes256 ? draft.encrypt_aes256.slice("keyring:".length) : "",
+  );
+
+  function setEncryptCredential(name) {
+    const trimmed = name.trim();
+    draft.encrypt_aes256 = trimmed === "" ? null : `keyring:${trimmed}`;
+  }
+
   // Mirrors a rule the core owns and enforces (`job_editor`): the editor may narrow risk, never
   // widen it. Disabling the control here is an affordance, not the enforcement — `write_proposal`
   // refuses the same edit whatever this frontend sends.
@@ -369,6 +388,50 @@
           <p class="mt-0.5 text-[11px] text-slate-500">
             Non selezionabile insieme a Mirror: le due destinazioni sono incompatibili (copia
             speculare 1:1 contro manifest e sottocartelle per generazione).
+          </p>
+        {/if}
+      </div>
+
+      <label for="f-encrypt">Cifratura</label>
+      <div>
+        <!-- F80: only the `keyring:NOME` form is editable here -- a literal key or an `env:`/`file:`
+             reference is shown read-only instead. Accepting free text would let this form write a
+             secret in clear text into the TOML, defeating the entire point of F56's keyring form. -->
+        {#if encryptKeyringForm}
+          <div class="flex items-center gap-1">
+            <span class="text-xs text-slate-500">keyring:</span>
+            <input
+              id="f-encrypt"
+              class="w-48 rounded border border-slate-300 px-2 py-1 font-mono disabled:bg-slate-100
+                     disabled:text-slate-500 dark:border-slate-700 dark:bg-slate-900
+                     dark:disabled:bg-slate-800"
+              placeholder="nome credenziale"
+              value={encryptCredentialName}
+              disabled={!!draft.backup_type}
+              oninput={(e) => setEncryptCredential(e.currentTarget.value)}
+            />
+          </div>
+          {#if draft.backup_type}
+            <p class="mt-0.5 text-[11px] text-slate-500">
+              Non selezionabile insieme a Tipo di backup: la pipeline a generazioni non cifra
+              ancora il proprio output (`Args::validate()` rifiuterebbe comunque la combinazione).
+            </p>
+          {:else}
+            <p class="mt-0.5 text-[11px] text-slate-500">
+              Nome di una credenziale salvata in Impostazioni → Gestione credenziali. Vuoto =
+              nessuna cifratura per questo job.
+            </p>
+          {/if}
+        {:else}
+          <p
+            id="f-encrypt"
+            class="rounded border border-slate-300 bg-slate-50 px-2 py-1 font-mono text-xs text-slate-600 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-400"
+          >
+            {draft.encrypt_aes256}
+          </p>
+          <p class="mt-0.5 text-[11px] text-slate-500">
+            Valore non in forma <code>keyring:NOME</code> — non modificabile qui, resta invariato
+            nella proposta. Modificalo a mano nel file di configurazione.
           </p>
         {/if}
       </div>
