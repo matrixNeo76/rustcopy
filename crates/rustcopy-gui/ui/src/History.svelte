@@ -46,13 +46,23 @@
       // reading of it. Keeping them apart means a parse problem in one does not blank the other.
       // Empty means "the un-suffixed index", which is what a single-job run writes.
       const job = session.jobName.trim() === "" ? null : session.jobName.trim();
-      history = await invoke("read_history", { reportPath: session.reportPath, jobName: job, limit: 100 });
-      advice = await invoke("read_advice", { reportPath: session.reportPath, jobName: job });
-      const codes = [...new Set((history?.runs ?? []).map((run) => run.exit_code))];
+      // F81 fix (CodeRabbit, found on this PR): `history` used to be assigned straight from this
+      // call, before `meaningByCode` was filled in below -- between those two assignments the
+      // table (and an unguarded "Esporta CSV" click) could render/export "…" instead of the real
+      // meaning. Kept local until every lookup below has resolved, then assigned together.
+      const loadedHistory = await invoke("read_history", {
+        reportPath: session.reportPath,
+        jobName: job,
+        limit: 100,
+      });
+      const loadedAdvice = await invoke("read_advice", { reportPath: session.reportPath, jobName: job });
+      const codes = [...new Set((loadedHistory?.runs ?? []).map((run) => run.exit_code))];
       const entries = await Promise.all(
         codes.map(async (code) => [code, await invoke("exit_code_meaning", { code })]),
       );
       meaningByCode = Object.fromEntries(entries);
+      history = loadedHistory;
+      advice = loadedAdvice;
     } catch (e) {
       error = String(e);
       history = null;
