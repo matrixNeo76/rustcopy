@@ -1468,6 +1468,10 @@ vuoto ("l'anteprima potrebbe fallire su percorsi relativi: apri prima il file di
 questa run in un'altra scheda"), o mostrare quale config verrà usato quando non è vuoto — coerente
 con quanto già fa D26 stesso, solo reso visibile prima del click invece che scoperto dopo.
 
+**✅ Implementato e verificato 8 Set 2026**, entrambe le metà proposte: avviso ambra quando
+`session.configPath` è vuoto, riga informativa col percorso effettivo quando non lo è. Nessun
+cambio al core. Dettaglio completo nella riga F82 di `ROADMAP.md`.
+
 **Nessun'altra criticità di rilievo trovata** in `Jobs.svelte`, `Settings.svelte`, `PathBar.svelte`:
 `PathBar.svelte` in particolare è il componente più curato dell'intera console (drag&drop, chiusura
 al click esterno, tasto Escape, collasso dei margini già risolto — §16.1/F68) e non ha mostrato

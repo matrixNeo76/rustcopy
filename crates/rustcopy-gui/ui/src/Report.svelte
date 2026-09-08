@@ -248,6 +248,27 @@
       </button>
     </div>
 
+    <!-- F82: `previewRestore()` above passes `session.configPath` as the cwd that makes a
+         report's relative source/dest readable (D26). That link only exists when the operator
+         reached Report via "Apri il report di questa run" (Esegui) or otherwise touched
+         Job/Esegui/Modifica first in this session -- opening Report directly leaves it empty, and
+         the preview then fails on the same "fatal error, no files copied" D26 already found, this
+         time for the silent absence of the prerequisite rather than a bug. Shown before the click,
+         not discovered after it; the two branches mirror what D26 itself already does with a
+         non-empty path, just made visible up front. -->
+    {#if session.configPath.trim() === ""}
+      <p class="mt-2 rounded border border-amber-300 bg-amber-50 px-2 py-1 text-xs text-amber-900
+                dark:border-amber-800 dark:bg-amber-950 dark:text-amber-200">
+        Nessun file di configurazione aperto in questa sessione: l'anteprima potrebbe fallire se il
+        report usa percorsi relativi. Apri prima il file di configurazione di questa run (scheda
+        Job, Esegui o Modifica), poi torna qui.
+      </p>
+    {:else}
+      <p class="mt-2 text-[11px] text-slate-500">
+        Percorsi relativi risolti rispetto a <code class="font-mono">{session.configPath}</code>.
+      </p>
+    {/if}
+
     {#if restorePreviewError}
       <p class="mt-2 rounded border border-red-300 bg-red-50 px-2 py-1 text-xs text-red-800
                 dark:border-red-800 dark:bg-red-950 dark:text-red-200" role="alert">

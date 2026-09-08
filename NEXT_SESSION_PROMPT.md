@@ -299,12 +299,15 @@ priorità, poi autorizzata l'implementazione in sequenza:
   un ritardo del nostro codice, un incidente della piattaforma. Mersa su autorizzazione esplicita
   dell'utente, basandosi sulla verifica locale già completa (`cargo test`/clippy/build puliti su
   entrambi i set di feature, verifica live in console eseguita due volte).
-- **Prossimo: F82** (avviso Anteprima ripristino senza config in sessione, spec in
-  `PIANO_GUI.md` §18.15 verso la fine).
+- **F82 chiuso, 8 Set 2026**: avviso "Anteprima ripristino" senza config in sessione. `Report.svelte`
+  mostra un avviso ambra prima del click quando `session.configPath` è vuoto, e una riga
+  informativa col percorso effettivo quando non lo è — entrambe le metà proposte, non solo una.
+  Nessun cambio al core. Dettaglio: riga F82 di `ROADMAP.md`. **Con F82 chiuso, l'intera sequenza
+  F72-F82 confermata da `PIANO_GUI.md` §18.16 è completa.**
 
 Se questa sessione riprende a metà sequenza (compattazione, nuova sessione), continuare da dove
 `ROADMAP.md` segna l'ultima riga passata da 🟡 a ✅ — non ripartire da
-F79/F80/F73/F72/F76/F81/F74/F75/F77/F78 se sono già chiusi.
+F79/F80/F73/F72/F76/F81/F74/F75/F77/F78/F82 se sono già chiusi.
 
 **Lavoro precedente, non urgente ma non dimenticato** (aree con lavoro reale trovate prima di
 questo giro, non ancora affrontate):
