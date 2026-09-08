@@ -34,5 +34,15 @@ export function invalidNameReason(name) {
   if (WINDOWS_RESERVED_DEVICE_NAMES.has(name.toUpperCase())) {
     return "È un nome di dispositivo riservato da Windows.";
   }
+  // F83 (CodeRabbit finding, verified empirically against real NTFS before fixing): mirrors
+  // `validate_job_name`'s own trailing '.'/' ' check -- Windows silently strips a single trailing
+  // dot/space when the file is created, so two names differing only by one would land on the same
+  // file. A form like "NUL.txt" (a device name *with* an extension) is deliberately NOT rejected
+  // here -- see the Rust function's own comment for why: `namespaced_path` never places this name
+  // as a filename's own leading segment, so the extra risk that check would guard against does
+  // not exist in how this codebase actually uses a job name.
+  if (name.endsWith(".") || name.endsWith(" ")) {
+    return "Non può terminare con '.' o uno spazio (Windows lo elimina in silenzio, e due nomi diversi finirebbero sullo stesso file).";
+  }
   return null;
 }
