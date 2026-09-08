@@ -122,6 +122,7 @@ fn copy_files(
         outcome.files_copied += 1;
         sink.add_bytes(bytes);
         sink.add_file();
+        sink.set_current_file(&file.relative_path.display().to_string());
         tracing::debug!(path = %file.relative_path.display(), bytes, label = log_label, "copied file");
     }
 

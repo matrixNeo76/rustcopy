@@ -383,11 +383,14 @@ struct RunStatus {
     /// the file: absent means "not running", which is a signal that needs no reasoning about
     /// staleness.
     progress: Option<robocopy_ingest::progress_file::ProgressSample>,
-    /// The tail of what the run printed, shown when it fails.
+    /// The tail of what the run has printed so far — live while it runs, and its final lines once
+    /// it ends.
     ///
-    /// A tail rather than the whole file: a run that failed after copying for an hour can have
-    /// produced a lot of output, and the operator needs the end of it — where the error is — not
-    /// a transcript that has to cross the IPC boundary whole.
+    /// A tail rather than the whole file: a run that copies for an hour can have produced a lot of
+    /// output, and the operator needs the last of it — where robocopy's own per-file lines or an
+    /// error are — not a transcript that has to cross the IPC boundary whole. While running this is
+    /// the only place those per-file lines reach the window at all; `Run.svelte` renders it inside a
+    /// disclosure the operator opens by choice, not forced open mid-run.
     output_tail: Option<String>,
     /// What that phase is, in words. Decided in the core: which phase a run is in is a fact about
     /// the backup, and naming it is not a rendering choice.
@@ -668,19 +671,35 @@ async fn run_status(state: tauri::State<'_, RunState>) -> Result<RunStatus, Stri
                 }
             }
             Ok(None) => {
-                let progress = read_progress(active.cancel_file.as_deref());
+                let cancel_file = active.cancel_file.clone();
+                let config_path = active.config_path.clone();
+                let stopping = active.stopping;
+                // Snapshot the little state this branch needs, then drop the lock before any file
+                // I/O below: `read_progress`/`read_output_tail` must never run while this mutex is
+                // held, or `stop_job` (which needs the same lock) stalls behind whatever a slow
+                // disk is doing — a network destination is this app's normal use case, not a corner
+                // case (CodeRabbit finding on this PR: `read_output_tail` went from running once, at
+                // the end of a run, to running on every ~1s poll tick while one is in progress).
+                drop(active);
+
+                let progress = read_progress(cancel_file.as_deref());
                 return Ok(RunStatus {
                     running: true,
-                    config_path: active.config_path.clone(),
+                    config_path,
                     exit_code: None,
                     meaning: None,
-                    stopping: active.stopping,
+                    stopping,
                     // `phase_label()` (not `phase.describe()` alone) so a job running inside a
                     // batch says which one it is — composed in the core, not here, same as every
                     // other judgement about what a sample means (this file's own doc comment).
                     phase_label: progress.as_ref().map(|sample| sample.phase_label()),
                     progress,
-                    output_tail: None,
+                    // Live, not just on failure (see the struct doc comment): the child's stdout is
+                    // already captured on disk as it writes, so reading its tail here costs one seek
+                    // over 16 KB per poll — nothing a run mid-flight cannot afford — and it is the
+                    // only place robocopy's own per-file lines (no `/NFL`, see engine::robocopy) ever
+                    // reach the window before the run ends.
+                    output_tail: read_output_tail(cancel_file.as_deref()),
                 });
             }
             Err(error) => return Err(format!("cannot check the running job: {error}")),

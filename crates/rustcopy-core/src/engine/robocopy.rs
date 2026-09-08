@@ -218,6 +218,40 @@ pub fn parse_file_bytes(line: &str) -> Option<u64> {
     None
 }
 
+/// The file name from a copied-file robocopy line, for the live "what's copying now" display.
+///
+/// Only meaningful to call once [`parse_file_bytes`] has already recognized `line` as a
+/// transferred file — this does not re-derive that decision, it reuses it, so the two can never
+/// disagree about which lines qualify (see D27 in `ANALYSIS.md` for the history of exactly that
+/// class of bug, from two functions independently guessing at the same line shape). With
+/// `/BYTES /NP` the name is always the last tab-separated field.
+fn parse_file_name(line: &str) -> Option<String> {
+    let trimmed = line.trim();
+
+    // Tab-separated (the common case, `/BYTES /NP`'s own output shape): the name never got split
+    // in the first place, so the last tab-separated field is it, spaces and all. Same threshold
+    // `split_fields` itself uses to choose this branch, not just "contains a tab".
+    let tabbed: Vec<&str> = trimmed
+        .split('\t')
+        .map(str::trim)
+        .filter(|f| !f.is_empty())
+        .collect();
+    if tabbed.len() >= 2 {
+        return tabbed.last().map(|f| f.to_string());
+    }
+
+    // Space-padded fallback (`split_fields`'s other branch, real observed robocopy output — see
+    // `parses_space_padded_lines_and_other_statuses` below): `split_whitespace()` cuts a
+    // multi-word name like "folder name.csv" into separate fields, so `.last()` alone would keep
+    // only "name.csv" (CodeRabbit finding on this PR, verified against `parse_file_bytes` already
+    // accepting exactly such a line). Reconstruct the name from every field after the byte count
+    // instead of just the trailing token.
+    let fields: Vec<&str> = trimmed.split_whitespace().collect();
+    let bytes_index = fields.iter().position(|f| parse_byte_count(f).is_some())?;
+    let name = fields[bytes_index + 1..].join(" ");
+    (!name.is_empty()).then_some(name)
+}
+
 /// Byte counts from robocopy's `Bytes :` summary row (requires `/BYTES`).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub struct SummaryRow {
@@ -374,6 +408,9 @@ impl<R: CommandRunner> CopyEngine for RobocopyEngine<R> {
                     streamed_files += 1;
                     sink.add_bytes(bytes);
                     sink.add_file();
+                    if let Some(name) = parse_file_name(line) {
+                        sink.set_current_file(&name);
+                    }
                     tracing::debug!(bytes, line = line.trim(), "robocopy transferred file");
                 }
             };
@@ -604,6 +641,32 @@ mod tests {
     fn parses_tab_separated_new_file_line() {
         let line = "\t    New File  \t\t     52428800\tsales_2026_01.csv";
         assert_eq!(parse_file_bytes(line), Some(52_428_800));
+    }
+
+    #[test]
+    fn parse_file_name_reads_the_trailing_field() {
+        let line = "\t    New File  \t\t     52428800\tsales_2026_01.csv";
+        assert_eq!(parse_file_name(line), Some("sales_2026_01.csv".to_string()));
+        assert_eq!(
+            parse_file_name("      Newer          1024   a.csv"),
+            Some("a.csv".to_string())
+        );
+    }
+
+    /// A multi-word name must survive the space-padded fallback whole — `.last()` alone kept only
+    /// the trailing token (CodeRabbit finding on this PR, verified: `parse_file_bytes` already
+    /// accepts this exact line shape, so `parse_file_name` has to handle it too). The tab-separated
+    /// case is unaffected either way, since a tab never splits inside the name.
+    #[test]
+    fn parse_file_name_keeps_a_multi_word_name_from_the_space_padded_fallback() {
+        assert_eq!(
+            parse_file_name("      Newer          1024   folder name.csv"),
+            Some("folder name.csv".to_string())
+        );
+        assert_eq!(
+            parse_file_name("\t    New File  \t\t     52428800\tfolder name.csv"),
+            Some("folder name.csv".to_string())
+        );
     }
 
     #[test]
