@@ -14,6 +14,36 @@
   // `gui_api::DEFAULT_REPORT_PATH` -- keep the two in sync if that default ever changes.
   const DEFAULT_REPORT_PATH_PLACEHOLDER = "./robocopy_ingest_report.json";
 
+  // F75: Thread's placeholder needs the *actual* default this machine would use when the field
+  // is left empty (`cli::default_threads`, clamped 1-128 via `MIN_THREADS`/`MAX_THREADS`).
+  // Fetched from the core (`gui_api::default_threads`, one pure Tauri command) rather than reading
+  // `navigator.hardwareConcurrency` in JS -- found by CodeRabbit that the latter is not a safe
+  // substitute: Chromium (WebView2's engine) can clamp or mask it for fingerprinting protection,
+  // so it is not guaranteed to equal what the core actually resolves an empty field to. `null`
+  // until the one-time fetch resolves; the caption and placeholder both fall back to "…" for that
+  // brief window, same pattern as F81's `meaningByCode`.
+  let DEFAULT_THREADS = $state(null);
+  invoke("default_threads").then((value) => {
+    DEFAULT_THREADS = value;
+  });
+
+  // F74: verified empirically against real robocopy.exe before adding these -- `draft.pattern` is
+  // a single string field (`CopyRequest::pattern`, `engine/robocopy.rs::build_args`) sent to
+  // robocopy as ONE argv token, never split. Both a semicolon-joined form ("*.jpg;*.png;*.gif")
+  // and a space-joined form inside one token ("*.jpg *.png *.gif") copy ZERO files with exit code
+  // 0 -- no error, just a silently empty backup, because robocopy treats the whole string as one
+  // literal filespec that matches no real filename. Multiple filespecs only work as separate argv
+  // tokens (`robocopy src dst *.jpg *.png *.gif`, three arguments), which this single-string field
+  // cannot produce. So the suggestions below stay single-pattern only -- do not add a
+  // multi-extension example here without first changing `pattern` to a list, a core change out of
+  // scope for a tooltip/caption feature.
+  const PATTERN_SUGGESTIONS = ["*", "*.pdf", "*.jpg"];
+
+  // F74: exclude_files/exclude_dirs are already a `Vec<String>` (`engine/robocopy.rs` pushes one
+  // `/XF`/`/XD` flag per entry), so -- unlike Pattern above -- multiple entries genuinely work.
+  // These add to `draft.exclude_files`, never replace what was typed by hand.
+  const EXCLUDE_FILE_SHORTCUTS = ["*.tmp", "*.log", "Thumbs.db", "desktop.ini", "~$*"];
+
   // The only pane that writes. It never writes in place: it produces a proposal in a new file and
   // the operator decides whether it replaces the running configuration.
   let drafts = $state([]);
@@ -141,6 +171,38 @@
   const nameInvalidReason = $derived(draft && !nameLocked ? invalidNameReason(draft.name) : null);
 
   const stale = $derived(loadedFrom !== "" && loadedFrom !== session.configPath);
+
+  // F78: `IngestError::EditorCannotSplitSingleJobConfig` (job_editor.rs) is a deliberate rule, not
+  // a bug (F54: a single-job file has no [[jobs]] to inherit from, so turning it into one changes
+  // what every field means -- the core declines rather than doing it silently). Its raw message
+  // ("add the [[jobs]] section by hand first") assumes the operator already knows what that means.
+  // No core change: `build_proposal`'s match is exhaustive (empty / single-matching / reject) and
+  // adding a real "Convert" capability is a separate decision (PIANO_GUI.md §18.1). This only
+  // intercepts the one specific error to show a concrete TOML example instead of the raw string --
+  // every other error still renders as-is below.
+  // Anchored on the full literal suffix (`errors.rs`'s `#[error(...)]` text is fixed except for
+  // the label), not just " into" -- found by CodeRabbit that a non-greedy match up to the first
+  // " into" would stop early and extract the wrong (partial) name if an existing job's name
+  // happened to contain that substring. `label_of` (job_editor.rs) reads a stored job's name
+  // straight from the TOML with no validation on read (only the editor's own write path
+  // restricts new names), so an externally-edited file's name is not something this can assume
+  // is well-behaved.
+  function splitJobErrorLabel(message) {
+    const match = message?.match(
+      /cannot split the single-job configuration holding (.+) into several jobs: add the \[\[jobs\]\] section by hand first/,
+    );
+    return match ? match[1] : null;
+  }
+  const splitJobLabel = $derived(error ? splitJobErrorLabel(error) : null);
+
+  // The TOML example below embeds this label inside a quoted string literal -- since `label_of`
+  // reads a stored job's name with no validation on read (see above), it could contain `"` or
+  // `\` and produce an invalid TOML snippet if inserted raw. Escapes both TOML string-literal
+  // metacharacters, same order real TOML escaping requires (backslash first, so escaping the
+  // quote doesn't double-escape a backslash it just introduced).
+  function tomlStringLiteral(value) {
+    return value.replace(/\\/g, "\\\\").replace(/"/g, '\\"');
+  }
 
   async function load() {
     error = null;
@@ -279,6 +341,14 @@
     const value = Number(trimmed);
     return Number.isInteger(value) ? value : null;
   }
+
+  // F74: a shortcut adds to the existing list; it never replaces what was typed by hand, and
+  // clicking one already present is a no-op rather than a duplicate entry.
+  function addExcludeFile(pattern) {
+    if (!draft.exclude_files.includes(pattern)) {
+      draft.exclude_files = [...draft.exclude_files, pattern];
+    }
+  }
 </script>
 
 <section class="p-4">
@@ -292,7 +362,37 @@
     onrun={load}
   />
 
-  {#if error}
+  {#if error && splitJobLabel}
+    <div
+      class="mt-3 rounded border border-red-300 bg-red-50 px-3 py-2 text-sm text-red-900
+             dark:border-red-800 dark:bg-red-950 dark:text-red-200"
+      role="alert"
+    >
+      <p>
+        Non puoi aggiungere un altro job a questo file da qui: <code>{splitJobLabel}</code> vive
+        oggi nella parte superiore del TOML, senza una sezione <code>[[jobs]]</code> — trasformarlo
+        cambierebbe il significato di ogni sua impostazione, quindi l'editor rifiuta piuttosto che
+        farlo in silenzio.
+      </p>
+      <p class="mt-2">
+        Per avere più job in questo file, riscrivine a mano l'inizio così, poi riapri qui per
+        modificare:
+      </p>
+      <pre
+        class="mt-1 overflow-x-auto rounded bg-red-100 px-2 py-1 font-mono text-xs
+               dark:bg-red-900"
+      >{`[[jobs]]
+name = "${tomlStringLiteral(splitJobLabel)}"
+source = "..."
+dest = "..."
+# ...il resto dei campi oggi in cima al file
+
+[[jobs]]
+name = "nuovo-job"
+source = "..."
+dest = "..."`}</pre>
+    </div>
+  {:else if error}
     <p
       class="mt-3 rounded border border-red-300 bg-red-50 px-2 py-1 text-sm text-red-800
              dark:border-red-800 dark:bg-red-950 dark:text-red-200"
@@ -475,45 +575,90 @@
       </div>
 
       <label for="f-pattern">Pattern</label>
-      <input
-        id="f-pattern"
-        class="w-48 rounded border border-slate-300 px-2 py-1 font-mono dark:border-slate-700 dark:bg-slate-900"
-        placeholder="*"
-        value={draft.pattern ?? ""}
-        oninput={(e) => (draft.pattern = e.currentTarget.value.trim() === "" ? null : e.currentTarget.value)}
-      />
+      <div>
+        <input
+          id="f-pattern"
+          class="w-48 rounded border border-slate-300 px-2 py-1 font-mono dark:border-slate-700 dark:bg-slate-900"
+          placeholder="*"
+          title="Un pattern alla volta per robocopy (es. *.pdf). Una stringa con più pattern arriva a robocopy come un unico argomento e non corrisponde a nulla, verificato empiricamente."
+          value={draft.pattern ?? ""}
+          oninput={(e) => {
+            const pattern = e.currentTarget.value.trim();
+            draft.pattern = pattern === "" ? null : pattern;
+          }}
+        />
+        <p class="mt-0.5 text-[11px] text-slate-500">
+          Esempi: {#each PATTERN_SUGGESTIONS as example, index}{index > 0 ? ", " : ""}<code
+            >{example}</code
+          >{/each} — un pattern alla volta; per più estensioni serve un job per ciascuna.
+        </p>
+      </div>
 
       <label for="f-threads">Thread</label>
       <!-- 1..=128 is the range the CLI enforces (`IngestError::InvalidThreads`). The bounds here
            are the affordance; `apply_draft` refuses the same values whatever this form sends. -->
-      <input
-        id="f-threads"
-        type="number"
-        min="1"
-        max="128"
-        step="1"
-        class="w-32 rounded border border-slate-300 px-2 py-1 dark:border-slate-700 dark:bg-slate-900"
-        value={draft.threads ?? ""}
-        oninput={(e) => (draft.threads = numberOrNull(e.currentTarget.value))}
-      />
+      <div>
+        <input
+          id="f-threads"
+          type="number"
+          min="1"
+          max="128"
+          step="1"
+          class="w-32 rounded border border-slate-300 px-2 py-1 dark:border-slate-700 dark:bg-slate-900"
+          placeholder={DEFAULT_THREADS === null ? "" : String(DEFAULT_THREADS)}
+          title="Numero di thread di copia di robocopy (/MT). Vuoto = usa il default di questa macchina."
+          value={draft.threads ?? ""}
+          oninput={(e) => (draft.threads = numberOrNull(e.currentTarget.value))}
+        />
+        <p class="mt-0.5 text-[11px] text-slate-500">
+          Vuoto = {DEFAULT_THREADS ?? "…"} (i core logici di questa macchina). Il valore migliore
+          dipende dalla destinazione: una condivisione di rete spesso peggiora con più thread, un
+          disco locale ne beneficia — verifica empiricamente piuttosto che indovinare.
+          {#if draft.backup_type}
+            <strong>Non ha effetto con Tipo di backup impostato</strong>: la pipeline a generazioni
+            usa il motore di copia semplice, che non è multi-thread.
+          {/if}
+        </p>
+      </div>
 
       <label for="f-retries">Tentativi</label>
-      <input
-        id="f-retries"
-        type="number"
-        class="w-32 rounded border border-slate-300 px-2 py-1 dark:border-slate-700 dark:bg-slate-900"
-        value={draft.retries ?? ""}
-        oninput={(e) => (draft.retries = numberOrNull(e.currentTarget.value))}
-      />
+      <div>
+        <input
+          id="f-retries"
+          type="number"
+          class="w-32 rounded border border-slate-300 px-2 py-1 dark:border-slate-700 dark:bg-slate-900"
+          placeholder="3"
+          title="Numero di tentativi per file non riuscito (robocopy /R)."
+          value={draft.retries ?? ""}
+          oninput={(e) => (draft.retries = numberOrNull(e.currentTarget.value))}
+        />
+        <p class="mt-0.5 text-[11px] text-slate-500">
+          Vuoto = 3. Alza per destinazioni di rete instabili, abbassa per fallire più in fretta su
+          un errore reale e non transitorio.
+        </p>
+      </div>
 
       <label for="f-excl-files">Escludi file</label>
-      <input
-        id="f-excl-files"
-        class="rounded border border-slate-300 px-2 py-1 font-mono dark:border-slate-700 dark:bg-slate-900"
-        placeholder="*.tmp, *.log"
-        value={draft.exclude_files.join(", ")}
-        oninput={(e) => (draft.exclude_files = toList(e.currentTarget.value))}
-      />
+      <div>
+        <input
+          id="f-excl-files"
+          class="rounded border border-slate-300 px-2 py-1 font-mono dark:border-slate-700 dark:bg-slate-900"
+          placeholder="*.tmp, *.log"
+          value={draft.exclude_files.join(", ")}
+          oninput={(e) => (draft.exclude_files = toList(e.currentTarget.value))}
+        />
+        <div class="mt-1 flex flex-wrap gap-1">
+          {#each EXCLUDE_FILE_SHORTCUTS as pattern}
+            <button
+              type="button"
+              class="rounded border border-slate-300 px-1.5 py-0.5 font-mono text-[11px]
+                     text-slate-600 hover:bg-slate-100 dark:border-slate-700 dark:text-slate-400
+                     dark:hover:bg-slate-800"
+              onclick={() => addExcludeFile(pattern)}
+            >+ {pattern}</button>
+          {/each}
+        </div>
+      </div>
 
       <label for="f-excl-dirs">Escludi cartelle</label>
       <input
@@ -549,6 +694,7 @@
           class="w-48 rounded border border-slate-300 px-2 py-1 disabled:bg-slate-100
                  disabled:text-slate-500 dark:border-slate-700 dark:bg-slate-900
                  dark:disabled:bg-slate-800"
+          title="Full copia tutto in una nuova generazione; Incremental copia solo ciò che è cambiato dall'ultima generazione; Differential copia ciò che è cambiato dall'ultimo Full. Nessuno = copia semplice, senza generazioni."
           value={draft.backup_type ?? ""}
           disabled={draft.mirror}
           onchange={(e) => (draft.backup_type = e.currentTarget.value === "" ? null : e.currentTarget.value)}
@@ -558,6 +704,13 @@
           <option value="incremental">Incremental</option>
           <option value="differential">Differential</option>
         </select>
+        <p class="mt-0.5 text-[11px] text-slate-500">
+          <strong>Full</strong> copia tutto in una nuova generazione; <strong>Incremental</strong>
+          copia solo ciò che è cambiato dall'ultima generazione (di qualunque tipo);
+          <strong>Differential</strong> copia ciò che è cambiato dall'ultimo Full, sempre rispetto
+          allo stesso riferimento. <strong>Nessuno</strong> = copia semplice, senza generazioni né
+          manifest.
+        </p>
         {#if draft.mirror}
           <p class="mt-0.5 text-[11px] text-slate-500">
             Non selezionabile insieme a Mirror: le due destinazioni sono incompatibili (copia
@@ -611,23 +764,59 @@
       </div>
     </div>
 
+    <!-- F77: tooltips reuse existing, already-verified text -- `Help.svelte`'s "verifica rapida"
+         entry verbatim for fast_verify (same discipline F71 already established toward
+         `Run.svelte`), and `cli.rs`'s own doc comments for the rest, which have no entry in Aiuto
+         today. Neither is new copy invented here. -->
     <div class="mt-3 flex flex-wrap gap-x-5 gap-y-2 text-xs">
-      <label class="flex items-center gap-1">
+      <label
+        class="flex items-center gap-1"
+        title={draft.backup_type
+          ? "Dopo il trasferimento, confronta i checksum di sorgente e destinazione. Non ha effetto con Tipo di backup impostato: la pipeline a generazioni non esegue ancora questa verifica."
+          : "Dopo il trasferimento, confronta i checksum di sorgente e destinazione."}
+      >
         <input type="checkbox" bind:checked={draft.verify_integrity} /> Verifica integrità
       </label>
-      <label class="flex items-center gap-1">
+      <label
+        class="flex items-center gap-1"
+        title="Salta i file la cui sorgente è immutata dall'ultima verifica riuscita. Si fida dell'identità della sorgente invece di rileggere i byte in destinazione: una corruzione nata in destinazione può sfuggire."
+      >
         <input type="checkbox" bind:checked={draft.fast_verify} /> Verifica rapida
       </label>
-      <label class="flex items-center gap-1">
+      <label
+        class="flex items-center gap-1"
+        title="Mostra cosa succederebbe senza copiare nulla (robocopy /L)."
+      >
         <input type="checkbox" bind:checked={draft.dry_run} /> Simulazione
       </label>
-      <label class="flex items-center gap-1">
+      <label
+        class="flex items-center gap-1"
+        title="Esclude giunzioni e cartelle collegate dalla copia (robocopy /XJ). Senza, robocopy le segue per default, che può duplicare dati o ciclare su una giunzione che punta a se stessa."
+      >
         <input type="checkbox" bind:checked={draft.exclude_junctions} /> Escludi giunzioni
       </label>
-      <label class="flex items-center gap-1">
+      <label
+        class="flex items-center gap-1"
+        title="Conserva i permessi di sicurezza ACL NTFS (robocopy /COPYALL)."
+      >
         <input type="checkbox" bind:checked={draft.preserve_acl} /> Conserva ACL
       </label>
     </div>
+    {#if draft.backup_type && draft.verify_integrity}
+      <!-- F77 fix (CodeRabbit, Major): execute_generation_backup never calls verify_integrity --
+           an operator ticking this alongside a Tipo di backup could believe the generation backup
+           was checksum-verified when it silently was not. The tooltip above states the limit;
+           this is the same warning made impossible to miss, since a hover-only tooltip is not
+           strong enough for a data-integrity claim that is not actually true. -->
+      <p
+        class="mt-1 rounded border border-amber-300 bg-amber-50 px-2 py-1 text-[11px]
+               text-amber-900 dark:border-amber-800 dark:bg-amber-950 dark:text-amber-200"
+        role="status"
+      >
+        Verifica integrità è impostata insieme a Tipo di backup, ma non ha effetto: la pipeline a
+        generazioni non esegue ancora questa verifica. I dati vengono copiati, non verificati.
+      </p>
+    {/if}
 
     <h3 class="mt-4 text-xs font-semibold uppercase tracking-wide text-slate-500">
       Impostazioni distruttive

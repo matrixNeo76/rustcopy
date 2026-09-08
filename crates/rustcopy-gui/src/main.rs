@@ -106,6 +106,17 @@ async fn inspect_path(path: String, config_path: String) -> Result<PathInspectio
     .await
 }
 
+/// F74/F75: the real value an empty Thread field resolves to on this machine
+/// (`gui_api::default_threads`, wrapping `cli::default_threads`) -- found necessary by CodeRabbit
+/// after the field's placeholder first shipped reading `navigator.hardwareConcurrency` directly,
+/// which the WebView's own Chromium engine can clamp for fingerprinting protection and so is not
+/// guaranteed to match. No blocking I/O, so no `off_thread`: a pure lookup, like F81's
+/// `exit_code_meaning`.
+#[tauri::command]
+fn default_threads() -> u16 {
+    gui_api::default_threads()
+}
+
 /// Lists the jobs a TOML config declares.
 ///
 /// Resolved exactly as `run_jobs` resolves them, including the positional `jobN` fallback for
@@ -763,6 +774,7 @@ fn main() {
         .plugin(tauri_plugin_notification::init())
         .invoke_handler(tauri::generate_handler![
             inspect_path,
+            default_threads,
             list_jobs,
             read_settings,
             read_report,

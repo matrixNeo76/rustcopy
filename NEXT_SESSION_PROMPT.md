@@ -263,13 +263,48 @@ priorità, poi autorizzata l'implementazione in sequenza:
   codice diverso da zero). Chiude un debito già tracciato in `CLAUDE.md` da F65. Zero nuovi test
   Rust (comando puro, `exit_code_meaning` già coperto in `runner.rs`). Dettaglio: riga F81 di
   `ROADMAP.md`.
-- **F74/F75/F77 sono i prossimi** (tooltip Pattern/Escludi file/Thread/Tentativi/backup_type), poi
-  F78 (messaggio migliore per l'errore di split job singolo), F82 (avviso Anteprima ripristino
-  senza config in sessione).
+- **F74/F75/F77 chiusi, 8 Set 2026** (tooltip Pattern/Escludi file/Thread/Tentativi/backup_type/
+  checkbox). Una correzione reale trovata verificando empiricamente contro `robocopy.exe` prima di
+  implementare: il suggerimento originale per Pattern (`*.jpg;*.png;*.gif`, estensioni multiple in
+  un campo) copia **zero file con exit code 0** — `draft.pattern` è una singola stringa inviata
+  come un unico argomento a robocopy, e né `;` né gli spazi dentro una stringa singola vengono
+  interpretati come più filespec. Corretto a suggerimenti a pattern singolo (`*`, `*.pdf`, `*.jpg`)
+  con una didascalia che dice esplicitamente il limite. Escludi file, Thread, Tentativi,
+  backup_type e le cinque checkbox implementati come da analisi. Zero nuovi test Rust (frontend
+  puro). Dettaglio: righe F74/F75/F77 di `ROADMAP.md`.
+- **PR #109 (F74/F75/F77) mersa, 8 Set 2026**, dopo che CodeRabbit ha trovato 6 difetti reali,
+  tutti verificati contro il codice e corretti prima del merge: trim mancante su Pattern, il
+  placeholder di Thread che leggeva `navigator.hardwareConcurrency` (mascherabile da Chromium per
+  protezione anti-fingerprinting, sostituito con un vero comando backend `gui_api::default_threads`
+  — stesso schema di F81), e due difetti più seri: Thread e Verifica integrità non dicevano di non
+  avere alcun effetto per un backup a generazioni (`engine::naive` ha `threads: 1` fisso,
+  `execute_generation_backup` non chiama mai `verify_integrity`) — corretti con didascalie
+  condizionali e, per Verifica integrità (Major), un avviso permanente visibile quando entrambi i
+  campi sono impostati insieme, non solo un tooltip. `main` ora ha anche `cli::default_threads` reso
+  `pub` e il nuovo comando Tauri `default_threads`.
+- **F78 chiuso, 8 Set 2026**: messaggio comprensibile per l'errore di split job singolo.
+  `Editor.svelte::splitJobErrorLabel` intercetta solo il messaggio letterale di
+  `EditorCannotSplitSingleJobConfig`, estrae il nome del job esistente ed mostra una spiegazione più
+  un esempio TOML concreto invece del messaggio grezzo in inglese — nessuna nuova capacità del core,
+  esattamente il perimetro proposto. Ogni altro errore di scrittura continua a mostrarsi come prima.
+  Dettaglio: riga F78 di `ROADMAP.md`.
+- **PR #108 (F81) mersa, 8 Set 2026**, dopo un incidente CI raro ma verificato a fondo: CodeRabbit
+  ha trovato un difetto reale (race fra `history`/`meaningByCode`: "Esporta CSV" poteva includere
+  il placeholder "…" invece del vero significato, corretto tenendo `history`/`advice` locali finché
+  ogni lookup non è risolto), poi GitHub Actions ha smesso di generare **qualunque** run
+  `pull_request` per questo repository — non solo per questa PR: confermato aprendo una PR
+  diagnostica su un branch mai usato prima, che non ha prodotto nemmeno un run, e confrontando i
+  check-suite via API (`gh api repos/.../commits/{sha}/check-suites`): i commit falliti non avevano
+  affatto una voce "GitHub Actions", solo le integrazioni di terze parti rimaste in coda vuota — non
+  un ritardo del nostro codice, un incidente della piattaforma. Mersa su autorizzazione esplicita
+  dell'utente, basandosi sulla verifica locale già completa (`cargo test`/clippy/build puliti su
+  entrambi i set di feature, verifica live in console eseguita due volte).
+- **Prossimo: F82** (avviso Anteprima ripristino senza config in sessione, spec in
+  `PIANO_GUI.md` §18.15 verso la fine).
 
 Se questa sessione riprende a metà sequenza (compattazione, nuova sessione), continuare da dove
-`ROADMAP.md` segna l'ultima riga passata da 🟡 a ✅ — non ripartire da F79/F80/F73/F72/F76/F81 se
-sono già chiusi.
+`ROADMAP.md` segna l'ultima riga passata da 🟡 a ✅ — non ripartire da
+F79/F80/F73/F72/F76/F81/F74/F75/F77/F78 se sono già chiusi.
 
 **Lavoro precedente, non urgente ma non dimenticato** (aree con lavoro reale trovate prima di
 questo giro, non ancora affrontate):
