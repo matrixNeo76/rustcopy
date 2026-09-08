@@ -304,10 +304,20 @@ priorità, poi autorizzata l'implementazione in sequenza:
   informativa col percorso effettivo quando non lo è — entrambe le metà proposte, non solo una.
   Nessun cambio al core. Dettaglio: riga F82 di `ROADMAP.md`. **Con F82 chiuso, l'intera sequenza
   F72-F82 confermata da `PIANO_GUI.md` §18.16 è completa.**
+- **F83 chiuso, 8 Set 2026, fuori sequenza**: subito dopo aver riportato la sequenza F72-F82
+  completa, l'utente ha aperto la console dal vivo e segnalato che la schermata vuota di Job
+  presume già un TOML esistente. Verificato prima di implementare: F79 ("Crea un esempio") scrive
+  dati finti, F71 (QuickSync) scrive un file vero ma con nome fisso e lo avvia subito — nessuno dei
+  due crea un job **nominato e riusabile** per cartelle reali senza avviarlo. Confermato con
+  l'utente (due `AskUserQuestion`, non un'estensione di QuickSync) un terzo percorso dedicato:
+  nuovo `NewJobWizard.svelte`, pulsante primario nella schermata vuota di Job, nessun cambio al
+  core (riusa `write_proposal`'s `existing: None` come QuickSync). Validazione nome (F72) estratta
+  in `jobName.js` condiviso, per non introdurre una terza copia della lista caratteri riservati.
+  Dettaglio: riga F83 di `ROADMAP.md`.
 
 Se questa sessione riprende a metà sequenza (compattazione, nuova sessione), continuare da dove
 `ROADMAP.md` segna l'ultima riga passata da 🟡 a ✅ — non ripartire da
-F79/F80/F73/F72/F76/F81/F74/F75/F77/F78/F82 se sono già chiusi.
+F79/F80/F73/F72/F76/F81/F74/F75/F77/F78/F82/F83 se sono già chiusi.
 
 **Lavoro precedente, non urgente ma non dimenticato** (aree con lavoro reale trovate prima di
 questo giro, non ancora affrontate):
