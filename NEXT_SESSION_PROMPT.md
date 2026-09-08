@@ -283,12 +283,33 @@ priorità, poi autorizzata l'implementazione in sequenza:
   con una didascalia che dice esplicitamente il limite. Escludi file, Thread, Tentativi,
   backup_type e le cinque checkbox implementati come da analisi. Zero nuovi test Rust (frontend
   puro). Dettaglio: righe F74/F75/F77 di `ROADMAP.md`.
-- **Prossimo: F78** (messaggio migliore per l'errore di split job singolo), poi F82 (avviso
-  Anteprima ripristino senza config in sessione).
+- **PR #109 (F74/F75/F77) mersa, 8 Set 2026**, dopo che CodeRabbit ha trovato 6 difetti reali,
+  tutti verificati contro il codice e corretti prima del merge: trim mancante su Pattern, il
+  placeholder di Thread che leggeva `navigator.hardwareConcurrency` (mascherabile da Chromium per
+  protezione anti-fingerprinting, sostituito con un vero comando backend `gui_api::default_threads`
+  — stesso schema di F81), e due difetti più seri: Thread e Verifica integrità non dicevano di non
+  avere alcun effetto per un backup a generazioni (`engine::naive` ha `threads: 1` fisso,
+  `execute_generation_backup` non chiama mai `verify_integrity`) — corretti con didascalie
+  condizionali e, per Verifica integrità (Major), un avviso permanente visibile quando entrambi i
+  campi sono impostati insieme, non solo un tooltip. `main` ora ha anche `cli::default_threads` reso
+  `pub` e il nuovo comando Tauri `default_threads`.
+- **F78 chiuso, 8 Set 2026**: messaggio comprensibile per l'errore di split job singolo.
+  `Editor.svelte::splitJobErrorLabel` intercetta solo il messaggio letterale di
+  `EditorCannotSplitSingleJobConfig`, estrae il nome del job esistente ed mostra una spiegazione più
+  un esempio TOML concreto invece del messaggio grezzo in inglese — nessuna nuova capacità del core,
+  esattamente il perimetro proposto. Ogni altro errore di scrittura continua a mostrarsi come prima.
+  Dettaglio: riga F78 di `ROADMAP.md`.
+- **Prossimo: F82** (avviso Anteprima ripristino senza config in sessione, spec in
+  `PIANO_GUI.md` §18.15 verso la fine).
+- **PR #108 (F81) resta ancora aperta**: la quota review OSS gratuita di CodeRabbit non si era
+  ancora resettata all'ultimo controllo (8 Set 2026, oltre due ore dopo il primo tentativo). CI
+  verde (8/8), F81 già verificato dal vivo. Ricontrollare a inizio sessione; se ancora esaurita,
+  chiedere all'utente se procedere al merge senza CodeRabbit (rischio basso, solo frontend) invece
+  di bloccare a tempo indeterminato.
 
 Se questa sessione riprende a metà sequenza (compattazione, nuova sessione), continuare da dove
 `ROADMAP.md` segna l'ultima riga passata da 🟡 a ✅ — non ripartire da
-F79/F80/F73/F72/F76/F81/F74/F75/F77 se sono già chiusi.
+F79/F80/F73/F72/F76/F81/F74/F75/F77/F78 se sono già chiusi.
 
 **Lavoro precedente, non urgente ma non dimenticato** (aree con lavoro reale trovate prima di
 questo giro, non ancora affrontate):

@@ -1150,6 +1150,12 @@ rifiuto) — offrire un pulsante "Converti" richiederebbe una nuova capacità de
 messaggio migliore, ed è una decisione di design a sé (vedi F78 sotto: solo la metà "messaggio
 comprensibile" è proposta ora).
 
+**✅ Implementato e verificato 8 Set 2026**, esattamente la metà a basso rischio proposta: nessuna
+nuova capacità del core, solo un'intercettazione in `Editor.svelte` del messaggio letterale di
+`EditorCannotSplitSingleJobConfig` che mostra una spiegazione in italiano più un esempio TOML
+concreto (con il nome reale del job già esistente) al posto del messaggio grezzo. Ogni altro errore
+di scrittura continua a mostrarsi come prima. Dettaglio completo nella riga F78 di `ROADMAP.md`.
+
 ### 18.2 Campo Nome — nessuna validazione
 
 Verificato in `job_editor::apply_draft`: `draft.name` viene usato letteralmente (`.clone()`) senza
