@@ -172,6 +172,38 @@
 
   const stale = $derived(loadedFrom !== "" && loadedFrom !== session.configPath);
 
+  // F78: `IngestError::EditorCannotSplitSingleJobConfig` (job_editor.rs) is a deliberate rule, not
+  // a bug (F54: a single-job file has no [[jobs]] to inherit from, so turning it into one changes
+  // what every field means -- the core declines rather than doing it silently). Its raw message
+  // ("add the [[jobs]] section by hand first") assumes the operator already knows what that means.
+  // No core change: `build_proposal`'s match is exhaustive (empty / single-matching / reject) and
+  // adding a real "Convert" capability is a separate decision (PIANO_GUI.md §18.1). This only
+  // intercepts the one specific error to show a concrete TOML example instead of the raw string --
+  // every other error still renders as-is below.
+  // Anchored on the full literal suffix (`errors.rs`'s `#[error(...)]` text is fixed except for
+  // the label), not just " into" -- found by CodeRabbit that a non-greedy match up to the first
+  // " into" would stop early and extract the wrong (partial) name if an existing job's name
+  // happened to contain that substring. `label_of` (job_editor.rs) reads a stored job's name
+  // straight from the TOML with no validation on read (only the editor's own write path
+  // restricts new names), so an externally-edited file's name is not something this can assume
+  // is well-behaved.
+  function splitJobErrorLabel(message) {
+    const match = message?.match(
+      /cannot split the single-job configuration holding (.+) into several jobs: add the \[\[jobs\]\] section by hand first/,
+    );
+    return match ? match[1] : null;
+  }
+  const splitJobLabel = $derived(error ? splitJobErrorLabel(error) : null);
+
+  // The TOML example below embeds this label inside a quoted string literal -- since `label_of`
+  // reads a stored job's name with no validation on read (see above), it could contain `"` or
+  // `\` and produce an invalid TOML snippet if inserted raw. Escapes both TOML string-literal
+  // metacharacters, same order real TOML escaping requires (backslash first, so escaping the
+  // quote doesn't double-escape a backslash it just introduced).
+  function tomlStringLiteral(value) {
+    return value.replace(/\\/g, "\\\\").replace(/"/g, '\\"');
+  }
+
   async function load() {
     error = null;
     written = null;
@@ -330,7 +362,37 @@
     onrun={load}
   />
 
-  {#if error}
+  {#if error && splitJobLabel}
+    <div
+      class="mt-3 rounded border border-red-300 bg-red-50 px-3 py-2 text-sm text-red-900
+             dark:border-red-800 dark:bg-red-950 dark:text-red-200"
+      role="alert"
+    >
+      <p>
+        Non puoi aggiungere un altro job a questo file da qui: <code>{splitJobLabel}</code> vive
+        oggi nella parte superiore del TOML, senza una sezione <code>[[jobs]]</code> — trasformarlo
+        cambierebbe il significato di ogni sua impostazione, quindi l'editor rifiuta piuttosto che
+        farlo in silenzio.
+      </p>
+      <p class="mt-2">
+        Per avere più job in questo file, riscrivine a mano l'inizio così, poi riapri qui per
+        modificare:
+      </p>
+      <pre
+        class="mt-1 overflow-x-auto rounded bg-red-100 px-2 py-1 font-mono text-xs
+               dark:bg-red-900"
+      >{`[[jobs]]
+name = "${tomlStringLiteral(splitJobLabel)}"
+source = "..."
+dest = "..."
+# ...il resto dei campi oggi in cima al file
+
+[[jobs]]
+name = "nuovo-job"
+source = "..."
+dest = "..."`}</pre>
+    </div>
+  {:else if error}
     <p
       class="mt-3 rounded border border-red-300 bg-red-50 px-2 py-1 text-sm text-red-800
              dark:border-red-800 dark:bg-red-950 dark:text-red-200"
