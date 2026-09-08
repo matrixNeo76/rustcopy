@@ -1217,6 +1217,16 @@ pattern comuni da offrire come scorciatoie cliccabili oltre alla didascalia, non
 — `*.tmp`, `*.log`, `Thumbs.db`, `desktop.ini`, `~$*` (file temporanei Office) — senza costringere a
 digitarli, un click li aggiunge alla lista già presente (mai sostituisce quanto scritto a mano).
 
+**✅ Implementato e verificato 8 Set 2026, con una correzione rispetto a questa bozza**: il
+suggerimento `*.jpg;*.png;*.gif` per estensioni multiple si è rivelato non funzionare — verificato
+empiricamente contro `robocopy.exe` reale prima di spedirlo, non assunto. `draft.pattern` è una
+singola stringa inviata come un unico argomento a robocopy (`engine/robocopy.rs::build_args`); sia
+`*.jpg;*.png;*.gif` sia una forma con spazi in un'unica stringa copiano **zero file con exit code
+0**, silenziosamente — nessun errore, un backup vuoto. I suggerimenti spediti restano a pattern
+singolo (`*`, `*.pdf`, `*.jpg`), con una didascalia che dice esplicitamente il limite. Escludi file
+implementato esattamente come proposto: `exclude_files` è già una lista con un `/XF` per voce,
+quindi lì le scorciatoie funzionano davvero. Dettaglio completo nella riga F74 di `ROADMAP.md`.
+
 ### 18.6/18.7 Thread e Tentativi — default e guida
 
 Verificato in `cli.rs`: `--threads` di default è il conteggio di CPU logiche (`default_threads()`,
@@ -1235,6 +1245,12 @@ già danno altrove (`scripts/benchmark-threads.ps1`, `RUNBOOK.md`) — "verifica
 resta una misura, non un default che la GUI può indovinare. Tentativi: stessa idea, placeholder con
 `3` più una riga che spiega quando alzarlo (destinazioni di rete instabili) o abbassarlo (velocità
 di fallimento su un errore reale, non transitorio).
+
+**✅ Implementato e verificato 8 Set 2026**, con la riserva sul `<select>` rispettata (nessun preset
+aggiunto): Thread mostra un `placeholder` col conteggio reale di CPU logiche di questa macchina
+(`navigator.hardwareConcurrency`, nessun nuovo comando Tauri, clampato 1-128 come il core), Tentativi
+mostra `placeholder="3"`; entrambi con una didascalia di guida sotto. Dettaglio completo nella riga
+F75 di `ROADMAP.md`.
 
 ### 18.8 Campo Report — non comunica il proprio default
 
@@ -1259,6 +1275,12 @@ con lo stesso testo già scritto per Aiuto (non va riscritto da zero, va **riusa
 disciplina di F71 verso `Run.svelte`), più una riga di didascalia per `backup_type` che dice in una
 frase la differenza fra full/incremental/differential (oggi assente sia in Modifica che in Aiuto:
 anche Aiuto non spiega i tre valori, solo il concetto generale di "generazione, ciclo").
+
+**✅ Implementato e verificato 8 Set 2026**, esattamente come proposto: `title=""` su `backup_type`
+e sulle cinque checkbox, testo di `fast_verify` riusato verbatim da Aiuto, testo delle altre quattro
+checkbox (senza corrispettivo in Aiuto) preso dai doc comment di `cli.rs` — fonte già autorevole, non
+inventata. `backup_type` ha in più una didascalia permanente, non solo il tooltip, che spiega la
+differenza fra i tre valori. Dettaglio completo nella riga F77 di `ROADMAP.md`.
 
 ### 18.11 Nessuna cartella d'esempio raggiungibile per chi ha installato il prodotto
 
@@ -1332,6 +1354,7 @@ In ordine di rapporto valore/rischio, non di apparizione nella lista originale:
 5. **F76** — placeholder Report col default reale. Costo quasi nullo. ✅ Completato 7 Set 2026.
 6. **F74/F75/F77** — suggerimenti Pattern/Escludi file/Thread/Tentativi/backup_type/checkbox. Stesso
    tipo di intervento (didascalie/tooltip), raggruppabile in un solo giro di lavoro.
+   ✅ Completato 8 Set 2026.
 7. **F78** — messaggio comprensibile per l'errore di split job singolo. Non blocca nessun flusso
    esistente (l'errore compare solo tentando l'azione non supportata), ma chiude il punto di
    partenza di questa stessa analisi (§18.1).

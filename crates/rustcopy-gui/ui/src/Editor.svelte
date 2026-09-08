@@ -14,6 +14,31 @@
   // `gui_api::DEFAULT_REPORT_PATH` -- keep the two in sync if that default ever changes.
   const DEFAULT_REPORT_PATH_PLACEHOLDER = "./robocopy_ingest_report.json";
 
+  // F75: Thread's placeholder needs the *actual* default this machine would use when the field
+  // is left empty (`cli.rs::default_threads`, clamped 1-128 via `MIN_THREADS`/`MAX_THREADS`) --
+  // a blank field otherwise looks like "nothing", not "use the default". No new Tauri command:
+  // the webview's own `navigator.hardwareConcurrency` already reports the same logical-CPU count
+  // the core's `num_cpus::get()` does, so the clamp is duplicated here (both bounds), not the
+  // lookup itself.
+  const DEFAULT_THREADS = Math.min(Math.max(navigator.hardwareConcurrency || 1, 1), 128);
+
+  // F74: verified empirically against real robocopy.exe before adding these -- `draft.pattern` is
+  // a single string field (`CopyRequest::pattern`, `engine/robocopy.rs::build_args`) sent to
+  // robocopy as ONE argv token, never split. Both a semicolon-joined form ("*.jpg;*.png;*.gif")
+  // and a space-joined form inside one token ("*.jpg *.png *.gif") copy ZERO files with exit code
+  // 0 -- no error, just a silently empty backup, because robocopy treats the whole string as one
+  // literal filespec that matches no real filename. Multiple filespecs only work as separate argv
+  // tokens (`robocopy src dst *.jpg *.png *.gif`, three arguments), which this single-string field
+  // cannot produce. So the suggestions below stay single-pattern only -- do not add a
+  // multi-extension example here without first changing `pattern` to a list, a core change out of
+  // scope for a tooltip/caption feature.
+  const PATTERN_SUGGESTIONS = ["*", "*.pdf", "*.jpg"];
+
+  // F74: exclude_files/exclude_dirs are already a `Vec<String>` (`engine/robocopy.rs` pushes one
+  // `/XF`/`/XD` flag per entry), so -- unlike Pattern above -- multiple entries genuinely work.
+  // These add to `draft.exclude_files`, never replace what was typed by hand.
+  const EXCLUDE_FILE_SHORTCUTS = ["*.tmp", "*.log", "Thumbs.db", "desktop.ini", "~$*"];
+
   // The only pane that writes. It never writes in place: it produces a proposal in a new file and
   // the operator decides whether it replaces the running configuration.
   let drafts = $state([]);
@@ -279,6 +304,14 @@
     const value = Number(trimmed);
     return Number.isInteger(value) ? value : null;
   }
+
+  // F74: a shortcut adds to the existing list; it never replaces what was typed by hand, and
+  // clicking one already present is a no-op rather than a duplicate entry.
+  function addExcludeFile(pattern) {
+    if (!draft.exclude_files.includes(pattern)) {
+      draft.exclude_files = [...draft.exclude_files, pattern];
+    }
+  }
 </script>
 
 <section class="p-4">
@@ -475,45 +508,83 @@
       </div>
 
       <label for="f-pattern">Pattern</label>
-      <input
-        id="f-pattern"
-        class="w-48 rounded border border-slate-300 px-2 py-1 font-mono dark:border-slate-700 dark:bg-slate-900"
-        placeholder="*"
-        value={draft.pattern ?? ""}
-        oninput={(e) => (draft.pattern = e.currentTarget.value.trim() === "" ? null : e.currentTarget.value)}
-      />
+      <div>
+        <input
+          id="f-pattern"
+          class="w-48 rounded border border-slate-300 px-2 py-1 font-mono dark:border-slate-700 dark:bg-slate-900"
+          placeholder="*"
+          title="Un pattern alla volta per robocopy (es. *.pdf). Una stringa con più pattern arriva a robocopy come un unico argomento e non corrisponde a nulla, verificato empiricamente."
+          value={draft.pattern ?? ""}
+          oninput={(e) => (draft.pattern = e.currentTarget.value.trim() === "" ? null : e.currentTarget.value)}
+        />
+        <p class="mt-0.5 text-[11px] text-slate-500">
+          Esempi: {#each PATTERN_SUGGESTIONS as example, index}{index > 0 ? ", " : ""}<code
+            >{example}</code
+          >{/each} — un pattern alla volta; per più estensioni serve un job per ciascuna.
+        </p>
+      </div>
 
       <label for="f-threads">Thread</label>
       <!-- 1..=128 is the range the CLI enforces (`IngestError::InvalidThreads`). The bounds here
            are the affordance; `apply_draft` refuses the same values whatever this form sends. -->
-      <input
-        id="f-threads"
-        type="number"
-        min="1"
-        max="128"
-        step="1"
-        class="w-32 rounded border border-slate-300 px-2 py-1 dark:border-slate-700 dark:bg-slate-900"
-        value={draft.threads ?? ""}
-        oninput={(e) => (draft.threads = numberOrNull(e.currentTarget.value))}
-      />
+      <div>
+        <input
+          id="f-threads"
+          type="number"
+          min="1"
+          max="128"
+          step="1"
+          class="w-32 rounded border border-slate-300 px-2 py-1 dark:border-slate-700 dark:bg-slate-900"
+          placeholder={String(DEFAULT_THREADS)}
+          title="Numero di thread di copia di robocopy (/MT). Vuoto = usa il default di questa macchina."
+          value={draft.threads ?? ""}
+          oninput={(e) => (draft.threads = numberOrNull(e.currentTarget.value))}
+        />
+        <p class="mt-0.5 text-[11px] text-slate-500">
+          Vuoto = {DEFAULT_THREADS} (i core logici di questa macchina). Il valore migliore dipende
+          dalla destinazione: una condivisione di rete spesso peggiora con più thread, un disco
+          locale ne beneficia — verifica empiricamente piuttosto che indovinare.
+        </p>
+      </div>
 
       <label for="f-retries">Tentativi</label>
-      <input
-        id="f-retries"
-        type="number"
-        class="w-32 rounded border border-slate-300 px-2 py-1 dark:border-slate-700 dark:bg-slate-900"
-        value={draft.retries ?? ""}
-        oninput={(e) => (draft.retries = numberOrNull(e.currentTarget.value))}
-      />
+      <div>
+        <input
+          id="f-retries"
+          type="number"
+          class="w-32 rounded border border-slate-300 px-2 py-1 dark:border-slate-700 dark:bg-slate-900"
+          placeholder="3"
+          title="Numero di tentativi per file non riuscito (robocopy /R)."
+          value={draft.retries ?? ""}
+          oninput={(e) => (draft.retries = numberOrNull(e.currentTarget.value))}
+        />
+        <p class="mt-0.5 text-[11px] text-slate-500">
+          Vuoto = 3. Alza per destinazioni di rete instabili, abbassa per fallire più in fretta su
+          un errore reale e non transitorio.
+        </p>
+      </div>
 
       <label for="f-excl-files">Escludi file</label>
-      <input
-        id="f-excl-files"
-        class="rounded border border-slate-300 px-2 py-1 font-mono dark:border-slate-700 dark:bg-slate-900"
-        placeholder="*.tmp, *.log"
-        value={draft.exclude_files.join(", ")}
-        oninput={(e) => (draft.exclude_files = toList(e.currentTarget.value))}
-      />
+      <div>
+        <input
+          id="f-excl-files"
+          class="rounded border border-slate-300 px-2 py-1 font-mono dark:border-slate-700 dark:bg-slate-900"
+          placeholder="*.tmp, *.log"
+          value={draft.exclude_files.join(", ")}
+          oninput={(e) => (draft.exclude_files = toList(e.currentTarget.value))}
+        />
+        <div class="mt-1 flex flex-wrap gap-1">
+          {#each EXCLUDE_FILE_SHORTCUTS as pattern}
+            <button
+              type="button"
+              class="rounded border border-slate-300 px-1.5 py-0.5 font-mono text-[11px]
+                     text-slate-600 hover:bg-slate-100 dark:border-slate-700 dark:text-slate-400
+                     dark:hover:bg-slate-800"
+              onclick={() => addExcludeFile(pattern)}
+            >+ {pattern}</button>
+          {/each}
+        </div>
+      </div>
 
       <label for="f-excl-dirs">Escludi cartelle</label>
       <input
@@ -549,6 +620,7 @@
           class="w-48 rounded border border-slate-300 px-2 py-1 disabled:bg-slate-100
                  disabled:text-slate-500 dark:border-slate-700 dark:bg-slate-900
                  dark:disabled:bg-slate-800"
+          title="Full copia tutto in una nuova generazione; Incremental copia solo ciò che è cambiato dall'ultima generazione; Differential copia ciò che è cambiato dall'ultimo Full. Nessuno = copia semplice, senza generazioni."
           value={draft.backup_type ?? ""}
           disabled={draft.mirror}
           onchange={(e) => (draft.backup_type = e.currentTarget.value === "" ? null : e.currentTarget.value)}
@@ -558,6 +630,13 @@
           <option value="incremental">Incremental</option>
           <option value="differential">Differential</option>
         </select>
+        <p class="mt-0.5 text-[11px] text-slate-500">
+          <strong>Full</strong> copia tutto in una nuova generazione; <strong>Incremental</strong>
+          copia solo ciò che è cambiato dall'ultima generazione (di qualunque tipo);
+          <strong>Differential</strong> copia ciò che è cambiato dall'ultimo Full, sempre rispetto
+          allo stesso riferimento. <strong>Nessuno</strong> = copia semplice, senza generazioni né
+          manifest.
+        </p>
         {#if draft.mirror}
           <p class="mt-0.5 text-[11px] text-slate-500">
             Non selezionabile insieme a Mirror: le due destinazioni sono incompatibili (copia
@@ -611,20 +690,39 @@
       </div>
     </div>
 
+    <!-- F77: tooltips reuse existing, already-verified text -- `Help.svelte`'s "verifica rapida"
+         entry verbatim for fast_verify (same discipline F71 already established toward
+         `Run.svelte`), and `cli.rs`'s own doc comments for the rest, which have no entry in Aiuto
+         today. Neither is new copy invented here. -->
     <div class="mt-3 flex flex-wrap gap-x-5 gap-y-2 text-xs">
-      <label class="flex items-center gap-1">
+      <label
+        class="flex items-center gap-1"
+        title="Dopo il trasferimento, confronta i checksum di sorgente e destinazione."
+      >
         <input type="checkbox" bind:checked={draft.verify_integrity} /> Verifica integrità
       </label>
-      <label class="flex items-center gap-1">
+      <label
+        class="flex items-center gap-1"
+        title="Salta i file la cui sorgente è immutata dall'ultima verifica riuscita. Si fida dell'identità della sorgente invece di rileggere i byte in destinazione: una corruzione nata in destinazione può sfuggire."
+      >
         <input type="checkbox" bind:checked={draft.fast_verify} /> Verifica rapida
       </label>
-      <label class="flex items-center gap-1">
+      <label
+        class="flex items-center gap-1"
+        title="Mostra cosa succederebbe senza copiare nulla (robocopy /L)."
+      >
         <input type="checkbox" bind:checked={draft.dry_run} /> Simulazione
       </label>
-      <label class="flex items-center gap-1">
+      <label
+        class="flex items-center gap-1"
+        title="Esclude giunzioni e cartelle collegate dalla copia (robocopy /XJ). Senza, robocopy le segue per default, che può duplicare dati o ciclare su una giunzione che punta a se stessa."
+      >
         <input type="checkbox" bind:checked={draft.exclude_junctions} /> Escludi giunzioni
       </label>
-      <label class="flex items-center gap-1">
+      <label
+        class="flex items-center gap-1"
+        title="Conserva i permessi di sicurezza ACL NTFS (robocopy /COPYALL)."
+      >
         <input type="checkbox" bind:checked={draft.preserve_acl} /> Conserva ACL
       </label>
     </div>
