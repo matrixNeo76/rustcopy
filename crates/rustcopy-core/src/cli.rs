@@ -37,8 +37,11 @@ impl LogLevel {
     }
 }
 
-/// Number of copy threads to use when --threads is not specified.
-fn default_threads() -> u16 {
+/// Number of copy threads to use when --threads is not specified. `pub` so `gui_api::default_threads`
+/// can expose the same value the CLI would actually use to the console -- `navigator.hardwareConcurrency`
+/// is not a safe substitute: Chromium (WebView2's engine) can clamp or mask it for fingerprinting
+/// protection, so it is not guaranteed to equal what this function returns on the same machine.
+pub fn default_threads() -> u16 {
     // num_cpus::get() returns logical CPUs, which is a sensible starting point.
     // Clamped to [1, 128] to honour robocopy's /MT constraints.
     (num_cpus::get() as u16).clamp(MIN_THREADS as u16, MAX_THREADS)
