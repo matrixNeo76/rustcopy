@@ -120,6 +120,13 @@
       jobs = await invoke("list_jobs", { configPath: session.configPath });
       status = await invoke("run_status");
       rememberBatchPosition(status);
+      // A run that already failed before this window ever polled it (opened fresh, or "Esamina"
+      // clicked again later) still deserves the details open by default -- `poll()`'s own
+      // running→finished check only ever fires for a failure this window watched happen live
+      // (CodeRabbit finding on this PR).
+      if (!status?.running && status?.exit_code != null && status.exit_code !== 0) {
+        detailsOpen = true;
+      }
     } catch (e) {
       error = String(e);
       jobs = [];

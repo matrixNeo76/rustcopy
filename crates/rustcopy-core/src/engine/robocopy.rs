@@ -226,7 +226,30 @@ pub fn parse_file_bytes(line: &str) -> Option<u64> {
 /// class of bug, from two functions independently guessing at the same line shape). With
 /// `/BYTES /NP` the name is always the last tab-separated field.
 fn parse_file_name(line: &str) -> Option<String> {
-    split_fields(line.trim()).last().map(|f| f.to_string())
+    let trimmed = line.trim();
+
+    // Tab-separated (the common case, `/BYTES /NP`'s own output shape): the name never got split
+    // in the first place, so the last tab-separated field is it, spaces and all. Same threshold
+    // `split_fields` itself uses to choose this branch, not just "contains a tab".
+    let tabbed: Vec<&str> = trimmed
+        .split('\t')
+        .map(str::trim)
+        .filter(|f| !f.is_empty())
+        .collect();
+    if tabbed.len() >= 2 {
+        return tabbed.last().map(|f| f.to_string());
+    }
+
+    // Space-padded fallback (`split_fields`'s other branch, real observed robocopy output — see
+    // `parses_space_padded_lines_and_other_statuses` below): `split_whitespace()` cuts a
+    // multi-word name like "folder name.csv" into separate fields, so `.last()` alone would keep
+    // only "name.csv" (CodeRabbit finding on this PR, verified against `parse_file_bytes` already
+    // accepting exactly such a line). Reconstruct the name from every field after the byte count
+    // instead of just the trailing token.
+    let fields: Vec<&str> = trimmed.split_whitespace().collect();
+    let bytes_index = fields.iter().position(|f| parse_byte_count(f).is_some())?;
+    let name = fields[bytes_index + 1..].join(" ");
+    (!name.is_empty()).then_some(name)
 }
 
 /// Byte counts from robocopy's `Bytes :` summary row (requires `/BYTES`).
@@ -627,6 +650,22 @@ mod tests {
         assert_eq!(
             parse_file_name("      Newer          1024   a.csv"),
             Some("a.csv".to_string())
+        );
+    }
+
+    /// A multi-word name must survive the space-padded fallback whole — `.last()` alone kept only
+    /// the trailing token (CodeRabbit finding on this PR, verified: `parse_file_bytes` already
+    /// accepts this exact line shape, so `parse_file_name` has to handle it too). The tab-separated
+    /// case is unaffected either way, since a tab never splits inside the name.
+    #[test]
+    fn parse_file_name_keeps_a_multi_word_name_from_the_space_padded_fallback() {
+        assert_eq!(
+            parse_file_name("      Newer          1024   folder name.csv"),
+            Some("folder name.csv".to_string())
+        );
+        assert_eq!(
+            parse_file_name("\t    New File  \t\t     52428800\tfolder name.csv"),
+            Some("folder name.csv".to_string())
         );
     }
 
