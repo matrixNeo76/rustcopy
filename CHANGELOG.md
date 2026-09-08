@@ -21,6 +21,38 @@ For full technical detail behind any entry, see `ANALYSIS.md` (defect list, `D<N
 
 ## [Unreleased]
 
+## [7.1.0] - 2026-09-08
+
+### Added
+- **Guided creation of a real job** from Job's empty state (F83): a new "Crea la tua
+  configurazione" wizard — name, source/destination via native folder pickers, a
+  Verifica integrità checkbox — writes a real, reusable TOML without starting it, filling a gap
+  neither the existing fake-data example (F79) nor QuickSync (F71, fixed name, starts
+  immediately) actually covered.
+- **Path inspection** (F73): a "Verifica" button next to Sorgente/Destinazione in *Modifica*
+  reports existence and file/folder counts on demand.
+- **Job name validation** (F72): the editor rejects Windows-reserved characters, control
+  characters, reserved device names (including legacy superscript forms), and — as of this
+  release — a trailing `.`/space, before the name is ever written to disk.
+- **Inline guidance throughout *Modifica*** (F74/F75/F77): suggestions for Pattern and Escludi
+  file, the real per-machine default shown for Thread, and tooltips reusing *Aiuto*'s own text
+  for `backup_type` and every checkbox.
+- **Friendlier errors**: the single-job-to-multi-job split error (F78) now shows a concrete TOML
+  example with the real job name instead of the raw English message; a Report placeholder shows
+  the real default path (F76); *Storico* exposes the exit-code meaning through a single shared
+  core function instead of a second hardcoded table (F81); the restore-preview button in *Report*
+  now warns up front when no configuration has been loaded in the session, instead of failing
+  silently on a relative-path report (F82).
+
+### Fixed
+- `History.svelte`'s CSV export could include the `"…"` placeholder instead of the real exit-code
+  meaning if triggered in the brief window before every code's meaning had resolved.
+- The Pattern field's own multi-extension suggestion (`*.jpg;*.png;*.gif`) was verified against
+  real `robocopy.exe` and found to silently copy zero files — corrected to single-pattern
+  suggestions only.
+- Thread's placeholder read `navigator.hardwareConcurrency`, which Chromium can clamp for
+  fingerprinting protection; now reads the same value the core would actually use.
+
 ## [7.0.0] - 2026-09-07
 
 ### Added
