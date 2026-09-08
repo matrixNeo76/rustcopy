@@ -501,6 +501,18 @@ pub fn inspect_path(path: &Path, anchor: &Path) -> Result<PathInspection, Ingest
     })
 }
 
+/// The real value `--threads` uses on this machine when left unset (`cli::default_threads`,
+/// already clamped to `1..=128`). Found necessary by CodeRabbit on the PR that added the Thread
+/// field's placeholder in `Editor.svelte`: the original design read `navigator.hardwareConcurrency`
+/// directly in JS to avoid a new command, but that value comes from the WebView's own Chromium
+/// engine, which can clamp or mask it for fingerprinting protection -- so it is not guaranteed to
+/// equal what this function (and therefore an empty Thread field) actually resolves to. This is
+/// the single source of truth both sides now read, the same pattern F81 established for
+/// `runner::exit_code_meaning`.
+pub fn default_threads() -> u16 {
+    crate::cli::default_threads()
+}
+
 /// Lists the jobs a config file declares, resolved the same way `run_jobs` resolves them.
 ///
 /// Single-job configs (no `[[jobs]]`) yield one entry, so a UI does not need two code paths.

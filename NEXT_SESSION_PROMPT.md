@@ -269,7 +269,11 @@ priorità, poi autorizzata l'implementazione in sequenza:
   (8/8), F81 è già verificato dal vivo contro il binario compilato. Se questa sessione riprende e
   la quota è ancora esaurita dopo un altro tentativo, valutare con l'utente se procedere al merge
   senza CodeRabbit (rischio basso, solo frontend) invece di bloccare la sequenza a tempo
-  indeterminato — non deciderlo unilateralmente.
+  indeterminato — non deciderlo unilateralmente. **Nota di coerenza (trovata da CodeRabbit sulla PR
+  #109)**: finché PR #108 non è mersa, le righe F81 di `ROADMAP.md`/`CLAUDE.md` su `main` restano
+  ancora 🟡 "proposto" — questa voce descrive il lavoro già fatto e verificato su quel branch, non
+  lo stato formale su `main`. Non modificare `ROADMAP.md`/`CLAUDE.md` per anticipare F81 su rami
+  diversi da quello di PR #108: la sincronizzazione avviene naturalmente al suo merge.
 - **F74/F75/F77 chiusi, 8 Set 2026** (tooltip Pattern/Escludi file/Thread/Tentativi/backup_type/
   checkbox). Una correzione reale trovata verificando empiricamente contro `robocopy.exe` prima di
   implementare: il suggerimento originale per Pattern (`*.jpg;*.png;*.gif`, estensioni multiple in

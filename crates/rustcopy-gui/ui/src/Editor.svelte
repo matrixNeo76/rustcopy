@@ -15,12 +15,17 @@
   const DEFAULT_REPORT_PATH_PLACEHOLDER = "./robocopy_ingest_report.json";
 
   // F75: Thread's placeholder needs the *actual* default this machine would use when the field
-  // is left empty (`cli.rs::default_threads`, clamped 1-128 via `MIN_THREADS`/`MAX_THREADS`) --
-  // a blank field otherwise looks like "nothing", not "use the default". No new Tauri command:
-  // the webview's own `navigator.hardwareConcurrency` already reports the same logical-CPU count
-  // the core's `num_cpus::get()` does, so the clamp is duplicated here (both bounds), not the
-  // lookup itself.
-  const DEFAULT_THREADS = Math.min(Math.max(navigator.hardwareConcurrency || 1, 1), 128);
+  // is left empty (`cli::default_threads`, clamped 1-128 via `MIN_THREADS`/`MAX_THREADS`).
+  // Fetched from the core (`gui_api::default_threads`, one pure Tauri command) rather than reading
+  // `navigator.hardwareConcurrency` in JS -- found by CodeRabbit that the latter is not a safe
+  // substitute: Chromium (WebView2's engine) can clamp or mask it for fingerprinting protection,
+  // so it is not guaranteed to equal what the core actually resolves an empty field to. `null`
+  // until the one-time fetch resolves; the caption and placeholder both fall back to "…" for that
+  // brief window, same pattern as F81's `meaningByCode`.
+  let DEFAULT_THREADS = $state(null);
+  invoke("default_threads").then((value) => {
+    DEFAULT_THREADS = value;
+  });
 
   // F74: verified empirically against real robocopy.exe before adding these -- `draft.pattern` is
   // a single string field (`CopyRequest::pattern`, `engine/robocopy.rs::build_args`) sent to
@@ -515,7 +520,10 @@
           placeholder="*"
           title="Un pattern alla volta per robocopy (es. *.pdf). Una stringa con più pattern arriva a robocopy come un unico argomento e non corrisponde a nulla, verificato empiricamente."
           value={draft.pattern ?? ""}
-          oninput={(e) => (draft.pattern = e.currentTarget.value.trim() === "" ? null : e.currentTarget.value)}
+          oninput={(e) => {
+            const pattern = e.currentTarget.value.trim();
+            draft.pattern = pattern === "" ? null : pattern;
+          }}
         />
         <p class="mt-0.5 text-[11px] text-slate-500">
           Esempi: {#each PATTERN_SUGGESTIONS as example, index}{index > 0 ? ", " : ""}<code
@@ -535,15 +543,19 @@
           max="128"
           step="1"
           class="w-32 rounded border border-slate-300 px-2 py-1 dark:border-slate-700 dark:bg-slate-900"
-          placeholder={String(DEFAULT_THREADS)}
+          placeholder={DEFAULT_THREADS === null ? "" : String(DEFAULT_THREADS)}
           title="Numero di thread di copia di robocopy (/MT). Vuoto = usa il default di questa macchina."
           value={draft.threads ?? ""}
           oninput={(e) => (draft.threads = numberOrNull(e.currentTarget.value))}
         />
         <p class="mt-0.5 text-[11px] text-slate-500">
-          Vuoto = {DEFAULT_THREADS} (i core logici di questa macchina). Il valore migliore dipende
-          dalla destinazione: una condivisione di rete spesso peggiora con più thread, un disco
-          locale ne beneficia — verifica empiricamente piuttosto che indovinare.
+          Vuoto = {DEFAULT_THREADS ?? "…"} (i core logici di questa macchina). Il valore migliore
+          dipende dalla destinazione: una condivisione di rete spesso peggiora con più thread, un
+          disco locale ne beneficia — verifica empiricamente piuttosto che indovinare.
+          {#if draft.backup_type}
+            <strong>Non ha effetto con Tipo di backup impostato</strong>: la pipeline a generazioni
+            usa il motore di copia semplice, che non è multi-thread.
+          {/if}
         </p>
       </div>
 
@@ -697,7 +709,9 @@
     <div class="mt-3 flex flex-wrap gap-x-5 gap-y-2 text-xs">
       <label
         class="flex items-center gap-1"
-        title="Dopo il trasferimento, confronta i checksum di sorgente e destinazione."
+        title={draft.backup_type
+          ? "Dopo il trasferimento, confronta i checksum di sorgente e destinazione. Non ha effetto con Tipo di backup impostato: la pipeline a generazioni non esegue ancora questa verifica."
+          : "Dopo il trasferimento, confronta i checksum di sorgente e destinazione."}
       >
         <input type="checkbox" bind:checked={draft.verify_integrity} /> Verifica integrità
       </label>
@@ -726,6 +740,21 @@
         <input type="checkbox" bind:checked={draft.preserve_acl} /> Conserva ACL
       </label>
     </div>
+    {#if draft.backup_type && draft.verify_integrity}
+      <!-- F77 fix (CodeRabbit, Major): execute_generation_backup never calls verify_integrity --
+           an operator ticking this alongside a Tipo di backup could believe the generation backup
+           was checksum-verified when it silently was not. The tooltip above states the limit;
+           this is the same warning made impossible to miss, since a hover-only tooltip is not
+           strong enough for a data-integrity claim that is not actually true. -->
+      <p
+        class="mt-1 rounded border border-amber-300 bg-amber-50 px-2 py-1 text-[11px]
+               text-amber-900 dark:border-amber-800 dark:bg-amber-950 dark:text-amber-200"
+        role="status"
+      >
+        Verifica integrità è impostata insieme a Tipo di backup, ma non ha effetto: la pipeline a
+        generazioni non esegue ancora questa verifica. I dati vengono copiati, non verificati.
+      </p>
+    {/if}
 
     <h3 class="mt-4 text-xs font-semibold uppercase tracking-wide text-slate-500">
       Impostazioni distruttive
