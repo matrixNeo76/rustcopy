@@ -263,17 +263,6 @@ priorità, poi autorizzata l'implementazione in sequenza:
   codice diverso da zero). Chiude un debito già tracciato in `CLAUDE.md` da F65. Zero nuovi test
   Rust (comando puro, `exit_code_meaning` già coperto in `runner.rs`). Dettaglio: riga F81 di
   `ROADMAP.md`.
-- **PR #108 (F81) resta aperta**, in attesa di review CodeRabbit: la quota review OSS gratuita
-  risultava esaurita l'8 Set 2026 ("You've used all free OSS reviews for now"), non un rate limit
-  transitorio — 5 tentativi di retrigger su oltre un'ora hanno dato lo stesso esito. CI è verde
-  (8/8), F81 è già verificato dal vivo contro il binario compilato. Se questa sessione riprende e
-  la quota è ancora esaurita dopo un altro tentativo, valutare con l'utente se procedere al merge
-  senza CodeRabbit (rischio basso, solo frontend) invece di bloccare la sequenza a tempo
-  indeterminato — non deciderlo unilateralmente. **Nota di coerenza (trovata da CodeRabbit sulla PR
-  #109)**: finché PR #108 non è mersa, le righe F81 di `ROADMAP.md`/`CLAUDE.md` su `main` restano
-  ancora 🟡 "proposto" — questa voce descrive il lavoro già fatto e verificato su quel branch, non
-  lo stato formale su `main`. Non modificare `ROADMAP.md`/`CLAUDE.md` per anticipare F81 su rami
-  diversi da quello di PR #108: la sincronizzazione avviene naturalmente al suo merge.
 - **F74/F75/F77 chiusi, 8 Set 2026** (tooltip Pattern/Escludi file/Thread/Tentativi/backup_type/
   checkbox). Una correzione reale trovata verificando empiricamente contro `robocopy.exe` prima di
   implementare: il suggerimento originale per Pattern (`*.jpg;*.png;*.gif`, estensioni multiple in
@@ -299,13 +288,19 @@ priorità, poi autorizzata l'implementazione in sequenza:
   un esempio TOML concreto invece del messaggio grezzo in inglese — nessuna nuova capacità del core,
   esattamente il perimetro proposto. Ogni altro errore di scrittura continua a mostrarsi come prima.
   Dettaglio: riga F78 di `ROADMAP.md`.
+- **PR #108 (F81) mersa, 8 Set 2026**, dopo un incidente CI raro ma verificato a fondo: CodeRabbit
+  ha trovato un difetto reale (race fra `history`/`meaningByCode`: "Esporta CSV" poteva includere
+  il placeholder "…" invece del vero significato, corretto tenendo `history`/`advice` locali finché
+  ogni lookup non è risolto), poi GitHub Actions ha smesso di generare **qualunque** run
+  `pull_request` per questo repository — non solo per questa PR: confermato aprendo una PR
+  diagnostica su un branch mai usato prima, che non ha prodotto nemmeno un run, e confrontando i
+  check-suite via API (`gh api repos/.../commits/{sha}/check-suites`): i commit falliti non avevano
+  affatto una voce "GitHub Actions", solo le integrazioni di terze parti rimaste in coda vuota — non
+  un ritardo del nostro codice, un incidente della piattaforma. Mersa su autorizzazione esplicita
+  dell'utente, basandosi sulla verifica locale già completa (`cargo test`/clippy/build puliti su
+  entrambi i set di feature, verifica live in console eseguita due volte).
 - **Prossimo: F82** (avviso Anteprima ripristino senza config in sessione, spec in
   `PIANO_GUI.md` §18.15 verso la fine).
-- **PR #108 (F81) resta ancora aperta**: la quota review OSS gratuita di CodeRabbit non si era
-  ancora resettata all'ultimo controllo (8 Set 2026, oltre due ore dopo il primo tentativo). CI
-  verde (8/8), F81 già verificato dal vivo. Ricontrollare a inizio sessione; se ancora esaurita,
-  chiedere all'utente se procedere al merge senza CodeRabbit (rischio basso, solo frontend) invece
-  di bloccare a tempo indeterminato.
 
 Se questa sessione riprende a metà sequenza (compattazione, nuova sessione), continuare da dove
 `ROADMAP.md` segna l'ultima riga passata da 🟡 a ✅ — non ripartire da

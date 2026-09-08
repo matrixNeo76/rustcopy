@@ -262,6 +262,16 @@ async fn read_advice(report_path: String, job_name: Option<String>) -> Result<Ve
     off_thread(move || gui_api::read_advice(&PathBuf::from(report_path), job_name.as_deref())).await
 }
 
+/// What an exit code means -- `runner::exit_code_meaning` is the one place this crate is allowed
+/// to decide that (module header above). `Run.svelte` already reads this from live `RunStatus`;
+/// F81 gives `History.svelte` the same source instead of a second, hand-maintained copy of the
+/// exit-code table. No blocking I/O, so no `off_thread`: this is a pure lookup, unlike every other
+/// command in this file.
+#[tauri::command]
+fn exit_code_meaning(code: u8) -> String {
+    robocopy_ingest::runner::exit_code_meaning(code).to_string()
+}
+
 /// Task names (Windows Task Scheduler) whose command line already references this configuration
 /// file — read-only, informational. Answers "would starting this by hand duplicate a schedule
 /// that already exists", never installs or removes anything.
@@ -771,6 +781,7 @@ fn main() {
             read_report_page,
             read_history,
             read_advice,
+            exit_code_meaning,
             schedules_referencing,
             set_credential,
             delete_credential,
