@@ -78,6 +78,10 @@ pub struct ProgressSample {
     pub batch_index: Option<u32>,
     #[serde(default)]
     pub batch_total: Option<u32>,
+    /// The most recently completed file's name, when the engine has reported one yet. `#[serde(
+    /// default)]` so a sample written by a binary older than this field still parses.
+    #[serde(default)]
+    pub current_file: Option<String>,
 }
 
 impl ProgressSample {
@@ -148,6 +152,7 @@ mod tests {
             throughput_mbps: 42.0,
             batch_index: None,
             batch_total: None,
+            current_file: None,
         }
     }
 

@@ -383,11 +383,14 @@ struct RunStatus {
     /// the file: absent means "not running", which is a signal that needs no reasoning about
     /// staleness.
     progress: Option<robocopy_ingest::progress_file::ProgressSample>,
-    /// The tail of what the run printed, shown when it fails.
+    /// The tail of what the run has printed so far — live while it runs, and its final lines once
+    /// it ends.
     ///
-    /// A tail rather than the whole file: a run that failed after copying for an hour can have
-    /// produced a lot of output, and the operator needs the end of it — where the error is — not
-    /// a transcript that has to cross the IPC boundary whole.
+    /// A tail rather than the whole file: a run that copies for an hour can have produced a lot of
+    /// output, and the operator needs the last of it — where robocopy's own per-file lines or an
+    /// error are — not a transcript that has to cross the IPC boundary whole. While running this is
+    /// the only place those per-file lines reach the window at all; `Run.svelte` renders it inside a
+    /// disclosure the operator opens by choice, not forced open mid-run.
     output_tail: Option<String>,
     /// What that phase is, in words. Decided in the core: which phase a run is in is a fact about
     /// the backup, and naming it is not a rendering choice.
@@ -680,7 +683,12 @@ async fn run_status(state: tauri::State<'_, RunState>) -> Result<RunStatus, Stri
                     // other judgement about what a sample means (this file's own doc comment).
                     phase_label: progress.as_ref().map(|sample| sample.phase_label()),
                     progress,
-                    output_tail: None,
+                    // Live, not just on failure (see the struct doc comment): the child's stdout is
+                    // already captured on disk as it writes, so reading its tail here costs one seek
+                    // over 16 KB per poll — nothing a run mid-flight cannot afford — and it is the
+                    // only place robocopy's own per-file lines (no `/NFL`, see engine::robocopy) ever
+                    // reach the window before the run ends.
+                    output_tail: read_output_tail(active.cancel_file.as_deref()),
                 });
             }
             Err(error) => return Err(format!("cannot check the running job: {error}")),

@@ -218,6 +218,17 @@ pub fn parse_file_bytes(line: &str) -> Option<u64> {
     None
 }
 
+/// The file name from a copied-file robocopy line, for the live "what's copying now" display.
+///
+/// Only meaningful to call once [`parse_file_bytes`] has already recognized `line` as a
+/// transferred file — this does not re-derive that decision, it reuses it, so the two can never
+/// disagree about which lines qualify (see D27 in `ANALYSIS.md` for the history of exactly that
+/// class of bug, from two functions independently guessing at the same line shape). With
+/// `/BYTES /NP` the name is always the last tab-separated field.
+fn parse_file_name(line: &str) -> Option<String> {
+    split_fields(line.trim()).last().map(|f| f.to_string())
+}
+
 /// Byte counts from robocopy's `Bytes :` summary row (requires `/BYTES`).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub struct SummaryRow {
@@ -374,6 +385,9 @@ impl<R: CommandRunner> CopyEngine for RobocopyEngine<R> {
                     streamed_files += 1;
                     sink.add_bytes(bytes);
                     sink.add_file();
+                    if let Some(name) = parse_file_name(line) {
+                        sink.set_current_file(&name);
+                    }
                     tracing::debug!(bytes, line = line.trim(), "robocopy transferred file");
                 }
             };
@@ -604,6 +618,16 @@ mod tests {
     fn parses_tab_separated_new_file_line() {
         let line = "\t    New File  \t\t     52428800\tsales_2026_01.csv";
         assert_eq!(parse_file_bytes(line), Some(52_428_800));
+    }
+
+    #[test]
+    fn parse_file_name_reads_the_trailing_field() {
+        let line = "\t    New File  \t\t     52428800\tsales_2026_01.csv";
+        assert_eq!(parse_file_name(line), Some("sales_2026_01.csv".to_string()));
+        assert_eq!(
+            parse_file_name("      Newer          1024   a.csv"),
+            Some("a.csv".to_string())
+        );
     }
 
     #[test]

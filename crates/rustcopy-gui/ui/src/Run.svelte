@@ -43,6 +43,15 @@
   // single publisher tick to ever land, which the live samples alone cannot show (also #73).
   let wasStopped = $state(false);
 
+  // Whether the details disclosure below is open. A plain `open={expr}` attribute is a one-way
+  // binding: Svelte re-applies it on every `status` update, which every 1s poll tick produces —
+  // so it would force the panel shut again a second after an operator clicked it open to watch
+  // files scroll by (found live, not by reading the code: clicking it during a real run visibly
+  // snapped straight back to collapsed). `bind:open` here instead treats the DOM's own open/closed
+  // state as the source of truth; this variable only ever pushes it open on a genuine failure,
+  // never closed, so a manual toggle in either direction survives the next poll.
+  let detailsOpen = $state(false);
+
   function rememberBatchPosition(s) {
     if (s?.progress?.batch_total > 1) {
       lastBatchIndex = s.progress.batch_index;
@@ -138,6 +147,7 @@
     error = null;
     busy = true;
     wasStopped = false;
+    detailsOpen = false;
     try {
       status = await invoke("resume_job", { checkpointPath: checkpoint.path });
       rememberBatchPosition(status);
@@ -154,6 +164,7 @@
     busy = true;
     // A fresh run has not been stopped yet, whatever a previous one ended with.
     wasStopped = false;
+    detailsOpen = false;
     try {
       status = await invoke("start_job", { configPath: session.configPath });
       rememberBatchPosition(status);
@@ -219,6 +230,7 @@
           timer = setTimeout(tick, 1000);
         } else if (wasRunning) {
           notifyFinished(next);
+          if (next.exit_code !== 0) detailsOpen = true;
         }
       } catch (e) {
         if (mine !== generation) return;
@@ -434,16 +446,33 @@
             — {p.throughput_mbps.toFixed(0)} MB/s
           {/if}
         </p>
+        {#if p.current_file}
+          <!-- The engine's own most-recently-completed file, not a guess: robocopy always logs
+               one line per transferred file (no /NFL), so this is exactly as current as the
+               phase's own progress numbers above — the direct answer to "what is it copying
+               right now", asked live after a run gave no such visibility while in progress. -->
+          <p class="mt-0.5 truncate text-[11px] text-slate-500" title={p.current_file}>
+            {p.current_file}
+          </p>
+        {/if}
       </div>
     {/if}
 
     {#if status?.output_tail}
-      <!-- Shown whenever the run ended, not only on failure: a successful run's summary is worth
-           reading too, and hiding it until something breaks means the operator only ever meets
-           this panel in a bad moment. -->
-      <details class="mt-3" open={status.exit_code !== 0}>
+      <!-- Collapsed by default — a choice the operator makes, not something forced on them mid-run
+           (live output was requested after a run started with no way to see which files were
+           actually moving). `bind:open`, not a one-way `open={expr}`: the latter looked right but
+           re-applied on every poll tick, snapping straight back to collapsed the instant an
+           operator clicked it open mid-run — found by actually clicking it during a real run, not
+           by reading the code. `detailsOpen` only ever pushes this open (on a real failure), never
+           closed, so a manual toggle in either direction survives the next poll. -->
+      <details class="mt-3" bind:open={detailsOpen}>
         <summary class="cursor-pointer text-xs text-slate-600 dark:text-slate-400">
-          Output della run {status.exit_code === 0 ? "(riuscita)" : "— qui c'è il motivo"}
+          {#if status.running}
+            Dettagli — file in copia
+          {:else}
+            Output della run {status.exit_code === 0 ? "(riuscita)" : "— qui c'è il motivo"}
+          {/if}
         </summary>
         <pre class="mt-1 max-h-64 overflow-auto rounded border border-slate-200 bg-slate-50 p-2
                     text-[11px] leading-snug whitespace-pre-wrap dark:border-slate-800
