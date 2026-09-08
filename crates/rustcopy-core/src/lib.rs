@@ -168,11 +168,13 @@ const WINDOWS_RESERVED_DEVICE_NAMES: &[&str] = &[
 ];
 
 /// F72: rejects a job `name` [`namespaced_path`] cannot safely interpolate into a filename --
-/// without this, a name containing a Windows reserved character, control character, or one of the
-/// reserved device names, surfaces only as a cryptic I/O error at the job's first scheduled run
-/// (the first time its report/cache/manifest is actually written), not when the name was chosen.
-/// Deliberately narrow: forbidden characters and reserved names only, not a broader
-/// filename-safety heuristic.
+/// without this, a name containing a Windows reserved character, control character, one of the
+/// reserved device names, or a trailing '.'/' ' (F83) surfaces only as a cryptic I/O error at the
+/// job's first scheduled run (the first time its report/cache/manifest is actually written), not
+/// when the name was chosen. Deliberately narrow: forbidden characters, reserved names and a
+/// trailing dot/space only, not a broader filename-safety heuristic -- see the trailing-dot/space
+/// check's own comment for why a device name *with* an extension (`NUL.txt`) is deliberately not
+/// rejected here, unlike the bare form.
 pub fn validate_job_name(name: &str) -> Result<(), errors::IngestError> {
     if let Some(bad) = name
         .chars()
@@ -199,6 +201,29 @@ pub fn validate_job_name(name: &str) -> Result<(), errors::IngestError> {
         return Err(errors::IngestError::InvalidJobName {
             name: name.to_string(),
             reason: "is a Windows reserved device name".to_string(),
+        });
+    }
+    // CodeRabbit also proposed rejecting a device name with an extension (e.g. "NUL.txt") by
+    // checking only the stem before the first '.' -- verified against how `namespaced_path`
+    // actually places `name` (empirically, on real NTFS, not assumed) before deciding: it always
+    // inserts `name` *between* two dots (`{stem}.{name}.{ext}`) or appends it after the original
+    // stem for an extension-less file (`{stem}.{name}`) -- `name` is never the filename's own
+    // leading segment in any real call site, and Windows' reserved-device check applies only to
+    // that leading segment (confirmed empirically: `report.NUL.json`, `name` embedded mid-string,
+    // creates as an ordinary file, not redirected to the NUL device). Rejecting "NUL.txt"-style
+    // names here would be over-validating names this codebase can never actually put at risk --
+    // declined, keeping this "deliberately narrow" per the doc comment above.
+    //
+    // A trailing '.' or ' ' is a different, real risk though, confirmed the same way: for the
+    // extension-less case (`.ingest_cache.{name}`, no `.ext` to follow), `name` *is* the filename's
+    // final character, and Windows silently strips a single trailing '.'/' ' when the file is
+    // created -- verified empirically: `.ingest_cache.backup.` landed on disk as
+    // `.ingest_cache.backup`, indistinguishable from a job actually named "backup". Two jobs named
+    // "backup" and "backup." would silently share one cache file.
+    if name.ends_with('.') || name.ends_with(' ') {
+        return Err(errors::IngestError::InvalidJobName {
+            name: name.to_string(),
+            reason: "cannot end with '.' or a space (Windows silently strips it, which can make two different names collide on disk)".to_string(),
         });
     }
     Ok(())
@@ -351,6 +376,31 @@ mod tests {
         assert!(validate_job_name("job\u{1f}name").is_err());
         assert!(validate_job_name("job\tname").is_err());
         assert!(validate_job_name("job\nname").is_err());
+    }
+
+    /// CodeRabbit finding on F83's PR: a trailing '.' or ' ' is silently stripped by Windows when
+    /// the file is actually created (verified empirically, see the doc comment above the check),
+    /// so two names differing only by a trailing dot/space would land on the same file.
+    #[test]
+    fn validate_job_name_rejects_a_trailing_dot_or_space() {
+        assert!(validate_job_name("backup.").is_err());
+        assert!(validate_job_name("backup ").is_err());
+        // A dot/space elsewhere in the name is fine -- only the trailing position is a real risk.
+        assert!(validate_job_name("backup.nas").is_ok());
+        assert!(validate_job_name("backup nas").is_ok());
+    }
+
+    /// CodeRabbit also proposed rejecting a device name followed by an extension (`NUL.txt`), by
+    /// checking only the stem before the first '.'. Declined, verified empirically rather than
+    /// assumed: `namespaced_path` never places `name` as a filename's own leading segment (always
+    /// `{stem}.{name}.{ext}` or `{stem}.{name}`), and Windows' reserved-device check applies only
+    /// to that leading segment -- a real `report.NUL.json` created on disk as an ordinary file,
+    /// not redirected to the NUL device. Rejecting this form would reject names this codebase can
+    /// never actually put at risk.
+    #[test]
+    fn validate_job_name_accepts_a_device_name_with_an_extension() {
+        assert!(validate_job_name("NUL.txt").is_ok());
+        assert!(validate_job_name("COM\u{b9}.log").is_ok());
     }
 
     fn fixed_now() -> DateTime<Utc> {
