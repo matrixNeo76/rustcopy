@@ -188,8 +188,8 @@
         role="alert"
       >
         <strong>Simulazione</strong> — nessun file è stato realmente copiato. I numeri sotto
-        (byte, file, throughput) descrivono cosa <em>sarebbe</em> successo con `--dry-run`
-        disattivato, non un trasferimento avvenuto.
+        (byte, file, throughput) descrivono cosa <em>sarebbe</em> successo con
+        <code>--dry-run</code> disattivato, non un trasferimento avvenuto.
       </p>
     {/if}
     <div class="card mt-4 grid grid-cols-2 gap-x-6 gap-y-2 text-xs md:grid-cols-4">
