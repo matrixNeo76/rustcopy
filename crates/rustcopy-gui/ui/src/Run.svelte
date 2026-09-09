@@ -429,7 +429,13 @@
 
     {#if status?.running && status?.progress}
       {@const p = status.progress}
-      {@const fraction = p.bytes_total ? Math.min(1, p.bytes_done / p.bytes_total) : null}
+      <!-- Capped at 0.99, not 1: this whole block only ever renders while `status.running` is
+           true (the enclosing condition above), so "100%" here would always be a contradiction —
+           found live, 9 Set 2026: robocopy's own per-line byte reports count directory entries
+           the inventory total doesn't, so bytes_done legitimately passes bytes_total (and this
+           already-capped-at-1 fraction) well before the transfer is actually done, and the bar
+           sat at a literal "100%" for however much real copying was still left. -->
+      {@const fraction = p.bytes_total ? Math.min(0.99, p.bytes_done / p.bytes_total) : null}
       <div class="mt-3 max-w-2xl">
         <!-- A bar only where a percentage can honestly be computed. During the inventory there is
              no total, and a bar sitting at 0% for the twenty minutes a 1.34M-file prescan takes
