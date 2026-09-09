@@ -198,6 +198,13 @@ pub struct ReportView {
     pub bytes_copied: u64,
     pub elapsed_seconds: f64,
     pub throughput_mbps: f64,
+    /// Whether this run was `--dry-run` (`robocopy /L`) -- found necessary live, 9 Set 2026: a
+    /// dry run's own `bytes_copied`/`throughput_mbps` describe what robocopy *would* have
+    /// transferred, computed the exact same way as a real transfer's, so a report with this
+    /// unset read as "84 GB in 30 seconds" with nothing in the JSON to explain why that number
+    /// is not impossible. `Report.svelte` renders a banner whenever this is `true`, ahead of the
+    /// stats it would otherwise contradict.
+    pub dry_run: bool,
     pub exit_code_meaning: Option<String>,
     pub integrity_status: Option<String>,
     /// Count only. The paths themselves come from [`Self::mismatches`] and the other pages.
@@ -237,6 +244,7 @@ impl ReportView {
             bytes_copied: report.robocopy_transfer.bytes_copied,
             elapsed_seconds: report.phase_timing.total_seconds,
             throughput_mbps: report.robocopy_transfer.throughput_mbps,
+            dry_run: report.configuration.dry_run,
             exit_code_meaning: report.robocopy_transfer.exit_code_meaning.clone(),
             integrity_status: integrity.map(|c| format!("{:?}", c.status)),
             integrity_error_count: integrity.map(|c| c.total_errors).unwrap_or(0),
@@ -1215,6 +1223,19 @@ mod tests {
         }
         let view = ReportView::from_report(&report, 0, DEFAULT_ERROR_PAGE);
         assert!(view.missing_in_dest.truncated_at_source);
+    }
+
+    /// Found live, 9 Set 2026: a `--dry-run` report's `bytes_copied`/`throughput_mbps` describe
+    /// what robocopy *would* transfer, computed identically to a real run's -- with no signal on
+    /// `ReportView` to explain that, a dry run of a real backup job read as "84 GB in 30 seconds",
+    /// indistinguishable from an impossible real transfer. This is the one field that lets
+    /// `Report.svelte` tell the two apart.
+    #[test]
+    fn a_dry_run_report_carries_that_through_to_the_view() {
+        let mut report = report_with_errors(0);
+        report.configuration.dry_run = true;
+        let view = ReportView::from_report(&report, 0, DEFAULT_ERROR_PAGE);
+        assert!(view.dry_run);
     }
 
     /// A report with no integrity check at all (verification not requested) must render, not panic.
