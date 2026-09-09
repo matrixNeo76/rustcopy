@@ -21,6 +21,25 @@ For full technical detail behind any entry, see `ANALYSIS.md` (defect list, `D<N
 
 ## [Unreleased]
 
+## [7.2.0] - 2026-09-09
+
+### Added
+- **Live "what's copying now"** in *Esegui*: the console shows the most recently completed
+  file's name next to the progress bar while a sync is running, reusing the same robocopy line
+  already parsed for byte/file counts — no new log volume, no new flag reaching the child
+  process. The "Dettagli" output panel can also now be opened while a run is still in progress,
+  not only after it finishes.
+
+### Fixed
+- The panel above stayed collapsed by default and, once opened during a run, snapped shut again
+  on the next 1-second poll (a one-way Svelte binding re-applying itself); both are now respected
+  as an explicit choice the operator makes, not something reset out from under them.
+- `run_status`'s live-progress path no longer holds the console's run-state lock while reading
+  files from disk — a slow or network destination could otherwise stall the "Ferma" button for as
+  long as that read took.
+- The current-file name preserved spaces correctly instead of only the trailing word when
+  robocopy's own output used space-padded columns instead of tabs.
+
 ## [7.1.0] - 2026-09-08
 
 ### Added
