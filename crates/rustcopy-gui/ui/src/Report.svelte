@@ -177,6 +177,21 @@
   {/if}
 
   {#if report}
+    {#if report.dry_run}
+      <!-- Found necessary live, 9 Set 2026: a --dry-run report's byte/throughput numbers describe
+           what robocopy would have transferred, computed the exact same way a real run's are —
+           without this, a dry run against a large tree read as an impossible transfer ("84 GB in
+           30 seconds"), because nothing on screen said the run never actually copied anything. -->
+      <p
+        class="mt-3 flex items-center gap-1.5 rounded border border-amber-300 bg-amber-50 px-2 py-1
+               text-xs text-amber-900 dark:border-amber-800 dark:bg-amber-950 dark:text-amber-200"
+        role="alert"
+      >
+        <strong>Simulazione</strong> — nessun file è stato realmente copiato. I numeri sotto
+        (byte, file, throughput) descrivono cosa <em>sarebbe</em> successo con `--dry-run`
+        disattivato, non un trasferimento avvenuto.
+      </p>
+    {/if}
     <div class="card mt-4 grid grid-cols-2 gap-x-6 gap-y-2 text-xs md:grid-cols-4">
       <div>
         <p class="text-slate-500">Quando</p>
