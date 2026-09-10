@@ -15,6 +15,8 @@ pub mod robocopy;
 use std::path::PathBuf;
 use std::time::Duration;
 
+use serde::{Deserialize, Serialize};
+
 use crate::errors::IngestError;
 use crate::exit_code::RobocopyStatus;
 use crate::progress::ProgressSink;
@@ -61,6 +63,22 @@ pub struct CopyRequest {
     pub exclude_junctions: bool,
 }
 
+/// The parts of robocopy's own `Bytes :`/`Files :` summary rows this crate used to discard --
+/// why files/bytes beyond `files_copied`/`bytes_copied` were, or were not, moved. `None` when the
+/// engine has no native summary row to read one from (the naive engine, used by `--backup-type`,
+/// never shells out to robocopy, so there is nothing to parse).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+pub struct CopySummaryDetail {
+    pub files_skipped: u64,
+    pub files_mismatch: u64,
+    pub files_failed: u64,
+    pub files_extra: u64,
+    pub bytes_skipped: u64,
+    pub bytes_mismatch: u64,
+    pub bytes_failed: u64,
+    pub bytes_extra: u64,
+}
+
 /// Result of a single engine invocation.
 #[derive(Debug, Clone, PartialEq)]
 pub struct CopyOutcome {
@@ -74,6 +92,9 @@ pub struct CopyOutcome {
     /// Number of *extra* attempts beyond the first one.
     pub retry_attempts_used: u32,
     pub dry_run: bool,
+    /// Skipped/mismatch/failed/extra detail from robocopy's own summary rows, when the engine
+    /// producing this outcome parses one. See [`CopySummaryDetail`].
+    pub summary: Option<CopySummaryDetail>,
 }
 
 impl CopyOutcome {
@@ -86,6 +107,7 @@ impl CopyOutcome {
             exit_code: None,
             retry_attempts_used: 0,
             dry_run: false,
+            summary: None,
         }
     }
 

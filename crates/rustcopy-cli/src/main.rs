@@ -720,6 +720,12 @@ struct RunOutcome {
 
 async fn execute(args: &Args, child_pid: Arc<AtomicU32>) -> Result<RunOutcome> {
     let start_all = Instant::now();
+    // Live feedback, 9 Set 2026: the only timestamp a report used to carry (`IngestReport`'s
+    // `timestamp` field) is set once the run is essentially done, so a report had no way to say
+    // when it actually started -- only how long it took. Captured here, before anything else
+    // (including the pre-command and VSS snapshot below), same reasoning as `start_all` just
+    // above: this is the true beginning of the run, wall-clock rather than monotonic.
+    let started_at = chrono::Utc::now();
 
     // F39: runs before anything else, including the VSS snapshot — a pre-command's job is
     // typically "stop the database so its files are consistent", which needs to happen before a
@@ -787,6 +793,7 @@ async fn execute(args: &Args, child_pid: Arc<AtomicU32>) -> Result<RunOutcome> {
             &inventory,
             inventory_seconds,
             start_all,
+            started_at,
         )
         .await;
     }
@@ -873,6 +880,7 @@ async fn execute(args: &Args, child_pid: Arc<AtomicU32>) -> Result<RunOutcome> {
         baseline_outcome.as_ref(),
         integrity_check.clone(),
         timing,
+        started_at,
     );
     report.encrypted = encrypted_count.unwrap_or(0) > 0;
     report.decrypted = decrypted_count.unwrap_or(0) > 0;
@@ -1022,6 +1030,7 @@ async fn record_run_history(report: &IngestReport, exit_code: u8, args: &Args) {
 /// incompatible with generations, just not wired up yet — `--backup-type` is opt-in (`None` by
 /// default), so none of the existing single-destination flows lose anything by this existing
 /// alongside them rather than folding into `execute()`'s main body.
+#[allow(clippy::too_many_arguments)]
 async fn execute_generation_backup(
     args: &Args,
     backup_type: robocopy_ingest::generations::BackupType,
@@ -1029,6 +1038,7 @@ async fn execute_generation_backup(
     inventory: &ScanSummary,
     inventory_seconds: f64,
     start_all: Instant,
+    started_at: chrono::DateTime<chrono::Utc>,
 ) -> Result<RunOutcome> {
     use robocopy_ingest::generations::{self, BackupType, GenerationManifest};
 
@@ -1217,6 +1227,7 @@ async fn execute_generation_backup(
         None,
         None,
         timing,
+        started_at,
     );
     report.copy_error = copy_error.as_ref().map(|error| error.to_string());
 

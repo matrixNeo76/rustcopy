@@ -188,6 +188,7 @@ impl CopyEngine for ScriptedEngine {
             exit_code: Some(code),
             retry_attempts_used: 0,
             dry_run: request.dry_run,
+            summary: None,
         })
     }
 }
