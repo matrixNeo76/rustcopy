@@ -6,10 +6,11 @@ use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 
 use crate::cli::Args;
-use crate::engine::CopyOutcome;
+use crate::engine::{CopyOutcome, CopySummaryDetail};
 use crate::errors::IngestError;
 use crate::exit_code::RobocopyStatus;
-use crate::integrity::IntegrityCheck;
+use crate::generations::BackupType;
+use crate::integrity::{HashAlgorithm, IntegrityCheck};
 use crate::progress::{speedup_factor, throughput_mbps};
 use crate::scan::ScanSummary;
 
@@ -57,6 +58,12 @@ pub struct PhaseTiming {
 }
 
 /// Configuration echoed back into the report for reproducibility.
+///
+/// Live feedback, 9 Set 2026: this used to carry only 7 fields while a job can set many more that
+/// materially change what a run did -- a report had no way to say a run was a mirror, used a
+/// generation backup type, excluded paths, throttled bandwidth, or read a VSS snapshot.
+/// `Report.svelte` renders only the fields that differ from their default, so growing this list is
+/// not the same as growing what an operator has to read on every report.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ConfigurationReport {
     pub threads: u16,
@@ -66,6 +73,28 @@ pub struct ConfigurationReport {
     pub verify_integrity: bool,
     pub compare_baseline: bool,
     pub dry_run: bool,
+    #[serde(default)]
+    pub mirror: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub backup_type: Option<BackupType>,
+    #[serde(default)]
+    pub exclude_files: Vec<String>,
+    #[serde(default)]
+    pub exclude_dirs: Vec<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub min_age_days: Option<u32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub max_age_days: Option<u32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub bandwidth_limit_mbps: Option<u32>,
+    #[serde(default)]
+    pub hash_algo: HashAlgorithm,
+    #[serde(default)]
+    pub fast_verify: bool,
+    #[serde(default)]
+    pub exclude_junctions: bool,
+    #[serde(default)]
+    pub vss_snapshot: bool,
 }
 
 impl From<&Args> for ConfigurationReport {
@@ -78,6 +107,17 @@ impl From<&Args> for ConfigurationReport {
             verify_integrity: args.verify_integrity,
             compare_baseline: args.compare_baseline,
             dry_run: args.dry_run,
+            mirror: args.mirror,
+            backup_type: args.backup_type,
+            exclude_files: args.exclude_files.clone(),
+            exclude_dirs: args.exclude_dirs.clone(),
+            min_age_days: args.min_age_days,
+            max_age_days: args.max_age_days,
+            bandwidth_limit_mbps: args.bandwidth_limit_mbps,
+            hash_algo: args.hash_algo,
+            fast_verify: args.fast_verify,
+            exclude_junctions: args.exclude_junctions,
+            vss_snapshot: args.vss_snapshot,
         }
     }
 }
@@ -96,6 +136,11 @@ pub struct TransferReport {
     pub exit_code_meaning: Option<String>,
     pub retry_attempts_used: u32,
     pub dry_run: bool,
+    /// Skipped/mismatch/failed/extra detail from robocopy's own summary rows -- why files/bytes
+    /// beyond `files_copied`/`bytes_copied` were, or weren't, moved. `None` for an engine with no
+    /// native summary row (the naive engine, `--backup-type`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub summary: Option<CopySummaryDetail>,
 }
 
 impl From<&CopyOutcome> for TransferReport {
@@ -112,6 +157,7 @@ impl From<&CopyOutcome> for TransferReport {
                 .map(|code| RobocopyStatus::new(code).describe()),
             retry_attempts_used: outcome.retry_attempts_used,
             dry_run: outcome.dry_run,
+            summary: outcome.summary,
         }
     }
 }
@@ -185,7 +231,22 @@ pub fn read_previous_report(path: &Path) -> Option<IngestReport> {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct IngestReport {
     pub schema_version: u32,
+    /// When this report was generated -- in practice, very close to when the run *finished*
+    /// (`IngestReport::with_timing` is only ever called once transfer/baseline/verification are
+    /// already done). Kept as-is, unrenamed, so existing consumers of this field (including
+    /// `restore::build_restore_args`, which parses a full report) see no change; `started_at`
+    /// below is the new field that was actually missing. Found live, 9 Set 2026: a report showed
+    /// this timestamp labelled ambiguously as a start time, with no way to see when the run
+    /// actually finished.
     pub timestamp: DateTime<Utc>,
+    /// Wall-clock time this run actually started -- captured once, at the very top of the CLI's
+    /// `execute()`/`execute_generation_backup()`, before the pre-command, VSS snapshot or
+    /// inventory. `#[serde(default)]` so a report written by a binary older than this field still
+    /// deserializes; a missing value defaults to the Unix epoch rather than failing the read, the
+    /// same "degrade, don't break" choice `previous_run_comparison`'s consumers already make
+    /// elsewhere in this file.
+    #[serde(default = "epoch")]
+    pub started_at: DateTime<Utc>,
     pub tool_version: String,
     pub host_platform: String,
     pub host_metadata: HostMetadata,
@@ -252,9 +313,11 @@ impl IngestReport {
             baseline,
             integrity,
             PhaseTiming::default(),
+            Utc::now(),
         )
     }
 
+    #[allow(clippy::too_many_arguments)]
     pub fn with_timing(
         args: &Args,
         inventory: &ScanSummary,
@@ -262,6 +325,7 @@ impl IngestReport {
         baseline: Option<&CopyOutcome>,
         integrity: Option<IntegrityCheck>,
         timing: PhaseTiming,
+        started_at: DateTime<Utc>,
     ) -> Self {
         let robocopy_transfer = TransferReport::from(robocopy);
         let baseline_transfer = baseline.map(TransferReport::from);
@@ -272,6 +336,7 @@ impl IngestReport {
         Self {
             schema_version: SCHEMA_VERSION,
             timestamp: Utc::now(),
+            started_at,
             tool_version: env!("CARGO_PKG_VERSION").to_string(),
             host_platform: std::env::consts::OS.to_string(),
             host_metadata: HostMetadata::default(),
@@ -391,6 +456,13 @@ impl IngestReport {
     }
 }
 
+/// Default for `IngestReport::started_at` when deserializing a report written before that field
+/// existed. Never actually shown as "started" without qualification -- `Report.svelte` treats the
+/// Unix epoch here as "unknown", not a real timestamp.
+fn epoch() -> DateTime<Utc> {
+    DateTime::from_timestamp(0, 0).unwrap_or_else(Utc::now)
+}
+
 fn round3(value: f64) -> f64 {
     if !value.is_finite() {
         return 0.0;
@@ -471,6 +543,7 @@ mod tests {
             exit_code: Some(1),
             retry_attempts_used: 1,
             dry_run: false,
+            summary: None,
         }
     }
 
@@ -483,6 +556,7 @@ mod tests {
             exit_code: None,
             retry_attempts_used: 0,
             dry_run: false,
+            summary: None,
         }
     }
 

@@ -40,6 +40,7 @@ use serde::{Deserialize, Serialize};
 use crate::checkpoint::Checkpoint;
 use crate::config::{IngestConfig, JobConfig};
 use crate::errors::IngestError;
+use crate::exit_code::RobocopyStatus;
 use crate::history::{RunHistory, RunRecord, DEFAULT_HISTORY_WINDOW};
 use crate::integrity::HashAlgorithm;
 use crate::report::IngestReport;
@@ -187,9 +188,25 @@ impl ErrorPage {
 }
 
 /// Everything a UI needs to render one run, with the per-file lists paged.
+///
+/// Grown significantly live, 9 Set 2026, from a real report an operator found "scarno": most of
+/// the fields below already existed on [`IngestReport`] and its sub-reports (robocopy's own
+/// skipped/mismatch/failed/extra summary counts, the per-phase timing breakdown, the run's actual
+/// start time, most of the job's own configuration) but never crossed into this view -- see the
+/// per-field doc comments below and `CLAUDE.md` for what was found where. This stays a thin
+/// wrapper regardless of its size: every new field is a direct read from `report`, no new
+/// business logic.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct ReportView {
-    pub timestamp: String,
+    /// `None` for a report written before this field existed (`IngestReport::started_at`'s own
+    /// `#[serde(default)]` falls back to the Unix epoch on read, which is never a real answer).
+    pub started_at: Option<String>,
+    /// Renamed from the underlying `IngestReport.timestamp` for this view only: that field is, in
+    /// practice, when the run *finished* (set once transfer/verification are already done), which
+    /// read as an ambiguous single "Quando" in `Report.svelte` with no visible end time at all.
+    /// `IngestReport.timestamp` itself is untouched, so nothing that reads the JSON report
+    /// directly (e.g. `restore::build_restore_args`) is affected.
+    pub finished_at: String,
     pub source: String,
     pub dest: String,
     pub total_files: usize,
@@ -198,6 +215,20 @@ pub struct ReportView {
     pub bytes_copied: u64,
     pub elapsed_seconds: f64,
     pub throughput_mbps: f64,
+    /// Per-phase breakdown of `elapsed_seconds` above -- already computed by `PhaseTiming`
+    /// (`report.rs`), previously collapsed into the one total here.
+    pub inventory_seconds: f64,
+    pub transfer_seconds: f64,
+    pub verification_seconds: Option<f64>,
+    pub baseline_seconds: Option<f64>,
+    pub exit_code: Option<i32>,
+    /// Whether `exit_code` counts as success in robocopy's own bitwise scheme (`RobocopyStatus::
+    /// is_success`, `exit_code.rs`) -- **not** `exit_code == 0`. Found live, 9 Set 2026, on the
+    /// first real report checked against this redesign: robocopy's own exit code `1` means "one
+    /// or more files were copied successfully", the single most common outcome of an ordinary
+    /// run, and a badge keyed on "is it literally zero" showed a red ✕ for it. `Report.svelte`
+    /// must key its badge on this field, never re-derive one from the raw number.
+    pub exit_code_is_success: Option<bool>,
     /// Whether this run was `--dry-run` (`robocopy /L`) -- found necessary live, 9 Set 2026: a
     /// dry run's own `bytes_copied`/`throughput_mbps` describe what robocopy *would* have
     /// transferred, computed the exact same way as a real transfer's, so a report with this
@@ -206,16 +237,41 @@ pub struct ReportView {
     /// stats it would otherwise contradict.
     pub dry_run: bool,
     pub exit_code_meaning: Option<String>,
+    /// Skipped/mismatch/failed/extra detail from robocopy's own summary rows -- the direct answer
+    /// to "why weren't the other files copied" (already up to date, conflicting size/date, a real
+    /// per-file error, or present only in the destination). `None` for an engine with no native
+    /// summary row (`--backup-type`'s naive engine).
+    pub copy_detail: Option<crate::engine::CopySummaryDetail>,
     pub integrity_status: Option<String>,
     /// Count only. The paths themselves come from [`Self::mismatches`] and the other pages.
     pub integrity_error_count: usize,
+    /// How many files `--verify-integrity` actually re-read and hashed, and how many bytes that
+    /// was -- absent (not zero) when verification did not run at all.
+    pub files_checked: Option<usize>,
+    pub bytes_hashed: Option<u64>,
+    /// How many of `files_checked` above `--fast-verify` skipped re-hashing because their source
+    /// identity matched the cache from the last run that verified them clean. `0`, not absent,
+    /// when verification ran without `--fast-verify`.
+    pub skipped_unchanged: Option<usize>,
     pub mismatches: ErrorPage,
     pub missing_in_dest: ErrorPage,
     pub unreadable: ErrorPage,
     pub encrypted: bool,
+    /// Never shown alongside `encrypted` above before this: a restore that decrypted its output
+    /// had no way to say so in the view, only in the raw JSON.
+    pub decrypted: bool,
     pub webhook_error: Option<String>,
     pub post_command_error: Option<String>,
     pub copy_error: Option<String>,
+    /// The job settings actually in effect for this run -- `Report.svelte` renders only the
+    /// fields that differ from their default, so this being a full struct (not a curated subset)
+    /// costs nothing on screen and keeps this view a direct passthrough rather than a second place
+    /// deciding what counts as "relevant".
+    pub configuration: crate::report::ConfigurationReport,
+    pub host_hostname: String,
+    pub host_os: String,
+    pub host_cpus: usize,
+    pub tool_version: String,
 }
 
 impl ReportView {
@@ -235,7 +291,12 @@ impl ReportView {
             .unwrap_or_default();
 
         Self {
-            timestamp: report.timestamp.to_rfc3339(),
+            // `started_at`'s `#[serde(default)]` falls back to the Unix epoch for a report
+            // written before this field existed -- a real run is never actually that old, so
+            // that sentinel value means "unknown", not "1970".
+            started_at: (report.started_at.timestamp() != 0)
+                .then(|| report.started_at.to_rfc3339()),
+            finished_at: report.timestamp.to_rfc3339(),
             source: report.source.clone(),
             dest: report.dest.clone(),
             total_files: report.total_files,
@@ -244,10 +305,23 @@ impl ReportView {
             bytes_copied: report.robocopy_transfer.bytes_copied,
             elapsed_seconds: report.phase_timing.total_seconds,
             throughput_mbps: report.robocopy_transfer.throughput_mbps,
+            inventory_seconds: report.phase_timing.inventory_seconds,
+            transfer_seconds: report.phase_timing.transfer_seconds,
+            verification_seconds: report.phase_timing.verification_seconds,
+            baseline_seconds: report.phase_timing.baseline_seconds,
+            exit_code: report.robocopy_transfer.exit_code,
+            exit_code_is_success: report
+                .robocopy_transfer
+                .exit_code
+                .map(|code| RobocopyStatus::new(code).is_success()),
             dry_run: report.configuration.dry_run,
             exit_code_meaning: report.robocopy_transfer.exit_code_meaning.clone(),
+            copy_detail: report.robocopy_transfer.summary,
             integrity_status: integrity.map(|c| format!("{:?}", c.status)),
             integrity_error_count: integrity.map(|c| c.total_errors).unwrap_or(0),
+            files_checked: integrity.map(|c| c.files_checked),
+            bytes_hashed: integrity.map(|c| c.bytes_hashed),
+            skipped_unchanged: integrity.map(|c| c.skipped_unchanged),
             mismatches: ErrorPage::of(&mismatch_paths, offset, limit, truncated),
             missing_in_dest: ErrorPage::of(
                 integrity.map(|c| &c.missing_in_dest).unwrap_or(&empty),
@@ -262,9 +336,15 @@ impl ReportView {
                 truncated,
             ),
             encrypted: report.encrypted,
+            decrypted: report.decrypted,
             webhook_error: report.webhook_error.clone(),
             post_command_error: report.post_command_error.clone(),
             copy_error: report.copy_error.clone(),
+            configuration: report.configuration.clone(),
+            host_hostname: report.host_metadata.hostname.clone(),
+            host_os: report.host_metadata.os_name.clone(),
+            host_cpus: report.host_metadata.logical_cpus,
+            tool_version: report.tool_version.clone(),
         }
     }
 }
@@ -1236,6 +1316,64 @@ mod tests {
         report.configuration.dry_run = true;
         let view = ReportView::from_report(&report, 0, DEFAULT_ERROR_PAGE);
         assert!(view.dry_run);
+    }
+
+    /// `SAMPLE_REPORT` predates `started_at`, so `#[serde(default)]` fills it with the Unix
+    /// epoch -- a real run is never actually that old, so `from_report` must read that sentinel
+    /// as "unknown", not render a report as having started in 1970.
+    #[test]
+    fn a_report_older_than_started_at_reports_it_as_absent() {
+        let view = ReportView::from_report(&report_with_errors(0), 0, DEFAULT_ERROR_PAGE);
+        assert_eq!(view.started_at, None);
+    }
+
+    /// Everything found missing live, 9 Set 2026, now reaching the view: real start time, the
+    /// numeric exit code, the per-phase timing breakdown, robocopy's own skipped/mismatch/failed/
+    /// extra detail, the verify-detail counts, and the wider job configuration.
+    #[test]
+    fn the_view_carries_the_fields_found_missing_in_the_real_report_complaint() {
+        let mut report = report_with_errors(0);
+        report.started_at = chrono::DateTime::parse_from_rfc3339("2026-09-09T10:00:00Z")
+            .expect("valid rfc3339")
+            .with_timezone(&chrono::Utc);
+        report.robocopy_transfer.summary = Some(crate::engine::CopySummaryDetail {
+            files_skipped: 4,
+            files_mismatch: 1,
+            files_failed: 0,
+            files_extra: 2,
+            bytes_skipped: 400,
+            bytes_mismatch: 100,
+            bytes_failed: 0,
+            bytes_extra: 200,
+        });
+        report.configuration.mirror = true;
+        report.configuration.exclude_dirs = vec!["node_modules".to_string()];
+
+        let view = ReportView::from_report(&report, 0, DEFAULT_ERROR_PAGE);
+
+        assert_eq!(
+            view.started_at.as_deref(),
+            Some("2026-09-09T10:00:00+00:00")
+        );
+        assert_eq!(view.exit_code, Some(1));
+        // Robocopy's own exit code 1 is a *success* (one or more files copied) -- the specific
+        // regression this test exists to pin, found live checking this exact fixture through the
+        // redesigned Report.svelte badge before this field was added.
+        assert_eq!(view.exit_code_is_success, Some(true));
+        assert_eq!(view.inventory_seconds, 0.0049447);
+        assert_eq!(view.transfer_seconds, 0.0607128);
+        assert_eq!(view.verification_seconds, Some(0.0072939));
+        let detail = view.copy_detail.expect("summary detail attached above");
+        assert_eq!(detail.files_skipped, 4);
+        assert_eq!(detail.bytes_extra, 200);
+        assert_eq!(view.files_checked, Some(1));
+        assert_eq!(view.bytes_hashed, Some(2));
+        assert_eq!(view.skipped_unchanged, Some(0));
+        assert!(view.configuration.mirror);
+        assert_eq!(view.configuration.exclude_dirs, vec!["node_modules"]);
+        assert_eq!(view.host_hostname, "HOST");
+        assert_eq!(view.host_cpus, 8);
+        assert_eq!(view.tool_version, "6.0.0");
     }
 
     /// A report with no integrity check at all (verification not requested) must render, not panic.

@@ -60,6 +60,8 @@
   // PIANO_GUI.md §10) and deliberately left in English rather than mistranslated.
   const INTEGRITY_LABEL = { Passed: "superata", Failed: "fallita" };
 
+  const HASH_ALGO_LABEL = { Sha256: "SHA-256", Xxh3: "xxHash3 (non crittografico)" };
+
   async function load(from = 0) {
     error = null;
     loading = true;
@@ -153,6 +155,57 @@
     }
     downloadCsv(`rustcopy-report-problemi-${Date.now()}.csv`, toCsv(["Categoria", "Percorso"], rows));
   }
+
+  // Live feedback, 9 Set 2026: a real report was found "scarno" — this pane showed a flat grid of
+  // 10 fields while `ReportView` (as of this same fix) carries the real start time, the per-phase
+  // timing breakdown, robocopy's own skipped/mismatch/failed/extra detail, verify-detail counts,
+  // host info, and the wider job configuration. Reorganised below into labelled sections instead
+  // of more rows in the same grid; see CLAUDE.md for where each field was found discarded.
+
+  // "Configurazione usata" shows only settings that differ from their default — the ones below
+  // always describe a real decision made for this run (never omitted), the rest only if active.
+  const CONFIG_ROWS = $derived(
+    report
+      ? [
+          report.configuration.mirror && ["Mirror", "sì — cancella in destinazione ciò che non è più in sorgente"],
+          report.configuration.backup_type && ["Tipo di backup", report.configuration.backup_type],
+          report.configuration.exclude_dirs.length > 0 && [
+            "Cartelle escluse",
+            report.configuration.exclude_dirs.join(", "),
+          ],
+          report.configuration.exclude_files.length > 0 && [
+            "File esclusi",
+            report.configuration.exclude_files.join(", "),
+          ],
+          report.configuration.min_age_days != null && [
+            "Età minima",
+            `${report.configuration.min_age_days} giorni`,
+          ],
+          report.configuration.max_age_days != null && [
+            "Età massima",
+            `${report.configuration.max_age_days} giorni`,
+          ],
+          report.configuration.bandwidth_limit_mbps != null && [
+            "Limite banda",
+            `${report.configuration.bandwidth_limit_mbps} Mbps`,
+          ],
+          report.configuration.exclude_junctions && ["Giunzioni", "escluse"],
+          report.configuration.vss_snapshot && ["Istantanea", "lettura da copia shadow VSS"],
+          // Shown whenever verify_integrity was configured for this run, independently of
+          // integrity_status: a run whose verify phase never completed (e.g. an earlier error)
+          // still had this setting active, and hiding it here would silently drop a real,
+          // deliberately-chosen setting from "Configurazione usata" (CodeRabbit finding).
+          report.configuration.verify_integrity && [
+            "Algoritmo verifica",
+            HASH_ALGO_LABEL[report.configuration.hash_algo] ?? report.configuration.hash_algo,
+          ],
+          report.configuration.fast_verify && [
+            "Verifica rapida",
+            "salta i file invariati per dimensione e data (cache locale)",
+          ],
+        ].filter(Boolean)
+      : [],
+  );
 </script>
 
 <section class="p-4">
@@ -192,27 +245,37 @@
         <code>--dry-run</code> disattivato, non un trasferimento avvenuto.
       </p>
     {/if}
-    <div class="card mt-4 grid grid-cols-2 gap-x-6 gap-y-2 text-xs md:grid-cols-4">
+
+    <!-- Riepilogo -->
+    <h2 class="mt-4 text-xs font-semibold uppercase tracking-wide text-slate-500">Riepilogo</h2>
+    <div class="card mt-1 grid grid-cols-2 gap-x-6 gap-y-2 text-xs md:grid-cols-4">
       <div>
-        <p class="text-slate-500">Quando</p>
-        <p class="font-mono text-sm">{new Date(report.timestamp).toLocaleString("it-IT")}</p>
+        <p class="text-slate-500">Iniziata</p>
+        <p class="font-mono text-sm">
+          {report.started_at ? new Date(report.started_at).toLocaleString("it-IT") : "non disponibile"}
+        </p>
       </div>
       <div>
-        <p class="text-slate-500">Esito</p>
-        <!-- No pass/fail icon here, deliberately: `exit_code_meaning` is robocopy's own open,
-             composable bitmask description (`RobocopyStatus::describe`), not a closed enum like
-             `integrity_status` below — `ReportView` does not even expose the numeric code to
-             derive one from. Same reasoning that kept this field untranslated (Livello 1, punto
-             4, PIANO_GUI.md §10): a fixed check/✕ here would claim a certainty the string itself
-             does not have. -->
-        <p class="font-mono text-sm">{report.exit_code_meaning ?? "—"}</p>
+        <p class="text-slate-500">Terminata</p>
+        <p class="font-mono text-sm">{new Date(report.finished_at).toLocaleString("it-IT")}</p>
       </div>
       <div>
-        <p class="text-slate-500">Durata</p>
+        <p class="text-slate-500">Durata totale</p>
         <p class="font-mono text-sm">{duration(report.elapsed_seconds)}</p>
+        <!-- Only the phases that actually ran: a run without --verify-integrity has no
+             verification_seconds, and showing "0s" next to it would claim a phase happened. -->
+        <p class="mt-0.5 text-[11px] text-slate-500">
+          inventario {duration(report.inventory_seconds)} · trasferimento {duration(report.transfer_seconds)}
+          {#if report.verification_seconds != null}
+            · verifica {duration(report.verification_seconds)}
+          {/if}
+          {#if report.baseline_seconds != null}
+            · baseline {duration(report.baseline_seconds)}
+          {/if}
+        </p>
       </div>
       <div>
-        <p class="text-slate-500">Throughput</p>
+        <p class="text-slate-500">Throughput medio</p>
         <p class="font-mono text-sm">{report.throughput_mbps.toFixed(1)} MB/s</p>
       </div>
       <div class="col-span-2">
@@ -223,20 +286,92 @@
         <p class="text-slate-500">Destinazione</p>
         <p class="truncate font-mono text-sm" title={report.dest}>{report.dest}</p>
       </div>
-      <div>
-        <p class="text-slate-500">File copiati</p>
-        <p class="font-mono text-sm">{report.files_copied} / {report.total_files}</p>
+      <div class="col-span-2 md:col-span-4">
+        <p class="text-slate-500">Macchina</p>
+        <p class="font-mono text-sm">
+          {report.host_hostname} ({report.host_os}, {report.host_cpus} CPU logiche) — rustcopy {report.tool_version}
+        </p>
       </div>
+    </div>
+
+    <!-- Esito -->
+    <h2 class="mt-4 text-xs font-semibold uppercase tracking-wide text-slate-500">Esito</h2>
+    <div class="card mt-1 flex items-center gap-2 text-xs">
+      <!-- The badge reads `exit_code_is_success` (robocopy's own bitwise success rule,
+           `RobocopyStatus::is_success`), never `exit_code === 0` -- exit code 1 alone means "one
+           or more files copied successfully", the single most common outcome of an ordinary run,
+           and a strict-zero check showed a red ✕ for it (found live, 9 Set 2026, on the very
+           first real report checked against this redesign). The badge and the meaning string
+           below it are still shown together so the badge's certainty never has to stand in for
+           the meaning's own nuance (what exactly happened). -->
+      {#if report.exit_code_is_success === true}
+        <CircleCheck size={14} strokeWidth={2} class="shrink-0 text-emerald-600 dark:text-emerald-400" aria-hidden="true" />
+      {:else if report.exit_code_is_success === false}
+        <CircleX size={14} strokeWidth={2} class="shrink-0 text-amber-600 dark:text-amber-400" aria-hidden="true" />
+      {/if}
+      <span class="font-mono text-sm">
+        {report.exit_code ?? "—"} — {report.exit_code_meaning ?? "nessun codice di uscita"}
+      </span>
+    </div>
+
+    <!-- File e byte -->
+    <h2 class="mt-4 text-xs font-semibold uppercase tracking-wide text-slate-500">File e byte</h2>
+    <div class="card mt-1 overflow-x-auto">
+      <table class="w-full text-xs">
+        <thead>
+          <tr class="text-left text-slate-500">
+            <th class="pb-1 pr-3 font-normal"></th>
+            <th class="pb-1 pr-3 font-normal">File</th>
+            <th class="pb-1 font-normal">Byte</th>
+          </tr>
+        </thead>
+        <tbody class="font-mono">
+          <tr>
+            <td class="pr-3 text-slate-500">Copiati</td>
+            <td class="pr-3">{report.files_copied} / {report.total_files}</td>
+            <td>{bytes(report.bytes_copied)} / {bytes(report.total_bytes)}</td>
+          </tr>
+          {#if report.copy_detail}
+            <!-- Robocopy's own answer to "perché gli altri no": già aggiornati (skipped), in
+                 conflitto su data/dimensione (mismatch), errore reale (failed), o presenti solo
+                 in destinazione (extra) — dati che robocopy calcola sempre e che prima venivano
+                 scartati subito dopo il parsing. -->
+            <tr>
+              <td class="pr-3 text-slate-500">Già aggiornati</td>
+              <td class="pr-3">{report.copy_detail.files_skipped}</td>
+              <td>{bytes(report.copy_detail.bytes_skipped)}</td>
+            </tr>
+            <tr>
+              <td class="pr-3 text-slate-500">In conflitto</td>
+              <td class="pr-3">{report.copy_detail.files_mismatch}</td>
+              <td>{bytes(report.copy_detail.bytes_mismatch)}</td>
+            </tr>
+            <tr>
+              <td class="pr-3 text-slate-500">Falliti</td>
+              <td class="pr-3">{report.copy_detail.files_failed}</td>
+              <td>{bytes(report.copy_detail.bytes_failed)}</td>
+            </tr>
+            <tr>
+              <td class="pr-3 text-slate-500">Extra in destinazione</td>
+              <td class="pr-3">{report.copy_detail.files_extra}</td>
+              <td>{bytes(report.copy_detail.bytes_extra)}</td>
+            </tr>
+          {/if}
+        </tbody>
+      </table>
+      {#if !report.copy_detail}
+        <p class="mt-2 text-[11px] text-slate-500">
+          Dettaglio non disponibile per questa run (motore senza riepilogo, ad es. backup a
+          generazioni, oppure output di robocopy interrotto o non riconosciuto).
+        </p>
+      {/if}
+    </div>
+
+    <!-- Verifica -->
+    <h2 class="mt-4 text-xs font-semibold uppercase tracking-wide text-slate-500">Verifica</h2>
+    <div class="card mt-1 grid grid-cols-2 gap-x-6 gap-y-2 text-xs md:grid-cols-4">
       <div>
-        <p class="text-slate-500">Byte copiati</p>
-        <p class="font-mono text-sm">{bytes(report.bytes_copied)} / {bytes(report.total_bytes)}</p>
-      </div>
-      <div>
-        <p class="text-slate-500">Cifrato</p>
-        <p class="font-mono text-sm">{report.encrypted ? "sì" : "no"}</p>
-      </div>
-      <div>
-        <p class="text-slate-500">Verifica</p>
+        <p class="text-slate-500">Esito</p>
         <!-- Absent is not the same as passed: a run without --verify-integrity compared nothing,
              and rendering that as a blank cell would read like a clean result. -->
         <p class="flex items-center gap-1 font-mono text-sm">
@@ -248,7 +383,51 @@
           {INTEGRITY_LABEL[report.integrity_status] ?? report.integrity_status ?? "non eseguita"}
         </p>
       </div>
+      {#if report.integrity_status}
+        <div>
+          <p class="text-slate-500">File verificati</p>
+          <p class="font-mono text-sm">{report.files_checked} ({bytes(report.bytes_hashed)})</p>
+        </div>
+        <div>
+          <p class="text-slate-500">Saltati (invariati)</p>
+          <p class="font-mono text-sm">{report.skipped_unchanged}</p>
+        </div>
+        <div>
+          <p class="text-slate-500">Algoritmo</p>
+          <p class="font-mono text-sm">
+            {HASH_ALGO_LABEL[report.configuration.hash_algo] ?? report.configuration.hash_algo}
+          </p>
+        </div>
+      {/if}
+      <div>
+        <p class="text-slate-500">Cifrato</p>
+        <p class="font-mono text-sm">{report.encrypted ? "sì" : "no"}</p>
+      </div>
+      {#if report.decrypted}
+        <div>
+          <p class="text-slate-500">Decifrato</p>
+          <p class="font-mono text-sm">sì</p>
+        </div>
+      {/if}
     </div>
+
+    <!-- Configurazione usata -->
+    {#if CONFIG_ROWS.length > 0}
+      <h2 class="mt-4 text-xs font-semibold uppercase tracking-wide text-slate-500">
+        Configurazione usata
+      </h2>
+      <div class="card mt-1 grid grid-cols-2 gap-x-6 gap-y-2 text-xs md:grid-cols-4">
+        <!-- Solo le impostazioni non-default per questa run: thread/pattern/tentativi restano
+             sempre gli stessi in ogni run e affollerebbero questa sezione senza dire nulla di
+             specifico su cosa è successo qui. -->
+        {#each CONFIG_ROWS as [label, value]}
+          <div>
+            <p class="text-slate-500">{label}</p>
+            <p class="font-mono text-sm">{value}</p>
+          </div>
+        {/each}
+      </div>
+    {/if}
 
     <div class="mt-3 flex items-center gap-2">
       <button

@@ -1603,6 +1603,32 @@ a guardia che il nuovo controllo non scambi una vera riga di trasferimento per u
 Riverificato contro il binario reale su una destinazione pulita: `files_copied: 4` ora coincide con
 `total_files: 4`, `bytes_copied: 160` con `total_bytes: 160` — nessuna discrepanza.
 
+**Seguito — `parse_summary_row` esteso all'italiano (10 Set 2026, vedi ROADMAP.md F84).** Il gap
+lasciato deliberatamente aperto sopra ("il riepilogo autorevole resta invisibile su un host
+italiano") è diventato bloccante mentre si verificava dal vivo la nuova sezione "File e byte" di
+F84 (report arricchito) proprio su questo host di sviluppo it-IT: `outcome.summary` tornava sempre
+`None` per una run reale con robocopy, mostrando "dettaglio non disponibile" invece dei conteggi
+skipped/mismatch/extra. `parse_summary_row(line, labels: &[&str])` ora accetta una lista di
+etichette candidate — i due call site in `engine/robocopy.rs::copy()` passano `&["Bytes", "Byte"]`/
+`&["Files", "File"]`, inglese per primo. Verificato riavviando la stessa run dal vivo: la sezione
+mostra correttamente "6000 file già aggiornati" invece del messaggio di indisponibilità. Resta
+**deliberatamente non esteso** ad altre localizzazioni non italiane — servirebbe lo stesso lavoro
+di cattura di output reale già fatto qui e in questo stesso difetto, non traduzioni presunte.
+
+Nella stessa PR, revisione CodeRabbit trovò una seconda criticità in `parse_summary_row`: righe
+troncate a meno di sei colonne (es. processo ucciso a metà riga) venivano comunque accettate, con i
+contatori mancanti riempiti a zero da `unwrap_or(0)` — uno zero indistinguibile da un vero zero,
+mentre in realtà quel dato è sconosciuto. Corretto in due punti: `parse_summary_row` ora rifiuta
+qualunque riga che non abbia esattamente sei colonne (il riepilogo reale di robocopy ne ha sempre
+sei, verificato sia sull'esempio inglese di Microsoft Learn sia sulla riga italiana catturata sopra
+in questo stesso difetto); e la costruzione di `summary_detail` in `copy()` richiede **entrambe** le
+righe Files e Bytes (`summary.zip(file_summary)`, non più `summary.is_some() ||
+file_summary.is_some()`) — prima, un output troncato subito dopo la sola riga Files avrebbe potuto
+produrre conteggi file reali con conteggi byte silenziosamente azzerati. 3 nuovi unit test:
+`engine_reports_no_summary_detail_with_only_the_files_row`,
+`engine_reports_no_summary_detail_with_only_the_bytes_row`,
+`parse_summary_row_rejects_a_row_with_fewer_than_six_columns`.
+
 ---
 
 ## 💡 3.2 Opportunità di miglioramento (non difetti)
