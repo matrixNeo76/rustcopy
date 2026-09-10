@@ -191,6 +191,18 @@
           ],
           report.configuration.exclude_junctions && ["Giunzioni", "escluse"],
           report.configuration.vss_snapshot && ["Istantanea", "lettura da copia shadow VSS"],
+          // Shown whenever verify_integrity was configured for this run, independently of
+          // integrity_status: a run whose verify phase never completed (e.g. an earlier error)
+          // still had this setting active, and hiding it here would silently drop a real,
+          // deliberately-chosen setting from "Configurazione usata" (CodeRabbit finding).
+          report.configuration.verify_integrity && [
+            "Algoritmo verifica",
+            HASH_ALGO_LABEL[report.configuration.hash_algo] ?? report.configuration.hash_algo,
+          ],
+          report.configuration.fast_verify && [
+            "Verifica rapida",
+            "salta i file invariati per dimensione e data (cache locale)",
+          ],
         ].filter(Boolean)
       : [],
   );
