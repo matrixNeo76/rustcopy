@@ -39,18 +39,21 @@ Da F60 l'installer è **uno solo** e la console grafica è un **componente opzio
 
 | Tipo di installazione | Cosa installa |
 |---|---|
-| **CLI e console grafica** | `robocopy_ingest.exe`, `notify-server.exe`, `rustcopy-gui.exe` |
+| **CLI e console grafica** | `robocopy_ingest.exe`, `notify-server.exe`, `rustcopy-gui.exe`, e — se si spunta anche l'estensione Shell — `rustcopy_shell.dll` |
 | **Solo CLI** | `robocopy_ingest.exe`, `notify-server.exe` |
-| **Scelta manuale** | La CLI è obbligatoria, la console si spunta |
+| **Scelta manuale** | La CLI è obbligatoria, la console e l'estensione Shell si spuntano |
 
 La console è opzionale di proposito: un server che esegue solo backup pianificati non ha alcun
 uso per una finestra desktop, e la CLI è il componente che deve continuare a funzionare non
 presidiato.
 
-`crates/rustcopy-shell` (F85, l'estensione Shell per il drag & drop di Explorer) **non è ancora in
-questa tabella**: non è integrata nell'installer, e va registrata a mano con `regsvr32
-.\target\release\rustcopy_shell.dll` (il percorso reale in cui `cargo build --release` lo scrive,
-non il nome nudo del file dalla radice del repo) dopo aver compilato il crate — vedi la riga F85 di
+`crates/rustcopy-shell` (F85, l'estensione Shell per il drag & drop di Explorer) è dall'11
+Settembre 2026 un componente dell'installer, `gui\shell` — annidato sotto la console e non
+selezionabile da solo: `InvokeCommand` cerca `rustcopy-gui.exe` accanto al proprio DLL, quindi
+l'estensione senza la console non avvierebbe mai una copia. La registrazione COM
+(`DllRegisterServer`/`DllUnregisterServer`) avviene in automatico a install/disinstalla —
+`regsvr32` manuale resta necessario solo per un `cargo build --release -p rustcopy-shell` fuori
+dall'installer (es. sviluppo locale), non per un'installazione normale — vedi la riga F85 di
 [ROADMAP.md](../ROADMAP.md).
 
 ```powershell

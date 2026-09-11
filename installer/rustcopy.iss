@@ -29,6 +29,7 @@
 #define MyAppExeName "robocopy_ingest.exe"
 #define MyGuiExeName "rustcopy-gui.exe"
 #define MyNotifyExeName "notify-server.exe"
+#define MyShellDllName "rustcopy_shell.dll"
 
 [Setup]
 AppId={{7B1E5C2A-2D8F-4A6B-9E3C-1F5A6D2B8C90}
@@ -64,9 +65,16 @@ Name: "custom"; Description: "Scelta manuale"; Flags: iscustom
 
 ; The console is optional on purpose: a server that only runs scheduled backups has no use for a
 ; desktop window, and the CLI is the component that has to keep working unattended.
+;
+; "shell" is a subcomponent of "gui", not a sibling: rustcopy-shell's InvokeCommand locates
+; rustcopy-gui.exe with runner::gui_beside(own_dll_path()) -- beside the DLL itself (F85,
+; Milestone 3's console-handoff design) -- so the extension is inert without the console actually
+; installed next to it. The "gui\shell" nesting keeps that dependency visible in the wizard
+; instead of relying on an operator to notice it; NextButtonClick below is the actual backstop.
 [Components]
 Name: "cli"; Description: "CLI e notify-server"; Types: full cli custom; Flags: fixed
 Name: "gui"; Description: "Console grafica (richiede WebView2)"; Types: full
+Name: "gui\shell"; Description: "Estensione Shell per Explorer (drag & drop, ""Copia con RustCopy"")"; Types: full
 
 [Tasks]
 Name: "addtopath"; Description: "Aggiungi rustcopy al PATH di sistema (consigliato)"; GroupDescription: "Opzioni aggiuntive:"; Components: cli
@@ -77,6 +85,9 @@ Source: "..\target\release\{#MyNotifyExeName}"; DestDir: "{app}"; Components: cl
 ; The console carries its frontend inside the executable (Tauri embeds ui/dist), so there is no
 ; web asset directory to install beside it.
 Source: "..\target\release\{#MyGuiExeName}"; DestDir: "{app}"; Components: gui; Flags: ignoreversion
+; regserver calls DllRegisterServer/DllUnregisterServer automatically at install/uninstall --
+; the DLL is self-registering (registry.rs), so no separate [Registry] section is needed here.
+Source: "..\target\release\{#MyShellDllName}"; DestDir: "{app}"; Components: gui\shell; Flags: ignoreversion regserver
 Source: "..\README.md"; DestDir: "{app}"; Components: cli; Flags: ignoreversion isreadme
 Source: "..\RUNBOOK.md"; DestDir: "{app}"; Components: cli; Flags: ignoreversion
 Source: "..\CLAUDE.md"; DestDir: "{app}"; DestName: "NOTES.md"; Components: cli; Flags: ignoreversion
@@ -159,6 +170,27 @@ begin
   Delete(Paths, P - 1, Length(Path) + 1);
   RegWriteExpandStringValue(HKEY_LOCAL_MACHINE,
     'SYSTEM\CurrentControlSet\Control\Session Manager\Environment', 'Path', Paths);
+end;
+
+// Backstop for the gui\shell nesting above: Inno's component tree unchecks/grays out a child
+// when its parent is unchecked, but does not stop a *parent* from being deselected while a
+// child selection from a "full"-type default is still logically pending on the same page (and a
+// custom install can reach odd intermediate states while clicking around). Checked explicitly
+// rather than trusted to the tree UI alone, since rustcopy-shell is genuinely non-functional
+// without rustcopy-gui.exe beside it (see the [Components] comment above).
+function NextButtonClick(CurPageID: Integer): Boolean;
+begin
+  Result := True;
+  if (CurPageID = wpSelectComponents) and WizardIsComponentSelected('gui\shell')
+    and not WizardIsComponentSelected('gui') then
+  begin
+    MsgBox(
+      'L''estensione Shell richiede la console grafica: da sola non avvierebbe mai una copia, ' +
+      'perche'' cerca rustcopy-gui.exe accanto a se''.' + #13#10 + #13#10 +
+      'Seleziona anche "Console grafica" oppure deseleziona "Estensione Shell per Explorer".',
+      mbError, MB_OK);
+    Result := False;
+  end;
 end;
 
 procedure CurStepChanged(CurStep: TSetupStep);
