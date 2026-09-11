@@ -47,6 +47,12 @@ La console è opzionale di proposito: un server che esegue solo backup pianifica
 uso per una finestra desktop, e la CLI è il componente che deve continuare a funzionare non
 presidiato.
 
+`crates/rustcopy-shell` (F85, l'estensione Shell per il drag & drop di Explorer) **non è ancora in
+questa tabella**: non è integrata nell'installer, e va registrata a mano con `regsvr32
+.\target\release\rustcopy_shell.dll` (il percorso reale in cui `cargo build --release` lo scrive,
+non il nome nudo del file dalla radice del repo) dopo aver compilato il crate — vedi la riga F85 di
+[ROADMAP.md](../ROADMAP.md).
+
 ```powershell
 # 1. Frontend della console (solo se la impacchetti)
 npm --prefix crates/rustcopy-gui/ui ci
@@ -65,10 +71,10 @@ del PATH di sistema, disinstallazione con ripristino del PATH — ciclo completo
 
 ```powershell
 # Installazione silenziosa (utile per deploy automatizzati)
-rustcopy-6.0.0-setup.exe /VERYSILENT /SUPPRESSMSGBOXES /NORESTART /TASKS="addtopath"
+rustcopy-7.2.0-setup.exe /VERYSILENT /SUPPRESSMSGBOXES /NORESTART /TASKS="addtopath"
 
 # Solo CLI, senza console grafica
-rustcopy-6.0.0-setup.exe /VERYSILENT /SUPPRESSMSGBOXES /NORESTART /TYPE=cli /TASKS="addtopath"
+rustcopy-7.2.0-setup.exe /VERYSILENT /SUPPRESSMSGBOXES /NORESTART /TYPE=cli /TASKS="addtopath"
 ```
 
 #### WebView2

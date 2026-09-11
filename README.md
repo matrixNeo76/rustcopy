@@ -17,7 +17,7 @@ generated:
 [![CI](https://github.com/matrixNeo76/rustcopy/actions/workflows/ci.yml/badge.svg)](https://github.com/matrixNeo76/rustcopy/actions/workflows/ci.yml)
 [![Audit di sicurezza](https://github.com/matrixNeo76/rustcopy/actions/workflows/security-audit.yml/badge.svg)](https://github.com/matrixNeo76/rustcopy/actions/workflows/security-audit.yml)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
-[![Crate version](https://img.shields.io/badge/version-6.0.0-informational.svg)](Cargo.toml)
+[![Crate version](https://img.shields.io/badge/version-7.2.0-informational.svg)](Cargo.toml)
 
 **Backup e ingestion di grandi volumi di dati su Windows, con verifica di integrità.** `rustcopy`
 avvolge `robocopy.exe` in un binario Rust che ne risolve i limiti pratici sui dataset enormi —
@@ -53,6 +53,12 @@ Log file   : E:\backup\ingest.log
 > come processo separato, e prepara proposte di configurazione in file nuovi. Non installa servizi
 > né pianificazioni, non forza un mirror non presidiato, e non tocca mai la configurazione in uso —
 > vedi [ROADMAP.md](ROADMAP.md) e [`PIANO_GUI.md`](PIANO_GUI.md).
+>
+> Dal 10 Settembre 2026 esiste anche `crates/rustcopy-shell` (F85): un'estensione Shell che
+> propone "Copia con RustCopy" sul menu di conferma del drag & drop di Explorer (solo cartelle,
+> solo tasto destro o fra unità diverse) e avvia la console con la copia già in corso. **Non ancora
+> integrata nell'installer** — richiede oggi una registrazione manuale con `regsvr32`, vedi la riga
+> F85 di [ROADMAP.md](ROADMAP.md).
 
 ---
 
@@ -148,8 +154,8 @@ I flag essenziali per l'uso quotidiano:
 ## 🧪 Sviluppo
 
 ```bash
-cargo test --locked --workspace --exclude rustcopy-gui --all-targets                                   # 506 test
-cargo test --locked --workspace --exclude rustcopy-gui --all-targets --features rustcopy-cli/notify-server  # 521 test
+cargo test --locked --workspace --exclude rustcopy-gui --exclude rustcopy-shell --all-targets                                   # 521 test
+cargo test --locked --workspace --exclude rustcopy-gui --exclude rustcopy-shell --all-targets --features rustcopy-cli/notify-server  # 536 test
 ```
 
 CI su Windows e Linux, `clippy -D warnings` e `cargo fmt --check` su entrambe le configurazioni di

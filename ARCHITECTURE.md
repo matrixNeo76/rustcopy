@@ -11,7 +11,7 @@ verified:
   at: 2026-09-02T00:00:00Z
 ---
 
-# Architettura di Sistema — robocopy-ingest-cli (v6.0.0)
+# Architettura di Sistema — robocopy-ingest-cli (v7.2.0)
 
 Questo documento descrive in dettaglio l'**architettura interna, la pipeline di esecuzione, i pattern di progettazione ed i meccanismi di sicurezza e performance** implementati nella libreria `robocopy_ingest`.
 
@@ -28,18 +28,26 @@ Dal 31 Agosto 2026 il terzo membro **esiste**: `crates/rustcopy-gui`, la console
 Svelte 5 + Tailwind 4). Non esegue backup e ha un solo percorso di scrittura, `job_editor`, che
 produce proposte di configurazione in file nuovi.
 
+Dal 10 Settembre 2026 esiste un quarto membro: `crates/rustcopy-shell` (F85), l'estensione Shell
+di Windows che propone "Copia con RustCopy" sul menu di conferma del drag & drop di Explorer. È la
+prima vera eccezione nel progetto al pattern "delega a un tool nativo invece di legare API COM
+direttamente" (VSS via `vssadmin.exe`, pianificazione via `schtasks.exe`) — giustificata solo
+perché non esiste un tool nativo da shellare per "aggiungi una voce al menu di conferma del drop":
+l'unica via è COM (`IShellExtInit`+`IContextMenu`).
+
 | Membro | Contiene | Produce |
 |---|---|---|
 | `crates/rustcopy-core` | Tutta la logica: scansione, motori di copia, integrità, crypto, VSS, generazioni, storico, report | La libreria **`robocopy_ingest`** |
 | `crates/rustcopy-cli` | Solo gli entry point e la loro orchestrazione | I binari **`robocopy_ingest`** e **`notify-server`** |
 | `crates/rustcopy-gui` | La console desktop: comandi Tauri come involucri sottili su `gui_api`/`job_editor`, più il frontend Svelte in `ui/` | Il binario **`rustcopy-gui`**, componente opzionale dell'installer |
+| `crates/rustcopy-shell` | L'handler COM del drag & drop di Explorer: `IClassFactory`/`DllGetClassObject`/`DllRegisterServer` come involucri sottili, la vera logica (classificazione cartelle, calcolo percorsi, scrittura del TOML monouso) in funzioni pure testabili | La libreria dinamica **`rustcopy_shell.dll`** (`cdylib`), non ancora integrata nell'installer — registrata/testata solo a mano con `regsvr32` |
 
 **Il nome della libreria e quelli dei binari non sono cambiati.** Il package si chiama
 `rustcopy-core` ma la sua `[lib]` resta `robocopy_ingest`, quindi ogni `use robocopy_ingest::…`
 continua a valere; i binari mantengono i nomi che installer e script già usano. La
 ristrutturazione non ha rinominato nulla di visibile a un utente o a uno script.
 
-Due invarianti sono presidiate da altrettanti gate in `ci.yml`, entrambi nella forma `if … then …
+Tre invarianti sono presidiate da altrettanti gate in `ci.yml`, tutti nella forma `if … then …
 fi` (mai `… | grep -q … && exit 1`, che fallisce quando l'albero è **pulito**):
 
 - `cargo tree --locked -p rustcopy-cli | grep -qi axum` deve essere vuoto senza la feature
@@ -47,6 +55,15 @@ fi` (mai `… | grep -q … && exit 1`, che fallisce quando l'albero è **pulito
 - `cargo tree --locked -p rustcopy-cli | grep -qiE 'tauri|wry|tao'` deve essere sempre vuoto: la
   CLI non acquisisce mai una dipendenza dalla GUI, ed è ciò che garantisce che un backup
   schedulato esegua lo stesso codice con o senza GUI installata.
+- `cargo tree --locked -p rustcopy-cli | grep -qiE 'windows(-core)? v[0-9]'` deve essere sempre
+  vuoto: la CLI non acquisisce mai una dipendenza dal toolchain COM di `rustcopy-shell` — il
+  pattern che cerca `windows(-core)? v<cifra>`, non una sottostringa `windows` nuda, per non dare
+  falsi positivi sulle dipendenze `windows-service`/`windows-sys` già legittime della CLI.
+
+`rustcopy-shell` è escluso dai job cross-platform di `ci.yml` esattamente come `rustcopy-gui` (la
+sua dipendenza `windows` è dichiarata solo sotto `[target.'cfg(windows)'.dependencies]`, quindi non
+compila affatto su Linux) — ha un proprio job dedicato `windows-latest` (`check`/`clippy`/`test`),
+speculare a quello della GUI.
 
 > **Nota sui percorsi negli altri documenti.** `ANALYSIS.md`, `ROADMAP.md`, `CLAUDE.md` e
 > `AGENTS.md` citano i moduli come `src/nome.rs` in racconti di lavori passati. I nomi dei moduli
