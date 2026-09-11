@@ -74,10 +74,10 @@ del PATH di sistema, disinstallazione con ripristino del PATH — ciclo completo
 
 ```powershell
 # Installazione silenziosa (utile per deploy automatizzati)
-rustcopy-7.2.0-setup.exe /VERYSILENT /SUPPRESSMSGBOXES /NORESTART /TASKS="addtopath"
+rustcopy-7.3.0-setup.exe /VERYSILENT /SUPPRESSMSGBOXES /NORESTART /TASKS="addtopath"
 
 # Solo CLI, senza console grafica
-rustcopy-7.2.0-setup.exe /VERYSILENT /SUPPRESSMSGBOXES /NORESTART /TYPE=cli /TASKS="addtopath"
+rustcopy-7.3.0-setup.exe /VERYSILENT /SUPPRESSMSGBOXES /NORESTART /TYPE=cli /TASKS="addtopath"
 ```
 
 #### WebView2

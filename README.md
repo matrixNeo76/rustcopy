@@ -17,7 +17,7 @@ generated:
 [![CI](https://github.com/matrixNeo76/rustcopy/actions/workflows/ci.yml/badge.svg)](https://github.com/matrixNeo76/rustcopy/actions/workflows/ci.yml)
 [![Audit di sicurezza](https://github.com/matrixNeo76/rustcopy/actions/workflows/security-audit.yml/badge.svg)](https://github.com/matrixNeo76/rustcopy/actions/workflows/security-audit.yml)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
-[![Crate version](https://img.shields.io/badge/version-7.2.0-informational.svg)](Cargo.toml)
+[![Crate version](https://img.shields.io/badge/version-7.3.0-informational.svg)](Cargo.toml)
 
 **Backup e ingestion di grandi volumi di dati su Windows, con verifica di integrità.** `rustcopy`
 avvolge `robocopy.exe` in un binario Rust che ne risolve i limiti pratici sui dataset enormi —

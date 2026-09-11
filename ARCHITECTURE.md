@@ -11,7 +11,7 @@ verified:
   at: 2026-09-02T00:00:00Z
 ---
 
-# Architettura di Sistema — robocopy-ingest-cli (v7.2.0)
+# Architettura di Sistema — robocopy-ingest-cli (v7.3.0)
 
 Questo documento descrive in dettaglio l'**architettura interna, la pipeline di esecuzione, i pattern di progettazione ed i meccanismi di sicurezza e performance** implementati nella libreria `robocopy_ingest`.
 

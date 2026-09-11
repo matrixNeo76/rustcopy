@@ -3571,7 +3571,7 @@ dependencies = [
 
 [[package]]
 name = "rustcopy-cli"
-version = "7.2.0"
+version = "7.3.0"
 dependencies = [
  "anyhow",
  "chrono",
@@ -3589,7 +3589,7 @@ dependencies = [
 
 [[package]]
 name = "rustcopy-core"
-version = "7.2.0"
+version = "7.3.0"
 dependencies = [
  "aes-gcm",
  "anyhow",
@@ -3622,7 +3622,7 @@ dependencies = [
 
 [[package]]
 name = "rustcopy-gui"
-version = "7.2.0"
+version = "7.3.0"
 dependencies = [
  "dirs",
  "rustcopy-core",
@@ -3636,7 +3636,7 @@ dependencies = [
 
 [[package]]
 name = "rustcopy-shell"
-version = "7.2.0"
+version = "7.3.0"
 dependencies = [
  "rustcopy-core",
  "tempfile",
