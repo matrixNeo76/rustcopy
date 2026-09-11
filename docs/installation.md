@@ -49,7 +49,9 @@ presidiato.
 
 `crates/rustcopy-shell` (F85, l'estensione Shell per il drag & drop di Explorer) **non è ancora in
 questa tabella**: non è integrata nell'installer, e va registrata a mano con `regsvr32
-rustcopy_shell.dll` dopo aver compilato il crate — vedi la riga F85 di [ROADMAP.md](../ROADMAP.md).
+.\target\release\rustcopy_shell.dll` (il percorso reale in cui `cargo build --release` lo scrive,
+non il nome nudo del file dalla radice del repo) dopo aver compilato il crate — vedi la riga F85 di
+[ROADMAP.md](../ROADMAP.md).
 
 ```powershell
 # 1. Frontend della console (solo se la impacchetti)
