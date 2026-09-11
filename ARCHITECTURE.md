@@ -33,14 +33,18 @@ di Windows che propone "Copia con RustCopy" sul menu di conferma del drag & drop
 prima vera eccezione nel progetto al pattern "delega a un tool nativo invece di legare API COM
 direttamente" (VSS via `vssadmin.exe`, pianificazione via `schtasks.exe`) — giustificata solo
 perché non esiste un tool nativo da shellare per "aggiungi una voce al menu di conferma del drop":
-l'unica via è COM (`IShellExtInit`+`IContextMenu`).
+l'unica via è COM (`IShellExtInit`+`IContextMenu`). Dall'11 Settembre 2026 è anche un componente
+dell'installer (`installer/rustcopy.iss`): `gui\shell`, annidato sotto `gui` invece che affiancato
+— `InvokeCommand` cerca `rustcopy-gui.exe` accanto al proprio DLL (`gui_beside`, Milestone 3), quindi
+l'estensione è inerte senza la console. `Flags: regserver` chiama `DllRegisterServer`/
+`DllUnregisterServer` in automatico a install/disinstalla; nessuna sezione `[Registry]` manuale.
 
 | Membro | Contiene | Produce |
 |---|---|---|
 | `crates/rustcopy-core` | Tutta la logica: scansione, motori di copia, integrità, crypto, VSS, generazioni, storico, report | La libreria **`robocopy_ingest`** |
 | `crates/rustcopy-cli` | Solo gli entry point e la loro orchestrazione | I binari **`robocopy_ingest`** e **`notify-server`** |
 | `crates/rustcopy-gui` | La console desktop: comandi Tauri come involucri sottili su `gui_api`/`job_editor`, più il frontend Svelte in `ui/` | Il binario **`rustcopy-gui`**, componente opzionale dell'installer |
-| `crates/rustcopy-shell` | L'handler COM del drag & drop di Explorer: `IClassFactory`/`DllGetClassObject`/`DllRegisterServer` come involucri sottili, la vera logica (classificazione cartelle, calcolo percorsi, scrittura del TOML monouso) in funzioni pure testabili | La libreria dinamica **`rustcopy_shell.dll`** (`cdylib`), non ancora integrata nell'installer — registrata/testata solo a mano con `regsvr32` |
+| `crates/rustcopy-shell` | L'handler COM del drag & drop di Explorer: `IClassFactory`/`DllGetClassObject`/`DllRegisterServer` come involucri sottili, la vera logica (classificazione cartelle, calcolo percorsi, scrittura del TOML monouso) in funzioni pure testabili | La libreria dinamica **`rustcopy_shell.dll`** (`cdylib`), componente `gui\shell` dell'installer (F85, 11 Set 2026) |
 
 **Il nome della libreria e quelli dei binari non sono cambiati.** Il package si chiama
 `rustcopy-core` ma la sua `[lib]` resta `robocopy_ingest`, quindi ogni `use robocopy_ingest::…`

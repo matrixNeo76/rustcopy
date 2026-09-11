@@ -56,9 +56,9 @@ Log file   : E:\backup\ingest.log
 >
 > Dal 10 Settembre 2026 esiste anche `crates/rustcopy-shell` (F85): un'estensione Shell che
 > propone "Copia con RustCopy" sul menu di conferma del drag & drop di Explorer (solo cartelle,
-> solo tasto destro o fra unità diverse) e avvia la console con la copia già in corso. **Non ancora
-> integrata nell'installer** — richiede oggi una registrazione manuale con `regsvr32`, vedi la riga
-> F85 di [ROADMAP.md](ROADMAP.md).
+> solo tasto destro o fra unità diverse) e avvia la console con la copia già in corso. Dall'11
+> Settembre 2026 è anche un componente dell'installer (`gui\shell`, richiede la console), vedi la
+> riga F85 di [ROADMAP.md](ROADMAP.md).
 
 ---
 
