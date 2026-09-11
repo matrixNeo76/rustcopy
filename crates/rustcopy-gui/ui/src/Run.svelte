@@ -1,4 +1,5 @@
 <script>
+  import { onMount } from "svelte";
   import { invoke } from "@tauri-apps/api/core";
   import { isPermissionGranted, requestPermission, sendNotification } from "@tauri-apps/plugin-notification";
   import PathBar from "./PathBar.svelte";
@@ -182,6 +183,28 @@
       busy = false;
     }
   }
+
+  // `rustcopy-shell`'s drag-and-drop handler (`tidy-sniffing-river.md`, Milestone 3) launches this
+  // window with `--auto-config <path>` instead of spawning `robocopy_ingest.exe` silently, so a
+  // drop lands the operator on a job already visibly running instead of nothing on screen at all.
+  // Every pane in `App.svelte` stays mounted regardless of which tab is active, so this fires at
+  // startup even when Job is the tab actually shown first.
+  //
+  // Calls `inspect()` before `start()`, not after -- `jobs.length > 0` is what makes this whole
+  // pane render anything beyond the empty state (see the template below), and `inspect()` is the
+  // only thing that populates it (`list_jobs`). Skipping this step is exactly the bug found live,
+  // 10 Set 2026: `start_job` alone really did start the copy, but with `jobs` still empty the
+  // window showed "Scegli un file di configurazione" the whole time regardless, and the operator
+  // had to click Esamina themselves to see anything -- indistinguishable from nothing having
+  // started at all.
+  onMount(async () => {
+    const autoConfig = await invoke("initial_auto_config");
+    if (!autoConfig) return;
+    session.configPath = autoConfig;
+    session.activeTab = "run";
+    await inspect();
+    await start();
+  });
 
   async function stop() {
     error = null;

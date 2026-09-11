@@ -76,6 +76,13 @@ pub enum IngestError {
     #[error("cannot find the rustcopy CLI at {0}. A supervisor runs the engine it was installed with, never one found on PATH")]
     CliBinaryNotFound(PathBuf),
 
+    /// `runner::write_shell_drop_config` was asked to describe zero dropped items -- the shell
+    /// extension's own classification (`handler::all_are_directories`) already refuses an empty
+    /// selection before this is ever reached, so this is a defensive backstop, not a case that
+    /// should occur in practice.
+    #[error("cannot write a drag-and-drop config for {0} with no source/dest pairs")]
+    ShellDropConfigEmpty(PathBuf),
+
     /// `--cancel-file` names a file that must not exist yet: one left behind by an earlier run
     /// would stop this one the moment it looked, which reads like a crash rather than a stop.
     #[error("the --cancel-file {0} already exists: it would stop this run immediately. Remove it, or name a path that does not exist yet")]
@@ -280,7 +287,8 @@ impl IngestError {
             | IngestError::EditorWouldOverwrite(_)
             | IngestError::ExampleWorkspaceAlreadyExists(_)
             | IngestError::CancelFileAlreadyExists(_)
-            | IngestError::CliBinaryNotFound(_) => false,
+            | IngestError::CliBinaryNotFound(_)
+            | IngestError::ShellDropConfigEmpty(_) => false,
         }
     }
 }
