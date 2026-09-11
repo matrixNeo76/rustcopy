@@ -21,6 +21,36 @@ For full technical detail behind any entry, see `ANALYSIS.md` (defect list, `D<N
 
 ## [Unreleased]
 
+## [7.3.0] - 2026-09-11
+
+### Added
+- **Richer Report screen** (F84): the exit-code icon is now derived server-side
+  (`RobocopyStatus::is_success()`) instead of a naive "exit code 0" check, which is wrong for
+  robocopy — a `1` alone is a genuine success. A new "File e byte" section surfaces robocopy's
+  full summary (skipped/mismatch/failed/extra, both counts and bytes), previously parsed and then
+  discarded down to just the copied total. "Configurazione usata" now shows every non-default
+  setting that was active for the run, not only a handful. A real start timestamp
+  (`started_at`) sits alongside the pre-existing finish time.
+- **Explorer Shell extension** (F85, closes the long-backlogged F51): dragging one or more
+  folders onto another with the right mouse button (or across drives) now offers "Copia con
+  RustCopy" on Explorer's own drop-confirmation menu, alongside the native Copy/Move. Picking it
+  hands the drop straight to the desktop console with the copy already queued and visible — not a
+  silent background process. Network (UNC) destinations default to a conservative 8 threads
+  instead of this machine's full logical-CPU count, a safety choice validated against a real cold
+  NAS benchmark that found no throughput benefit past a handful of threads. Installed as an
+  optional component of the existing setup (`gui\shell`, nested under the desktop console, which
+  it requires to function) — no separate installer, no manual registry step.
+
+### Fixed
+- The Report screen's "File e byte" section showed "dettaglio non disponibile" on any
+  Italian-locale Windows install, because the underlying parser only recognized the English
+  `Files`/`Bytes` row labels robocopy prints — it now tries the Italian forms too.
+- A truncated robocopy summary line (fewer than six columns) was previously accepted and
+  zero-filled, showing a real count as if it were a confirmed zero; it is now rejected outright.
+- The Report screen's file/byte counts could come from only one of robocopy's two summary rows
+  (Files or Bytes) instead of requiring both, risking a real file count paired with silently
+  zeroed bytes.
+
 ## [7.2.0] - 2026-09-09
 
 ### Added
