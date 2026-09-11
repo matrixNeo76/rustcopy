@@ -1631,6 +1631,40 @@ produrre conteggi file reali con conteggi byte silenziosamente azzerati. 3 nuovi
 
 ---
 
+### D28 — `normalize_path_arg` produce un prefisso di percorso lungo non valido per un percorso UNC 🟡 APERTO (10 Set 2026)
+
+**Stato: aperto, non bloccante.**
+
+**Gravità: MEDIA** — non corrompe alcun dato (robocopy riceverebbe un percorso che Windows non
+risolve, quindi fallirebbe in modo rumoroso, non silenzioso), ma rilevante perché le destinazioni
+di backup di questo progetto sono spesso condivisioni NAS (percorsi UNC), non solo lettere di
+unità locali.
+
+**Causa.** `engine::robocopy::normalize_path_arg` (`crates/rustcopy-core/src/engine/robocopy.rs`),
+quando `--long-paths` è attivo e il percorso supera 240 caratteri, costruisce il prefisso esteso
+con `format!(r"\\?\{trimmed}")` — incollando `\\?\` davanti al percorso originale **per intero**,
+qualunque esso sia. Per una lettera di unità locale (`C:\...`) questo produce il prefisso corretto
+(`\\?\C:\...`). Per un percorso UNC (`\\server\condivisione\...`), la stessa formula produce
+`\\?\\\server\condivisione\...` — cinque backslash iniziali, non un percorso che Windows risolve.
+La convenzione reale di Windows per un percorso UNC esteso è `\\?\UNC\server\condivisione\...`: i
+due backslash iniziali del percorso UNC vanno **sostituiti** con `\\?\UNC\`, non semplicemente
+preceduti da `\\?\`.
+
+**Come è stato trovato.** Non da un test o da un audit dedicato al codice — da CodeRabbit, in
+revisione di una PR che toccava **solo** un file `.claude/agents/*.md` (PR #122) che descriveva il
+comportamento di questa funzione. La descrizione era accurata rispetto al codice; è il codice
+stesso ad avere il gap. Corretto nel file agent (non più presentato come funzionante per un caso
+UNC, dichiarato come limite aperto) e segnalato come task separato — non risolto in quella PR
+perché fuori perimetro (PR di sola documentazione).
+
+**Non ancora risolto.** Il fix è contenuto: rilevare un percorso UNC (`trimmed.starts_with(r"\\")`
+dopo il trim dei separatori finali) e produrre `\\?\UNC\` seguito dal resto del percorso privato
+dei due backslash iniziali, invece del semplice `format!(r"\\?\{trimmed}")`. Serve un test di
+regressione con un vero percorso UNC lungo (>240 caratteri), accanto ai test esistenti di
+`normalize_path_arg_strips_various_separators`.
+
+---
+
 ## 💡 3.2 Opportunità di miglioramento (non difetti)
 
 Proposte ordinate per rapporto valore/rischio, motivate da problemi osservati sul campo:
