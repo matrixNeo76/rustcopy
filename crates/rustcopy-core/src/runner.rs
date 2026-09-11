@@ -246,7 +246,7 @@ pub fn gui_beside(supervisor_exe: &Path) -> Result<PathBuf, IngestError> {
 /// `8` is not itself measured as an "optimal" value (the sweep found no optimum to calibrate to,
 /// a flat curve has none) -- it is a conservative default chosen to keep a convenience feature
 /// from being able to saturate the operator's own machine, not a throughput claim.
-const CONSERVATIVE_NETWORK_THREADS: u16 = 8;
+pub const CONSERVATIVE_NETWORK_THREADS: u16 = 8;
 
 /// `true` for a UNC path (`\\server\share\...`); a local drive letter is never throttled this way
 /// -- the measurement above is specific to SMB, not a general claim about local disks.
