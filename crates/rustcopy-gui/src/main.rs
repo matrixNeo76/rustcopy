@@ -777,10 +777,56 @@ fn read_progress(
     robocopy_ingest::progress_file::ProgressSample::read_from(&path)
 }
 
+/// The `--auto-config <path>` value this process was launched with, captured once in `main`
+/// before `.run()` -- `std::env::args()` reflects the real invocation only at process start, so
+/// capturing it once here (rather than re-reading argv on every call) keeps that fact explicit.
+/// `Mutex`, not `OnceLock<Option<String>>` alone: [`initial_auto_config`] consumes it with
+/// `.take()`, so a second call (a stray double `onMount` in dev/hot-reload, or a future second
+/// window) returns `None` rather than starting the same job twice -- same one-shot-consumption
+/// shape as `active.cancel_file.take()` in `run_status` above.
+static INITIAL_AUTO_CONFIG: std::sync::Mutex<Option<String>> = std::sync::Mutex::new(None);
+
+/// Pulls `--auto-config <path>` out of an argument list, if present. Pure and independent of
+/// `std::env::args()` so it is testable without actually launching a process with different
+/// arguments -- the one thing every other command in this file already reuses `off_thread`/
+/// `gui_api` to keep testable without a real WebView, applied here to argv parsing instead.
+fn parse_auto_config_arg(args: impl Iterator<Item = String>) -> Option<String> {
+    let args: Vec<String> = args.collect();
+    args.iter()
+        .position(|arg| arg == "--auto-config")
+        .and_then(|index| args.get(index + 1))
+        .cloned()
+}
+
+/// The config path this window was launched to run immediately, if any -- set by
+/// `rustcopy-shell`'s drag-and-drop handler (`tidy-sniffing-river.md`, Milestone 3) via
+/// `--auto-config`, so a drop lands the operator on a running job with visible progress instead
+/// of a silent background process. `None` for every ordinary launch (Start Menu, a shortcut,
+/// `cargo run`) and for every call after the first. `Run.svelte`'s own `onMount` reads this once,
+/// then calls `inspect()` (populates `jobs`, without which this pane renders nothing but the
+/// empty state) followed by `start()` -- found live, 10 Set 2026: starting the run alone, without
+/// also populating `jobs`, left the window showing "Scegli un file di configurazione" the whole
+/// time regardless of a real copy already running underneath it.
+#[tauri::command]
+fn initial_auto_config() -> Option<String> {
+    // No other code path touches this lock while holding it across a panic, so poisoning is not
+    // expected in practice -- but this command's whole purpose is a convenience handoff, not
+    // something worth crashing the console over. `.ok()` treats a poisoned lock the same as "no
+    // auto-config", the same fallback an ordinary launch already gets.
+    INITIAL_AUTO_CONFIG
+        .lock()
+        .ok()
+        .and_then(|mut guard| guard.take())
+}
+
 // Tauri's own idiomatic entry point: `run` only returns `Err` for a launch failure (no
 // WebView2, corrupt bundle) that leaves nothing else to do but report it and exit.
 #[allow(clippy::expect_used)]
 fn main() {
+    // Captured before the Tauri runtime starts, once, for the reason `INITIAL_AUTO_CONFIG`'s own
+    // doc comment gives.
+    *INITIAL_AUTO_CONFIG.lock().expect("lock poisoned") = parse_auto_config_arg(std::env::args());
+
     tauri::Builder::default()
         .manage(RunState::default())
         // Native pickers. The plugin reads nothing and writes nothing on its own: it returns the
@@ -792,6 +838,7 @@ fn main() {
         // `run_status`, so no new command is needed here.
         .plugin(tauri_plugin_notification::init())
         .invoke_handler(tauri::generate_handler![
+            initial_auto_config,
             inspect_path,
             default_threads,
             list_jobs,
@@ -817,4 +864,35 @@ fn main() {
         ])
         .run(tauri::generate_context!())
         .expect("error while running the rustcopy console");
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn parse_auto_config_arg_finds_the_value_after_the_flag() {
+        let args = ["rustcopy-gui.exe", "--auto-config", "C:\\temp\\drop.toml"]
+            .into_iter()
+            .map(String::from);
+        assert_eq!(
+            parse_auto_config_arg(args),
+            Some("C:\\temp\\drop.toml".to_string())
+        );
+    }
+
+    #[test]
+    fn parse_auto_config_arg_is_none_for_an_ordinary_launch() {
+        let args = ["rustcopy-gui.exe"].into_iter().map(String::from);
+        assert_eq!(parse_auto_config_arg(args), None);
+    }
+
+    /// A flag with nothing after it must not panic or read past the end of argv.
+    #[test]
+    fn parse_auto_config_arg_is_none_when_the_flag_is_the_last_argument() {
+        let args = ["rustcopy-gui.exe", "--auto-config"]
+            .into_iter()
+            .map(String::from);
+        assert_eq!(parse_auto_config_arg(args), None);
+    }
 }

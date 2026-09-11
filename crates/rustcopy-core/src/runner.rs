@@ -207,6 +207,125 @@ pub fn restore_preview_arguments(report: &Path, preview_report_path: &Path) -> V
     ]
 }
 
+/// The desktop console's own executable file name.
+pub const GUI_BINARY: &str = if cfg!(windows) {
+    "rustcopy-gui.exe"
+} else {
+    "rustcopy-gui"
+};
+
+/// Finds the desktop console beside the given executable — same reasoning as [`cli_beside`]:
+/// the installer places every binary in one directory, and a supervisor should launch the
+/// console it shipped with, not one found on `PATH`. Used by `rustcopy-shell`'s drag-and-drop
+/// handler (`tidy-sniffing-river.md`) to hand a drop off to the console for visible progress,
+/// rather than spawning `robocopy_ingest.exe` directly and leaving the operator with no feedback
+/// at all (found live, 10 Set 2026: a silent fire-and-forget spawn answers "did anything happen?"
+/// with nothing an operator can see).
+pub fn gui_beside(supervisor_exe: &Path) -> Result<PathBuf, IngestError> {
+    let candidate = supervisor_exe
+        .parent()
+        .unwrap_or_else(|| Path::new("."))
+        .join(GUI_BINARY);
+
+    if candidate.is_file() {
+        Ok(candidate)
+    } else {
+        Err(IngestError::CliBinaryNotFound(candidate))
+    }
+}
+
+/// A drag-and-drop copy never opted into a thread count the way a hand-written config or a
+/// deliberate `--threads` flag does, so leaving it unset (the pre-existing default: this
+/// machine's logical CPU count, `cli::default_threads`) is the wrong default specifically for a
+/// UNC/network destination -- **measured, not assumed**, against this project's own real NAS
+/// (`_ops_reports/benchmark/cold`, 10 Set 2026, the M0 sweep this session ran): throughput stayed
+/// within 12% across `--threads` 4 through 48 (`ConcurrencyInsensitive`, well under the 15% noise
+/// threshold), so 48 threads bought nothing there -- only 6x the simultaneous SMB connections for
+/// zero benefit, real system-wide sluggishness for the operator, live-verified the same day
+/// (started a 19 GB drop, the whole machine became hard to use until the transfer was stopped).
+/// `8` is not itself measured as an "optimal" value (the sweep found no optimum to calibrate to,
+/// a flat curve has none) -- it is a conservative default chosen to keep a convenience feature
+/// from being able to saturate the operator's own machine, not a throughput claim.
+pub const CONSERVATIVE_NETWORK_THREADS: u16 = 8;
+
+/// `true` for a UNC path (`\\server\share\...`); a local drive letter is never throttled this way
+/// -- the measurement above is specific to SMB, not a general claim about local disks.
+fn is_network_destination(dest: &Path) -> bool {
+    dest.to_string_lossy().starts_with(r"\\")
+}
+
+fn conservative_threads_for(dest: &Path) -> Option<u16> {
+    is_network_destination(dest).then_some(CONSERVATIVE_NETWORK_THREADS)
+}
+
+/// Writes a throwaway configuration file for one drag-and-drop batch: one `(source, dest)` pair
+/// becomes a plain single-job config (`defaults` only, exactly the pre-F33 shape); more than one
+/// becomes an `[[jobs]]` batch, one entry per dropped folder, each named after its own source
+/// folder — reusing F33's existing multi-job machinery (and `Run.svelte`'s existing batch-queue
+/// display, F49) instead of inventing a second way to run several copies in sequence. Every field
+/// besides `source`/`dest`/`name`/`threads` is left at its `JobConfig::default()` -- a
+/// drag-and-drop copy carries no opinion on retries or verification, and the console resolves
+/// those the same way it always does for a config file with unset fields. `threads` is the one
+/// deliberate exception -- see [`CONSERVATIVE_NETWORK_THREADS`] for why.
+pub fn write_shell_drop_config(
+    items: &[(PathBuf, PathBuf)],
+    out_path: &Path,
+) -> Result<(), IngestError> {
+    let config = match items {
+        [] => return Err(IngestError::ShellDropConfigEmpty(out_path.to_path_buf())),
+        [(source, dest)] => crate::config::IngestConfig {
+            defaults: crate::config::JobConfig {
+                source: Some(source.clone()),
+                dest: Some(dest.clone()),
+                threads: conservative_threads_for(dest),
+                ..Default::default()
+            },
+            jobs: None,
+        },
+        many => crate::config::IngestConfig {
+            defaults: crate::config::JobConfig::default(),
+            jobs: Some(
+                many.iter()
+                    .map(|(source, dest)| crate::config::JobConfig {
+                        name: source.file_name().map(|n| n.to_string_lossy().into_owned()),
+                        source: Some(source.clone()),
+                        dest: Some(dest.clone()),
+                        threads: conservative_threads_for(dest),
+                        ..Default::default()
+                    })
+                    .collect(),
+            ),
+        },
+    };
+
+    let rendered = toml::to_string_pretty(&config).map_err(|error| {
+        IngestError::io(
+            out_path,
+            std::io::Error::new(std::io::ErrorKind::InvalidData, error),
+        )
+    })?;
+    if let Some(parent) = out_path.parent() {
+        std::fs::create_dir_all(parent).map_err(|error| IngestError::io(parent, error))?;
+    }
+    crate::atomic_write(out_path, rendered.as_bytes())
+        .map_err(|error| IngestError::io(out_path, error))
+}
+
+/// Where [`write_shell_drop_config`] writes its file — same temp directory as stop/progress files
+/// and F64's restore-preview scratch report ([`cancel_file_dir`]), for the same reason:
+/// guaranteed writable, and namespaced so two drops in quick succession never collide.
+pub fn shell_drop_config_path() -> Result<PathBuf, IngestError> {
+    let dir = cancel_file_dir();
+    std::fs::create_dir_all(&dir).map_err(|error| IngestError::io(&dir, error))?;
+    let stamp = format!(
+        "{}-{}-{}",
+        chrono::Local::now().format("%Y%m%d-%H%M%S%.3f"),
+        std::process::id(),
+        CANCEL_FILE_SEQUENCE.fetch_add(1, Ordering::Relaxed)
+    );
+    Ok(dir.join(format!("shell-drop-{stamp}.toml")))
+}
+
 /// Where a restore preview (F64) writes its scratch report — same temp directory as stop/progress
 /// files ([`cancel_file_dir`]), for the same reason: guaranteed writable, and never the operator's
 /// own report path.
@@ -307,6 +426,151 @@ mod tests {
         );
         assert!(joined.starts_with("--restore-from backup-report.json"));
         assert_eq!(args.len(), 5, "and nothing else may be added silently");
+    }
+
+    /// `rustcopy-shell` forwards paths the user dragged, not ones they typed into a validated
+    /// form — `JobConfig::default()` means `mirror`/`backup_type`/every other F61-relevant field
+    /// stays unset no matter what a future edit to the handler does, without this test having to
+    /// enumerate every forbidden field the way the argument-list tests above enumerate flags.
+    #[test]
+    fn a_single_dropped_item_writes_a_plain_single_job_config() {
+        let dir = tempfile::tempdir().unwrap();
+        let out = dir.path().join("drop.toml");
+        write_shell_drop_config(
+            &[(
+                PathBuf::from(r"C:\Users\demo\Desktop\Photos"),
+                PathBuf::from(r"D:\Backup\Photos"),
+            )],
+            &out,
+        )
+        .unwrap();
+
+        let loaded = crate::config::IngestConfig::load_from(&out).unwrap();
+        assert_eq!(
+            loaded.defaults.source,
+            Some(PathBuf::from(r"C:\Users\demo\Desktop\Photos"))
+        );
+        assert_eq!(
+            loaded.defaults.dest,
+            Some(PathBuf::from(r"D:\Backup\Photos"))
+        );
+        assert_eq!(
+            loaded.jobs, None,
+            "one item must not produce a [[jobs]] batch"
+        );
+        assert_eq!(
+            loaded.defaults.mirror, None,
+            "unset, like every other F61-relevant field"
+        );
+        assert_eq!(
+            loaded.defaults.threads, None,
+            "a local drive letter is never throttled -- only the measured SMB case is"
+        );
+    }
+
+    #[test]
+    fn is_network_destination_recognizes_a_unc_path_and_not_a_drive_letter() {
+        assert!(is_network_destination(Path::new(r"\\NAS\Share\Backup")));
+        assert!(!is_network_destination(Path::new(r"D:\Backup\Photos")));
+    }
+
+    /// The whole point of this default: found live, 10 Set 2026, dragging a 19 GB folder onto a
+    /// UNC destination with the unset-threads default (this machine's 48 logical CPUs) made the
+    /// operator's own system hard to use for the duration of the transfer -- the same NAS this
+    /// session's own M0 benchmark had already measured as `ConcurrencyInsensitive` (12% variation
+    /// across --threads 4-48), so those 48 simultaneous connections bought nothing.
+    #[test]
+    fn a_network_destination_gets_the_conservative_thread_default() {
+        let dir = tempfile::tempdir().unwrap();
+        let out = dir.path().join("drop.toml");
+        write_shell_drop_config(
+            &[(
+                PathBuf::from(r"C:\Users\demo\Desktop\LabSources"),
+                PathBuf::from(r"\\NAS\Share\Backup\LabSources"),
+            )],
+            &out,
+        )
+        .unwrap();
+
+        let loaded = crate::config::IngestConfig::load_from(&out).unwrap();
+        assert_eq!(loaded.defaults.threads, Some(CONSERVATIVE_NETWORK_THREADS));
+    }
+
+    #[test]
+    fn several_dropped_items_write_an_independent_job_per_item() {
+        let dir = tempfile::tempdir().unwrap();
+        let out = dir.path().join("drop.toml");
+        // `Path::new(..).join(..)` rather than a raw `r"C:\Photos"` literal: `\` is only a
+        // separator on Windows (D16, CLAUDE.md — Path/PathBuf behaviour is host-platform-
+        // dependent, not target-semantics-dependent), and `.name` below is derived from
+        // `.file_name()`, so a backslash literal here would silently assert the wrong thing on
+        // this crate's own Linux CI job instead of testing the real per-source-basename logic.
+        write_shell_drop_config(
+            &[
+                (
+                    Path::new("C:").join("Photos"),
+                    Path::new("D:").join("Backup").join("Photos"),
+                ),
+                (
+                    Path::new("C:").join("Docs"),
+                    Path::new("D:").join("Backup").join("Docs"),
+                ),
+            ],
+            &out,
+        )
+        .unwrap();
+
+        let loaded = crate::config::IngestConfig::load_from(&out).unwrap();
+        let jobs = loaded
+            .jobs
+            .expect("several items must produce a [[jobs]] batch");
+        assert_eq!(jobs.len(), 2);
+        assert_eq!(jobs[0].name.as_deref(), Some("Photos"));
+        assert_eq!(jobs[1].name.as_deref(), Some("Docs"));
+    }
+
+    /// Each job's thread default is decided from its *own* destination, not the batch as a
+    /// whole -- a single drop is unlikely to mix local and network targets, but nothing about
+    /// `write_shell_drop_config`'s contract rules it out, so this must not accidentally throttle
+    /// (or fail to throttle) one job based on a sibling's destination.
+    #[test]
+    fn each_job_in_a_batch_gets_its_own_threads_default_from_its_own_destination() {
+        let dir = tempfile::tempdir().unwrap();
+        let out = dir.path().join("drop.toml");
+        // Source paths built portably (see the comment in the test above) -- the UNC destination
+        // stays a raw string literal on purpose: `is_network_destination` only ever does a plain
+        // string-prefix check on it, never `.file_name()`, so it carries no platform-dependent
+        // `Path` parsing to worry about.
+        write_shell_drop_config(
+            &[
+                (
+                    Path::new("C:").join("Photos"),
+                    Path::new("D:").join("Backup").join("Photos"),
+                ),
+                (
+                    Path::new("C:").join("Docs"),
+                    PathBuf::from(r"\\NAS\Share\Docs"),
+                ),
+            ],
+            &out,
+        )
+        .unwrap();
+
+        let loaded = crate::config::IngestConfig::load_from(&out).unwrap();
+        let jobs = loaded.jobs.unwrap();
+        assert_eq!(jobs[0].threads, None, "local destination: unthrottled");
+        assert_eq!(
+            jobs[1].threads,
+            Some(CONSERVATIVE_NETWORK_THREADS),
+            "UNC destination: throttled"
+        );
+    }
+
+    #[test]
+    fn write_shell_drop_config_refuses_an_empty_selection() {
+        let dir = tempfile::tempdir().unwrap();
+        let out = dir.path().join("drop.toml");
+        assert!(write_shell_drop_config(&[], &out).is_err());
     }
 
     /// The preview must write its own report, never the path a real run would use — otherwise a

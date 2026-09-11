@@ -50,10 +50,10 @@ jobs:
         run: cargo fmt --all -- --check
 
       - name: cargo clippy (default features)
-        run: cargo clippy --locked --workspace --exclude rustcopy-gui --all-targets -- -D warnings
+        run: cargo clippy --locked --workspace --exclude rustcopy-gui --exclude rustcopy-shell --all-targets -- -D warnings
 
       - name: cargo clippy (notify-server feature)
-        run: cargo clippy --locked --workspace --exclude rustcopy-gui --all-targets --features rustcopy-cli/notify-server -- -D warnings
+        run: cargo clippy --locked --workspace --exclude rustcopy-gui --exclude rustcopy-shell --all-targets --features rustcopy-cli/notify-server -- -D warnings
 
       # clippy::unwrap_used/expect_used are allow-by-default "restriction" lints, so `-D warnings`
       # alone never catches a new unwrap()/expect() — they have to be turned on explicitly first
@@ -72,10 +72,10 @@ jobs:
           cargo clippy --locked -p rustcopy-cli --bins --features notify-server -- -W clippy::unwrap_used -W clippy::expect_used -D warnings
 
       - name: cargo test (default features)
-        run: cargo test --locked --workspace --exclude rustcopy-gui --all-targets
+        run: cargo test --locked --workspace --exclude rustcopy-gui --exclude rustcopy-shell --all-targets
 
       - name: cargo test (notify-server feature)
-        run: cargo test --locked --workspace --exclude rustcopy-gui --all-targets --features rustcopy-cli/notify-server
+        run: cargo test --locked --workspace --exclude rustcopy-gui --exclude rustcopy-shell --all-targets --features rustcopy-cli/notify-server
 
       # Broken intra-doc links are invisible to clippy and to the test suite, and this crate
       # leans on them heavily (17 in generations.rs alone). Adding this gate immediately
@@ -120,6 +120,22 @@ jobs:
             exit 1
           fi
 
+      # rustcopy-shell (the Explorer drag-and-drop COM handler, tidy-sniffing-river.md) is not a
+      # dependency of the CLI at all -- this is a regression guard for that staying true, same
+      # shape and reasoning as the GUI-toolchain gate above. Matches the bare `windows`/
+      # `windows-core` crate specifically (`windows(-core)? v<digit>`, cargo tree's own
+      # "<name> v<version>" rendering) -- not a substring match on "windows" alone, which would
+      # false-positive on this CLI's own legitimate, unrelated `windows-service`/`windows-sys`
+      # dependencies.
+      - name: the CLI never depends on the Shell extension's COM toolchain
+        shell: bash
+        run: |
+          if cargo tree --locked -p rustcopy-cli | grep -qiE 'windows(-core)? v[0-9]'; then
+            echo "::error::the windows/COM crate reached the CLI binary -- it must stay in rustcopy-shell"
+            cargo tree --locked -p rustcopy-cli | grep -iE 'windows(-core)? v[0-9]'
+            exit 1
+          fi
+
   # Keeps Cargo.toml's rust-version honest. It was declared as 1.74 for months while nothing
   # ever tested it, and it was wrong by fourteen releases: the committed lockfile pulls
   # time@0.3.54, which needs 1.88. Checked against --locked, so the gate tracks the lockfile
@@ -140,8 +156,8 @@ jobs:
 
       - name: cargo check on MSRV (both feature sets)
         run: |
-          cargo check --workspace --exclude rustcopy-gui --all-targets --locked
-          cargo check --workspace --exclude rustcopy-gui --all-targets --locked --features rustcopy-cli/notify-server
+          cargo check --workspace --exclude rustcopy-gui --exclude rustcopy-shell --all-targets --locked
+          cargo check --workspace --exclude rustcopy-gui --exclude rustcopy-shell --all-targets --locked --features rustcopy-cli/notify-server
 
   # F53: the GUI is Windows-native and depends on Tauri, which needs webkit2gtk system libraries
   # on Linux — so it is excluded from the cross-platform jobs above and checked here instead. That
@@ -183,6 +199,51 @@ jobs:
 
       - name: cargo clippy (GUI crate)
         run: cargo clippy --locked -p rustcopy-gui --all-targets -- -W clippy::unwrap_used -W clippy::expect_used -D warnings
+
+      # rustcopy-gui has no lib target (hence --bin, not --lib, everywhere else in this job), but
+      # it does have a handful of real unit tests now (tidy-sniffing-river.md's --auto-config argv
+      # parsing) -- previously this job never ran `cargo test` at all because there was nothing to
+      # run; that stopped being true and the gate needs to catch up.
+      - name: cargo test (GUI crate)
+        run: cargo test --locked -p rustcopy-gui --bin rustcopy-gui
+
+  # rustcopy-shell (the Explorer drag-and-drop COM handler, tidy-sniffing-river.md) is Windows-only
+  # by construction -- a Shell extension DLL has no meaning off Windows, and its `windows` crate
+  # dependency is declared under `[target.'cfg(windows)'.dependencies]` only, same reasoning as the
+  # `gui` job above for why it is excluded from the cross-platform jobs and checked here instead.
+  shell:
+    timeout-minutes: 15
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache cargo registry and build artifacts
+        uses: Swatinem/rust-cache@v2
+
+      - name: cargo check (Shell extension crate)
+        run: cargo check --locked -p rustcopy-shell --all-targets
+
+      - name: cargo clippy (Shell extension crate)
+        run: cargo clippy --locked -p rustcopy-shell --all-targets -- -D warnings
+
+      # Deliberately --lib, not --all-targets -- test code legitimately unwraps everywhere (that's
+      # idiomatic, not a defect), same reasoning as the unwrap/expect discipline step in the `test`
+      # job above (CLAUDE.md). Every production-code unwrap/expect this catches carries its own
+      # #[allow(...)] with a one-line reason.
+      - name: cargo clippy (unwrap/expect discipline, production code only)
+        run: cargo clippy --locked -p rustcopy-shell --lib -- -W clippy::unwrap_used -W clippy::expect_used -D warnings
+
+      # The COM plumbing itself (IClassFactory, DllGetClassObject, the #[implement]-generated
+      # vtable dispatch) has no test coverage here -- no COM host exists inside `cargo test`, same
+      # declared limitation this project already accepts for VSS (F30) and --install-service (F37).
+      # What this does run: the pure functions around it (path computation, directory
+      # classification, registry string formatting).
+      - name: cargo test (Shell extension crate)
+        run: cargo test --locked -p rustcopy-shell --lib
 
   # docs/archive/PIANO_GUI_TAURI.md §8.6: the Rust dependencies have `cargo audit` in security-audit.yml; the
   # npm ones that arrived with the frontend need the equivalent. Kept in the ordinary CI rather

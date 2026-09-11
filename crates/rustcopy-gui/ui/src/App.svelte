@@ -17,6 +17,11 @@
     CircleQuestionMark,
   } from "@lucide/svelte";
 
+  // `rustcopy-shell`'s drag-and-drop handler (`tidy-sniffing-river.md`, Milestone 3) launches this
+  // window with `--auto-config <path>`, handled in Run.svelte's own `onMount` rather than here --
+  // it needs `inspect()`/`jobs`/`start()`, all local to that component (every pane stays mounted
+  // per the note below, so its `onMount` fires at startup regardless of which tab is active).
+
   // One list instead of five near-identical buttons: a sixth pane should not mean copying the
   // same class expression again and getting one of the states wrong.
   const TABS = [
