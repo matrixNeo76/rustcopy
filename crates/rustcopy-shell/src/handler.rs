@@ -72,6 +72,19 @@ pub fn all_are_directories(paths: &[PathBuf]) -> bool {
     !paths.is_empty() && paths.iter().all(|p| p.is_dir())
 }
 
+/// Recovers from a poisoned lock rather than panicking -- deliberately, everywhere this handler
+/// touches its own state. Unlike a `Mutex::lock().expect(...)` inside a normal Rust process, a
+/// panic here would have to unwind across the `#[implement]`-generated COM vtable thunk back into
+/// `explorer.exe` itself; whether that unwind is even sound is not something to gamble the whole
+/// desktop shell on. These locks only ever guard a `clone`/simple assignment (never a callback
+/// that could itself panic), so poisoning is not expected in practice -- but "recover the last
+/// good value and keep going" is a far safer failure mode here than "maybe crash Explorer."
+fn lock_or_recover<T>(mutex: &std::sync::Mutex<T>) -> std::sync::MutexGuard<'_, T> {
+    mutex
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
+}
+
 #[implement(IShellExtInit, IContextMenu)]
 pub struct RustCopyHandler {
     dest_folder: Mutex<Option<PathBuf>>,
@@ -109,7 +122,7 @@ impl IShellExtInit_Impl for RustCopyHandler_Impl {
                 None
             }
         };
-        *self.dest_folder.lock().expect("lock poisoned") = dest.clone();
+        *lock_or_recover(&self.dest_folder) = dest.clone();
 
         let dropped = pdtobj.as_ref().map(read_dropped_paths).unwrap_or_default();
         let _ = log::append_line(
@@ -119,7 +132,7 @@ impl IShellExtInit_Impl for RustCopyHandler_Impl {
                 all_are_directories(&dropped)
             ),
         );
-        *self.dropped_paths.lock().expect("lock poisoned") = dropped;
+        *lock_or_recover(&self.dropped_paths) = dropped;
 
         Ok(())
     }
@@ -137,7 +150,7 @@ impl IContextMenu_Impl for RustCopyHandler_Impl {
         _idcmdlast: u32,
         _uflags: u32,
     ) -> HRESULT {
-        let dropped = self.dropped_paths.lock().expect("lock poisoned");
+        let dropped = lock_or_recover(&self.dropped_paths);
         if !all_are_directories(&dropped) {
             return HRESULT(0);
         }
@@ -166,8 +179,8 @@ impl IContextMenu_Impl for RustCopyHandler_Impl {
     fn InvokeCommand(&self, pici: *const CMINVOKECOMMANDINFO) -> Result<()> {
         let _ = unsafe { (*pici).lpVerb };
 
-        let dest_folder = self.dest_folder.lock().expect("lock poisoned").clone();
-        let dropped = self.dropped_paths.lock().expect("lock poisoned").clone();
+        let dest_folder = lock_or_recover(&self.dest_folder).clone();
+        let dropped = lock_or_recover(&self.dropped_paths).clone();
 
         let Some(dest_folder) = dest_folder else {
             let _ = log::append_line(&log::log_path(), "InvokeCommand: no dest_folder, aborting");

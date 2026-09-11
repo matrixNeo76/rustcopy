@@ -809,7 +809,14 @@ fn parse_auto_config_arg(args: impl Iterator<Item = String>) -> Option<String> {
 /// time regardless of a real copy already running underneath it.
 #[tauri::command]
 fn initial_auto_config() -> Option<String> {
-    INITIAL_AUTO_CONFIG.lock().expect("lock poisoned").take()
+    // No other code path touches this lock while holding it across a panic, so poisoning is not
+    // expected in practice -- but this command's whole purpose is a convenience handoff, not
+    // something worth crashing the console over. `.ok()` treats a poisoned lock the same as "no
+    // auto-config", the same fallback an ordinary launch already gets.
+    INITIAL_AUTO_CONFIG
+        .lock()
+        .ok()
+        .and_then(|mut guard| guard.take())
 }
 
 // Tauri's own idiomatic entry point: `run` only returns `Err` for a launch failure (no
