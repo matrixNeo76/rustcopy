@@ -500,13 +500,21 @@ mod tests {
     fn several_dropped_items_write_an_independent_job_per_item() {
         let dir = tempfile::tempdir().unwrap();
         let out = dir.path().join("drop.toml");
+        // `Path::new(..).join(..)` rather than a raw `r"C:\Photos"` literal: `\` is only a
+        // separator on Windows (D16, CLAUDE.md — Path/PathBuf behaviour is host-platform-
+        // dependent, not target-semantics-dependent), and `.name` below is derived from
+        // `.file_name()`, so a backslash literal here would silently assert the wrong thing on
+        // this crate's own Linux CI job instead of testing the real per-source-basename logic.
         write_shell_drop_config(
             &[
                 (
-                    PathBuf::from(r"C:\Photos"),
-                    PathBuf::from(r"D:\Backup\Photos"),
+                    Path::new("C:").join("Photos"),
+                    Path::new("D:").join("Backup").join("Photos"),
                 ),
-                (PathBuf::from(r"C:\Docs"), PathBuf::from(r"D:\Backup\Docs")),
+                (
+                    Path::new("C:").join("Docs"),
+                    Path::new("D:").join("Backup").join("Docs"),
+                ),
             ],
             &out,
         )
@@ -529,14 +537,18 @@ mod tests {
     fn each_job_in_a_batch_gets_its_own_threads_default_from_its_own_destination() {
         let dir = tempfile::tempdir().unwrap();
         let out = dir.path().join("drop.toml");
+        // Source paths built portably (see the comment in the test above) -- the UNC destination
+        // stays a raw string literal on purpose: `is_network_destination` only ever does a plain
+        // string-prefix check on it, never `.file_name()`, so it carries no platform-dependent
+        // `Path` parsing to worry about.
         write_shell_drop_config(
             &[
                 (
-                    PathBuf::from(r"C:\Photos"),
-                    PathBuf::from(r"D:\Backup\Photos"),
+                    Path::new("C:").join("Photos"),
+                    Path::new("D:").join("Backup").join("Photos"),
                 ),
                 (
-                    PathBuf::from(r"C:\Docs"),
+                    Path::new("C:").join("Docs"),
                     PathBuf::from(r"\\NAS\Share\Docs"),
                 ),
             ],
