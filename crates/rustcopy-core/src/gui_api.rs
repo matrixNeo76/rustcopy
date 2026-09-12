@@ -104,6 +104,27 @@ pub struct JobSummary {
     /// report (Livello 1, punto 5, `PIANO_GUI.md` §10) — deliberately not attempted for a
     /// `{timestamp}` config rather than guessed at and wrong.
     pub report_path: Option<String>,
+    /// The job-name key `read_history`/`read_advice` expect for *this* job's own run index —
+    /// `None` for the implicit single-job case (no `[[jobs]]` at all, where the index carries no
+    /// suffix), `Some(name)` for each `[[jobs]]` entry. Mirrors `report_path`'s own
+    /// `namespace_with` exactly (D12): a `[[jobs]]` entry can legally be named "job1" too, which
+    /// would be indistinguishable from the fallback `name` above if this field did not exist —
+    /// a frontend passing `name` straight to `read_history` for the implicit case would look for
+    /// a namespaced index that was never written (F86).
+    pub history_job_name: Option<String>,
+    /// True when the job would encrypt its output (`--encrypt-aes256`, F80). Never carries the
+    /// key itself — same redaction boundary as `read_settings`'s `webhook_url` truncation.
+    pub encrypt_enabled: bool,
+    /// `--keep-generations`, when set. Only meaningful alongside `backup_type`, same as the CLI.
+    pub keep_generations: Option<usize>,
+    /// Combined length of `exclude_files` + `exclude_dirs` — a single at-a-glance count, not a
+    /// judgement about which files are excluded. `Settings.svelte`/`read_settings` remain the
+    /// only place that lists them.
+    pub exclude_count: usize,
+    /// `--threads`, when the job (or its inherited defaults) set one explicitly. A UI comparing
+    /// this against `default_threads()` decides "non-default" for itself — resolving that here
+    /// would duplicate a judgement `Settings.svelte` already makes via `SettingOrigin`.
+    pub threads: Option<u16>,
 }
 
 /// Same default `--report-path` clap gives `Args` (`cli.rs`), applied here because `JobSummary`
@@ -627,6 +648,13 @@ pub fn list_jobs(config_path: &Path) -> Result<Vec<JobSummary>, IngestError> {
             unconfigured: is_placeholder(d.source.as_ref().map(|p| p.to_string_lossy()).as_deref())
                 || is_placeholder(d.dest.as_ref().map(|p| p.to_string_lossy()).as_deref()),
             report_path,
+            // No `[[jobs]]` at all means the run index carries no job suffix (F86).
+            history_job_name: None,
+            encrypt_enabled: d.encrypt_aes256.is_some(),
+            keep_generations: d.keep_generations,
+            exclude_count: d.exclude_files.as_ref().map_or(0, Vec::len)
+                + d.exclude_dirs.as_ref().map_or(0, Vec::len),
+            threads: d.threads,
         }]);
     }
 
@@ -646,6 +674,10 @@ pub fn list_jobs(config_path: &Path) -> Result<Vec<JobSummary>, IngestError> {
             let namespace_with = job.report_path.is_none().then_some(name.as_str());
             let report_path =
                 report_path_for_summary(resolved.report_path.as_deref(), namespace_with, anchor);
+            // Computed before the literal below, not inline as `Some(name.clone())` next to the
+            // `name,` shorthand field: struct-literal fields evaluate in source order, and `name,`
+            // is a move — a later field cloning `name` after that point would not compile.
+            let history_job_name = Some(name.clone());
             JobSummary {
                 // Mirrors `run_jobs`: the job's own name, else the positional fallback. Reading it
                 // from `resolved` would be wrong now that `name` no longer inherits, and would have
@@ -673,6 +705,12 @@ pub fn list_jobs(config_path: &Path) -> Result<Vec<JobSummary>, IngestError> {
                         .as_deref(),
                 ),
                 report_path,
+                history_job_name,
+                encrypt_enabled: resolved.encrypt_aes256.is_some(),
+                keep_generations: resolved.keep_generations,
+                exclude_count: resolved.exclude_files.as_ref().map_or(0, Vec::len)
+                    + resolved.exclude_dirs.as_ref().map_or(0, Vec::len),
+                threads: resolved.threads,
             }
         })
         .collect())
@@ -2186,5 +2224,84 @@ report_path = "reports/documenti.json"
         );
         let jobs = list_jobs(&path).expect("reads");
         assert_eq!(jobs[0].report_path, None);
+    }
+
+    /// F86: the implicit single-job case (no `[[jobs]]`) must key `read_history`/`read_advice`
+    /// with `None` — its run index carries no job suffix. A frontend passing this job's own
+    /// `name` (always `"job1"` when unset) would look for a namespaced index that was never
+    /// written, silently showing "no runs" for a job that has them.
+    #[test]
+    fn history_job_name_is_none_for_the_implicit_single_job() {
+        let (_dir, path) = write_config("source = \"D:/src\"\ndest = \"E:/dst\"\n");
+        let jobs = list_jobs(&path).expect("reads");
+        assert_eq!(jobs[0].history_job_name, None);
+    }
+
+    /// F86: every `[[jobs]]` entry gets its own name as the history key — including one that
+    /// never set an explicit `name` and fell back to `job{idx+1}`, mirroring `namespace_with`'s
+    /// use of the same fallback for `report_path` (D12).
+    #[test]
+    fn history_job_name_matches_the_jobs_own_name_for_named_jobs() {
+        let (_dir, path) = write_config(
+            r#"
+[[jobs]]
+name = "documenti"
+source = "D:/docs"
+dest = "E:/docs"
+
+[[jobs]]
+source = "D:/other"
+dest = "E:/other"
+"#,
+        );
+        let jobs = list_jobs(&path).expect("reads");
+        assert_eq!(
+            job(&jobs, "documenti").history_job_name,
+            Some("documenti".to_string())
+        );
+        assert_eq!(
+            job(&jobs, "job2").history_job_name,
+            Some("job2".to_string())
+        );
+    }
+
+    /// F86 (Onda 2): the at-a-glance fields must come from the *resolved* (`merged_over`) job,
+    /// same as every other field in this function — a job inheriting these from `[defaults]`
+    /// without setting them itself must still show them, not fall back to "unset".
+    #[test]
+    fn wave_2_fields_reflect_merged_over_resolution() {
+        let (_dir, path) = write_config(
+            r#"
+encrypt_aes256 = "keyring:backup"
+keep_generations = 5
+exclude_files = ["*.tmp"]
+exclude_dirs = [".git", "node_modules"]
+threads = 4
+backup_type = "full"
+
+[[jobs]]
+name = "documenti"
+source = "D:/docs"
+dest = "E:/docs"
+"#,
+        );
+        let jobs = list_jobs(&path).expect("reads");
+        let summary = job(&jobs, "documenti");
+        assert!(summary.encrypt_enabled);
+        assert_eq!(summary.keep_generations, Some(5));
+        assert_eq!(summary.exclude_count, 3);
+        assert_eq!(summary.threads, Some(4));
+    }
+
+    /// F86 (Onda 2): a job with none of these settings, inherited or own, must report the
+    /// honest "unset"/zero state rather than some sentinel that looks like a value.
+    #[test]
+    fn wave_2_fields_are_unset_when_nothing_configures_them() {
+        let (_dir, path) = write_config("source = \"D:/src\"\ndest = \"E:/dst\"\n");
+        let jobs = list_jobs(&path).expect("reads");
+        assert!(!jobs[0].encrypt_enabled);
+        assert_eq!(jobs[0].keep_generations, None);
+        assert_eq!(jobs[0].exclude_count, 0);
+        assert_eq!(jobs[0].threads, None);
     }
 }

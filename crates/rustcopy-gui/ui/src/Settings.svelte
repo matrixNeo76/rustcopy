@@ -48,6 +48,17 @@
     }
   }
 
+  // F86: "Impostazioni" from a Job row sets configPath and this flag together, then switches
+  // here — same one-shot pattern as Report.svelte's pendingReportLoad. A live binding on
+  // configPath itself would reload on every keystroke of someone typing a path by hand in this
+  // very pane, since it stays mounted (and its state kept) even while hidden (App.svelte).
+  $effect(() => {
+    if (session.pendingSettingsLoad) {
+      session.pendingSettingsLoad = false;
+      load();
+    }
+  });
+
   function visible(entries) {
     // A caution is never hidden, whatever its origin: a job that mirrors because nobody set
     // anything is still a job that mirrors.

@@ -72,6 +72,16 @@
     }
   }
 
+  // F86: "Storico" from a Job row sets reportPath/jobName and this flag together, then switches
+  // here — same one-shot pattern as Report.svelte's pendingReportLoad, for the same reason
+  // (this pane stays mounted while hidden, so a live binding would over-trigger on manual typing).
+  $effect(() => {
+    if (session.pendingHistoryLoad) {
+      session.pendingHistoryLoad = false;
+      load();
+    }
+  });
+
   function duration(seconds) {
     if (seconds < 10) return `${seconds.toFixed(2)}s`;
     const total = Math.round(seconds);

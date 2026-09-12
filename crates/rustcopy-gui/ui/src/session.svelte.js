@@ -20,6 +20,17 @@ export const session = $state({
   // Report.svelte's own effect the moment it fires. Never left `true` — a signal that could stay
   // set would re-trigger a load the next time something unrelated touched reportPath.
   pendingReportLoad: false,
+  // F86: same one-shot pattern as pendingReportLoad, for Job's "Impostazioni"/"Storico" row
+  // actions. Needed because Settings.svelte/History.svelte only ever load on a manual PathBar
+  // click — unlike Report.svelte, nothing here already watches configPath/reportPath for a
+  // cross-pane jump, verified by reading both files before adding this.
+  pendingSettingsLoad: false,
+  pendingHistoryLoad: false,
+  // F86: Job's "Modifica" row action. Deliberately its own field, not a reuse of jobName above:
+  // jobName is a persistent, operator-typed filter that History.svelte reads live, and writing a
+  // one-shot navigation signal into it would make the same field mean two different things
+  // depending on which pane touched it last.
+  pendingEditorJob: null,
 });
 
 const RECENT_LIMIT = 8;

@@ -200,6 +200,21 @@
     }
   }
 
+  // F86: "Modifica" from a Job row sets configPath and this flag together, then switches here —
+  // same one-shot family as Report.svelte's pendingReportLoad, but this pane's load() always
+  // resets `selected` to 0 (line 192 above), so the requested job is selected only *after* load()
+  // resolves, not alongside it, or the reset would immediately undo it.
+  $effect(() => {
+    if (session.pendingEditorJob != null) {
+      const wanted = session.pendingEditorJob;
+      session.pendingEditorJob = null;
+      load().then(() => {
+        const idx = drafts.findIndex((entry) => entry.name === wanted);
+        if (idx >= 0) selected = idx;
+      });
+    }
+  });
+
   function addJob() {
     if (drafts.length === 0) return;
     // Copied from the currently selected job so the new one starts from something valid, then
