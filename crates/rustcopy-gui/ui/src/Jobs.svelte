@@ -61,6 +61,16 @@
   invoke("default_threads").then((value) => {
     defaultThreads = value;
   });
+  // The file the currently-displayed table actually came from (CodeRabbit finding on this PR).
+  // Not read from `session.configPath` at click time: that field is a live binding shared with
+  // `PathBar`, so an operator who starts typing a different path -- without pressing "Elenca
+  // job" -- would send Impostazioni/Modifica to the half-typed path instead of the one the
+  // visible row actually belongs to. Same reasoning as Editor.svelte's own `loadedFrom`.
+  let loadedFrom = $state("");
+  // Same generation-counter guard as History/Settings/Editor (CodeRabbit finding on this PR,
+  // applied here too for the identical hazard): a slower `load()` for an earlier path landing
+  // after a faster one for a later path would otherwise overwrite it.
+  let loadGeneration = 0;
 
   async function createExample() {
     exampleError = null;
@@ -79,30 +89,40 @@
   }
 
   async function load() {
+    const mine = ++loadGeneration;
     error = null;
     loading = true;
     try {
-      jobs = await invoke("list_jobs", { configPath: session.configPath });
+      const source = session.configPath;
+      const loadedJobs = await invoke("list_jobs", { configPath: source });
+      if (mine !== loadGeneration) return;
+      jobs = loadedJobs;
       loaded = true;
-      await loadOperationalStatus();
+      loadedFrom = source;
+      await loadOperationalStatus(mine);
     } catch (e) {
+      if (mine !== loadGeneration) return;
       error = String(e);
       jobs = [];
     } finally {
-      loading = false;
+      if (mine === loadGeneration) loading = false;
     }
   }
 
   // Kept separate from load() above: a failure here (an unreadable history index, a schedule
   // query that errors out) must never blank the table of jobs load() just populated -- the
   // configuration is the fact this pane exists to show; the status atop it is an enrichment.
-  async function loadOperationalStatus() {
+  // Takes the caller's generation rather than reading `loadGeneration` fresh, for the same reason
+  // `load()`'s own checks do: a superseded call must not overwrite what a newer one already
+  // committed or is about to.
+  async function loadOperationalStatus(mine) {
     scheduleCount = 0;
     try {
       const schedules = await invoke("schedules_referencing", { configPath: session.configPath });
+      if (mine !== loadGeneration) return;
       scheduleCount = schedules.length;
     } catch {
-      scheduleCount = 0;
+      if (mine === loadGeneration) scheduleCount = 0;
     }
 
     const entries = await Promise.all(
@@ -120,6 +140,7 @@
         }
       }),
     );
+    if (mine !== loadGeneration) return;
     historyByJob = Object.fromEntries(entries);
   }
 </script>
@@ -302,8 +323,12 @@
                     class="text-slate-500 hover:text-slate-800 dark:hover:text-slate-200"
                     title="Apri le impostazioni di questo job"
                     onclick={() => {
-                      // session.configPath is already this file's own path -- Job just loaded it
-                      // from there -- so only the signal and the tab switch are needed here.
+                      // CodeRabbit finding on this PR: `session.configPath` is a live PathBar
+                      // binding, so an operator who started typing a different path here --
+                      // without pressing "Elenca job" -- would send Impostazioni to that
+                      // half-typed path instead of the one this row's data actually came from.
+                      // Restored from `loadedFrom` explicitly rather than assumed unchanged.
+                      session.configPath = loadedFrom;
                       session.pendingSettingsLoad = true;
                       session.activeTab = "settings";
                     }}
@@ -325,6 +350,8 @@
                     class="text-slate-500 hover:text-slate-800 dark:hover:text-slate-200"
                     title="Modifica questo job"
                     onclick={() => {
+                      // Same restoration as Impostazioni above, for the same reason.
+                      session.configPath = loadedFrom;
                       session.pendingEditorJob = job.name;
                       session.activeTab = "editor";
                     }}

@@ -1713,6 +1713,21 @@ Stesso metodo di §14.4/§16.3/§17.5/§18.17, applicato prima di presentare que
   esattamente quanto Impostazioni già mostra meglio (con provenienza) sarebbe un secondo posto da
   tenere sincronizzato per zero beneficio reale.
 
+**Due difetti reali trovati da CodeRabbit sulla PR, non in questa rilettura**: (a) `History.svelte`/
+`Settings.svelte`/`Editor.svelte::load()` non si guardavano da risposte fuori ordine — prima
+dell'Onda 3 ogni pane caricava solo dal proprio click "Apri" manuale, dove un doppio caricamento
+sovrapposto era raro; con i collegamenti diretti da Job questo diventa un percorso reale (due clic
+rapidi su "Storico" per job diversi, una risposta più lenta per il primo che sovrascrive la
+seconda). Corretto con lo stesso contatore di generazione già usato dal poll loop di `Run.svelte`
+per l'identico problema — non un meccanismo nuovo, la stessa idea applicata a un secondo posto che
+ne aveva bisogno. (b) Il collegamento "Impostazioni"/"Modifica" leggeva `session.configPath` al
+momento del clic, ma quel campo è un binding live condiviso con `PathBar`: un operatore che inizia
+a digitare un percorso diverso senza premere "Elenca job" manderebbe quei due collegamenti al
+percorso a metà digitato invece che a quello da cui la riga cliccata viene davvero. Corretto con lo
+stesso schema `loadedFrom` già usato da `Editor.svelte` (il percorso da cui la tabella *visibile*
+è stata caricata) — ripristinato esplicitamente su `session.configPath` prima di impostare il
+segnale one-shot, invece di fidarsi che non sia cambiato.
+
 ## Riferimenti
 
 - [`CLAUDE.md`](CLAUDE.md) — regole operative per `runner.rs`, `job_editor.rs`, `gui_api.rs`.

@@ -64,6 +64,13 @@
   // progress here -- A's jobs applied over B's configuration. The shared path is what made the
   // console usable; this is the hole it opened, and the two have to be held apart.
   let loadedFrom = $state("");
+  // F86 (CodeRabbit): this pane now loads both from a manual "Apri" click and from a Job row's
+  // "Modifica" action, so two calls can overlap for the first time in a way that matters -- same
+  // generation-counter guard already used by Run.svelte's poll loop for the identical
+  // out-of-order hazard. `load()` returns the generation it captured so the `pendingEditorJob`
+  // effect below can tell whether its own call is still the current one before touching
+  // `selected`, which live outside `load()`'s own try/catch/finally.
+  let loadGeneration = 0;
   // F69: the floor a job's `keep_generations` may never go below, captured once at load time by
   // job name (existing jobs only -- `addJob` sets `keep_generations = null` on a new one, so it
   // never gets a floor and the raise-only control stays hidden for it, same as the core's own
@@ -181,34 +188,43 @@
   }
 
   async function load() {
+    const mine = ++loadGeneration;
     error = null;
     written = null;
     loading = true;
     try {
       const source = session.configPath;
-      drafts = await invoke("read_job_drafts", { configPath: source });
+      const loadedDrafts = await invoke("read_job_drafts", { configPath: source });
+      const loadedOutPath = await invoke("suggest_proposal_path", { configPath: source });
+      if (mine !== loadGeneration) return mine;
+      drafts = loadedDrafts;
       existingNames = new Set(drafts.map((entry) => entry.name));
       originalKeepGenerations = new Map(drafts.map((entry) => [entry.name, entry.keep_generations]));
       selected = 0;
-      outPath = await invoke("suggest_proposal_path", { configPath: source });
+      outPath = loadedOutPath;
       loadedFrom = source;
     } catch (e) {
+      if (mine !== loadGeneration) return mine;
       error = String(e);
       drafts = [];
     } finally {
-      loading = false;
+      if (mine === loadGeneration) loading = false;
     }
+    return mine;
   }
 
   // F86: "Modifica" from a Job row sets configPath and this flag together, then switches here —
   // same one-shot family as Report.svelte's pendingReportLoad, but this pane's load() always
   // resets `selected` to 0 (line 192 above), so the requested job is selected only *after* load()
-  // resolves, not alongside it, or the reset would immediately undo it.
+  // resolves, not alongside it, or the reset would immediately undo it. Also checks the returned
+  // generation is still current: a superseded load() (a newer one already started) must not move
+  // `selected` on top of drafts a fresher call already replaced.
   $effect(() => {
     if (session.pendingEditorJob != null) {
       const wanted = session.pendingEditorJob;
       session.pendingEditorJob = null;
-      load().then(() => {
+      load().then((mine) => {
+        if (mine !== loadGeneration) return;
         const idx = drafts.findIndex((entry) => entry.name === wanted);
         if (idx >= 0) selected = idx;
       });
