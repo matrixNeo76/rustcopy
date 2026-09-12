@@ -1527,6 +1527,207 @@ le prime due dal primo giro (§18.1-§18.14), le ultime due dal giro di audit co
   proposta diversa e più ampia, non fatta qui: F81 chiude solo la contraddizione fra il commento e
   il codice nello stesso file, non ridisegna la semantica dei colori per l'intera console.
 
+## 19. Scheda Job: stato operativo e rifacimento informativo (analisi del 12 Set 2026)
+
+Richiesta diretta dell'utente: *"la gui relativa ai jobs è decisamente priva di informazioni e di
+un dettagliato funzionale e grafico professionale"*. Stesso metodo delle sezioni precedenti: letto
+il codice reale (`Jobs.svelte`, `gui_api::JobSummary`/`list_jobs`, `History.svelte`,
+`Settings.svelte`, `App.svelte`, `session.svelte.js`, `Report.svelte`), non assunto dalla memoria
+di sessioni precedenti.
+
+### 19.1 Cosa mostra oggi, verificato riga per riga
+
+`Jobs.svelte` (219 righe) rende un'unica `<table>` a 5 colonne (Job, Sorgente, Destinazione, Tipo,
+Verifica) da `gui_api::JobSummary` (`gui_api.rs:72-107`), che espone **8** dei 34 campi di
+`JobConfig` (il conteggio dei 34 è già in §16.2, ma lì per l'editor, non per questa scheda):
+`name`, `source`, `dest`, `backup_type`, `mirror`, `verify_integrity`, `fast_verify`,
+`unconfigured`, più `report_path` mai renderizzato in questa scheda. Due badge inline (MIRROR,
+MODELLO) sono l'unica informazione oltre alla configurazione statica.
+
+**Zero informazione operativa**: nessuna riga dice se quel job è mai stato eseguito, quando, con
+quale esito, a quale velocità — l'informazione esiste già (`gui_api::read_history`, usata da
+`History.svelte`) ma non raggiunge questa scheda. **Zero collegamento verso le altre schede**: un
+operatore che vede un job non ha un solo clic per aprirne le impostazioni complete (Impostazioni),
+lo storico (Storico) o la modifica (Modifica) — deve ricopiare a mano il percorso del file in
+un'altra scheda e, per lo storico, anche il nome del job.
+
+Visivamente, `Jobs.svelte` è oggi la scheda meno sviluppata delle sette rispetto al vocabolario che
+le altre già usano: `Settings.svelte` ha badge di provenienza colorati per ogni valore
+(`ORIGIN_CLASS`, righe 31-35); `History.svelte` ha icone di esito (`CircleCheck`/`CircleX`, righe
+244-257) e badge colorati per severità dell'analisi; `Report.svelte` (F84) ha un'icona di esito
+calcolata server-side. `Jobs.svelte` non ha alcuna icona di stato — solo due badge testuali per
+condizioni rare (mirror, modello). Non è una regressione: è la scheda più vecchia, che non ha
+ricevuto lo stesso investimento delle altre nelle onde successive di questo documento.
+
+Il confronto con Cobian Reflector, già scritto in questo stesso documento (§14.2), lo dice
+esplicitamente e non è mai stato convertito in un piano: *"Un elenco di Task con icona di stato
+(riuscito/fallito/avviso)"* — esattamente il gap descritto sopra, mai raccolto come voce di lavoro
+perché §14 si concentrava sulle capacità del motore (pausa/ripresa, coda), non sulla presentazione
+dell'elenco job.
+
+### 19.2 Cosa NON cambia (vincoli permanenti di questo progetto)
+
+- **F61 resta intero**: questa scheda resta di sola lettura per l'elenco job in sé. QuickSync
+  (F71) e la creazione guidata (F83) restano le uniche due eccezioni già dichiarate, invariate,
+  fuori perimetro di questa proposta.
+- **Linguaggio visivo**: `app.css` dichiara esplicitamente *"An operator console, not a product
+  page: high density, no decoration"* — questa proposta estende il vocabolario già stabilito
+  (`.card`, i badge colorati già visti in Storico/Impostazioni, le icone `@lucide/svelte` già
+  importate altrove), non ne inventa uno nuovo. "Grafico professionale" qui significa gerarchia e
+  leggibilità delle informazioni esistenti, non elementi decorativi.
+- **La pianificazione è per-file, non per-job**: verificato in `crates/rustcopy-cli/src/main.rs` —
+  un'attività pianificata invoca sempre `--config <file>`, che esegue `run_jobs` su **ogni**
+  `[[jobs]]` del file; non esiste un flag che scheduli un singolo job dentro un file multi-job. Il
+  badge "pianificato" (da `gui_api::schedules_referencing`, già usato altrove per lo stesso file)
+  va quindi mostrato **una sola volta per l'intero file caricato**, mai per singola riga —
+  mostrarlo per riga implicherebbe una granularità che il motore non ha, lo stesso errore che
+  questo documento ha già evitato altrove (D26, la cwd di `preview_restore`).
+- **`report_path` può essere `None`**: quando il campo TOML contiene ancora `{timestamp}` non
+  risolto (P1), `report_path_for_summary` lo restituisce `None` di proposito (nessuna run passata è
+  prevedibile in anticipo). La colonna "Ultima esecuzione" deve mostrare onestamente "non
+  disponibile" in quel caso, non tentare un'euristica sul nome file.
+- **Non duplicare `Settings.svelte`**: quella scheda resta l'unica fonte del dettaglio completo a
+  34 campi con provenienza. Questa proposta aggiunge una vista "a colpo d'occhio" (poche icone/
+  badge per le impostazioni che più cambiano il comportamento) più un collegamento diretto a
+  Impostazioni per il dettaglio — non un secondo dump completo.
+
+### 19.3 Modifica al core — minima, un solo campo nuovo
+
+Tutto il resto è già letto da comandi Tauri esistenti (`read_history`, `schedules_referencing`) —
+nessun nuovo comando per quelli. Serve un solo campo nuovo su `JobSummary` (`gui_api.rs:72`):
+
+```rust
+/// The job-name key `read_history`/`read_advice` expect for *this* job's own run index —
+/// `None` for the implicit single-job case (no `[[jobs]]` at all, where the index carries no
+/// suffix), `Some(name)` for each `[[jobs]]` entry. Mirrors `report_path`'s own `namespace_with`
+/// exactly (D12): the frontend must not re-derive "is this the implicit single job or a named
+/// batch entry" itself, since a `[[jobs]]` entry can legally be named "job1" too, which would be
+/// indistinguishable from the fallback name if this field did not exist.
+pub history_job_name: Option<String>,
+```
+
+Popolato in `list_jobs` (`gui_api.rs:607-679`) con `None` nel ramo `jobs.is_empty()` (riga 619) e
+con `Some(name.clone())` nel ramo `[[jobs]]` (riga 649) — stessa condizione già usata per
+`namespace_with` alla riga 646, resa esplicita per un secondo consumatore invece di duplicata.
+
+### 19.4 Piano prioritizzato, tre onde (stesso metodo di §8)
+
+**Onda 1 — Stato operativo per job, nessun nuovo comando oltre il campo di §19.3**
+
+1. Per ogni job con `report_path` e `history_job_name` risolti, la scheda chiama
+   `invoke("read_history", { reportPath, jobName: history_job_name, limit: 1 })` e legge
+   `runs[0]` se presente (l'indice NDJSON è letto in ordine e la finestra scorrevole di
+   `RunHistory::read_from` con `limit: 1` lascia sopravvivere solo il record più recente —
+   verificato in `history.rs`). Aggiunge una colonna **"Ultima esecuzione"**: icona di esito
+   (riuso della stessa coppia `CircleCheck`/icona-attenzione già in `History.svelte`, colorazione
+   amber/emerald già stabilita da F81 — mai rosso per un codice diverso da zero che non sia un
+   fallimento vero), data relativa, throughput. Tre stati onesti: "mai eseguito" (nessuna riga
+   nell'indice), "non disponibile" (`report_path` è `None`, `{timestamp}` irrisolto), o l'esito
+   vero.
+   - **Costo esplicitamente accettato**: una chiamata `read_history` per job (N+1), non un nuovo
+     comando aggregato. Per il numero di job realistico di un file di configurazione (1-10) è
+     un costo trascurabile; se in futuro emergesse un caso reale con decine di job, questo è il
+     punto da rivedere per primo — non costruito ora perché nessun caso d'uso lo richiede ancora
+     (stessa disciplina D8 di `CLAUDE.md`).
+2. Badge "pianificato" **una volta per file**, sopra la tabella, da `schedules_referencing`
+   (già disponibile, già usato altrove per lo stesso file) — non per riga, per la ragione di
+   §19.2.
+
+**Onda 2 — Colpo d'occhio sulle impostazioni che contano di più**
+
+3. Una striscia di icone piccole per riga (non un secondo dump di Impostazioni), per le
+   impostazioni che cambiano davvero il comportamento e non sono già coperte dai badge MIRROR/
+   MODELLO esistenti: cifratura attiva (`encrypt_aes256` impostato), retention attiva
+   (`keep_generations`, col numero), esclusioni attive (conteggio di `exclude_files`+
+   `exclude_dirs` se non vuoti), thread non-default. Richiede di aggiungere questi campi a
+   `JobSummary` (già in `JobConfig`, già risolti da `merged_over` — nessuna nuova logica di
+   risoluzione, solo esporli). Nomi icone esatti da verificare nel barrel `@lucide/svelte`
+   all'implementazione (lo stesso avvertimento già scritto per F84 sulle icone pass/fail).
+4. Colonna "Job" arricchita con il conteggio job del file (es. "3 di 5") quando l'elenco ha più
+   di una riga — orientamento minimo, zero dato nuovo (già `jobs.length`).
+
+**Onda 3 — Collegamenti fra schede (chiude §9g specificamente per Job)**
+
+5. Tre azioni per riga (icone, non pulsanti di testo, per restare dentro la densità esistente).
+   **Corretto dopo verifica del codice reale** (una prima stesura di questo paragrafo assumeva un
+   ricaricamento automatico che non esiste): `Settings.svelte`/`History.svelte`/`Editor.svelte`
+   caricano solo al click su `PathBar`'s `onrun` — `Report.svelte` è l'unica scheda con un
+   ricaricamento cross-scheda già cablato (`session.pendingReportLoad`). Mantenere la promessa
+   "un clic apre già i dati di quel job" richiede quindi **due flag one-shot in più**, stesso
+   pattern, non uno stato condiviso che si presume osservato da sé:
+   - **Impostazioni**: imposta `session.configPath`, `session.pendingSettingsLoad = true` e
+     `session.activeTab = "settings"` — un nuovo `$effect` in `Settings.svelte`, identico a
+     quello di `Report.svelte:95-100`, consuma il flag e chiama `load()`.
+   - **Storico**: imposta `session.reportPath = job.report_path`,
+     `session.jobName = job.history_job_name ?? ""` (**mai `job.name`**: nel caso del job singolo
+     implicito `name` vale sempre il fallback `"job1"`, che punterebbe a un indice namespaced
+     inesistente — `.rustcopy_history.job1.jsonl` — invece di quello senza suffisso, mostrando
+     "nessuna run" per un job che invece ha storico), `session.pendingHistoryLoad = true`,
+     `session.activeTab = "history"` — stesso pattern one-shot di `pendingSettingsLoad`, in
+     `History.svelte`, la cui `load()` legge già `reportPath`/`jobName` freschi ad ogni chiamata
+     (riga 48).
+   - **Modifica**: richiede l'unico stato di sessione già corretto in questa proposta,
+     `session.pendingEditorJob: string | null` — stesso pattern one-shot già usato da
+     `session.pendingReportLoad` (impostato da `Run.svelte:113`, consumato da un `$effect` in
+     `Report.svelte:95-100` che lo azzera subito e carica). `Editor.svelte` lo leggerebbe allo
+     stesso modo: un `$effect` che, quando il flag è impostato e `drafts` è già popolato, trova
+     l'indice del draft con quel nome, imposta `selected` a quell'indice, e azzera il flag. Senza
+     questo, "Modifica" potrebbe solo aprire la scheda sul primo job, non su quello scelto.
+
+### 19.5 Disegno visivo proposto (entro il linguaggio esistente)
+
+- Tabella mantenuta, non convertita in card per riga: la densità informativa di una tabella resta
+  corretta per un elenco di job, coerente con la scelta esplicita "dashboard operativa" di
+  `app.css`. Le card restano per un dettaglio per-entità più lungo (come già in
+  `Settings.svelte`, un'`<article class="card">` per job).
+- Nuovo `<colgroup>` a 7 colonne (Job, Sorgente, Destinazione, Tipo, Verifica, Ultima esecuzione,
+  Impostazioni+Azioni) — stesso principio di larghezze esplicite già applicato (Livello 1, §10)
+  per non lasciare la colonna più larga assorbire tutto lo spazio.
+- Riuso letterale delle classi di colore/badge già stabilite: `bg-emerald-*`/`bg-amber-*` per
+  l'esito (History/Run), `bg-blue-100`/`bg-slate-200` per l'origine (Settings) — niente palette
+  nuova.
+
+### 19.6 Criticità trovate rileggendo questa stessa sezione
+
+Stesso metodo di §14.4/§16.3/§17.5/§18.17, applicato prima di presentare questa proposta:
+
+- La prima stesura dell'Onda 1 proponeva un nuovo comando Tauri aggregato
+  `job_last_runs(config_path)` che internamente chiamasse `read_history` per ogni job e
+  restituisse un solo array. Riletta contro D8 ("non costruire senza un chiamante reale che lo
+  richieda") e contro il fatto che `read_history` è già invocabile riga per riga dal frontend
+  senza alcuna logica di dominio in mezzo, il nuovo comando non farebbe altro che spostare un
+  ciclo `for` da Rust a JavaScript — zero guadagno, una superficie API in più da mantenere.
+  Corretto: N chiamate dirette a `read_history` dal frontend, nessun nuovo comando oltre al campo
+  di §19.3.
+- La prima stesura dell'Onda 3 proponeva di far leggere a `Editor.svelte` il già esistente
+  `session.jobName` invece di un campo dedicato. Riletta, `session.jobName` è già in uso attivo da
+  `History.svelte` come **filtro di lettura** (un campo di testo libero che l'operatore digita a
+  mano, righe 129-136) — riusarlo anche come segnale di navigazione per Modifica lo farebbe
+  scrivere da due schede con significati diversi (un filtro persistente contro un segnale
+  monouso), lo stesso tipo di collisione che `pendingReportLoad` esiste apposta per evitare.
+  Corretto: campo dedicato `session.pendingEditorJob`, one-shot come `pendingReportLoad`, mai
+  riusato per altro.
+- Punto aperto, non un errore ma un limite dichiarato: la striscia di icone dell'Onda 2 mostra
+  *che* un'impostazione è attiva, non il suo valore — per quello resta necessario aprire
+  Impostazioni. Non allargare l'Onda 2 con tooltip che duplicano il valore: un tooltip che ripete
+  esattamente quanto Impostazioni già mostra meglio (con provenienza) sarebbe un secondo posto da
+  tenere sincronizzato per zero beneficio reale.
+
+**Due difetti reali trovati da CodeRabbit sulla PR, non in questa rilettura**: (a) `History.svelte`/
+`Settings.svelte`/`Editor.svelte::load()` non si guardavano da risposte fuori ordine — prima
+dell'Onda 3 ogni pane caricava solo dal proprio click "Apri" manuale, dove un doppio caricamento
+sovrapposto era raro; con i collegamenti diretti da Job questo diventa un percorso reale (due clic
+rapidi su "Storico" per job diversi, una risposta più lenta per il primo che sovrascrive la
+seconda). Corretto con lo stesso contatore di generazione già usato dal poll loop di `Run.svelte`
+per l'identico problema — non un meccanismo nuovo, la stessa idea applicata a un secondo posto che
+ne aveva bisogno. (b) Il collegamento "Impostazioni"/"Modifica" leggeva `session.configPath` al
+momento del clic, ma quel campo è un binding live condiviso con `PathBar`: un operatore che inizia
+a digitare un percorso diverso senza premere "Elenca job" manderebbe quei due collegamenti al
+percorso a metà digitato invece che a quello da cui la riga cliccata viene davvero. Corretto con lo
+stesso schema `loadedFrom` già usato da `Editor.svelte` (il percorso da cui la tabella *visibile*
+è stata caricata) — ripristinato esplicitamente su `session.configPath` prima di impostare il
+segnale one-shot, invece di fidarsi che non sia cambiato.
+
 ## Riferimenti
 
 - [`CLAUDE.md`](CLAUDE.md) — regole operative per `runner.rs`, `job_editor.rs`, `gui_api.rs`.

@@ -24,6 +24,12 @@
   // which codes actually appear in this history. Missing entries render as "…" briefly while the
   // lookups for a freshly loaded history are still in flight.
   let meaningByCode = $state({});
+  // F86 (CodeRabbit): this pane now loads both from a manual "Apri" click and from a Job row's
+  // "Storico" action, so two calls can overlap for the first time in a way that matters -- a
+  // slower reply for an earlier path/job landing after a faster one for a later choice would
+  // silently show the wrong history. Same generation-counter guard already used by Run.svelte's
+  // poll loop for the identical out-of-order hazard.
+  let loadGeneration = 0;
 
   const SEVERITY_ORDER = { ATTENZIONE: 0, PROPOSTA: 1, INFO: 2 };
 
@@ -37,6 +43,7 @@
   };
 
   async function load() {
+    const mine = ++loadGeneration;
     error = null;
     loading = true;
     // A filter left over from a different report/job would silently hide runs in the new one.
@@ -60,17 +67,31 @@
       const entries = await Promise.all(
         codes.map(async (code) => [code, await invoke("exit_code_meaning", { code })]),
       );
+      // A superseded request (a newer load() already started) never overwrites what that newer
+      // one already committed or is about to.
+      if (mine !== loadGeneration) return;
       meaningByCode = Object.fromEntries(entries);
       history = loadedHistory;
       advice = loadedAdvice;
     } catch (e) {
+      if (mine !== loadGeneration) return;
       error = String(e);
       history = null;
       advice = [];
     } finally {
-      loading = false;
+      if (mine === loadGeneration) loading = false;
     }
   }
+
+  // F86: "Storico" from a Job row sets reportPath/jobName and this flag together, then switches
+  // here — same one-shot pattern as Report.svelte's pendingReportLoad, for the same reason
+  // (this pane stays mounted while hidden, so a live binding would over-trigger on manual typing).
+  $effect(() => {
+    if (session.pendingHistoryLoad) {
+      session.pendingHistoryLoad = false;
+      load();
+    }
+  });
 
   function duration(seconds) {
     if (seconds < 10) return `${seconds.toFixed(2)}s`;

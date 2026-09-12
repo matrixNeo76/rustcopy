@@ -20,6 +20,11 @@
   // the pane readable; the toggle is there because "what is this job actually set to" is a
   // legitimate question too.
   let showDefaults = $state(false);
+  // F86 (CodeRabbit): this pane now loads both from a manual "Apri" click and from a Job row's
+  // "Impostazioni" action, so two calls can overlap for the first time in a way that matters --
+  // same generation-counter guard already used by Run.svelte's poll loop for the identical
+  // out-of-order hazard.
+  let loadGeneration = 0;
 
   // The origin comes from the library as an enum. Rendering it is the frontend's job; deciding it
   // is not — `merged_over` resolves the value and only the library knows which layer supplied it.
@@ -35,18 +40,33 @@
   };
 
   async function load() {
+    const mine = ++loadGeneration;
     error = null;
     loading = true;
     try {
-      jobs = await invoke("read_settings", { configPath: session.configPath });
+      const result = await invoke("read_settings", { configPath: session.configPath });
+      if (mine !== loadGeneration) return;
+      jobs = result;
       loaded = true;
     } catch (e) {
+      if (mine !== loadGeneration) return;
       error = String(e);
       jobs = [];
     } finally {
-      loading = false;
+      if (mine === loadGeneration) loading = false;
     }
   }
+
+  // F86: "Impostazioni" from a Job row sets configPath and this flag together, then switches
+  // here — same one-shot pattern as Report.svelte's pendingReportLoad. A live binding on
+  // configPath itself would reload on every keystroke of someone typing a path by hand in this
+  // very pane, since it stays mounted (and its state kept) even while hidden (App.svelte).
+  $effect(() => {
+    if (session.pendingSettingsLoad) {
+      session.pendingSettingsLoad = false;
+      load();
+    }
+  });
 
   function visible(entries) {
     // A caution is never hidden, whatever its origin: a job that mirrors because nobody set
