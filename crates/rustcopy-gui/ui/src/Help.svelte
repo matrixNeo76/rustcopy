@@ -77,8 +77,11 @@
 
 <section class="p-4">
   <p class="max-w-3xl text-sm text-slate-600 dark:text-slate-400">
-    Questa console <strong>legge</strong> ciò che rustcopy ha già scritto e prepara proposte di
-    configurazione. Non esegue backup, non copia e non cancella nulla.
+    Questa console <strong>legge</strong> ciò che rustcopy ha già scritto, prepara proposte di
+    configurazione (Modifica) e — dalla scheda Esegui — avvia un backup vero, lanciando la stessa
+    CLI che eseguirebbe un'attività pianificata. Non può però accendere il mirror, forzare una
+    cancellazione, né installare servizi o pianificazioni: quelle restano operazioni che solo un
+    file di configurazione scritto a mano o la CLI possono autorizzare.
   </p>
 
   {#each SECTIONS as section}
