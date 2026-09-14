@@ -21,6 +21,29 @@ For full technical detail behind any entry, see `ANALYSIS.md` (defect list, `D<N
 
 ## [Unreleased]
 
+## [7.4.0] - 2026-09-14
+
+### Added
+- **Operational status on the Job screen** (F86): each job now shows an "Ultima esecuzione"
+  column — outcome, date and throughput from its own run history, honestly distinguishing "never
+  run" from "no data available yet" (an unresolved `{timestamp}` report path) rather than guessing.
+  A compact icon strip flags encryption, retention, exclusions and non-default thread counts at a
+  glance. Three new per-row actions jump straight to that job's Impostazioni, Storico or Modifica,
+  instead of retyping a path in another tab. A "pianificato" badge appears once per file when a
+  Windows scheduled task references it — file-level, since a scheduled run always executes every
+  job in the file, never a single one.
+
+### Fixed
+- The verification algorithm on the Report screen never translated to a friendly label ("SHA-256",
+  "BLAKE3") — a casing mismatch between the lookup table and the real value meant it silently
+  always fell back to the raw wire form ("sha256"); BLAKE3 was missing from the table outright.
+- The Help screen's introduction still claimed the console never runs backups, copies, or deletes
+  anything — false since the Esegui tab was added, and contradicted by the very next section of
+  the same page.
+- The Report screen could show a stale report if two loads overlapped (a manual open racing a
+  cross-tab jump from Esegui) — the same out-of-order-response guard already added to every other
+  pane that loads from more than one trigger.
+
 ## [7.3.0] - 2026-09-11
 
 ### Added
