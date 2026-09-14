@@ -1728,6 +1728,132 @@ stesso schema `loadedFrom` già usato da `Editor.svelte` (il percorso da cui la 
 è stata caricata) — ripristinato esplicitamente su `session.configPath` prima di impostare il
 segnale one-shot, invece di fidarsi che non sia cambiato.
 
+## 20. Audit completo delle sette schede, dal vivo e nel codice (analisi del 14 Set 2026)
+
+Richiesta diretta dell'utente, dopo la verifica visiva di F86: *"effettua controllo accurato della
+gui e controlla cosa altro manca affinché sia funzionale e completa"*. Diverso nel metodo da
+§18.15 (che partiva da una lente ristretta, "manca un aiuto inline", e concludeva "nessun'altra
+criticità" per `Jobs.svelte`/`Settings.svelte`/`PathBar.svelte"): qui ogni file Svelte è stato letto
+per intero (non a campione — `Editor.svelte` 925 righe, `Report.svelte` 610, `Run.svelte` 536, gli
+altri otto per intero), e **quattro** sono stati caricati dal vivo sulla console realmente
+installata (§ precedente, `C:\Program Files\rustcopy`) con un file di configurazione reale e una
+run vera già eseguita — non solo letti. Tre difetti reali e una capacità mancante, tutti verificati
+al livello di dettaglio che questo documento richiede altrove (citazione di riga, non "sembra
+sbagliato").
+
+### 20.1 Difetti reali trovati (proposti come **F87**)
+
+**(a) `Report.svelte`: l'algoritmo di verifica non si traduce mai — mostra sempre la forma grezza
+del wire format.** `HASH_ALGO_LABEL` (riga 63) è `{ Sha256: "SHA-256", Xxh3: "xxHash3 (non
+crittografico)" }`, ma `HashAlgorithm` (`integrity.rs:21-32`) serializza con `#[serde(rename =
+"sha256")]`/`"blake3"`/`"xxh3"` — minuscolo, mai il nome della variante Rust. La chiave `Sha256`
+non incontra **mai** il valore reale `"sha256"` che arriva da `report.configuration.hash_algo`; il
+lookup fallisce sempre, silenziosamente, e il fallback `?? report.configuration.hash_algo` (righe
+200, 398) mostra la stringa grezza. **Blake3 manca dal dizionario anche a prescindere dalla
+maiuscola** — tre algoritmi, zero che si traducono mai. Verificato dal vivo sulla console
+installata (screenshot, run reale con `--hash-algo` di default): sia "Verifica → Algoritmo" sia
+"Configurazione usata → Algoritmo verifica" mostravano `sha256`, non `SHA-256`. **Non lo stesso
+difetto già dichiarato deliberato per `exit_code_meaning`** (commento alla riga 56-60 di
+`Report.svelte`: quella stringa è una descrizione bitmask composita, tradurla richiederebbe una
+combinatoria di frasi, scelta consapevole di lasciarla in inglese) — qui l'enum è chiusa a tre
+varianti, esattamente il caso in cui `Report.svelte` stesso dice che una traduzione è legittima,
+solo scritta con le chiavi sbagliate. Confrontato con `Settings.svelte`: quella scheda non ha
+questo bug perché non tenta una traduzione — `gui_api.rs:1088-1094` rende `hash_algo` con
+`format!("{value:?}").to_lowercase()` lato Rust, già minuscolo, già corretto per il proprio scopo
+(mostrare il valore TOML-equivalente, non un'etichetta amichevole).
+
+**(b) `Help.svelte`: il paragrafo introduttivo contraddice la sezione subito sotto, nello stesso
+file.** Riga 80-81: *"Questa console **legge** ciò che rustcopy ha già scritto... **Non esegue
+backup, non copia e non cancella nulla**"* — falso dall'introduzione dell'esecuzione (F54, la
+scheda Esegui avvia realmente la CLI) e smentito dalla sezione "Cosa significano le schede" tre
+righe sotto nello stesso file (riga 33: *"Esegui: Avvia la stessa CLI..."*). **Questa esatta frase
+era già stata segnalata come falsa e dichiarata corretta in §9h** (*"Corretto in questa stessa
+sessione (`Help.svelte`)"*, 4 Set 2026) — ma il fix di allora ha evidentemente aggiunto la voce
+"Esegui" all'elenco delle schede senza toccare il paragrafo introduttivo, che porta ancora la
+stessa frase falsa parola per parola. Non un nuovo difetto: una correzione dichiarata completa che
+non lo era, trovata solo rileggendo il file per intero invece di fidarsi della riga di `CLAUDE.md`
+che la dava per chiusa.
+
+**(c) `Report.svelte::load()` non ha la stessa guardia contro le risposte fuori ordine aggiunta
+altrove da F86.** La PR #128 (F86) ha aggiunto un contatore di generazione a `load()` in
+`History.svelte`/`Settings.svelte`/`Editor.svelte`/`Jobs.svelte` dopo che CodeRabbit ha trovato la
+stessa classe di difetto — ma `Report.svelte` non era nel diff di quella PR, quindi non l'ha
+ricevuta, pur avendo esattamente la stessa forma vulnerabile: `load()` (riga 65) chiamabile sia dal
+clic manuale "Apri report" sia dal segnale one-shot `pendingReportLoad` (riga 95-100, impostato da
+`Run.svelte`'s "Apri il report di questa run"). Due `load()` sovrapposte — un click manuale su un
+percorso, subito seguito da un salto da Esegui verso un report diverso prima che il primo
+risponda — possono ancora oggi mostrare il report sbagliato se la risposta più lenta arriva dopo
+quella più veloce. Non introdotto da F86: preesistente da quando `pendingReportLoad` esiste (F82),
+solo mai chiuso con lo stesso pattern già stabilito altrove.
+
+### 20.2 Capacità mancante: non esiste un modo per rimuovere un job da una proposta (proposta come **F88**)
+
+`Editor.svelte` offre "+ Nuovo job" (`addJob`, riga 234) e riordino (`moveJob`, riga 252), ma
+**nessun controllo rimuove un job esistente dalla proposta**. Verificato non solo nell'interfaccia
+ma nel contratto del core stesso, che lo rende un vincolo reale e non solo un pulsante dimenticato:
+`job_editor::build_proposal` (righe 504-511) — *"Any stored job no draft named stays exactly as it
+was... omission never deletes"* — chiunque scriva `drafts` senza un job non lo rimuove, lo
+riattacca comunque in coda. **Un ipotetico pulsante "Elimina" che si limitasse a togliere la voce
+dall'array locale non funzionerebbe**: il core lo riscriverebbe nella proposta lo stesso, perché
+l'assenza di menzione è già la garanzia — deliberata, testata (`job_editor.rs` righe 870+) — che
+protegge un job da una svista del frontend. Rimuovere un job richiede quindi un canale esplicito
+distinto dalla semplice omissione (es. un elenco di nomi da rimuovere passato accanto a `drafts`, o
+un marcatore `remove: true` per voce), non un cambiamento lato sola GUI. **Perché conta per
+"funzionale e completa"**: un operatore che ha aggiunto un job per errore, o che vuole smettere di
+fare backup di una cartella, oggi non ha alcun percorso nella console — deve modificare il file
+TOML a mano, l'unica operazione per cui l'intera scheda Modifica esiste altrimenti di non dover
+fare.
+
+### 20.3 Gap già tracciati altrove, non riaperti qui
+
+Il conteggio di §16.2 (17 dei 34 campi di `JobConfig` raggiungibili da `Editor.svelte`) è
+aggiornato a **18/34** dopo F80 (`encrypt_aes256`) — verificato con `grep -oE "draft\.[a-z_]+"`.
+Gli altri 14 (`retry_wait_seconds`, `ignore_transient_missing`, `html_report_path`, `hash_algo`,
+`compare_baseline`, `log_path`, `min_age_days`, `max_age_days`, `bandwidth_limit_mbps`,
+`no_prescan`, `skip_space_check`, `space_safety_margin_percent`, `long_paths`,
+`preserve_timestamps`) restano backlog senza F-number dedicato, esattamente come già concluso in
+§16.2 — non riproposti qui in dettaglio. Il motore pilotabile (F47/F48/F58, §15) e il limitatore di
+banda con slider (§14.5 punto 3) restano sospesi/a bassa priorità per le stesse ragioni già scritte
+lì. `checkpoint::build_resume_args`'s limite dichiarato (D25, `ANALYSIS.md`) resta aperto e
+correttamente comunicato dal vivo in `Run.svelte` (righe 308-313, verificato nello screenshot di
+questa stessa sessione).
+
+### 20.4 Piano prioritizzato
+
+**Onda 1 — tre correzioni indipendenti, nessun rischio, nessun cambio al core**
+
+1. **F87(a)**: correggere le chiavi di `HASH_ALGO_LABEL` in `Report.svelte` (`sha256`/`blake3`/
+   `xxh3`, minuscolo, aggiungendo la voce Blake3 mancante) — allineate al wire format reale, non
+   al nome della variante Rust.
+2. **F87(b)**: riscrivere il paragrafo introduttivo di `Help.svelte` (righe 79-82) per riflettere
+   l'esistenza di Esegui, coerente con la sezione "Cosa significano le schede" tre righe sotto.
+3. **F87(c)**: aggiungere a `Report.svelte::load()` lo stesso contatore di generazione già in
+   `History.svelte`/`Settings.svelte`/`Editor.svelte`/`Jobs.svelte` (F86) — stesso pattern, stessa
+   guardia, nessuna decisione nuova da prendere.
+
+**Onda 2 — una capacità nuova, richiede un cambio al core**
+
+4. **F88**: rimozione di un job dalla proposta di `Editor.svelte`. Richiede prima una decisione di
+   design sul canale esplicito (elenco di nomi da rimuovere vs. marcatore per voce) da discutere
+   prima di scrivere codice, per la stessa ragione per cui ogni altra modifica a `job_editor.rs`
+   passa da qui prima che dal codice (F54, F69, F70, F80 tutte lo hanno fatto).
+
+### 20.5 Criticità trovate rileggendo questa stessa sezione
+
+Stesso metodo di §14.4/§16.3/§17.5/§18.17/§19.6:
+
+- La prima stesura di §20.1(a) proponeva di correggere `HASH_ALGO_LABEL` aggiungendo semplicemente
+  le chiavi minuscole accanto a quelle esistenti (`sha256` E `Sha256`), per "non rompere nulla se
+  qualcosa altrove si aspetta la maiuscola". Verificato con `grep -rn "HASH_ALGO_LABEL"
+  crates/rustcopy-gui/ui/src` che l'unico consumatore è `Report.svelte` stesso — le chiavi
+  maiuscole non sono mai state corrette da nessun valore reale, quindi tenerle sarebbe morto codice
+  travestito da compatibilità. Corretto: sostituire, non aggiungere.
+- Il primo elenco di §20.1(c) non specificava se il difetto fosse "introdotto da F86" o
+  preesistente — importante perché questo documento distingue sempre le due cose (es. §19.1 lo fa
+  esplicitamente per Job). Verificato: `pendingReportLoad` esiste da F82 (8 Set 2026), ben prima di
+  F86 — il difetto è preesistente, F86 non lo ha causato, solo non lo ha chiuso perché
+  `Report.svelte` non era nel proprio diff.
+
 ## Riferimenti
 
 - [`CLAUDE.md`](CLAUDE.md) — regole operative per `runner.rs`, `job_editor.rs`, `gui_api.rs`.

@@ -60,17 +60,36 @@
   // PIANO_GUI.md §10) and deliberately left in English rather than mistranslated.
   const INTEGRITY_LABEL = { Passed: "superata", Failed: "fallita" };
 
-  const HASH_ALGO_LABEL = { Sha256: "SHA-256", Xxh3: "xxHash3 (non crittografico)" };
+  // F87(a): keyed on the wire value `ConfigurationReport::hash_algo` actually serializes to —
+  // `HashAlgorithm`'s own `#[serde(rename = "sha256"/"blake3"/"xxh3")]` (integrity.rs), all
+  // lowercase, never the Rust variant name. The lookup below silently never matched with
+  // PascalCase keys (`Sha256`/`Xxh3`), always falling through to the raw wire string; Blake3 was
+  // missing from the table entirely regardless of casing. Verified live against a real report.
+  const HASH_ALGO_LABEL = {
+    sha256: "SHA-256",
+    blake3: "BLAKE3",
+    xxh3: "xxHash3 (non crittografico)",
+  };
+
+  // F87(c): same generation-counter guard F86 added to History/Settings/Editor/Jobs.svelte after
+  // CodeRabbit found the identical hazard there — this pane has the same shape (load() reachable
+  // both from a manual PathBar click and from the one-shot `pendingReportLoad` signal below) and
+  // was simply not in that PR's diff, so it never received the fix. Preexisting since
+  // `pendingReportLoad` itself (F82), not introduced by F86.
+  let loadGeneration = 0;
 
   async function load(from = 0) {
+    const mine = ++loadGeneration;
     error = null;
     loading = true;
     try {
-      report = await invoke("read_report_page", {
+      const loadedReport = await invoke("read_report_page", {
         path: session.reportPath,
         offset: from,
         limit: PAGE,
       });
+      if (mine !== loadGeneration) return;
+      report = loadedReport;
       offset = from;
       // A filter left over from a previous report, or from a page the operator just left, would
       // silently hide entries in the one just loaded.
@@ -80,10 +99,11 @@
       restorePreview = null;
       restorePreviewError = null;
     } catch (e) {
+      if (mine !== loadGeneration) return;
       error = String(e);
       report = null;
     } finally {
-      loading = false;
+      if (mine === loadGeneration) loading = false;
     }
   }
 
