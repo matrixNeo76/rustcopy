@@ -66,7 +66,14 @@ fn read_dropped_paths(data_object: &IDataObject) -> Vec<PathBuf> {
         return Vec::new();
     };
 
-    if !medium_is_a_usable_hglobal(medium.tymed, unsafe { medium.u.hGlobal.0.is_null() }) {
+    // CodeRabbit finding on this exact fix (kept as the two-line story, not silently corrected):
+    // the first version of this guard called `medium_is_a_usable_hglobal(medium.tymed, unsafe {
+    // medium.u.hGlobal.0.is_null() })` -- Rust evaluates a call's arguments before the call
+    // itself, so that second argument read the union *unconditionally*, defeating the entire
+    // point of checking `tymed` first. The tymed check below is therefore its own statement,
+    // guaranteed to run and return before `medium.u` is ever touched -- never fold it back into
+    // a single expression that also computes something from the union.
+    if !tymed_is_hglobal(medium.tymed) {
         unsafe {
             windows::Win32::System::Ole::ReleaseStgMedium(&mut medium);
         }
@@ -74,6 +81,12 @@ fn read_dropped_paths(data_object: &IDataObject) -> Vec<PathBuf> {
     }
 
     let hglobal = unsafe { medium.u.hGlobal };
+    if hglobal.0.is_null() {
+        unsafe {
+            windows::Win32::System::Ole::ReleaseStgMedium(&mut medium);
+        }
+        return Vec::new();
+    }
     let hdrop = HDROP(hglobal.0);
 
     let count = unsafe { DragQueryFileW(hdrop, 0xFFFF_FFFF, None) };
@@ -101,14 +114,17 @@ pub fn all_are_directories(paths: &[PathBuf]) -> bool {
     !paths.is_empty() && paths.iter().all(|p| p.is_dir())
 }
 
-/// Whether a `STGMEDIUM` returned by `IDataObject::GetData` is safe to read as an `HGLOBAL` — the
-/// tymed discriminant must actually say `TYMED_HGLOBAL` (the union's other variants are not
-/// `hGlobal`, reading it as one anyway is undefined behaviour) and the handle it carries must be
-/// non-null. Split out of `read_dropped_paths` so this specific decision has a real test, even
-/// though building a genuine `STGMEDIUM`/`IDataObject` to exercise the caller end-to-end is not
-/// possible outside a live COM host (see the module doc in `lib.rs`).
-fn medium_is_a_usable_hglobal(tymed: u32, hglobal_is_null: bool) -> bool {
-    tymed == TYMED_HGLOBAL.0 as u32 && !hglobal_is_null
+/// Whether a `STGMEDIUM`'s `tymed` discriminant says its union's `hGlobal` field is the one
+/// `GetData` actually populated — the union's other variants (`hBitmap`/`hMetaFilePict`/
+/// `hEnhMetaFile`/...) are not `hGlobal`, reading it as one anyway is undefined behaviour. Takes
+/// only `tymed`, never a value already read from the union: the caller must treat this as a gate
+/// that runs and returns *before* `medium.u` is touched at all, not as one input among several
+/// computed up front (see the comment at the call site in `read_dropped_paths` for why that
+/// distinction is load-bearing, not stylistic). Split out so this specific decision has a real
+/// test, even though building a genuine `STGMEDIUM`/`IDataObject` to exercise the caller
+/// end-to-end is not possible outside a live COM host (see the module doc in `lib.rs`).
+fn tymed_is_hglobal(tymed: u32) -> bool {
+    tymed == TYMED_HGLOBAL.0 as u32
 }
 
 /// Recovers from a poisoned lock rather than panicking -- deliberately, everywhere this handler
@@ -345,20 +361,12 @@ mod tests {
     // Regression tests for the 15 Set 2026 incident: a `STGMEDIUM` whose `tymed` does not
     // actually say `TYMED_HGLOBAL` must never be trusted, whatever the request asked for.
     #[test]
-    fn medium_is_usable_only_when_tymed_is_hglobal_and_the_handle_is_non_null() {
-        let hglobal = TYMED_HGLOBAL.0 as u32;
-        assert!(medium_is_a_usable_hglobal(hglobal, false));
+    fn tymed_is_hglobal_is_true_for_the_real_hglobal_discriminant() {
+        assert!(tymed_is_hglobal(TYMED_HGLOBAL.0 as u32));
     }
 
     #[test]
-    fn medium_is_not_usable_when_tymed_is_not_hglobal() {
-        let not_hglobal = (TYMED_HGLOBAL.0 as u32) + 1;
-        assert!(!medium_is_a_usable_hglobal(not_hglobal, false));
-    }
-
-    #[test]
-    fn medium_is_not_usable_when_the_handle_is_null_even_with_the_right_tymed() {
-        let hglobal = TYMED_HGLOBAL.0 as u32;
-        assert!(!medium_is_a_usable_hglobal(hglobal, true));
+    fn tymed_is_hglobal_is_false_for_any_other_discriminant() {
+        assert!(!tymed_is_hglobal((TYMED_HGLOBAL.0 as u32) + 1));
     }
 }

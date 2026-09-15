@@ -1712,16 +1712,32 @@ conforme.
 **Fix.** Due controlli prima di toccare l'union, esattamente ciò che ogni esempio Microsoft di
 estensione shell fa e che questa versione saltava: `medium.tymed` deve essere davvero
 `TYMED_HGLOBAL` prima di leggere `medium.u.hGlobal`, e l'handle risultante deve essere non-nullo
-prima di incapsularlo in `HDROP`. Estratta la decisione in una funzione pura testabile
-(`medium_is_a_usable_hglobal`), con tre nuovi test unitari. **Trovato nello stesso giro un secondo
-difetto, minore**: il commento di modulo di `lib.rs` dichiarava `all_are_directories` già coperta
-da test unitari — falso, l'intero crate non aveva **nessun** modulo `#[cfg(test)]` in `handler.rs`.
-Aggiunti tre test anche per quella funzione, colmando un gap di copertura reale su una funzione che
-decide sia se mostrare la voce di menu sia se `InvokeCommand` procede.
+prima di incapsularlo in `HDROP`.
 
-**Verificato**: `cargo test -p rustcopy-shell --lib` (12/12, +6), `cargo clippy -p rustcopy-shell
---all-targets -D warnings` e con il gate unwrap/expect scoped a `--lib`, `cargo fmt --check`, tutti
-puliti. **Non ancora verificato dal vivo**: un ciclo reale di trascinamento su una seconda macchina
+**Difetto minore trovato nello stesso giro, non in review**: il commento di modulo di `lib.rs`
+dichiarava `all_are_directories` già coperta da test unitari — falso, l'intero crate non aveva
+**nessun** modulo `#[cfg(test)]` in `handler.rs`. Aggiunti tre test anche per quella funzione,
+colmando un gap di copertura reale su una funzione che decide sia se mostrare la voce di menu sia
+se `InvokeCommand` procede.
+
+**Terzo difetto, nello stesso fix, trovato da CodeRabbit sulla PR e non da questa stessa
+rilettura**: la prima versione della correzione chiamava
+`medium_is_a_usable_hglobal(medium.tymed, unsafe { medium.u.hGlobal.0.is_null() })` — una singola
+espressione con due argomenti. Rust valuta gli argomenti di una chiamata **prima** della chiamata
+stessa, quindi il secondo argomento leggeva l'union `medium.u` **incondizionatamente**, esattamente
+il difetto che quella correzione doveva chiudere, solo spostato dentro una funzione dal nome
+rassicurante. La lezione, non ovvia: una funzione pura testabile che *riceve* un valore già letto
+dall'union non protegge da nulla se il chiamante lo legge comunque per costruire l'argomento — la
+guardia deve essere una propria istruzione (`if !tymed_is_hglobal(medium.tymed) { return; }`) che
+ritorna **prima** che il codice successivo tocchi `medium.u`, non un ingrediente fra altri di
+un'unica espressione. Corretto: `tymed_is_hglobal(tymed: u32) -> bool` riceve solo il discriminante,
+mai un valore derivato dall'union, e il controllo sull'handle nullo è una seconda istruzione
+separata, dopo che l'union è già stata letta in sicurezza.
+
+**Verificato**: `cargo test -p rustcopy-shell --lib` (11/11, +5 nette), `cargo clippy -p
+rustcopy-shell --all-targets -D warnings` e con il gate unwrap/expect scoped a `--lib`, `cargo fmt
+--check`, tutti puliti dopo la correzione. **Non ancora verificato dal vivo**: un ciclo reale di
+trascinamento su una seconda macchina
 con uno stack software diverso da quella di sviluppo — la stessa condizione che ha esposto il
 difetto, non riproducibile senza una macchina del genere disponibile.
 
