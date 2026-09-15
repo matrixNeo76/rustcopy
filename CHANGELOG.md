@@ -21,6 +21,19 @@ For full technical detail behind any entry, see `ANALYSIS.md` (defect list, `D<N
 
 ## [Unreleased]
 
+## [7.4.1] - 2026-09-15
+
+### Fixed
+- **Critical**: the Explorer Shell extension (F85) could crash `explorer.exe` itself — taking
+  down the desktop, taskbar and every open window at once, on some machines requiring a full
+  reboot to recover — for any right-click or cross-drive drag onto any folder or drive, not just
+  a drag between two rustcopy-managed folders. The handler read a Windows drag-and-drop data
+  structure without first checking which of its union fields was actually valid; a non-standard
+  drag source (a cloud-sync folder, another Shell extension, antivirus Shell hooks) could trigger
+  undefined behavior inside Explorer's own process. Installations that never selected the Shell
+  extension component, or never used the affected drag gesture, were not exposed. Full write-up:
+  `ANALYSIS.md` D29.
+
 ## [7.4.0] - 2026-09-14
 
 ### Added
