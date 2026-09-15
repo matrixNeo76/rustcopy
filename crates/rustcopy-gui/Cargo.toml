@@ -41,7 +41,7 @@ serde_json.workspace = true
 # effective version in the tree via tauri/tauri-build (verified: `cargo tree -p rustcopy-gui -i
 # dirs` resolves to 6.0.0 before this was declared) -- adds no new crate, only makes it directly
 # usable from this crate's own code instead of only through Tauri's internals.
-dirs = "6"
+dirs = "7"
 
 [[bin]]
 name = "rustcopy-gui"
