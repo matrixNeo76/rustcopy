@@ -1663,6 +1663,84 @@ dei due backslash iniziali, invece del semplice `format!(r"\\?\{trimmed}")`. Ser
 regressione con un vero percorso UNC lungo (>240 caratteri), accanto ai test esistenti di
 `normalize_path_arg_strips_various_separators`.
 
+### D29 — `read_dropped_paths` leggeva l'union `STGMEDIUM` senza controllare il discriminante `tymed`, crash reale di Explorer su una seconda macchina 🟢 CHIUSO (15 Set 2026)
+
+**Stato: chiuso, fix verificato con test unitari e compilazione; non ancora riverificato dal vivo
+su una seconda macchina reale (nessuna disponibile in questa sessione).**
+
+**Gravità: CRITICA** — non un difetto isolato all'estensione: ha reso `explorer.exe` inutilizzabile
+nella sua interezza (desktop, barra delle applicazioni, ogni finestra aperta) su un secondo PC
+Windows 11 su cui l'utente ha installato rustcopy, al punto da richiedere un riavvio completo della
+macchina per ripristinarlo. Il precedente più vicino in questo progetto è D22 (la console installata
+che caricava il server di sviluppo) — ma quello rompeva solo la console stessa, mai il resto del
+sistema operativo dell'utente.
+
+**Causa.** `handler::read_dropped_paths` (`crates/rustcopy-shell/src/handler.rs`) chiama
+`IDataObject::GetData` chiedendo `CF_HDROP` con `tymed: TYMED_HGLOBAL`, poi leggeva
+`medium.u.hGlobal` **senza mai controllare `medium.tymed`** — il campo che `STGMEDIUM` porta
+apposta per dire quale variante dell'union `u` (`hBitmap`/`hMetaFilePict`/`hEnhMetaFile`/`hGlobal`/
+...) è davvero quella che `GetData` ha popolato. Un `IDataObject` conforme alla specifica COM
+dovrebbe onorare l'unico `tymed` richiesto — ma "dovrebbe" non è "fa sempre": questo handler è
+registrato sotto `Directory`/`Drive` in `shellex\DragDropHandlers` (`registry.rs`), quindi gira
+**dentro lo stesso processo di `explorer.exe`** per ogni trascinamento col tasto destro o fra unità
+diverse su qualunque cartella o unità — non solo un trascinamento fra due cartelle gestite da
+rustcopy. Ogni sorgente di drag&drop installata sulla macchina (una cartella di sincronizzazione
+cloud, un'altra estensione shell, un hook di un antivirus) è un chiamante potenziale, e nessuna di
+queste è mai stata esercitata sulla macchina di sviluppo originale durante i test dal vivo di F85.
+Un medium non-HGLOBAL passato senza controllo faceva leggere a `medium.u.hGlobal` i byte
+effettivamente presenti nell'altra variante dell'union — comportamento indefinito — e quel valore
+veniva incapsulato in un `HDROP` e passato direttamente a `DragQueryFileW`, una vera chiamata
+Win32, come se fosse un handle valido. Un handle non valido lì crasha il processo chiamante — che
+qui è `explorer.exe` stesso, l'unico processo che ospita desktop, barra delle applicazioni e ogni
+finestra di Esplora risorse aperta.
+
+**Perché un riavvio del processo non bastava.** Il riavvio automatico di `explorer.exe` dopo un
+crash non garantisce di ripulire lo stato COM/cache di classe di quella sessione, e il primo
+trascinamento successivo rischiava di far ripetere lo stesso crash da capo — coerente con la
+segnalazione dell'utente, che ha dovuto riavviare l'intera macchina per risolvere, non solo
+richiudere Esplora risorse.
+
+**Come è stato trovato.** Segnalazione diretta dell'utente dopo un'installazione reale su una
+seconda macchina Windows 11 — *"si è sputtanato tutto e non mi funzionava nemmeno esplora
+risorse"* — non da un test, non da un audit del codice: nessuna copertura di test automatica esiste
+per la plumbing COM di questo crate (limite dichiarato fin da F85, condiviso con VSS/F30 e
+`--install-service`/F37), e la verifica dal vivo di F85 era stata fatta su una sola macchina, con
+un solo tipo di sorgente di trascinamento (Explorer stesso, cartelle locali) — mai su una macchina
+con uno stack software diverso, che è esattamente la condizione che espone un `IDataObject` non
+conforme.
+
+**Fix.** Due controlli prima di toccare l'union, esattamente ciò che ogni esempio Microsoft di
+estensione shell fa e che questa versione saltava: `medium.tymed` deve essere davvero
+`TYMED_HGLOBAL` prima di leggere `medium.u.hGlobal`, e l'handle risultante deve essere non-nullo
+prima di incapsularlo in `HDROP`.
+
+**Difetto minore trovato nello stesso giro, non in review**: il commento di modulo di `lib.rs`
+dichiarava `all_are_directories` già coperta da test unitari — falso, l'intero crate non aveva
+**nessun** modulo `#[cfg(test)]` in `handler.rs`. Aggiunti tre test anche per quella funzione,
+colmando un gap di copertura reale su una funzione che decide sia se mostrare la voce di menu sia
+se `InvokeCommand` procede.
+
+**Terzo difetto, nello stesso fix, trovato da CodeRabbit sulla PR e non da questa stessa
+rilettura**: la prima versione della correzione chiamava
+`medium_is_a_usable_hglobal(medium.tymed, unsafe { medium.u.hGlobal.0.is_null() })` — una singola
+espressione con due argomenti. Rust valuta gli argomenti di una chiamata **prima** della chiamata
+stessa, quindi il secondo argomento leggeva l'union `medium.u` **incondizionatamente**, esattamente
+il difetto che quella correzione doveva chiudere, solo spostato dentro una funzione dal nome
+rassicurante. La lezione, non ovvia: una funzione pura testabile che *riceve* un valore già letto
+dall'union non protegge da nulla se il chiamante lo legge comunque per costruire l'argomento — la
+guardia deve essere una propria istruzione (`if !tymed_is_hglobal(medium.tymed) { return; }`) che
+ritorna **prima** che il codice successivo tocchi `medium.u`, non un ingrediente fra altri di
+un'unica espressione. Corretto: `tymed_is_hglobal(tymed: u32) -> bool` riceve solo il discriminante,
+mai un valore derivato dall'union, e il controllo sull'handle nullo è una seconda istruzione
+separata, dopo che l'union è già stata letta in sicurezza.
+
+**Verificato**: `cargo test -p rustcopy-shell --lib` (11/11, +5 nette), `cargo clippy -p
+rustcopy-shell --all-targets -D warnings` e con il gate unwrap/expect scoped a `--lib`, `cargo fmt
+--check`, tutti puliti dopo la correzione. **Non ancora verificato dal vivo**: un ciclo reale di
+trascinamento su una seconda macchina
+con uno stack software diverso da quella di sviluppo — la stessa condizione che ha esposto il
+difetto, non riproducibile senza una macchina del genere disponibile.
+
 ---
 
 ## 💡 3.2 Opportunità di miglioramento (non difetti)

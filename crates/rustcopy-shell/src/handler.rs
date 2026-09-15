@@ -31,6 +31,28 @@ const MENU_TEXT: &str = "Copia con RustCopy\0";
 /// any failure along the way -- an empty list makes `QueryContextMenu`'s "every item is a
 /// folder" check trivially false (an empty selection is not "all folders"), which is the correct,
 /// safe default: never show the menu item when the source list could not be read at all.
+///
+/// **Real bug, found from a live incident (15 Set 2026)**: this used to read `medium.u.hGlobal`
+/// straight off a successful `GetData`, without first checking `medium.tymed`. `STGMEDIUM.u` is a
+/// C union (`hBitmap`/`hMetaFilePict`/`hEnhMetaFile`/`hGlobal`/...) — `tymed` is the discriminant
+/// that says which field is actually valid, and only `GetData` itself knows which one it filled
+/// in. The `FORMATETC` above asks for `TYMED_HGLOBAL` only, and a compliant `IDataObject` is
+/// supposed to honor that — but "supposed to" is not "does": this handler is registered under
+/// `Directory`/`Drive` `shellex\DragDropHandlers` (`registry.rs`), so it runs **inside
+/// `explorer.exe` itself** for every right-click or cross-drive drag onto any folder or drive,
+/// not just a drag between two rustcopy-managed folders — every third-party drag source on the
+/// machine (a cloud-sync shell folder, another shell extension, antivirus shell hooks) is a
+/// potential caller. A non-HGLOBAL medium slipping through unchecked meant `medium.u.hGlobal`
+/// read whatever bytes actually lived in the union's other variant, handed that garbage straight
+/// to `HDROP`/`DragQueryFileW` (a real Win32 call, not this crate's own code) as if it were a
+/// valid handle — undefined behavior at the Win32 boundary, executing in the one process that
+/// hosts the desktop, taskbar and every open Explorer window at once. This is the most plausible,
+/// concrete explanation for a real report of Explorer becoming totally unusable after installing
+/// this extension on a second machine with a different software stack than the one this was
+/// developed and tested on — the bug needs a non-conformant drag source to trigger, which this
+/// project's own dev machine apparently never exercised. Both checks below are the fix: verify
+/// `tymed` before touching the union, and verify the resulting handle is non-null before trusting
+/// it, exactly what every Microsoft shell-extension sample does and what this one skipped.
 fn read_dropped_paths(data_object: &IDataObject) -> Vec<PathBuf> {
     let format = FORMATETC {
         cfFormat: CF_HDROP.0,
@@ -44,7 +66,27 @@ fn read_dropped_paths(data_object: &IDataObject) -> Vec<PathBuf> {
         return Vec::new();
     };
 
+    // CodeRabbit finding on this exact fix (kept as the two-line story, not silently corrected):
+    // the first version of this guard called `medium_is_a_usable_hglobal(medium.tymed, unsafe {
+    // medium.u.hGlobal.0.is_null() })` -- Rust evaluates a call's arguments before the call
+    // itself, so that second argument read the union *unconditionally*, defeating the entire
+    // point of checking `tymed` first. The tymed check below is therefore its own statement,
+    // guaranteed to run and return before `medium.u` is ever touched -- never fold it back into
+    // a single expression that also computes something from the union.
+    if !tymed_is_hglobal(medium.tymed) {
+        unsafe {
+            windows::Win32::System::Ole::ReleaseStgMedium(&mut medium);
+        }
+        return Vec::new();
+    }
+
     let hglobal = unsafe { medium.u.hGlobal };
+    if hglobal.0.is_null() {
+        unsafe {
+            windows::Win32::System::Ole::ReleaseStgMedium(&mut medium);
+        }
+        return Vec::new();
+    }
     let hdrop = HDROP(hglobal.0);
 
     let count = unsafe { DragQueryFileW(hdrop, 0xFFFF_FFFF, None) };
@@ -70,6 +112,19 @@ fn read_dropped_paths(data_object: &IDataObject) -> Vec<PathBuf> {
 /// `IDataObject` -- see the module doc in `lib.rs` for why the COM plumbing itself cannot be.
 pub fn all_are_directories(paths: &[PathBuf]) -> bool {
     !paths.is_empty() && paths.iter().all(|p| p.is_dir())
+}
+
+/// Whether a `STGMEDIUM`'s `tymed` discriminant says its union's `hGlobal` field is the one
+/// `GetData` actually populated — the union's other variants (`hBitmap`/`hMetaFilePict`/
+/// `hEnhMetaFile`/...) are not `hGlobal`, reading it as one anyway is undefined behaviour. Takes
+/// only `tymed`, never a value already read from the union: the caller must treat this as a gate
+/// that runs and returns *before* `medium.u` is touched at all, not as one input among several
+/// computed up front (see the comment at the call site in `read_dropped_paths` for why that
+/// distinction is load-bearing, not stylistic). Split out so this specific decision has a real
+/// test, even though building a genuine `STGMEDIUM`/`IDataObject` to exercise the caller
+/// end-to-end is not possible outside a live COM host (see the module doc in `lib.rs`).
+fn tymed_is_hglobal(tymed: u32) -> bool {
+    tymed == TYMED_HGLOBAL.0 as u32
 }
 
 /// Recovers from a poisoned lock rather than panicking -- deliberately, everywhere this handler
@@ -271,3 +326,47 @@ pub const CLSID_RUSTCOPY_HANDLER: GUID = GUID::from_u128(0x59139f3e_0f3d_443e_bf
 
 /// The DLL's own module handle, captured once at `DLL_PROCESS_ATTACH` (see `lib.rs::DllMain`).
 pub static DLL_MODULE_HANDLE: AtomicIsize = AtomicIsize::new(0);
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // `lib.rs`'s own module doc claimed `all_are_directories` was already unit-tested -- found
+    // false while investigating the 15 Set 2026 incident: this crate had zero `#[cfg(test)]`
+    // modules anywhere, this function included, despite gating both whether the menu item
+    // appears and whether `InvokeCommand` proceeds.
+    #[test]
+    fn all_are_directories_is_false_for_an_empty_selection() {
+        assert!(!all_are_directories(&[]));
+    }
+
+    #[test]
+    fn all_are_directories_is_false_if_any_entry_is_not_a_directory() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let file_path = dir.path().join("not-a-dir.txt");
+        std::fs::write(&file_path, b"x").expect("write");
+        assert!(!all_are_directories(&[dir.path().to_path_buf(), file_path]));
+    }
+
+    #[test]
+    fn all_are_directories_is_true_when_every_entry_is_a_real_directory() {
+        let a = tempfile::tempdir().expect("tempdir");
+        let b = tempfile::tempdir().expect("tempdir");
+        assert!(all_are_directories(&[
+            a.path().to_path_buf(),
+            b.path().to_path_buf()
+        ]));
+    }
+
+    // Regression tests for the 15 Set 2026 incident: a `STGMEDIUM` whose `tymed` does not
+    // actually say `TYMED_HGLOBAL` must never be trusted, whatever the request asked for.
+    #[test]
+    fn tymed_is_hglobal_is_true_for_the_real_hglobal_discriminant() {
+        assert!(tymed_is_hglobal(TYMED_HGLOBAL.0 as u32));
+    }
+
+    #[test]
+    fn tymed_is_hglobal_is_false_for_any_other_discriminant() {
+        assert!(!tymed_is_hglobal((TYMED_HGLOBAL.0 as u32) + 1));
+    }
+}
