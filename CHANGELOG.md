@@ -21,6 +21,28 @@ For full technical detail behind any entry, see `ANALYSIS.md` (defect list, `D<N
 
 ## [Unreleased]
 
+## [7.5.0] - 2026-09-21
+
+### Fixed
+- A backup destination on a network share (UNC path) longer than 240 characters with
+  `--long-paths` produced an invalid long-path prefix (`\\?\` glued onto the original path
+  instead of the real `\\?\UNC\server\share\...` convention), which Windows does not resolve —
+  robocopy would fail loudly rather than silently lose data, but the run itself never worked.
+  Full write-up: `ANALYSIS.md` D28.
+
+### Added
+- **Windows Server hardening for the installer** (F90): detects Server Core (no desktop shell at
+  all) and hides the console/Shell-extension components entirely instead of offering something
+  that could never run; warns — without blocking setup, same as the existing VC++/WebView2
+  checks — when the detected Windows/Server version predates the Universal CRT requirement
+  (Windows 10 1607+ / Server 2016+); warns when the Shell extension is selected on a detected
+  Server SKU, since it loads into every signed-in user's Explorer process on a Remote Desktop
+  Session Host, not just one desktop.
+- **Production deployment guidance** (F90): a new section in `RUNBOOK.md` covers recommended
+  antivirus/EDR exclusions for backup source/destination paths, checking VSS writer health before
+  relying on `--vss-snapshot` against an application server, and partial mitigations for the
+  still-open code-signing gap (F60).
+
 ## [7.4.1] - 2026-09-15
 
 ### Fixed

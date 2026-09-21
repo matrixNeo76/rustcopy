@@ -1854,6 +1854,135 @@ Stesso metodo di §14.4/§16.3/§17.5/§18.17/§19.6:
   F86 — il difetto è preesistente, F86 non lo ha causato, solo non lo ha chiuso perché
   `Report.svelte` non era nel proprio diff.
 
+## 21. Usabilità per operatori non tecnici (analisi del 21 Set 2026)
+
+### 21.1 Contesto
+
+Critica diretta dell'utente, dopo aver già visto F86/F87 chiuse e la console reinstallata più
+volte in questa stessa sessione: *"la gui sembra ancora troppo poco intuitiva onestamente per
+persone che non hanno una grande competenza tecnica"*. Una lente diversa da §19/§20, che
+misuravano completezza e correttezza — qui la domanda è se un operatore **senza** background
+IT/backup riesce a usare la console senza restare bloccato o dover indovinare. Analisi condotta
+rileggendo tutti e nove i file della UI (le sette schede più `QuickSync.svelte` e `PathBar.svelte`)
+con questa sola lente, non un secondo giro di §20.
+
+### 21.2 Verdetto sintetico
+
+**La critica è fondata, e per `Editor.svelte` nello specifico sottostimata piuttosto che
+esagerata.** Non è un'impressione vaga: è un pattern reale, ripetuto in almeno cinque delle sette
+schede, con citazioni di riga precise (sotto). Va anche detto cosa **non** conferma la critica:
+`QuickSync.svelte` è la schermata meglio riuscita dell'intera applicazione per un principiante
+assoluto, i controlli distruttivi (mirror, generazioni) sono già visivamente distinti (riquadro
+ambra), e i messaggi d'errore sono quasi ovunque italiano semplice scritto con cura, non testo
+grezzo di un `enum` Rust. Il problema non è "l'app è rotta per un non tecnico", è più preciso:
+**la console spiega concetti di dominio (mirror, generazioni, hash, VSS, webhook, keyring, i flag
+di robocopy) come se si spiegassero da soli**, delegando la spiegazione vera a tooltip al passaggio
+del mouse o a `Help.svelte`, una scheda separata che l'operatore deve sapere di dover aprire.
+
+### 21.3 Pattern trasversali (compaiono in più schede, non un difetto isolato)
+
+**A. Il punto d'ingresso di sei schede su sette è gergo di formato file.** `PathBar.svelte`
+etichetta il proprio campo "Percorso del file di configurazione TOML" / "Percorso del report
+JSON" — la primissima cosa che Job, Modifica, Esegui, Impostazioni, Report e Storico mostrano.
+"TOML" e "JSON" sono nomi di formato, non concetti utili a un operatore che vuole solo aprire "i
+miei job di backup" o "il risultato dell'ultimo backup". Ripetuto identico in sei schede: la
+singola correzione con la leva più alta di tutto questo piano.
+
+**B. Affordance solo-icona, senza etichetta visibile.** La striscia Onda 2 di `Jobs.svelte`
+(righe 301-317: lucchetto, orologio+contatore, imbuto+contatore, CPU — F86) si distingue solo al
+passaggio del mouse; le frecce di riordino di `Editor.svelte` (righe 456-473, §14.5) idem; la
+stella preferiti di `PathBar.svelte` (righe 187-201) idem. Nessuna delle tre porta mai un testo
+visibile. Per chi scorre una tabella senza sapere già cosa cercare, queste icone semplicemente non
+esistono finché non ci passa sopra per caso.
+
+**C. Flag grezzi di robocopy infilati nei tooltip di `Editor.svelte`.** `/R` (riga 638), `/MT`
+(616), `/XJ` (801), `/COPYALL` (807), `/L` (795) compaiono come parte del testo esplicativo
+pensato per un utente che *non* dovrebbe mai vedere un flag da riga di comando — lo stesso
+documento che a §18 aveva già fissato la regola opposta per il resto della scheda.
+
+**D. `Help.svelte` porta un peso esplicativo che i controlli di lavoro non portano.** Mirror
+(Help righe 42-44), generazioni (46-48) e verifica rapida (50-52) sono definiti lì, ma il badge
+mirror di `Jobs.svelte` (228, 237) e il menu "Tipo di backup" di `Editor.svelte` (693-727) non
+riproducono né linkano quella definizione — solo la casella "verifica rapida" ha un proprio
+tooltip corto. **VSS non ha nemmeno una voce nel glossario**, pur comparendo in `Report.svelte`
+riga 213 ("Istantanea" = lettura da copia shadow VSS) senza alcuna spiegazione a corredo — gap
+verificato, non presunto (cercato "VSS" in `Help.svelte`: zero occorrenze).
+
+**E. Due vicoli ciechi reali, non solo attrito.** (1) `Run.svelte` righe 382-386: un job con
+mirror attivo mostra "Eseguila dalla CLI" — un'istruzione che un operatore senza CLI non può
+eseguire. (2) `Editor.svelte` righe 372-401: l'errore di split-job mostra un frammento TOML grezzo
+come "correzione", cioè chiede di modificare a mano un file di configurazione. **Nessuno dei due è
+un difetto di UI**: sono confini di sicurezza reali (F61 per il primo — la conferma mirror richiede
+un terminale, per costruzione, verificato in `runner.rs`; l'ambiguità implicito/`[[jobs]]` per il
+secondo, §19 lo tratta già come un vincolo strutturale). Il problema è solo il **messaggio**: dice
+a un operatore non tecnico di fare qualcosa che letteralmente non può fare, invece di riconoscere
+il limite e indirizzarlo a chi può (un collega IT, chi ha configurato il file).
+
+**F. `Editor.svelte`: 18+ campi in un'unica sezione senza gerarchia.** Righe 478-889: un'unica
+griglia a due colonne elenca Nome, Sorgente, Destinazione, Pattern, Thread, Tentativi, Escludi
+file, Escludi cartelle, Report, Tipo di backup, Cifratura, poi cinque checkbox, con un solo
+raggruppamento visivo ("Impostazioni distruttive"). Nessuna distinzione fra "compila questi due
+campi e sei operativo" e "il resto, se ti serve" — ogni campo si presenta con lo stesso peso
+visivo. È il singolo finding più pesante di questa analisi, e l'unico che richiede una vera
+decisione di progettazione (§21.4, Onda 2) prima di poter scrivere codice.
+
+### 21.4 Cosa già funziona (non riproporre, non regredire)
+
+`QuickSync.svelte`: solo sorgente e destinazione, rassicurazione esplicita "Nessuna opzione
+distruttiva qui" (105-106) — il percorso più riuscito dell'app per un principiante assoluto, non
+va toccato. Il riquadro ambra "Impostazioni distruttive" di `Editor.svelte` (828-889) e l'avviso
+mirror di `Run.svelte` (377-388, a parte il testo di E) distinguono già visivamente l'azione
+rischiosa da quella ordinaria — è esattamente il criterio 6 di questa stessa analisi, già
+rispettato. I messaggi d'errore (split-job compreso, a parte l'istruzione finale) sono scritti in
+italiano piano, non testo interno tradotto male. Nessun residuo di inglese accidentale rilevante —
+solo un paio di termini tecnici non tradotti ("fast" in Jobs riga ~270, "default" nei badge
+`ORIGIN_LABEL` di `Settings.svelte` 31-39), rifinitura minore, non un problema di lingua.
+
+### 21.5 Piano prioritizzato
+
+**Onda 1 — solo testo/etichette, nessun cambio di logica, nessun rischio di regressione**
+
+1. **Pattern A**: riscrivere le etichette di `PathBar.svelte` in linguaggio semplice ("File dei
+   job di backup" / "File del risultato di un backup"), tenendo "TOML"/"JSON" come indicazione
+   secondaria per chi li riconosce, non come etichetta principale. Un solo file, sei schede
+   beneficiano insieme.
+2. **Pattern C**: rimuovere i riferimenti a flag grezzi (`/R`, `/MT`, `/XJ`, `/COPYALL`, `/L`) dai
+   tooltip di `Editor.svelte`, riscritti in termini di comportamento osservabile ("riprova un file
+   bloccato fino a N volte" invece di "(robocopy /R)").
+3. **Pattern D**: aggiungere una riga di spiegazione inline (stesso stile già usato per "verifica
+   rapida") al badge mirror di `Jobs.svelte` e al menu "Tipo di backup" di `Editor.svelte`;
+   aggiungere una voce "VSS" al glossario di `Help.svelte` (gap verificato, oggi assente).
+4. **Pattern E**: riscrivere i due messaggi (`Run.svelte` 382-386, `Editor.svelte` 372-401) per
+   riconoscere il limite invece di indicare un'azione che l'operatore non può compiere — es.
+   "questa run richiede una conferma che questa console non può dare da sola: chiedi a chi gestisce
+   i backup di questo server di avviarla" invece di "Eseguila dalla CLI".
+
+**Onda 2 — cambio di struttura, richiede una decisione di progettazione prima del codice**
+
+5. **Pattern F**: raggruppare i campi di `Editor.svelte` in sezioni con priorità visiva distinta —
+   proposta di partenza da confermare, non da considerare già decisa: *Base* (Nome, Sorgente,
+   Destinazione, Pattern), *Comportamento* (Thread, Tentativi, Escludi file/cartelle, Report),
+   *Avanzate* (Tipo di backup, Cifratura, la riga di checkbox), *Impostazioni distruttive*
+   (invariata). Stesso principio già applicato a F88: una decisione di design, non solo di
+   markup, va confermata prima di scrivere codice — qui la domanda aperta è quali campi contano
+   davvero come "base" per un operatore reale di questo progetto.
+
+**Onda 3 — rifinitura, bassa priorità**
+
+6. **Pattern B**: etichette testuali visibili (non solo tooltip) per la striscia Onda 2 di
+   `Jobs.svelte` e i controlli icona-sola equivalenti — bilanciare contro lo spazio di riga già
+   limitato (§19 aveva scelto icone apposta per quello), quindi da valutare insieme, non imposto.
+7. Esplorare se il vicolo cieco split-job (E, punto 2) meriti in futuro una vera azione guidata
+   "converti in `[[jobs]]`" invece di sola documentazione — non progettato qui, stessa cautela di
+   F88 su `job_editor.rs`.
+
+### 21.6 Criticità trovate rileggendo questa stessa sezione
+
+Stesso metodo di §14.4/§16.3/§17.5/§18.17/§19.6/§20.5:
+
+- La prima stesura del Pattern E proponeva di risolvere il vicolo cieco di `Run.svelte` **abilitando** la conferma mirror da console invece di riscrivere solo il messaggio — scartato subito: `runner.rs` ha un test dedicato che verifica che nessuno dei divieti F61 (incluso `--force-purge`/mirror non presidiato) possa mai raggiungere la CLI dalla console, ed è un confine di sicurezza deliberato, non un difetto di percorso. Il fix resta testuale.
+- Il punto 5 (Onda 2) elencava inizialmente una proposta di raggruppamento già "decisa" nel testo. Corretto per essere esplicitamente una proposta da confermare: questo documento non ha mai deciso unilateralmente la forma di un cambio a `Editor.svelte` senza prima passare da conferma dell'utente (F70/F80/F88 lo hanno sempre fatto), e non doveva iniziare a farlo qui.
+
 ## Riferimenti
 
 - [`CLAUDE.md`](CLAUDE.md) — regole operative per `runner.rs`, `job_editor.rs`, `gui_api.rs`.

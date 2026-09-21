@@ -143,7 +143,15 @@ pub fn build_args(request: &CopyRequest) -> Vec<String> {
 pub fn normalize_path_arg(path: &str, long_paths: bool) -> String {
     let trimmed = path.trim_end_matches(['\\', '/']);
     if long_paths && cfg!(windows) && !trimmed.starts_with(r"\\?\") && trimmed.len() > 240 {
-        format!(r"\\?\{trimmed}")
+        // D28: a UNC path's real long-path convention replaces its leading `\\` with
+        // `\\?\UNC\`, not `\\?\` glued on top of it — the naive prefix produces
+        // `\\?\\\server\share\...` (five leading backslashes), which Windows does not
+        // resolve. A local drive letter (`C:\...`) has no such special case.
+        if let Some(unc_tail) = trimmed.strip_prefix(r"\\") {
+            format!(r"\\?\UNC\{unc_tail}")
+        } else {
+            format!(r"\\?\{trimmed}")
+        }
     } else {
         trimmed.to_string()
     }
@@ -1071,6 +1079,35 @@ mod tests {
             normalize_path_arg("C:\\\\", false),
             "C:",
             "multiple seps stripped"
+        );
+    }
+
+    #[test]
+    fn normalize_path_arg_produces_the_real_unc_long_path_prefix() {
+        // D28: `\\server\share\...` must become `\\?\UNC\server\share\...`, not `\\?\`
+        // glued on top of the original two leading backslashes.
+        let long_tail = "a".repeat(230);
+        let unc = format!(r"\\server\share\{long_tail}");
+        assert!(
+            unc.len() > 240,
+            "fixture must exceed the long-path threshold"
+        );
+        assert_eq!(
+            normalize_path_arg(&unc, true),
+            format!(r"\\?\UNC\server\share\{long_tail}")
+        );
+
+        // A local drive letter is unaffected by the UNC-specific branch.
+        let long_local = format!(r"C:\{}", "b".repeat(240));
+        assert_eq!(
+            normalize_path_arg(&long_local, true),
+            format!(r"\\?\{long_local}")
+        );
+
+        // Short UNC paths stay under the threshold and are left alone.
+        assert_eq!(
+            normalize_path_arg(r"\\server\share\short", true),
+            r"\\server\share\short"
         );
     }
 

@@ -74,10 +74,10 @@ del PATH di sistema, disinstallazione con ripristino del PATH — ciclo completo
 
 ```powershell
 # Installazione silenziosa (utile per deploy automatizzati)
-rustcopy-7.4.1-setup.exe /VERYSILENT /SUPPRESSMSGBOXES /NORESTART /TASKS="addtopath"
+rustcopy-7.5.0-setup.exe /VERYSILENT /SUPPRESSMSGBOXES /NORESTART /TASKS="addtopath"
 
 # Solo CLI, senza console grafica
-rustcopy-7.4.1-setup.exe /VERYSILENT /SUPPRESSMSGBOXES /NORESTART /TYPE=cli /TASKS="addtopath"
+rustcopy-7.5.0-setup.exe /VERYSILENT /SUPPRESSMSGBOXES /NORESTART /TYPE=cli /TASKS="addtopath"
 ```
 
 #### WebView2
@@ -92,6 +92,25 @@ della console che non si aprirebbe.
 
 Il bundler di Tauri resta **disattivato** (`bundle.active: false`): produrrebbe un secondo
 MSI/NSIS per la sola console, cioè esattamente la separazione che questo installer evita.
+
+#### Windows Server 2016/2019/2022
+
+Dal 21 Settembre 2026 (F90, `ROADMAP.md`) l'installer rileva l'ambiente Server e si comporta di
+conseguenza, sempre senza mai bloccare il setup:
+
+- **Server Core**: nessuna shell Explorer, quindi né la console (WebView2) né l'estensione Shell
+  potrebbero mai funzionare — l'installer le nasconde del tutto dalla selezione componenti invece
+  di offrirle inutilmente.
+- **Versione Windows/Server precedente a 10/2016**: la Universal CRT da cui dipende l'eseguibile
+  non è presente di default — avviso, stesso trattamento già riservato a VC++ Redistributable e
+  WebView2 più sotto.
+- **Estensione Shell su una SKU Server con Desktop Experience**: avviso aggiuntivo se selezionata,
+  perché su un Remote Desktop Session Host (comune su Server 2016/2019/2022) carica nella sessione
+  di ogni utente collegato, non di un singolo desktop personale.
+
+Precauzioni operative aggiuntive per un deploy in produzione (esclusioni antivirus/EDR, verifica
+dei VSS writer, mitigazioni per l'assenza di firma del codice) sono in
+[RUNBOOK.md §3](../RUNBOOK.md#-3-distribuzione-in-produzione-windows-server-20162019-2022).
 
 ---
 
