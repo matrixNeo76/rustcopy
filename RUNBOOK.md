@@ -397,9 +397,13 @@ questi percorsi crea quindi un vero punto cieco permanente: un file dannoso depo
 verrebbe rilevato da nessuna delle tre modalità finché non si sposta altrove. Il controllo
 compensativo è che sorgente e destinazione di un backup sono per definizione dati già scansionati
 altrove (alla loro origine reale) — l'esclusione sposta la superficie di rilevamento, non la
-elimina. Dove il prodotto lo permette, preferire un'esclusione più stretta (per processo —
-`robocopy_ingest.exe`/`rustcopy-gui.exe` — invece che per intera cartella) per ridurre il punto
-cieco al solo momento in cui questo software sta effettivamente leggendo quei file.
+elimina. Dove il prodotto lo permette, un'esclusione per processo (`robocopy_ingest.exe`/
+`rustcopy-gui.exe` invece dell'intera cartella) è tipicamente più stretta di una per percorso, ma
+il suo perimetro esatto **dipende dal prodotto** — non verificato qui per alcun EDR specifico oltre
+Defender, quindi da confermare nella documentazione del prodotto realmente in uso prima di
+affidarcisi. In ogni caso, dopo aver applicato qualunque esclusione: verificarla con una scansione
+di prova mirata a quei percorsi (o un altro controllo compensativo concreto, non solo l'assunzione
+che "i dati arrivano già puliti"), invece di considerarla sicura per definizione.
 
 ### 3.2 VSS writer prima di `--vss-snapshot` in produzione
 
@@ -422,8 +426,13 @@ rende uno snapshot application-consistent **probabile**, non dimostrato: l'unica
 dimostra davvero è un ripristino di prova (o un controllo di coerenza specifico dell'applicazione,
 es. `DBCC CHECKDB` per SQL Server) contro i dati effettivamente copiati. Se l'applicazione non ha un
 writer VSS proprio (o non è affidabile), `--pre-command`/`--post-command` (F39) restano l'alternativa
-già disponibile per fermare/riavviare un servizio attorno alla copia, con una coerenza garantita
-dall'applicazione stessa invece che da VSS.
+già disponibile per fermare/riavviare un servizio attorno alla copia — ma non è una garanzia
+automatica: la coerenza dipende dal comando stesso essere quello corretto per fermare/svuotare
+davvero lo stato dell'applicazione, e un `--post-command` che fallisce **non fa fallire il job**
+(solo registrato in `post_command_error`, stesso comportamento non fatale di `webhook_error`) — un
+servizio che non si riavvia correttamente dopo la copia non blocca né segnala di per sé un backup
+altrimenti "riuscito". Anche qui, un ripristino di prova resta l'unica verifica che dimostra
+davvero la coerenza ottenuta, non solo l'esito del comando.
 
 ### 3.3 Binario non firmato: mitigazioni parziali
 
