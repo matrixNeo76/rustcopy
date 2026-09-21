@@ -370,7 +370,90 @@ tramite questo stesso comando, senza `--source`/`--dest`.
 
 ---
 
-## 📑 3. Indice Documentazione di Progetto
+## 🏢 3. Distribuzione in produzione: Windows Server 2016/2019/2022
+
+Ogni verifica dal vivo di questo progetto, incluso l'incidente D29, è avvenuta finora su Windows 11
+client — mai su una macchina Server. Questa sezione (F90, `ROADMAP.md`) raccoglie gli accorgimenti
+operativi che l'installer non può applicare da solo (vedi anche
+[docs/installation.md](docs/installation.md) per le rilevazioni automatiche di Server Core, versione
+minima e host multi-utente aggiunte alla stessa release).
+
+### 3.1 Esclusioni antivirus/EDR
+
+Nessun documento di questo progetto ne parlava prima d'ora. Un backup massivo (il profilo reale da
+1,34M file citato altrove in questo documento) legge e scrive ogni file una volta per ogni run — con
+la scansione realtime di un antivirus/EDR aziendale attiva su entrambi i lati, il rallentamento è
+spesso l'ordine di grandezza dominante, non il disco o la rete. Prassi standard per software di
+backup (Veeam, Cobian Reflector e simili la richiedono tutti): escludere dalla scansione
+
+- la cartella di installazione (`{app}`, di norma `C:\Program Files\rustcopy`);
+- la cartella/le cartelle sorgente di ogni job attivo;
+- la cartella/le cartelle destinazione di ogni job attivo.
+
+**Non è una scelta senza costo.** Su Microsoft Defender un'esclusione di percorso vale per la
+scansione pianificata, quella su richiesta **e** la protezione realtime insieme — non esiste una
+forma che lasci attivo solo un sottoinsieme, verificato nella documentazione ufficiale. Escludere
+questi percorsi crea quindi un vero punto cieco permanente: un file dannoso depositato lì non
+verrebbe rilevato da nessuna delle tre modalità finché non si sposta altrove. Il controllo
+compensativo è che sorgente e destinazione di un backup sono per definizione dati già scansionati
+altrove (alla loro origine reale) — l'esclusione sposta la superficie di rilevamento, non la
+elimina. Dove il prodotto lo permette, un'esclusione per processo (`robocopy_ingest.exe`/
+`rustcopy-gui.exe` invece dell'intera cartella) è tipicamente più stretta di una per percorso, ma
+il suo perimetro esatto **dipende dal prodotto** — non verificato qui per alcun EDR specifico oltre
+Defender, quindi da confermare nella documentazione del prodotto realmente in uso prima di
+affidarcisi. In ogni caso, dopo aver applicato qualunque esclusione: verificarla con una scansione
+di prova mirata a quei percorsi (o un altro controllo compensativo concreto, non solo l'assunzione
+che "i dati arrivano già puliti"), invece di considerarla sicura per definizione.
+
+### 3.2 VSS writer prima di `--vss-snapshot` in produzione
+
+`--vss-snapshot` (F30) chiama `vssadmin.exe create shadow`, che coinvolge i writer VSS registrati
+sulla macchina — ma **non verifica né segnala** il loro stato di salute. Uno snapshot preso mentre
+un writer applicativo (SQL Server, Exchange, Active Directory) è in stato fallito è comunque
+*crash-consistent* (i file sul volume sono coerenti fra loro) ma non necessariamente
+*application-consistent* (i dati dell'applicazione potrebbero essere a metà di una transazione).
+Prima di affidarsi a `--vss-snapshot` contro un server applicativo in produzione:
+
+```powershell
+vssadmin list writers
+```
+
+Verifica che ogni writer rilevante mostri `Stato stabile` e `Ultimo errore: Nessun errore` **prima**
+di avviare lo snapshot — è un controllo preliminare, non una garanzia successiva: `vss.rs` verifica
+solo che `vssadmin create shadow` sia riuscito e legge l'ID dello shadow restituito, mai lo stato dei
+writer né la coerenza applicativa del contenuto copiato. Un writer sano al momento del controllo
+rende uno snapshot application-consistent **probabile**, non dimostrato: l'unica verifica che lo
+dimostra davvero è un ripristino di prova (o un controllo di coerenza specifico dell'applicazione,
+es. `DBCC CHECKDB` per SQL Server) contro i dati effettivamente copiati. Se l'applicazione non ha un
+writer VSS proprio (o non è affidabile), `--pre-command`/`--post-command` (F39) restano l'alternativa
+già disponibile per fermare/riavviare un servizio attorno alla copia — ma non è una garanzia
+automatica: la coerenza dipende dal comando stesso essere quello corretto per fermare/svuotare
+davvero lo stato dell'applicazione, e un `--post-command` che fallisce **non fa fallire il job**
+(solo registrato in `post_command_error`, stesso comportamento non fatale di `webhook_error`) — un
+servizio che non si riavvia correttamente dopo la copia non blocca né segnala di per sé un backup
+altrimenti "riuscito". Anche qui, un ripristino di prova resta l'unica verifica che dimostra
+davvero la coerenza ottenuta, non solo l'esito del comando.
+
+### 3.3 Binario non firmato: mitigazioni parziali
+
+`ROADMAP.md` (riga F60) dichiara già aperta la mancanza di una firma del codice — un eseguibile non
+firmato che chiede privilegi di Amministratore genera avvisi SmartScreen ovunque, e in un ambiente
+aziendale con AppLocker/WDAC o un EDR restrittivo, sia il setup sia `rustcopy_shell.dll` (che si
+auto-registra come componente COM) hanno più probabilità di essere bloccati o messi in quarantena
+che su un PC domestico. Senza un certificato di firma (decisione fuori portata di questo documento),
+le mitigazioni disponibili oggi sono:
+
+- pubblicare, per ogni release GitHub, lo SHA-256 di ciascun artefatto (`rustcopy-X.Y.Z-setup.exe`),
+  cosi'' un amministratore puo'' verificarlo prima dell'installazione:
+  ```powershell
+  Get-FileHash rustcopy-7.5.0-setup.exe -Algorithm SHA256
+  ```
+- per un allow-list AppLocker/WDAC, usare una regola basata su hash o su percorso (`{app}`) invece
+  che su editore/firma, che qui non e'' disponibile.
+
+---
+
+## 📑 4. Indice Documentazione di Progetto
 
 | Documento | Descrizione e Contenuto |
 |---|---|

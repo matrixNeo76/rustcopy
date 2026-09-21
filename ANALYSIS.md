@@ -1631,9 +1631,11 @@ produrre conteggi file reali con conteggi byte silenziosamente azzerati. 3 nuovi
 
 ---
 
-### D28 — `normalize_path_arg` produce un prefisso di percorso lungo non valido per un percorso UNC 🟡 APERTO (10 Set 2026)
+### D28 — `normalize_path_arg` produce un prefisso di percorso lungo non valido per un percorso UNC 🟢 CHIUSO (21 Set 2026)
 
-**Stato: aperto, non bloccante.**
+**Stato: chiuso, fix verificato con un test unitario contro un vero percorso UNC lungo; non ancora
+riverificato dal vivo con `robocopy.exe` reale contro una condivisione di rete** (nessuna
+disponibile in questa sessione — stesso limite dichiarato per D29).
 
 **Gravità: MEDIA** — non corrompe alcun dato (robocopy riceverebbe un percorso che Windows non
 risolve, quindi fallirebbe in modo rumoroso, non silenzioso), ma rilevante perché le destinazioni
@@ -1657,11 +1659,16 @@ stesso ad avere il gap. Corretto nel file agent (non più presentato come funzio
 UNC, dichiarato come limite aperto) e segnalato come task separato — non risolto in quella PR
 perché fuori perimetro (PR di sola documentazione).
 
-**Non ancora risolto.** Il fix è contenuto: rilevare un percorso UNC (`trimmed.starts_with(r"\\")`
-dopo il trim dei separatori finali) e produrre `\\?\UNC\` seguito dal resto del percorso privato
-dei due backslash iniziali, invece del semplice `format!(r"\\?\{trimmed}")`. Serve un test di
-regressione con un vero percorso UNC lungo (>240 caratteri), accanto ai test esistenti di
-`normalize_path_arg_strips_various_separators`.
+**Risolto (21 Set 2026, F90).** `normalize_path_arg` ora rileva un percorso UNC con
+`trimmed.strip_prefix(r"\\")` (dopo il trim dei separatori finali) e produce `\\?\UNC\` seguito
+dal resto del percorso privato dei due backslash iniziali, invece del semplice
+`format!(r"\\?\{trimmed}")` usato per ogni caso — una lettera di unità locale resta sul ramo
+originale, immutata. Nuovo test `normalize_path_arg_produces_the_real_unc_long_path_prefix`,
+accanto a `normalize_path_arg_strips_various_separators`: un percorso UNC reale sopra 240
+caratteri produce `\\?\UNC\server\share\...`, un percorso locale sopra soglia produce ancora
+`\\?\C:\...`, e un percorso UNC sotto soglia resta invariato. Motivato di nuovo dalla richiesta
+dell'utente di rendere più sicuro l'uso in produzione (F90, `ROADMAP.md`): una destinazione di
+backup su NAS/server di rete è la topologia più comune, non un caso raro.
 
 ### D29 — `read_dropped_paths` leggeva l'union `STGMEDIUM` senza controllare il discriminante `tymed`, crash reale di Explorer su una seconda macchina 🟢 CHIUSO (15 Set 2026)
 
