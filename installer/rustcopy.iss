@@ -172,7 +172,10 @@ var
   Version: TWindowsVersion;
 begin
   GetWindowsVersionEx(Version);
-  Result := Version.Major >= 10;
+  // Windows 11 still reports NT major version 10 (same as Windows 10 and Server 2016+) -- only
+  // the build number tells 1607+ apart from an older 10.0 release (1507/1511) that predates the
+  // Universal CRT. 14393 is Windows 10 1607 / Windows Server 2016's build number.
+  Result := (Version.Major > 10) or ((Version.Major = 10) and (Version.Build >= 14393));
 end;
 
 // --- Add/remove {app} from the system PATH (classic Inno Setup snippet, adapted) -------------
@@ -246,14 +249,18 @@ begin
   // Checked here rather than in InitializeSetup because components are not chosen yet at that
   // point: warning about WebView2 on a CLI-only install would be noise about a runtime nothing
   // installed is going to use.
+  // SuppressibleMsgBox (not MsgBox) on every warning from here down: /SUPPRESSMSGBOXES does NOT
+  // suppress a script-authored MsgBox (only Setup's own built-in prompts) -- verified against
+  // Inno Setup's own docs, found by CodeRabbit reviewing this PR. Without this, an unattended
+  // /VERYSILENT /SUPPRESSMSGBOXES install would hang waiting for a click nobody is there to give.
   if WizardIsComponentSelected('gui') and not IsWebView2Installed() then
-    MsgBox(
+    SuppressibleMsgBox(
       'La console grafica richiede il runtime WebView2 (Microsoft), non rilevato su questo ' +
       'sistema.' + #13#10 + #13#10 +
       'La CLI funziona comunque: e'' solo la finestra della console che non si aprirebbe. ' +
       'Scarica il runtime da:' + #13#10 +
       WEBVIEW2_URL,
-      mbInformation, MB_OK);
+      mbInformation, MB_OK, IDOK);
 
   // F90 (ROADMAP.md): Windows Server 2016/2019/2022 with Desktop Experience can run the shell
   // extension, unlike Server Core (already excluded from selection above) -- but on a Remote
@@ -261,12 +268,12 @@ begin
   // explorer.exe at once, not one personal desktop. Informational only, same as every other
   // warning in this script: never blocks setup.
   if WizardIsComponentSelected('gui\shell') and IsServerSku() then
-    MsgBox(
+    SuppressibleMsgBox(
       'Questo sistema e'' una SKU Windows Server. Su un Remote Desktop Session Host, comune su ' +
       'Server 2016/2019/2022, l''estensione Shell per Explorer si carica nella sessione di ' +
       'OGNI utente collegato contemporaneamente, non di un singolo desktop personale.' + #13#10 + #13#10 +
       'Setup continuera'' comunque -- valuta se installarla davvero su un host multi-utente.',
-      mbInformation, MB_OK);
+      mbInformation, MB_OK, IDOK);
 end;
 
 procedure CurUninstallStepChanged(CurUninstallStep: TUninstallStep);
@@ -279,24 +286,24 @@ function InitializeSetup(): Boolean;
 begin
   Result := True;
   if not IsVCRedistInstalled() then
-    MsgBox(
+    SuppressibleMsgBox(
       'rustcopy richiede il Visual C++ Redistributable x64 (Microsoft), non rilevato su questo ' +
       'sistema.' + #13#10 + #13#10 +
       'Il programma potrebbe non avviarsi senza. Scaricalo da:' + #13#10 +
       VC_REDIST_URL + #13#10 + #13#10 +
       'Setup continuera comunque.',
-      mbInformation, MB_OK);
+      mbInformation, MB_OK, IDOK);
 
   // F90 (ROADMAP.md): the Universal CRT rustcopy relies on ships by default only from Windows 10
   // 1607+ / Server 2016+ (already documented in docs/installation.md, never enforced before this).
   // Checked here, unlike the WebView2 warning below, because it applies to every component --
   // components are not chosen yet at InitializeSetup, but this warning does not depend on them.
   if not IsOsVersionSupported() then
-    MsgBox(
+    SuppressibleMsgBox(
       'Questa versione di Windows/Windows Server e'' precedente a quella richiesta ' +
       '(Windows 10 1607+ / Windows Server 2016+).' + #13#10 + #13#10 +
       'Il programma potrebbe non avviarsi, con un errore di sistema poco chiaro invece di ' +
       'questo avviso.' + #13#10 + #13#10 +
       'Setup continuera comunque.',
-      mbInformation, MB_OK);
+      mbInformation, MB_OK, IDOK);
 end;

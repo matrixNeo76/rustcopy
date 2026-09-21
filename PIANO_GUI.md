@@ -1912,9 +1912,11 @@ verificato, non presunto (cercato "VSS" in `Help.svelte`: zero occorrenze).
 mirror attivo mostra "Eseguila dalla CLI" — un'istruzione che un operatore senza CLI non può
 eseguire. (2) `Editor.svelte` righe 372-401: l'errore di split-job mostra un frammento TOML grezzo
 come "correzione", cioè chiede di modificare a mano un file di configurazione. **Nessuno dei due è
-un difetto di UI**: sono confini di sicurezza reali (F61 per il primo — la conferma mirror richiede
-un terminale, per costruzione, verificato in `runner.rs`; l'ambiguità implicito/`[[jobs]]` per il
-secondo, §19 lo tratta già come un vincolo strutturale). Il problema è solo il **messaggio**: dice
+un difetto di UI**: sono confini di sicurezza reali (per il primo, due meccanismi distinti — i
+divieti F61 impediscono a `runner.rs::run_arguments` di far raggiungere `--mirror` non presidiato
+alla CLI dalla console, e separatamente `main.rs` richiede un terminale per la conferma interattiva
+stessa, via `std::io::IsTerminal`; per il secondo, §19 tratta già l'ambiguità implicito/`[[jobs]]`
+come un vincolo strutturale). Il problema è solo il **messaggio**: dice
 a un operatore non tecnico di fare qualcosa che letteralmente non può fare, invece di riconoscere
 il limite e indirizzarlo a chi può (un collega IT, chi ha configurato il file).
 
