@@ -1082,6 +1082,10 @@ mod tests {
         );
     }
 
+    // D28's branch is itself `cfg!(windows)`-gated (the long-path prefix is a Windows-only
+    // concept), so on any other host `normalize_path_arg` returns the input unchanged and this
+    // assertion would fail there -- same class of platform-conditional gap as D16.
+    #[cfg(windows)]
     #[test]
     fn normalize_path_arg_produces_the_real_unc_long_path_prefix() {
         // D28: `\\server\share\...` must become `\\?\UNC\server\share\...`, not `\\?\`
