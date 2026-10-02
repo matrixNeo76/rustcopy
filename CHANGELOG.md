@@ -21,6 +21,22 @@ For full technical detail behind any entry, see `ANALYSIS.md` (defect list, `D<N
 
 ## [Unreleased]
 
+## [7.6.0] - 2026-10-02
+
+### Changed
+- **Plainer language in the console** (F89, waves 1-2): the file pickers, empty states and
+  path fields no longer lead with file-format jargon ("TOML"/"JSON"); raw robocopy flags and
+  developer identifiers (`/MT`, `/XJ`, `Args::validate()`, `keep_generations`) are gone from
+  tooltips and visible text; a "VSS" entry was added to the Aiuto glossary; the two messages that
+  pointed non-technical operators at actions they cannot perform now say so plainly.
+- **Modifica groups its fields**: name/source/destination/file filter stay visible, while
+  "Comportamento della copia" and "Opzioni avanzate" are collapsible sections that open by
+  themselves whenever they hold a non-default setting, so a collapsed section never hides a
+  customised value or the verify-with-generations warning.
+
+### Fixed
+- Bumped the transitive `devalue` dependency of the console's frontend (npm audit, high).
+
 ## [7.5.0] - 2026-09-21
 
 ### Fixed

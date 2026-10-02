@@ -57,8 +57,8 @@
   }
 
   const FILTERS = {
-    config: [{ name: "Configurazione TOML", extensions: ["toml"] }],
-    report: [{ name: "Report JSON", extensions: ["json"] }],
+    config: [{ name: "Job di backup (.toml)", extensions: ["toml"] }],
+    report: [{ name: "Risultato di un backup (.json)", extensions: ["json"] }],
   };
 
   async function browse() {

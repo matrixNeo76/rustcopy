@@ -1,4 +1,5 @@
 <script>
+  import { untrack } from "svelte";
   import { invoke } from "@tauri-apps/api/core";
   import { open, save } from "@tauri-apps/plugin-dialog";
   import PathBar from "./PathBar.svelte";
@@ -146,6 +147,41 @@
   // widen it. Disabling the control here is an affordance, not the enforcement — `write_proposal`
   // refuses the same edit whatever this frontend sends.
   const mirrorLocked = $derived(draft ? !draft.mirror : true);
+
+  // F89 Onda 2: sections open by default only when they hold something the operator set, so a
+  // collapsed section can never hide a non-default value (or the verify+generations warning).
+  const behaviorCount = (d) =>
+    d
+      ? [
+          d.threads != null,
+          d.retries != null,
+          d.exclude_files.length > 0,
+          d.exclude_dirs.length > 0,
+          d.report_path != null,
+        ].filter(Boolean).length
+      : 0;
+  const advancedCount = (d) =>
+    d
+      ? [
+          d.backup_type != null,
+          d.encrypt_aes256 != null,
+          d.verify_integrity,
+          d.fast_verify,
+          d.dry_run,
+          d.exclude_junctions,
+          d.preserve_acl,
+        ].filter(Boolean).length
+      : 0;
+  const countLabel = (n, one, many) => (n === 0 ? "nessuna impostazione" : n === 1 ? `1 ${one}` : `${n} ${many}`);
+  let behaviorOpen = $state(false);
+  let advancedOpen = $state(false);
+  $effect(() => {
+    const d = draft;
+    untrack(() => {
+      behaviorOpen = behaviorCount(d) > 0;
+      advancedOpen = advancedCount(d) > 0;
+    });
+  });
   const nameLocked = $derived(draft ? existingNames.has(draft.name) : true);
 
   // F72/F83: `invalidNameReason` now lives in `jobName.js` -- mirrors `validate_job_name`
@@ -308,7 +344,7 @@
     // refusal it will be, in the same words.
     const picked = await save({
       defaultPath: outPath,
-      filters: [{ name: "Configurazione TOML", extensions: ["toml"] }],
+      filters: [{ name: "Job di backup (.toml)", extensions: ["toml"] }],
     });
     if (typeof picked === "string" && picked.length > 0) {
       outPath = picked;
@@ -362,8 +398,8 @@
   <PathBar
     bind:value={session.configPath}
     kind="config"
-    label="Percorso del file di configurazione TOML"
-    placeholder="Scegli un file di configurazione TOML"
+    label="File con i job di backup"
+    placeholder="Scegli il file con i tuoi job di backup (.toml)"
     action="Apri per modifica"
     busy={loading}
     onrun={load}
@@ -382,8 +418,9 @@
         farlo in silenzio.
       </p>
       <p class="mt-2">
-        Per avere più job in questo file, riscrivine a mano l'inizio così, poi riapri qui per
-        modificare:
+        Per avere più job in questo file serve riscriverne a mano l'inizio: è un'operazione
+        tecnica, quindi se non l'hai mai fatta chiedi a chi ha preparato il file. L'inizio deve
+        diventare così, poi riapri qui per modificare:
       </p>
       <pre
         class="mt-1 overflow-x-auto rounded bg-red-100 px-2 py-1 font-mono text-xs
@@ -488,8 +525,8 @@ dest = "..."`}</pre>
         />
         {#if nameLocked}
           <p class="mt-0.5 text-[11px] text-slate-500">
-            Il nome è l'identità del job: report, cache e manifest delle generazioni sono
-            namespacizzati su di esso. Rinominarlo orfanerebbe la catena delle generazioni, quindi
+            Il nome è l'identità del job: i suoi file di report, cache e storico delle generazioni
+            portano questo nome. Rinominarlo spezzerebbe la catena delle generazioni, quindi
             l'editor non lo consente.
           </p>
         {:else if nameInvalidReason}
@@ -581,13 +618,13 @@ dest = "..."`}</pre>
         {/if}
       </div>
 
-      <label for="f-pattern">Pattern</label>
+      <label for="f-pattern">Filtro file</label>
       <div>
         <input
           id="f-pattern"
           class="w-48 rounded border border-slate-300 px-2 py-1 font-mono dark:border-slate-700 dark:bg-slate-900"
           placeholder="*"
-          title="Un pattern alla volta per robocopy (es. *.pdf). Una stringa con più pattern arriva a robocopy come un unico argomento e non corrisponde a nulla, verificato empiricamente."
+          title="Quali file copiare, ad esempio *.pdf per i soli PDF. Si indica un solo filtro alla volta: per più tipi di file serve un job per ciascuno."
           value={draft.pattern ?? ""}
           oninput={(e) => {
             const pattern = e.currentTarget.value.trim();
@@ -601,7 +638,17 @@ dest = "..."`}</pre>
         </p>
       </div>
 
-      <label for="f-threads">Thread</label>
+    </div>
+
+    <details class="mt-3 rounded border border-slate-200 px-2 py-1 dark:border-slate-800" bind:open={behaviorOpen}>
+      <summary class="cursor-pointer text-xs font-semibold text-slate-600 dark:text-slate-300">
+        Comportamento della copia
+        <span class="font-normal text-slate-500">
+          — {countLabel(behaviorCount(draft), "impostazione personalizzata", "impostazioni personalizzate")}
+        </span>
+      </summary>
+      <div class="mt-2 grid grid-cols-[10rem_1fr] items-center gap-x-3 gap-y-2 text-xs">
+      <label for="f-threads">Copie in parallelo</label>
       <!-- 1..=128 is the range the CLI enforces (`IngestError::InvalidThreads`). The bounds here
            are the affordance; `apply_draft` refuses the same values whatever this form sends. -->
       <div>
@@ -613,17 +660,17 @@ dest = "..."`}</pre>
           step="1"
           class="w-32 rounded border border-slate-300 px-2 py-1 dark:border-slate-700 dark:bg-slate-900"
           placeholder={DEFAULT_THREADS === null ? "" : String(DEFAULT_THREADS)}
-          title="Numero di thread di copia di robocopy (/MT). Vuoto = usa il default di questa macchina."
+          title="Quanti file vengono copiati contemporaneamente. Vuoto = valore consigliato per questa macchina."
           value={draft.threads ?? ""}
           oninput={(e) => (draft.threads = numberOrNull(e.currentTarget.value))}
         />
         <p class="mt-0.5 text-[11px] text-slate-500">
-          Vuoto = {DEFAULT_THREADS ?? "…"} (i core logici di questa macchina). Il valore migliore
-          dipende dalla destinazione: una condivisione di rete spesso peggiora con più thread, un
-          disco locale ne beneficia — verifica empiricamente piuttosto che indovinare.
+          Vuoto = {DEFAULT_THREADS ?? "…"} (consigliato per questa macchina). Il valore migliore
+          dipende dalla destinazione: una condivisione di rete spesso peggiora con più copie in
+          parallelo, un disco locale ne beneficia — meglio fare una prova che indovinare.
           {#if draft.backup_type}
-            <strong>Non ha effetto con Tipo di backup impostato</strong>: la pipeline a generazioni
-            usa il motore di copia semplice, che non è multi-thread.
+            <strong>Non ha effetto con Tipo di backup impostato</strong>: i backup a generazioni
+            copiano un file alla volta.
           {/if}
         </p>
       </div>
@@ -635,7 +682,7 @@ dest = "..."`}</pre>
           type="number"
           class="w-32 rounded border border-slate-300 px-2 py-1 dark:border-slate-700 dark:bg-slate-900"
           placeholder="3"
-          title="Numero di tentativi per file non riuscito (robocopy /R)."
+          title="Quante volte riprovare a copiare un file che dà errore (ad esempio perché è in uso)."
           value={draft.retries ?? ""}
           oninput={(e) => (draft.retries = numberOrNull(e.currentTarget.value))}
         />
@@ -690,6 +737,17 @@ dest = "..."`}</pre>
         </p>
       </div>
 
+      </div>
+    </details>
+
+    <details class="mt-3 rounded border border-slate-200 px-2 py-1 dark:border-slate-800" bind:open={advancedOpen}>
+      <summary class="cursor-pointer text-xs font-semibold text-slate-600 dark:text-slate-300">
+        Opzioni avanzate
+        <span class="font-normal text-slate-500">
+          — {countLabel(advancedCount(draft), "attiva", "attive")}
+        </span>
+      </summary>
+      <div class="mt-2 grid grid-cols-[10rem_1fr] items-center gap-x-3 gap-y-2 text-xs">
       <label for="f-backup-type">Tipo di backup</label>
       <div>
         <!-- F70: incompatibile con Mirror (`Args::validate()`, e ora anche `job_editor::apply_draft`
@@ -698,7 +756,7 @@ dest = "..."`}</pre>
              `null`/stringa vuota è la stessa copia semplice pre-F34, la scelta di sempre. -->
         <select
           id="f-backup-type"
-          class="w-48 rounded border border-slate-300 px-2 py-1 disabled:bg-slate-100
+          class="w-72 rounded border border-slate-300 px-2 py-1 disabled:bg-slate-100
                  disabled:text-slate-500 dark:border-slate-700 dark:bg-slate-900
                  dark:disabled:bg-slate-800"
           title="Full copia tutto in una nuova generazione; Incremental copia solo ciò che è cambiato dall'ultima generazione; Differential copia ciò che è cambiato dall'ultimo Full. Nessuno = copia semplice, senza generazioni."
@@ -707,9 +765,9 @@ dest = "..."`}</pre>
           onchange={(e) => (draft.backup_type = e.currentTarget.value === "" ? null : e.currentTarget.value)}
         >
           <option value="">Nessuno (copia semplice)</option>
-          <option value="full">Full</option>
-          <option value="incremental">Incremental</option>
-          <option value="differential">Differential</option>
+          <option value="full">Full (copia tutto)</option>
+          <option value="incremental">Incremental (solo le novità dall'ultimo backup)</option>
+          <option value="differential">Differential (novità dall'ultimo Full)</option>
         </select>
         <p class="mt-0.5 text-[11px] text-slate-500">
           <strong>Full</strong> copia tutto in una nuova generazione; <strong>Incremental</strong>
@@ -747,8 +805,8 @@ dest = "..."`}</pre>
           </div>
           {#if draft.backup_type}
             <p class="mt-0.5 text-[11px] text-slate-500">
-              Non selezionabile insieme a Tipo di backup: la pipeline a generazioni non cifra
-              ancora il proprio output (`Args::validate()` rifiuterebbe comunque la combinazione).
+              Non selezionabile insieme a Tipo di backup: i backup a generazioni non cifrano ancora
+              i propri file (la combinazione verrebbe rifiutata comunque).
             </p>
           {:else}
             <p class="mt-0.5 text-[11px] text-slate-500">
@@ -792,19 +850,19 @@ dest = "..."`}</pre>
       </label>
       <label
         class="flex items-center gap-1"
-        title="Mostra cosa succederebbe senza copiare nulla (robocopy /L)."
+        title="Mostra cosa succederebbe senza copiare nulla."
       >
         <input type="checkbox" bind:checked={draft.dry_run} /> Simulazione
       </label>
       <label
         class="flex items-center gap-1"
-        title="Esclude giunzioni e cartelle collegate dalla copia (robocopy /XJ). Senza, robocopy le segue per default, che può duplicare dati o ciclare su una giunzione che punta a se stessa."
+        title="Non segue le giunzioni (collegamenti verso altre cartelle). Seguirle può duplicare dati o girare in tondo se una giunzione punta a se stessa."
       >
         <input type="checkbox" bind:checked={draft.exclude_junctions} /> Escludi giunzioni
       </label>
       <label
         class="flex items-center gap-1"
-        title="Conserva i permessi di sicurezza ACL NTFS (robocopy /COPYALL)."
+        title="Conserva nella copia i permessi di accesso ai file (ACL NTFS)."
       >
         <input type="checkbox" bind:checked={draft.preserve_acl} /> Conserva ACL
       </label>
@@ -824,6 +882,8 @@ dest = "..."`}</pre>
         generazioni non esegue ancora questa verifica. I dati vengono copiati, non verificati.
       </p>
     {/if}
+
+    </details>
 
     <h3 class="mt-4 text-xs font-semibold uppercase tracking-wide text-slate-500">
       Impostazioni distruttive
@@ -851,13 +911,13 @@ dest = "..."`}</pre>
            reaching that check -- so this control offers no way to clear it, only to raise it. -->
       {#if keepGenerationsFloor === null}
         <p class="mt-2 text-[11px] text-slate-600 dark:text-slate-400">
-          <code>keep_generations</code>: non impostato — la retention si introduce nel file di
+          Conservazione delle generazioni: non impostata — si introduce nel file di
           configurazione. L'editor non può introdurla, perché non tenerne alcuna significa
           cancellarle tutte.
         </p>
       {:else}
         <div class="mt-2 flex items-center gap-2 text-[11px] text-slate-600 dark:text-slate-400">
-          <label for="f-keep-generations"><code>keep_generations</code></label>
+          <label for="f-keep-generations">Generazioni da conservare</label>
           <input
             id="f-keep-generations"
             type="number"

@@ -210,7 +210,7 @@
             `${report.configuration.bandwidth_limit_mbps} Mbps`,
           ],
           report.configuration.exclude_junctions && ["Giunzioni", "escluse"],
-          report.configuration.vss_snapshot && ["Istantanea", "lettura da copia shadow VSS"],
+          report.configuration.vss_snapshot && ["Istantanea", "lettura da una fotografia del disco (VSS)"],
           // Shown whenever verify_integrity was configured for this run, independently of
           // integrity_status: a run whose verify phase never completed (e.g. an earlier error)
           // still had this setting active, and hiding it here would silently drop a real,
@@ -232,8 +232,8 @@
   <PathBar
     bind:value={session.reportPath}
     kind="report"
-    label="Percorso del report JSON"
-    placeholder="Scegli il report JSON di una run"
+    label="File con il risultato di un backup"
+    placeholder="Scegli il file con il risultato di un backup (.json)"
     action="Apri report"
     busy={loading}
     onrun={() => load(0)}
@@ -622,7 +622,7 @@
       icon={FileText}
       title="Scegli un report per vederne il dettaglio"
       lines={[
-        "Ogni run conclusa scrive un report JSON (per impostazione predefinita ingest-report.json). Questa scheda ne mostra esito, volumi, durata e i file che la verifica ha segnalato.",
+        "Ogni run conclusa scrive un file con il risultato (per impostazione predefinita ingest-report.json). Questa scheda ne mostra esito, volumi, durata e i file che la verifica ha segnalato.",
         "Gli elenchi per-file arrivano a blocchi di 100: un report può contenerne 10.000 per ciascuna delle tre liste, e mandarli tutti in un solo messaggio è la versione IPC dell'errore che D18 ha fatto con i log.",
       ]}
     />

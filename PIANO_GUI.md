@@ -1985,6 +1985,45 @@ Stesso metodo di §14.4/§16.3/§17.5/§18.17/§19.6/§20.5:
 - La prima stesura del Pattern E proponeva di risolvere il vicolo cieco di `Run.svelte` **abilitando** la conferma mirror da console invece di riscrivere solo il messaggio — scartato subito: `runner.rs` ha un test dedicato che verifica che nessuno dei divieti F61 (incluso `--force-purge`/mirror non presidiato) possa mai raggiungere la CLI dalla console, ed è un confine di sicurezza deliberato, non un difetto di percorso. Il fix resta testuale.
 - Il punto 5 (Onda 2) elencava inizialmente una proposta di raggruppamento già "decisa" nel testo. Corretto per essere esplicitamente una proposta da confermare: questo documento non ha mai deciso unilateralmente la forma di un cambio a `Editor.svelte` senza prima passare da conferma dell'utente (F70/F80/F88 lo hanno sempre fatto), e non doveva iniziare a farlo qui.
 
+### 21.7 Esito dell'implementazione (21 Set 2026, Onda 1 e Onda 2) e correzioni a questa stessa analisi
+
+Implementate l'Onda 1 e l'Onda 2; l'Onda 3 (etichette testuali sulle icone, azione guidata
+"converti in `[[jobs]]`") resta aperta. Rileggendo il codice **prima** di scrivere, tre affermazioni
+di §21.3 si sono rivelate imprecise — l'analisi veniva da una lettura delegata, e non va
+trattata come più affidabile del codice:
+
+- **Pattern A: l'etichetta di `PathBar.svelte` è `sr-only`**, cioè visibile solo agli screen reader.
+  Il gergo "TOML/JSON" che un operatore vedeva davvero stava nei **placeholder** di ogni scheda e nei
+  **nomi dei filtri del selettore file** nativo. Corretti quelli (più l'etichetta per gli screen
+  reader, e il testo degli stati vuoti di Job/Impostazioni/Report che nominava ancora il formato).
+- **Pattern D: il badge mirror di `Jobs.svelte` portava già la sua glossa** ("cancella in
+  destinazione"), e il menu "Tipo di backup" di `Editor.svelte` aveva già una didascalia visibile in
+  italiano semplice. Aggiunti solo un tooltip esteso al badge mirror e la glossa nelle voci del
+  menu ("Full (copia tutto)", ...). Il gap vero era la voce **VSS**, assente da `Help.svelte`:
+  aggiunta, e la riga "Istantanea" di `Report.svelte` ora dice "fotografia del disco (VSS)".
+- **Pattern C era più ampio**: oltre ai flag nei tooltip (`/R`, `/MT`, `/XJ`, `/COPYALL`, `/L`) la
+  verifica dal vivo ha trovato nel testo visibile un identificatore Rust (`Args::validate()`),
+  `keep_generations` come etichetta e "namespacizzati" — riscritti.
+
+**Onda 2 (`Editor.svelte`)**: la forma proposta in §21.5 è stata implementata con `<details>` nativi,
+non con una libreria di componenti (valutato shadcn-svelte: +16 pacchetti e +155 KB di JS per tre
+componenti, vedi §21.8). *Base* (Nome, Sorgente, Destinazione, Filtro file) sempre visibile;
+*Comportamento della copia* e *Opzioni avanzate* chiuse. **Vincolo di sicurezza aggiunto rispetto
+alla proposta**: una sezione si apre da sola quando contiene un'impostazione diversa dal default
+(`behaviorCount`/`advancedCount`), e l'intestazione riporta il conteggio — altrimenti una sezione
+chiusa potrebbe nascondere proprio l'avviso "verifica integrità impostata ma senza effetto" o un
+valore personalizzato. Verificato dal vivo sul binario compilato: job di default con entrambe le
+sezioni chiuse ("nessuna impostazione"); job con retries/esclusioni/tipo di backup/verifica con
+entrambe aperte ("2 impostazioni personalizzate", "2 attive") e l'avviso ambra visibile.
+
+### 21.8 Valutazione di shadcn-svelte (2 Ott 2026)
+
+Misurata in una copia di scratch con tre componenti reali (Accordion, Tooltip, Collapsible):
+56 → 72 pacchetti, JS 190,8 → 345,5 KB (+81%), nessuna nuova vulnerabilità. Non adottata: richiede un
+secondo sistema di stile (variabili CSS e alias `$lib` contro le classi `slate-*` esistenti) e non
+risolve nessuno dei finding di §21 (testi, gerarchia, icone senza etichetta). Riconsiderabile solo
+se servissero componenti complessi (combobox, date picker, menu contestuali).
+
 ## Riferimenti
 
 - [`CLAUDE.md`](CLAUDE.md) — regole operative per `runner.rs`, `job_editor.rs`, `gui_api.rs`.

@@ -119,8 +119,8 @@
   <PathBar
     bind:value={session.configPath}
     kind="config"
-    label="Percorso del file di configurazione TOML"
-    placeholder="Scegli un file di configurazione TOML"
+    label="File con i job di backup"
+    placeholder="Scegli il file con i tuoi job di backup (.toml)"
     action="Apri impostazioni"
     busy={loading}
     onrun={load}
@@ -200,7 +200,7 @@
       icon={SlidersHorizontal}
       title="Scegli un file di configurazione per vederne le impostazioni"
       lines={[
-        "Questa scheda mostra le due cose che il TOML non dice: da quale strato viene il valore che vince per ciascun job, e quali impostazioni portano una conseguenza — cancellano, saltano controlli, eliminano generazioni.",
+        "Questa scheda mostra le due cose che il file dei job non dice: da quale strato viene il valore che vince per ciascun job, e quali impostazioni portano una conseguenza — cancellano, saltano controlli, eliminano generazioni.",
         "L'URL di un webhook viene troncato a schema e host di proposito: vale come credenziale e questa finestra finisce negli screenshot.",
       ]}
     />
@@ -212,7 +212,7 @@
       Gestione credenziali
     </h2>
     <p class="mt-1 text-xs text-slate-600 dark:text-slate-400">
-      Salva o rimuove un segreto in Gestione credenziali di Windows (F56) — mai nel file TOML, mai
+      Salva o rimuove un segreto in Gestione credenziali di Windows (F56) — mai nel file dei job, mai
       come argomento: il segreto passa solo per questo modulo. Usalo poi come
       <code>keyring:NOME</code> ovunque un campo accetti una chiave o una password, per esempio
       <code>--encrypt-aes256 keyring:NOME</code>.
