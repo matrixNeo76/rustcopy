@@ -190,13 +190,13 @@
              nearly the whole row into "Sorgente" while "Tipo"/"Verifica" stayed cramped, unrelated
              to what either column actually needs (Livello 1, punto 2, PIANO_GUI.md §10). -->
         <colgroup>
-          <col class="w-[16%]" />
-          <col class="w-[19%]" />
-          <col class="w-[19%]" />
+          <col class="w-[15%]" />
+          <col class="w-[17%]" />
+          <col class="w-[17%]" />
           <col class="w-[8%]" />
           <col class="w-[8%]" />
-          <col class="w-[16%]" />
-          <col class="w-[14%]" />
+          <col class="w-[15%]" />
+          <col class="w-[20%]" />
         </colgroup>
         <thead class="border-b border-slate-300 dark:border-slate-700">
           <tr>
@@ -295,33 +295,35 @@
                        never a value beyond the two counts already exposed here -- the full
                        picture with provenance stays Impostazioni's job alone (§19.2). -->
                   {#if job.encrypt_enabled}
-                    <span title="Cifratura attiva">
-                      <Lock size={13} strokeWidth={2} class="text-slate-500" aria-hidden="true" />
+                    <span class="inline-flex items-center gap-0.5 text-slate-500" title="Cifratura attiva">
+                      <Lock size={13} strokeWidth={2} aria-hidden="true" />
+                      <span class="text-[10px]">Cifrato</span>
                     </span>
                   {/if}
                   {#if job.keep_generations != null}
                     <span class="inline-flex items-center gap-0.5 text-slate-500" title="Generazioni conservate">
                       <RotateCcwClock size={13} strokeWidth={2} aria-hidden="true" />
-                      <span class="text-[10px]">{job.keep_generations}</span>
+                      <span class="text-[10px]">{job.keep_generations} cicli</span>
                     </span>
                   {/if}
                   {#if job.exclude_count > 0}
                     <span class="inline-flex items-center gap-0.5 text-slate-500" title="Esclusioni configurate">
                       <Funnel size={13} strokeWidth={2} aria-hidden="true" />
-                      <span class="text-[10px]">{job.exclude_count}</span>
+                      <span class="text-[10px]">{job.exclude_count} {job.exclude_count === 1 ? "esclusione" : "esclusioni"}</span>
                     </span>
                   {/if}
                   {#if job.threads != null && job.threads !== defaultThreads}
-                    <span title="Copie in parallelo diverse dal valore consigliato: {job.threads}">
-                      <Cpu size={13} strokeWidth={2} class="text-slate-500" aria-hidden="true" />
+                    <span class="inline-flex items-center gap-0.5 text-slate-500" title="Copie in parallelo diverse dal valore consigliato: {job.threads}">
+                      <Cpu size={13} strokeWidth={2} aria-hidden="true" />
+                      <span class="text-[10px]">{job.threads} in parallelo</span>
                     </span>
                   {/if}
                 </div>
-                <div class="mt-1 flex items-center gap-2">
+                <div class="mt-1 flex flex-wrap items-center gap-x-3 gap-y-1">
                   <!-- Onda 3: un clic verso il dettaglio di questo job in un'altra scheda, invece
                        di ricopiare a mano percorso (e nome job) (PIANO_GUI.md §9g/§19.1). -->
                   <button
-                    class="text-slate-500 hover:text-slate-800 dark:hover:text-slate-200"
+                    class="inline-flex items-center gap-1 text-[11px] text-slate-500 hover:text-slate-800 dark:hover:text-slate-200"
                     title="Apri le impostazioni di questo job"
                     onclick={() => {
                       // CodeRabbit finding on this PR: `session.configPath` is a live PathBar
@@ -333,9 +335,9 @@
                       session.pendingSettingsLoad = true;
                       session.activeTab = "settings";
                     }}
-                  ><SettingsIcon size={14} strokeWidth={2} aria-hidden="true" /></button>
+                  ><SettingsIcon size={14} strokeWidth={2} aria-hidden="true" />Impostazioni</button>
                   <button
-                    class="text-slate-500 hover:text-slate-800 disabled:opacity-30 dark:hover:text-slate-200"
+                    class="inline-flex items-center gap-1 text-[11px] text-slate-500 hover:text-slate-800 disabled:opacity-30 dark:hover:text-slate-200"
                     title="Apri lo storico di questo job"
                     disabled={job.report_path == null}
                     onclick={() => {
@@ -346,9 +348,9 @@
                       session.pendingHistoryLoad = true;
                       session.activeTab = "history";
                     }}
-                  ><Clock size={14} strokeWidth={2} aria-hidden="true" /></button>
+                  ><Clock size={14} strokeWidth={2} aria-hidden="true" />Storico</button>
                   <button
-                    class="text-slate-500 hover:text-slate-800 dark:hover:text-slate-200"
+                    class="inline-flex items-center gap-1 text-[11px] text-slate-500 hover:text-slate-800 dark:hover:text-slate-200"
                     title="Modifica questo job"
                     onclick={() => {
                       // Same restoration as Impostazioni above, for the same reason.
@@ -356,7 +358,7 @@
                       session.pendingEditorJob = job.name;
                       session.activeTab = "editor";
                     }}
-                  ><SquarePen size={14} strokeWidth={2} aria-hidden="true" /></button>
+                  ><SquarePen size={14} strokeWidth={2} aria-hidden="true" />Modifica</button>
                 </div>
               </td>
             </tr>

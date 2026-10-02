@@ -2024,6 +2024,35 @@ secondo sistema di stile (variabili CSS e alias `$lib` contro le classi `slate-*
 risolve nessuno dei finding di §21 (testi, gerarchia, icone senza etichetta). Riconsiderabile solo
 se servissero componenti complessi (combobox, date picker, menu contestuali).
 
+### 21.9 Onda 3 (2 Ott 2026): etichette visibili implementate, "converti in `[[jobs]]`" non fattibile nell'editor
+
+**Punto 6, fatto.** Le affordance solo-icona hanno ora un testo visibile accanto: la striscia di
+`Jobs.svelte` ("Cifrato", "N cicli", "N esclusioni", "N in parallelo"), le tre azioni per riga
+("Impostazioni", "Storico", "Modifica"), le frecce di riordino di `Editor.svelte` ("Ordine di
+esecuzione") e la stella di `PathBar.svelte` ("Aggiungi ai preferiti" / "Nei preferiti"). I
+tooltip restano. Costo dichiarato in §19 come motivo della scelta di sole icone: lo spazio di riga —
+compensato ribilanciando le larghezze di colonna (Sorgente/Destinazione 19% → 17%, ultima colonna
+14% → 20%) e lasciando andare a capo la striscia.
+
+**Punto 7, esplorato e non implementato: non è un problema di interfaccia, è una migrazione di
+dati.** Un file senza `[[jobs]]` esegue un job singolo i cui campi vivono in cima al file; con
+`[[jobs]]` quei campi diventano solo *default ereditati* e il job implicito sparisce. Una
+conversione guidata dovrebbe quindi spostare `source`/`dest` in una voce `[[jobs]]` — fin qui
+scrivibile come proposta — ma c'è un effetto che nessuna proposta di testo può contenere. Letto nel
+codice (`namespaced_path`, `cache::default_cache_path`, `GenerationManifest::path_for`,
+`history`): in modalità multi-job **cinque file di servizio cambiano nome**, perché il nome del job
+viene inserito nel filename — report, report HTML, `.ingest_cache`, `.rustcopy_generations.json` e
+l'indice dello storico — mentre il job singolo implicito usa i nomi senza suffisso. Dopo la
+conversione il primo run non troverebbe più la catena di generazioni (un incrementale senza Full di
+riferimento fallisce, la retention non vede i cicli vecchi), la cache di verifica rapida
+ripartirebbe da zero e lo storico si spezzerebbe in due. Per questo l'editor rifiuta (D12/F33) e per
+questo non può nemmeno farlo "a una condizione": rinominare quei file sul disco è una scrittura
+fuori dal contratto dell'editor ("scrive solo una proposta in un file nuovo", F54/F61). Se mai
+servirà, il posto giusto è la CLI, con un'operazione esplicita di migrazione e un'anteprima
+(`--dry-run`) che elenca i file da rinominare — tracciata come F91 nel backlog, non avviata.
+Nel frattempo il messaggio dell'Editor (riscritto in Onda 1) dice la verità: serve un intervento
+tecnico, da chiedere a chi ha preparato il file.
+
 ## Riferimenti
 
 - [`CLAUDE.md`](CLAUDE.md) — regole operative per `runner.rs`, `job_editor.rs`, `gui_api.rs`.

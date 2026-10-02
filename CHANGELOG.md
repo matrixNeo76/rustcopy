@@ -21,6 +21,15 @@ For full technical detail behind any entry, see `ANALYSIS.md` (defect list, `D<N
 
 ## [Unreleased]
 
+## [7.6.1] - 2026-10-02
+
+### Changed
+- **Visible labels on icon-only controls** (F89, wave 3): the Job table's settings strip now reads
+  "Cifrato", "N cicli", "N esclusioni", "N in parallelo"; the per-row actions read
+  "Impostazioni", "Storico", "Modifica"; the Editor's reorder arrows are labelled "Ordine di
+  esecuzione"; the path bar's star reads "Aggiungi ai preferiti" / "Nei preferiti". Tooltips are
+  unchanged.
+
 ## [7.6.0] - 2026-10-02
 
 ### Changed

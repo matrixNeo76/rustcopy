@@ -185,7 +185,7 @@
       onkeydown={(e) => e.key === "Enter" && run()}
     />
     <button
-      class="rounded border border-slate-300 px-1.5 py-1 disabled:opacity-40 dark:border-slate-700"
+      class="inline-flex items-center gap-1 rounded border border-slate-300 px-1.5 py-1 text-sm disabled:opacity-40 dark:border-slate-700"
       onclick={toggleFavorite}
       disabled={value.length === 0}
       title={alreadyFavorite ? "Rimuovi dai preferiti" : "Aggiungi ai preferiti"}
@@ -198,6 +198,7 @@
         class={alreadyFavorite ? "text-amber-500" : "text-slate-400"}
         aria-hidden="true"
       />
+      {alreadyFavorite ? "Nei preferiti" : "Aggiungi ai preferiti"}
     </button>
     <button
       class="rounded border border-slate-300 px-2 py-1 text-sm dark:border-slate-700"
