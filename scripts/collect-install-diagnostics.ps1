@@ -17,7 +17,8 @@
   name and file paths.
 
 .PARAMETER OutDir
-  Where the report is written. Default: <Desktop>\rustcopy-diagnostics
+  Where the report is written. Default: <Desktop>\rustcopy-diagnostics-<date-time>. A folder that
+  already has content is never reused or cleared: a time-stamped sibling is created instead.
 
 .PARAMETER InstallerPath
   Optional path of the setup .exe that failed; its download mark (Zone.Identifier) and SHA-256 are
@@ -28,11 +29,30 @@
 #>
 [CmdletBinding()]
 param(
-  [string]$OutDir = (Join-Path ([Environment]::GetFolderPath('Desktop')) 'rustcopy-diagnostics'),
+  [string]$OutDir = '',
   [string]$InstallerPath = ''
 )
 
+# A 32-bit PowerShell on 64-bit Windows sees a redirected System32 and the Wow6432Node registry view,
+# which would make a runtime that is present look absent. Re-run in the native 64-bit host instead
+# of reasoning about both views throughout this script.
+if ([Environment]::Is64BitOperatingSystem -and -not [Environment]::Is64BitProcess) {
+  $native = Join-Path $env:SystemRoot 'Sysnative\WindowsPowerShell\v1.0\powershell.exe'
+  $forward = @('-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', $PSCommandPath)
+  if ($OutDir)        { $forward += @('-OutDir', $OutDir) }
+  if ($InstallerPath) { $forward += @('-InstallerPath', $InstallerPath) }
+  & $native @forward
+  exit $LASTEXITCODE
+}
+
 $ErrorActionPreference = 'Continue'
+# Every run writes to a fresh folder: never clear, overwrite or mix with files already there.
+$stamp = Get-Date -Format 'yyyyMMdd-HHmmss'
+if (-not $OutDir) {
+  $OutDir = Join-Path ([Environment]::GetFolderPath('Desktop')) "rustcopy-diagnostics-$stamp"
+} elseif ((Test-Path $OutDir) -and @(Get-ChildItem $OutDir -Force -ErrorAction SilentlyContinue).Count -gt 0) {
+  $OutDir = "$OutDir-$stamp"
+}
 New-Item -ItemType Directory -Force -Path $OutDir | Out-Null
 $report = Join-Path $OutDir 'report.txt'
 Set-Content -Path $report -Value ("rustcopy install diagnostics - " + (Get-Date -Format 'yyyy-MM-dd HH:mm:ss')) -Encoding UTF8
@@ -46,6 +66,16 @@ function Capture([string]$Name, [scriptblock]$Block) {
     Add-Content -Path $report -Value $text.TrimEnd() -Encoding UTF8
   } catch {
     Line ("  [errore in $Name] " + $_.Exception.Message)
+  }
+}
+
+# Get-WinEvent reports "no matching events" as an error. That is an empty result, not a failure:
+# recognise it by its locale-independent error id and let every other error (access denied, log
+# missing) surface in the report instead of masquerading as "nothing found".
+function Get-EventsOrEmpty([hashtable]$Filter) {
+  try { Get-WinEvent -FilterHashtable $Filter -ErrorAction Stop }
+  catch {
+    if ($_.FullyQualifiedErrorId -like 'NoMatchingEventsFound*') { @() } else { throw }
   }
 }
 
@@ -183,7 +213,7 @@ foreach ($exe in 'robocopy_ingest.exe', 'notify-server.exe') {
     if (-not (Test-Path $p)) { "$exe non presente"; return }
     $out = & $p --version 2>&1 | Out-String
     $code = $LASTEXITCODE
-    $hint = if ($code -ne 0) { '  <-- 0xC0000135 / -1073741515 = DLL mancante (VCRUNTIME140.dll?)' } else { '' }
+    $hint = if ($code -eq -1073741515 -or $code -eq 3221225781) { '  <-- 0xC0000135 / -1073741515 = DLL mancante (VCRUNTIME140.dll?)' } else { '' }
     "{0} --version -> exit {1}{2}  output: {3}" -f $exe, $code, $hint, $out.Trim()
   }
 }
@@ -214,8 +244,8 @@ Capture 'deviceguard' {
 }
 Capture 'codeintegrity' {
   $since = (Get-Date).AddDays(-3)
-  $ev = Get-WinEvent -FilterHashtable @{ LogName = 'Microsoft-Windows-CodeIntegrity/Operational'; StartTime = $since; Id = 3033, 3034, 3076, 3077 } -ErrorAction SilentlyContinue
-  if (-not $ev) { 'Code Integrity: nessun blocco negli ultimi 3 giorni'; return }
+  $ev = @(Get-EventsOrEmpty @{ LogName = 'Microsoft-Windows-CodeIntegrity/Operational'; StartTime = $since; Id = 3033, 3034, 3076, 3077 })
+  if ($ev.Count -eq 0) { 'Code Integrity: nessun blocco negli ultimi 3 giorni'; return }
   "Code Integrity: $(@($ev).Count) eventi di blocco/audit negli ultimi 3 giorni (di qualunque programma)"
   $mine = $ev | Where-Object { $_.Message -match 'rustcopy|robocopy_ingest|notify-server' }
   if ($mine) { $mine | Select-Object -First 10 TimeCreated, Id, @{n = 'Msg'; e = { $_.Message -replace '\s+', ' ' }} | Format-List }
@@ -250,9 +280,10 @@ Capture 'setuplogs' {
 Section 'Registro eventi Applicazione (ultimi 3 giorni)'
 Capture 'events' {
   $since = (Get-Date).AddDays(-3)
-  $ev = Get-WinEvent -FilterHashtable @{ LogName = 'Application'; StartTime = $since; Level = 1, 2 } -ErrorAction SilentlyContinue |
-    Where-Object { $_.Message -match 'rustcopy|robocopy_ingest|rustcopy_shell|rustcopy-gui|notify-server|VCRUNTIME|regsvr|setup' -or $_.ProviderName -in 'SideBySide', 'MsiInstaller' }
-  if ($ev) { $ev | Select-Object -First 15 TimeCreated, ProviderName, Id, @{n = 'Msg'; e = { ($_.Message -replace '\s+', ' ').Substring(0, [math]::Min(300, $_.Message.Length)) }} | Format-List }
+  $ev = @(Get-EventsOrEmpty @{ LogName = 'Application'; StartTime = $since; Level = 1, 2 } |
+    Where-Object { $_.Message -match 'rustcopy|robocopy_ingest|rustcopy_shell|rustcopy-gui|notify-server|VCRUNTIME|regsvr|setup' -or $_.ProviderName -in 'SideBySide', 'MsiInstaller' } |
+    Select-Object -First 15)
+  if ($ev.Count -gt 0) { $ev | Select-Object TimeCreated, ProviderName, Id, @{n = 'Msg'; e = { ($_.Message -replace '\s+', ' ').Substring(0, [math]::Min(300, $_.Message.Length)) }} | Format-List }
   else { 'Nessun evento di errore pertinente' }
 }
 
@@ -267,8 +298,11 @@ Capture 'reboot' {
 }
 
 $zip = "$OutDir.zip"
-Remove-Item $zip -ErrorAction SilentlyContinue
-try { Compress-Archive -Path (Join-Path $OutDir '*') -DestinationPath $zip -Force } catch { $zip = '(zip non creato: ' + $_.Exception.Message + ')' }
+if (Test-Path $zip) { $zip = "$OutDir-$stamp.zip" }   # never replace an archive that already exists
+try {
+  Compress-Archive -Path (Join-Path $OutDir '*') -DestinationPath $zip -ErrorAction Stop
+  if (-not (Test-Path $zip)) { throw 'archivio non trovato dopo la creazione' }
+} catch { $zip = '(zip non creato: ' + $_.Exception.Message + ')' }
 Write-Host ''
 Write-Host 'Fatto. Nessuna modifica e'' stata apportata al sistema.'
 Write-Host "Report : $report"

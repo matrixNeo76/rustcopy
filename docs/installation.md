@@ -134,7 +134,7 @@ macchina e dei percorsi.
 Per avere il log dell'installazione anche in modalità silenziosa:
 
 ```powershell
-rustcopy-7.6.1-setup.exe /VERYSILENT /SUPPRESSMSGBOXES /NORESTART /LOG="C:\Temp\rustcopy-setup.log"
+rustcopy-7.6.1-setup.exe /VERYSILENT /SUPPRESSMSGBOXES /NORESTART /LOG="$env:TEMP\rustcopy-setup.log"
 ```
 
 Cause note, dalla più alla meno frequente (dettaglio in `ANALYSIS.md` D30): Visual C++
