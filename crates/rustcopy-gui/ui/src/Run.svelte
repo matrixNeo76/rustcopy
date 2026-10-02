@@ -281,8 +281,8 @@
   <PathBar
     bind:value={session.configPath}
     kind="config"
-    label="Percorso del file di configurazione TOML"
-    placeholder="Scegli un file di configurazione TOML"
+    label="File con i job di backup"
+    placeholder="Scegli il file con i tuoi job di backup (.toml)"
     action="Esamina"
     busy={busy}
     onrun={inspect}
@@ -380,8 +380,9 @@
         <ShieldAlert size={13} strokeWidth={2.25} class="mt-0.5 shrink-0" aria-hidden="true" />
         <span>
           <strong>{mirrorJobs.join(", ")}</strong> {mirrorJobs.length === 1 ? "cancella" : "cancellano"}
-          in destinazione. Da qui non si può autorizzare: la conferma richiede un terminale, quindi la
-          run si fermerà da sola con esito 3. Eseguila dalla CLI, dove la conferma mostra
+          in destinazione. Da qui non si può avviare: serve una conferma che questa console non può
+          dare, quindi la run si fermerebbe da sola con esito 3. Chiedi a chi gestisce i backup di
+          questo computer di eseguirla dalla riga di comando, dove la conferma mostra
           <em>quali</em> file verrebbero eliminati.
         </span>
       </p>

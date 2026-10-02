@@ -140,8 +140,8 @@
   <PathBar
     bind:value={session.reportPath}
     kind="report"
-    label="Percorso del report JSON"
-    placeholder="Scegli un report JSON (lo storico sta lì accanto)"
+    label="File con il risultato di un backup"
+    placeholder="Scegli il risultato di un backup (.json): lo storico sta lì accanto"
     action="Apri storico"
     busy={loading}
     onrun={load}

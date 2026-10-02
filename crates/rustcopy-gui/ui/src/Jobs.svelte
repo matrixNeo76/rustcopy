@@ -149,8 +149,8 @@
   <PathBar
     bind:value={session.configPath}
     kind="config"
-    label="Percorso del file di configurazione TOML"
-    placeholder="Scegli un file di configurazione TOML"
+    label="File con i job di backup"
+    placeholder="Scegli il file con i tuoi job di backup (.toml)"
     action="Elenca job"
     busy={loading}
     onrun={load}
@@ -232,6 +232,7 @@
                   <span
                     class="ml-1 inline-flex items-center gap-1 rounded bg-amber-200 px-1 text-[10px]
                            font-semibold text-amber-900 dark:bg-amber-900 dark:text-amber-100"
+                    title="Mirror: la destinazione diventa identica alla sorgente, quindi i file che nella sorgente non ci sono più vengono cancellati anche lì."
                   >
                     <ShieldAlert size={11} strokeWidth={2.25} aria-hidden="true" />
                     MIRROR — cancella in destinazione
@@ -311,7 +312,7 @@
                     </span>
                   {/if}
                   {#if job.threads != null && job.threads !== defaultThreads}
-                    <span title="Thread non-default: {job.threads}">
+                    <span title="Copie in parallelo diverse dal valore consigliato: {job.threads}">
                       <Cpu size={13} strokeWidth={2} class="text-slate-500" aria-hidden="true" />
                     </span>
                   {/if}
@@ -373,7 +374,7 @@
       icon={ListChecks}
       title="Scegli un file di configurazione per cominciare"
       lines={[
-        "Questa scheda elenca i job che un file TOML descrive: sorgente, destinazione, tipo di backup e se la verifica è attiva.",
+        "Questa scheda elenca i job descritti in un file di configurazione: sorgente, destinazione, tipo di backup e se la verifica è attiva.",
         "Un job che cancella in destinazione (mirror) viene segnalato in modo distinto, perché è l'impostazione più distruttiva che possa avere.",
         "Hai clonato il repository? Prova examples/demo-locale.toml: copia qualche file finto in una cartella accanto, quindi non può toccare nulla di tuo.",
       ]}
