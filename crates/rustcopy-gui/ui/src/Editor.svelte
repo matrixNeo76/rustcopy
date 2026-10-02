@@ -490,6 +490,7 @@ dest = "..."`}</pre>
              Order here is the order `write_proposal` writes: this changes only the sequence
              `[[jobs]]` runs in, nothing else about any job. -->
         <span class="ml-1 flex items-center gap-0.5 border-l border-slate-300 pl-1 dark:border-slate-700">
+          <span class="mr-0.5 text-[11px] text-slate-500">Ordine di esecuzione</span>
           <button
             class="rounded p-0.5 text-slate-500 hover:bg-slate-100 disabled:opacity-30
                    dark:text-slate-400 dark:hover:bg-slate-800"

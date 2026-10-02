@@ -446,7 +446,7 @@ le mitigazioni disponibili oggi sono:
 - pubblicare, per ogni release GitHub, lo SHA-256 di ciascun artefatto (`rustcopy-X.Y.Z-setup.exe`),
   cosi'' un amministratore puo'' verificarlo prima dell'installazione:
   ```powershell
-  Get-FileHash rustcopy-7.6.0-setup.exe -Algorithm SHA256
+  Get-FileHash rustcopy-7.6.1-setup.exe -Algorithm SHA256
   ```
 - per un allow-list AppLocker/WDAC, usare una regola basata su hash o su percorso (`{app}`) invece
   che su editore/firma, che qui non e'' disponibile.
