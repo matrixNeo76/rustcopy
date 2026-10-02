@@ -1748,6 +1748,55 @@ trascinamento su una seconda macchina
 con uno stack software diverso da quella di sviluppo — la stessa condizione che ha esposto il
 difetto, non riproducibile senza una macchina del genere disponibile.
 
+### D30 — Installazione fallita su Windows Server 2016 e 2022, riuscita su Server 2019 e Windows 11 🟡 APERTO (2 Ott 2026)
+
+**Stato: aperto. Causa più probabile individuata e correzione provata in scratch, non ancora
+confermata sulle macchine che hanno fallito** (nessun Server disponibile in questa sessione; i
+sintomi esatti non sono ancora stati raccolti).
+
+**Gravità: ALTA** — l'installazione, cioè il primo contatto con il prodotto, non riesce su due
+delle quattro macchine provate, entrambe SKU Server di produzione.
+
+**Cosa è verificato, non ipotizzato.**
+- `dumpbin /dependents` sui quattro artefatti di release: **tutti** importano `VCRUNTIME140.dll`, e
+  la console anche `VCRUNTIME140_1.dll` (presente solo da Visual C++ 2019 in poi). Nessun
+  `crt-static` in `.cargo/` né nei `Cargo.toml`: il runtime è dinamico ovunque.
+- `installer/rustcopy.iss` registra l'estensione Shell con `Flags: regserver`: Inno Setup chiama
+  `DllRegisterServer` durante l'installazione, e questo richiede `LoadLibrary` sulla DLL — che
+  fallisce (errore 126) se `VCRUNTIME140.dll` manca. Per documentazione di Inno Setup un errore di
+  registrazione apre un dialogo Interrompi/Riprova/Ignora e, se interrotto, annulla l'intera
+  installazione: **un componente opzionale (l'estensione Shell) può far fallire tutto il resto**.
+- `InitializeSetup` controlla il Redistributable ma **solo avvisa e prosegue** ("Setup continuera
+  comunque"): l'installazione va avanti fino al punto che poi fallisce. Il controllo, inoltre, legge
+  `Runtimes\X64\Installed = 1`, vero anche per un 14.0 del 2015, che **non** ha `VCRUNTIME140_1.dll`.
+- Rust supporta Windows Server 2016 e successivi (pagina ufficiale di supporto della piattaforma
+  `x86_64-pc-windows-msvc`): la versione del sistema operativo **non** è di per sé la causa. Un primo
+  sospetto su `ProcessPrng` (`bcryptprimitives.dll`) è stato scartato per questa ragione — un
+  risultato di ricerca affermava che Server 2016 non lo ha, ed è contraddetto da quella pagina.
+
+**Ipotesi, in ordine di probabilità, con la prova che le distingue** (la raccoglie in una sola
+esecuzione `scripts/collect-install-diagnostics.ps1`, di sola lettura):
+
+| # | Ipotesi | Spiega | Prova decisiva nel report |
+|---|---|---|---|
+| H1 | VC++ Redistributable assente | installazione fallita a `regserver`, CLI che non parte | `vcruntime140.dll` ASSENTE; caricamento di `rustcopy_shell.dll` con errore 126; `robocopy_ingest.exe --version` con codice `0xC0000135` |
+| H2 | Solo VC++ 2015 (senza `VCRUNTIME140_1`) | installazione riuscita ma la console non parte | `vcruntime140_1.dll` ASSENTE, versione `14.0.x` |
+| H3 | WebView2 assente | console che non si apre, CLI e installazione a posto | nessuna chiave `EdgeUpdate\Clients\{F3017226…}` |
+| H4 | Criterio di sicurezza (AppLocker, WDAC, Defender/EDR) su binari non firmati | file messi in quarantena o DLL non caricabile (errore 1260) | eventi Code Integrity che citano rustcopy, `Get-AppLockerPolicy`, stato Defender |
+| H5 | Riavvio in sospeso, permessi, file scaricato e bloccato (Zone.Identifier) | installazione interrotta a metà | flag di riavvio, `Zone.Identifier` dell'installer, `Setup Log` |
+
+**Cosa dice contro H1 e va detto**: se il report mostrerà il Redistributable **presente** sulle
+macchine che hanno fallito, H1 e H2 cadono e restano H3-H5. Che 2019 e Windows 11 funzionino e
+2016/2022 no è coerente con H1 solo se le prime due lo avevano già per altri programmi — da
+confermare, non da assumere.
+
+**Correzione provata in scratch (2 Ott 2026).** Compilando CLI, DLL della Shell e console con
+`RUSTFLAGS="-C target-feature=+crt-static"` in una cartella di build separata, `dumpbin` non mostra
+**nessuna** importazione di `VCRUNTIME*`/`MSVCP*`/`api-ms-win-crt-*` in nessuno dei tre (prima:
+tutte), al costo di +20 KB (CLI), +123 KB (console), +93 KB (DLL Shell). Il binario compilato parte
+(`robocopy_ingest 7.6.1`). Con il CRT statico il Redistributable smette di essere un requisito: H1 e
+H2 non possono più verificarsi, su nessuna versione di Windows. Piano in `ROADMAP.md`, riga F92.
+
 ---
 
 ## 💡 3.2 Opportunità di miglioramento (non difetti)

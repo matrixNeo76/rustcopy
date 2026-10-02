@@ -114,6 +114,35 @@ dei VSS writer, mitigazioni per l'assenza di firma del codice) sono in
 
 ---
 
+#### Se l'installazione fallisce o il programma non parte
+
+Prima cosa: **non indovinare, raccogli i fatti**. Su una macchina con problemi esegui, da PowerShell
+come Amministratore (funziona su Windows PowerShell 5.1, quindi anche su Server 2016):
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\scripts\collect-install-diagnostics.ps1 `
+  -InstallerPath C:\Temp\rustcopy-7.6.1-setup.exe
+```
+
+Lo script **non modifica nulla** (non registra, non installa, non cambia impostazioni): scrive sul
+Desktop una cartella `rustcopy-diagnostics` e il relativo `.zip` con sistema operativo, Visual C++
+Redistributable, WebView2, ciò che l'installer ha lasciato, la prova di caricamento di ogni binario
+(con il codice d'errore di Windows), i criteri di sicurezza attivi, il log di Inno Setup, gli errori
+recenti e i riavvii in sospeso. Controlla il contenuto prima di condividerlo: include il nome della
+macchina e dei percorsi.
+
+Per avere il log dell'installazione anche in modalità silenziosa:
+
+```powershell
+rustcopy-7.6.1-setup.exe /VERYSILENT /SUPPRESSMSGBOXES /NORESTART /LOG="C:\Temp\rustcopy-setup.log"
+```
+
+Cause note, dalla più alla meno frequente (dettaglio in `ANALYSIS.md` D30): Visual C++
+Redistributable x64 assente o troppo vecchio (la console richiede anche `VCRUNTIME140_1.dll`, presente
+solo dalla versione 2019); WebView2 assente (riguarda solo la console, non la CLI); binari non firmati
+bloccati da AppLocker, WDAC o da un antivirus/EDR; riavvio in sospeso; installer scaricato e bloccato
+da Windows (`Zone.Identifier`).
+
 ---
 
 ## 📬 Notify Server: notifiche di backup
