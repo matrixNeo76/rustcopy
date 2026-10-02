@@ -52,7 +52,7 @@
         ],
         [
           "VSS (copia shadow)",
-          "Volume Shadow Copy: Windows scatta una fotografia del disco per un istante e il backup legge da quella invece che dai file vivi, così un file aperto o in modifica viene copiato in uno stato coerente. Richiede i privilegi di Amministratore. Nel risultato di un backup compare come \"Istantanea\".",
+          "Volume Shadow Copy: Windows scatta una fotografia del disco per un istante e il backup legge da quella invece che dai file vivi, così anche un file aperto o in modifica si può leggere. La copia è coerente come lo sarebbe dopo un'interruzione di corrente, non necessariamente per l'applicazione che usa quei file (per un database serve che l'applicazione stessa partecipi allo snapshot). Richiede i privilegi di Amministratore. Nel risultato di un backup compare come \"Istantanea\".",
         ],
         [
           "ereditato",
