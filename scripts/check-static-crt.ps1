@@ -20,7 +20,9 @@ $ErrorActionPreference = 'Stop'
 
 $vswhere = Join-Path ${env:ProgramFiles(x86)} 'Microsoft Visual Studio\Installer\vswhere.exe'
 if (-not (Test-Path $vswhere)) { throw "vswhere.exe not found at $vswhere (Visual Studio Build Tools needed for dumpbin)" }
-$dumpbin = & $vswhere -latest -products * -find 'VC\Tools\MSVC\**\bin\Hostx64\x64\dumpbin.exe' | Select-Object -Last 1
+$found = & $vswhere -latest -products * -find 'VC\Tools\MSVC\**\bin\Hostx64\x64\dumpbin.exe'
+if ($LASTEXITCODE -ne 0) { throw "vswhere.exe failed with exit code $LASTEXITCODE" }
+$dumpbin = $found | Select-Object -Last 1
 if (-not $dumpbin) { throw 'dumpbin.exe not found: install the MSVC build tools' }
 
 $forbidden = '^(vcruntime|msvcp|concrt|vccorlib|ucrtbase|api-ms-win-crt-)'
@@ -28,7 +30,11 @@ $failed = $false
 
 foreach ($file in $Path) {
   if (-not (Test-Path $file)) { throw "File not found: $file" }
-  $imports = & $dumpbin /nologo /dependents $file |
+  # $ErrorActionPreference does not catch a native tool's exit code: without this check a dumpbin
+  # that failed would produce no imports and the file would be reported as clean.
+  $output = & $dumpbin /nologo /dependents $file
+  if ($LASTEXITCODE -ne 0) { throw "dumpbin.exe failed on $file with exit code $LASTEXITCODE" }
+  $imports = $output |
     Where-Object { $_ -match '^\s+\S+\.dll\s*$' } |
     ForEach-Object { $_.Trim() }
   $bad = @($imports | Where-Object { $_ -match $forbidden })

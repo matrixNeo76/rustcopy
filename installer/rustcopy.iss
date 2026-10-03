@@ -255,7 +255,7 @@ begin
       SuppressibleMsgBox(
         'L''estensione Shell per Explorer non e'' stata registrata: resta disattivata.' + #13#10 + #13#10 +
         'Il resto di rustcopy (CLI e console) e'' installato regolarmente. Il motivo e'' nel rapporto di ' +
-        'installazione, in ' + ExpandConstant('{commonappdata}\rustcopy\install-reports') + '.',
+        'installazione, in ' + ReportDirectory() + '.',
         mbInformation, MB_OK, IDOK);
 
   // Checked here rather than in InitializeSetup because components are not chosen yet at that

@@ -111,6 +111,34 @@ begin
     Exec(ExpandConstant('{sys}\regsvr32.exe'), '/u /s "' + DllPath + '"', '', SW_HIDE, ewWaitUntilTerminated, Code);
 end;
 
+function DefaultReportDirectory(): string;
+begin
+  Result := ExpandConstant('{commonappdata}\rustcopy\install-reports');
+end;
+
+// /ReportDir=<folder> on the Setup command line overrides where the report goes (an admin who wants
+// it on a share, and the way this logic is tested without writing under C:\ProgramData).
+function ReportDirectory(): string;
+begin
+  Result := ExpandConstant('{param:ReportDir|{commonappdata}\rustcopy\install-reports}');
+end;
+
+// WebView2 is registered per machine (32-bit view), per machine, or per user depending on how it
+// was installed: the console works with any of them, so the report must look at all three.
+function WebView2VersionText(): string;
+var
+  Version: string;
+begin
+  if RegQueryStringValue(HKLM, 'SOFTWARE\WOW6432Node\Microsoft\EdgeUpdate\Clients\' + WEBVIEW2_CLIENT, 'pv', Version) then
+    Result := Version + ' (per macchina, vista a 32 bit)'
+  else if RegQueryStringValue(HKLM, 'SOFTWARE\Microsoft\EdgeUpdate\Clients\' + WEBVIEW2_CLIENT, 'pv', Version) then
+    Result := Version + ' (per macchina)'
+  else if RegQueryStringValue(HKCU, 'SOFTWARE\Microsoft\EdgeUpdate\Clients\' + WEBVIEW2_CLIENT, 'pv', Version) then
+    Result := Version + ' (per utente)'
+  else
+    Result := '(assente)';
+end;
+
 // Facts that need no wizard: called from InitializeSetup.
 procedure ReportStart();
 var
@@ -166,8 +194,7 @@ begin
   ReportAdd('vcruntime140.dll: ' + FileVersionText(ExpandConstant('{sys}\vcruntime140.dll')));
   ReportAdd('vcruntime140_1.dll: ' + FileVersionText(ExpandConstant('{sys}\vcruntime140_1.dll')));
   ReportAdd('ucrtbase.dll: ' + FileVersionText(ExpandConstant('{sys}\ucrtbase.dll')));
-  ReportAdd('WebView2 (richiesto solo dalla console): ' +
-    RegValueText('SOFTWARE\WOW6432Node\Microsoft\EdgeUpdate\Clients\' + WEBVIEW2_CLIENT, 'pv'));
+  ReportAdd('WebView2 (richiesto solo dalla console): ' + WebView2VersionText());
 
   ReportAdd('');
   ReportAdd('--- Installazione precedente ---');
@@ -211,10 +238,38 @@ begin
   end;
 end;
 
+// Saves the report (and a copy of Setup's own log) into Dir under a name no earlier or concurrent
+// run has used. Returns False when Dir cannot be created or written.
+function TrySaveReport(const Dir, Stamp: string): Boolean;
+var
+  N: Integer;
+  Base, SetupLog: string;
+begin
+  Result := False;
+  if not ForceDirectories(Dir) then
+    exit;
+  N := 0;
+  repeat
+    if N = 0 then
+      Base := Dir + '\install-' + Stamp
+    else
+      Base := Dir + '\install-' + Stamp + '-' + IntToStr(N);
+    N := N + 1;
+  until (not FileExists(Base + '.txt') and not FileExists(Base + '-setup.log')) or (N > 99);
+  if not SaveStringToFile(Base + '.txt', ReportLines.Text, False) then
+    exit;
+  ReportPath := Base + '.txt';
+  SetupLog := ExpandConstant('{log}');
+  if SetupLog <> '' then
+    CopyFile(SetupLog, Base + '-setup.log', False);
+  Result := True;
+end;
+
 // Called from DeinitializeSetup, which runs whether Setup completed, failed or was cancelled.
 procedure ReportFinish();
 var
-  Dir, Stamp, Outcome, SetupLog: string;
+  Stamp, Outcome: string;
+  Saved: Boolean;
 begin
   if not ReportReady then
     exit;
@@ -227,17 +282,19 @@ begin
   ReportAdd('');
   ReportAdd('--- Esito: ' + Outcome + ' ---');
 
-  // /ReportDir=<folder> on the Setup command line overrides where the report goes (an admin who wants
-  // it on a share, and the way this logic is tested without writing under C:\ProgramData).
-  Dir := ExpandConstant('{param:ReportDir|{commonappdata}\rustcopy\install-reports}');
-  if not ForceDirectories(Dir) then
-    exit;
   Stamp := GetDateTimeString('yyyymmdd-hhnnss', '-', ':');
-  ReportPath := Dir + '\install-' + Stamp + '.txt';
-  ReportLines.SaveToFile(ReportPath);
-  SetupLog := ExpandConstant('{log}');
-  if SetupLog <> '' then
-    CopyFile(SetupLog, Dir + '\install-' + Stamp + '-setup.log', False);
+  // The requested folder first, then the default, then the current user's profile: a report that
+  // cannot be saved is exactly the one nobody can read, so a bad /ReportDir must not lose it.
+  Saved := TrySaveReport(ReportDirectory(), Stamp);
+  if not Saved and (CompareText(ReportDirectory(), DefaultReportDirectory()) <> 0) then
+    Saved := TrySaveReport(DefaultReportDirectory(), Stamp);
+  if not Saved then
+    Saved := TrySaveReport(ExpandConstant('{localappdata}\rustcopy\install-reports'), Stamp);
+  if not Saved then
+  begin
+    Log('report: could not be saved in any folder');
+    exit;
+  end;
 
   if InstallBegan and not InstallCompleted and not WizardSilent then
     SuppressibleMsgBox(
