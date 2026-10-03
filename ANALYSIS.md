@@ -1750,9 +1750,9 @@ difetto, non riproducibile senza una macchina del genere disponibile.
 
 ### D30 — Installazione fallita su Windows Server 2016 e 2022, riuscita su Server 2019 e Windows 11 🟡 APERTO (2 Ott 2026)
 
-**Stato: aperto. Causa più probabile individuata e correzione provata in scratch, non ancora
-confermata sulle macchine che hanno fallito** (nessun Server disponibile in questa sessione; i
-sintomi esatti non sono ancora stati raccolti).
+**Stato: aperto. Correzione implementata in 7.7.0 (F92, Onda 1), non ancora confermata sulle
+macchine che hanno fallito** (nessun Server disponibile in questa sessione; i sintomi esatti non
+sono ancora stati raccolti). Il meccanismo del fallimento, invece, è stato **riprodotto**: vedi sotto.
 
 **Gravità: ALTA** — l'installazione, cioè il primo contatto con il prodotto, non riesce su due
 delle quattro macchine provate, entrambe SKU Server di produzione.
@@ -1773,6 +1773,17 @@ delle quattro macchine provate, entrambe SKU Server di produzione.
   `x86_64-pc-windows-msvc`): la versione del sistema operativo **non** è di per sé la causa. Un primo
   sospetto su `ProcessPrng` (`bcryptprimitives.dll`) è stato scartato per questa ragione — un
   risultato di ricerca affermava che Server 2016 non lo ha, ed è contraddetto da quella pagina.
+
+**Meccanismo riprodotto (3 Ott 2026).** Un installer di test minimo, senza privilegi e senza
+toccare il sistema, con una DLL non registrabile marcata `regserver`, sotto `/VERYSILENT
+/SUPPRESSMSGBOXES`: il log di Inno Setup riporta `RegSvr32 failed with exit code 0x3` (3 =
+`LoadLibrary` non riuscita, che è ciò che accade a `rustcopy_shell.dll` senza `VCRUNTIME140.dll`),
+poi `Defaulting to Abort for suppressed message box (Abort/Retry/Ignore)`, `Rolling back changes`,
+codice d'uscita **5** e nessun file installato. Lo stesso test ha mostrato che `DeinitializeSetup`
+viene eseguita anche in caso di fallimento, che `ExpandConstant('{log}')` restituisce il percorso del
+log di Setup, e che un'eccezione nello script di Setup è registrata ma **non** interrompe
+l'installazione. Questo conferma il *meccanismo*; resta da confermare sulle macchine reali che sia
+proprio la mancanza del Redistributable a innescarlo.
 
 **Ipotesi, in ordine di probabilità, con la prova che le distingue** (la raccoglie in una sola
 esecuzione `scripts/collect-install-diagnostics.ps1`, di sola lettura):

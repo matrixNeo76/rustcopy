@@ -21,6 +21,28 @@ For full technical detail behind any entry, see `ANALYSIS.md` (defect list, `D<N
 
 ## [Unreleased]
 
+## [7.7.0] - 2026-10-03
+
+### Fixed
+- **Installation on a clean Windows machine** (D30/F92): the installer failed on Windows Server 2016
+  and 2022 (and would on any machine without the Visual C++ Redistributable). Every binary imported
+  the dynamic C runtime, so the optional Explorer Shell extension could not even be loaded, its
+  registration failed, and Setup rolled the **whole** install back (exit code 5). The binaries now
+  link the C runtime statically (`+20 KB` CLI, `+123 KB` console, `+93 KB` Shell DLL), so the
+  Redistributable is no longer a requirement, and registering the Shell extension can no longer
+  take the rest of the install down with it: if it fails it is reported and skipped.
+
+### Added
+- **Automatic install report**: every install run, silent or not, completed or failed,
+  writes `C:\ProgramData\rustcopy\install-reports\install-<date>.txt` plus a copy of Setup's own log
+  beside it, with the operating system and build, privileges, command-line options, chosen
+  components, runtime and WebView2 state, pending reboots, the exit code of the Shell registration
+  and the final outcome. `/ReportDir=<folder>` redirects it. On failure Setup also says where the
+  report is. No PowerShell is started to produce it.
+- `scripts/collect-install-diagnostics.ps1` (read-only deep dive: event log, Defender, AppLocker,
+  Code Integrity) and `scripts/check-static-crt.ps1` (fails if a binary imports the dynamic C
+  runtime again; run by a new CI job).
+
 ## [7.6.1] - 2026-10-02
 
 ### Changed
