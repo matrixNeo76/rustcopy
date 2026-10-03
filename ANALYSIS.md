@@ -1750,7 +1750,8 @@ difetto, non riproducibile senza una macchina del genere disponibile.
 
 ### D30 — Installazione fallita su Windows Server 2016 e 2022, riuscita su Server 2019 e Windows 11 🟡 APERTO (2 Ott 2026)
 
-**Stato: aperto. Correzione implementata in 7.7.0 (F92, Onda 1), non ancora confermata sulle
+**Stato: aperto. Correzione implementata in 7.7.0 (F92, Onda 1) e verificata con l'installer reale
+su Windows 11 (aggiornamento da 7.3.0, rapporto `COMPLETATA`); non ancora confermata sulle
 macchine che hanno fallito** (nessun Server disponibile in questa sessione; i sintomi esatti non
 sono ancora stati raccolti). Il meccanismo del fallimento, invece, è stato **riprodotto**: vedi sotto.
 
