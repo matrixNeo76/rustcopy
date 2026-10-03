@@ -1,0 +1,13 @@
+# F92 / D30 (ANALYSIS.md): link the C runtime statically on Windows.
+#
+# Without this every binary imports VCRUNTIME140.dll (the console also VCRUNTIME140_1.dll), so a
+# machine without the matching Visual C++ Redistributable cannot even load rustcopy_shell.dll -- which
+# made the installer's DLL registration fail and abort the whole install. Measured on 2 Ott 2026:
+# +20 KB (CLI), +123 KB (console), +93 KB (Shell DLL), and `dumpbin /dependents` then shows no
+# VCRUNTIME*/MSVCP*/api-ms-win-crt-* import at all.
+#
+# Do not remove this to "shrink" the binaries, and do not set RUSTFLAGS in CI: that environment
+# variable replaces this file's rustflags entirely. ci.yml's `static-crt` job fails if an artifact
+# imports the dynamic runtime again.
+[target.x86_64-pc-windows-msvc]
+rustflags = ["-C", "target-feature=+crt-static"]

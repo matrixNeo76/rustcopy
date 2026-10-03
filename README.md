@@ -20,7 +20,7 @@ verified:
 [![CI](https://github.com/matrixNeo76/rustcopy/actions/workflows/ci.yml/badge.svg)](https://github.com/matrixNeo76/rustcopy/actions/workflows/ci.yml)
 [![Audit di sicurezza](https://github.com/matrixNeo76/rustcopy/actions/workflows/security-audit.yml/badge.svg)](https://github.com/matrixNeo76/rustcopy/actions/workflows/security-audit.yml)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
-[![Crate version](https://img.shields.io/badge/version-7.6.1-informational.svg)](Cargo.toml)
+[![Crate version](https://img.shields.io/badge/version-7.7.0-informational.svg)](Cargo.toml)
 
 **Backup e ingestion di grandi volumi di dati su Windows, con verifica di integrità.** `rustcopy`
 avvolge `robocopy.exe` in un binario Rust che ne risolve i limiti pratici sui dataset enormi —
@@ -89,10 +89,10 @@ Log file   : E:\backup\ingest.log
 cargo build --release -p rustcopy-cli --features notify-server
 ```
 
-Due requisiti verificati sul binario compilato:
+Requisiti verificati sul binario compilato:
 
-- **Visual C++ Redistributable x64** (Microsoft, gratuito) — il binario `windows-msvc` importa
-  `VCRUNTIME140.dll`, che non è presente in un'installazione Windows pulita. Senza, non parte.
+- **Windows 10 / Windows Server 2016 o successivo.** Dalla 7.7.0 il runtime C è collegato in modo
+  statico: il Visual C++ Redistributable **non** serve più.
 - **`robocopy.exe` di sistema**, presente su ogni Windows da Vista in poi: non serve installarlo,
   ma il tool non lo include.
 
