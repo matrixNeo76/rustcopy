@@ -113,14 +113,55 @@
       credBusy = false;
     }
   }
+  // F93: plain-language names for the TOML keys `read_settings` returns. Display only -- what a
+  // setting means, where its value comes from and which ones carry a consequence (`caution`) all
+  // stay in the core. Same wording as the Editor's labels, so one name never means two things.
+  const LABEL = {
+    source: "Sorgente",
+    dest: "Destinazione",
+    pattern: "Filtro file",
+    exclude_files: "File esclusi",
+    exclude_dirs: "Cartelle escluse",
+    min_age_days: "Età minima dei file (giorni)",
+    max_age_days: "Età massima dei file (giorni)",
+    exclude_junctions: "Escludi giunzioni",
+    mirror: "Mirror (cancella in destinazione ciò che manca in sorgente)",
+    dry_run: "Simulazione",
+    threads: "Copie in parallelo",
+    retries: "Tentativi per file bloccato",
+    retry_wait_seconds: "Attesa fra i tentativi (secondi)",
+    bandwidth_limit_mbps: "Limite di banda (MB/s)",
+    no_prescan: "Salta il conteggio iniziale",
+    long_paths: "Percorsi lunghi",
+    preserve_timestamps: "Conserva le date",
+    preserve_acl: "Conserva ACL (permessi)",
+    verify_integrity: "Verifica integrità",
+    fast_verify: "Verifica rapida",
+    hash_algo: "Algoritmo di verifica",
+    ignore_transient_missing: "Ignora file temporanei mancanti",
+    compare_baseline: "Confronto con la copia semplice",
+    backup_type: "Tipo di backup",
+    keep_generations: "Cicli di backup da conservare",
+    report_path: "File del report",
+    log_path: "File di log",
+    html_report_path: "Report HTML",
+    webhook_url: "Notifica webhook",
+    pre_command: "Comando prima del backup",
+    post_command: "Comando dopo il backup",
+  };
+  const BOOLEAN_KEYS = new Set([
+    "exclude_junctions", "mirror", "dry_run", "no_prescan", "long_paths", "preserve_timestamps",
+    "preserve_acl", "verify_integrity", "fast_verify", "ignore_transient_missing", "compare_baseline",
+  ]);
+  const YES_NO = { true: "sì", false: "no" };
 </script>
 
 <section class="p-4">
   <PathBar
     bind:value={session.configPath}
     kind="config"
-    label="Percorso del file di configurazione TOML"
-    placeholder="Scegli un file di configurazione TOML"
+    label="File con i job di backup"
+    placeholder="Scegli il file con i tuoi job di backup (.toml)"
     action="Apri impostazioni"
     busy={loading}
     onrun={load}
@@ -156,15 +197,21 @@
               <tbody>
                 {#each entries as entry}
                   <tr class="border-b border-slate-200 align-top last:border-0 dark:border-slate-800">
-                    <td class="w-56 py-1 pr-3 font-mono text-slate-600 dark:text-slate-400">
-                      {entry.key}
+                    <td class="w-64 py-1 pr-3">
+                      <!-- F93: the plain-language name first, the TOML key small beside it for
+                           whoever edits the file by hand. A key with no entry in LABEL falls back
+                           to itself, so a field added in the core never renders blank. -->
+                      <span class="text-sm">{LABEL[entry.key] ?? entry.key}</span>
+                      {#if LABEL[entry.key]}
+                        <span class="ml-1 font-mono text-xs text-slate-500">{entry.key}</span>
+                      {/if}
                     </td>
                     <td class="py-1 pr-3">
                       <!-- Origin badge inline with the value it describes, not in its own column
                            at the far right — on a wide window that put it ~1300px from the value
                            it labels, forcing a full-width eye movement per row for no reason
                            (Livello 1, punto 3, PIANO_GUI.md §10). -->
-                      <span class="font-mono text-sm">{entry.value}</span>
+                      <span class="font-mono text-sm">{BOOLEAN_KEYS.has(entry.key) ? (YES_NO[entry.value] ?? entry.value) : entry.value}</span>
                       <span class="ml-1.5 rounded px-1 text-[10px] font-semibold {ORIGIN_CLASS[entry.origin]}">
                         {ORIGIN_LABEL[entry.origin]}
                       </span>
@@ -200,7 +247,7 @@
       icon={SlidersHorizontal}
       title="Scegli un file di configurazione per vederne le impostazioni"
       lines={[
-        "Questa scheda mostra le due cose che il TOML non dice: da quale strato viene il valore che vince per ciascun job, e quali impostazioni portano una conseguenza — cancellano, saltano controlli, eliminano generazioni.",
+        "Questa scheda mostra le due cose che il file dei job non dice: da quale strato viene il valore che vince per ciascun job, e quali impostazioni portano una conseguenza — cancellano, saltano controlli, eliminano generazioni.",
         "L'URL di un webhook viene troncato a schema e host di proposito: vale come credenziale e questa finestra finisce negli screenshot.",
       ]}
     />
@@ -212,7 +259,7 @@
       Gestione credenziali
     </h2>
     <p class="mt-1 text-xs text-slate-600 dark:text-slate-400">
-      Salva o rimuove un segreto in Gestione credenziali di Windows (F56) — mai nel file TOML, mai
+      Salva o rimuove un segreto in Gestione credenziali di Windows — mai nel file dei job, mai
       come argomento: il segreto passa solo per questo modulo. Usalo poi come
       <code>keyring:NOME</code> ovunque un campo accetti una chiave o una password, per esempio
       <code>--encrypt-aes256 keyring:NOME</code>.

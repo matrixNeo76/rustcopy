@@ -1,0 +1,105 @@
+name: Installer smoke test
+
+# F92, wave 2: build the real installer and install/uninstall it on a Windows Server 2022 runner.
+#
+# A separate workflow rather than another job in ci.yml: it builds the console (frontend + Tauri)
+# and the installer, which costs far more than any other job, and it only has anything to say when
+# the installer, the Shell extension or the build configuration changed. `paths` filters exist per
+# workflow, not per job -- that is the reason for the split. It always runs on `main` and on demand.
+#
+# What this does not cover: a machine without the Visual C++ runtime. The runner has Visual Studio
+# installed, so a missing runtime would never show here. That property is checked by the
+# `static-crt` job in ci.yml (binaries must not import the dynamic C runtime).
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+    paths:
+      - "installer/**"
+      - "crates/rustcopy-shell/**"
+      - "scripts/ci-installer-smoke.ps1"
+      - ".github/workflows/installer-smoke.yml"
+      - ".cargo/**"
+      - "Cargo.toml"
+      - "crates/rustcopy-gui/tauri.conf.json"
+  workflow_dispatch:
+
+env:
+  CARGO_TERM_COLOR: always
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
+
+jobs:
+  install-windows-server-2022:
+    # Console build (~5 min warm) + installer + install/uninstall. A hung installer would otherwise
+    # hold the runner for GitHub's 6-hour default.
+    timeout-minutes: 45
+    runs-on: windows-2022
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache cargo registry and build artifacts
+        uses: Swatinem/rust-cache@v2
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: crates/rustcopy-gui/ui/package-lock.json
+
+      - name: Build the console frontend
+        working-directory: crates/rustcopy-gui/ui
+        run: |
+          npm ci
+          npm run build
+
+      - name: Build the release binaries
+        run: cargo build --release --locked -p rustcopy-cli -p rustcopy-shell -p rustcopy-gui
+
+      - name: Static C runtime on all three binaries
+        shell: powershell
+        run: ./scripts/check-static-crt.ps1 -Path target/release/robocopy_ingest.exe, target/release/rustcopy_shell.dll, target/release/rustcopy-gui.exe
+
+      - name: Install Inno Setup if the image lacks it
+        shell: powershell
+        run: |
+          $iscc = Get-ChildItem -Path "${env:ProgramFiles(x86)}\Inno Setup 6", "$env:ProgramFiles\Inno Setup 6" -Filter ISCC.exe -ErrorAction SilentlyContinue | Select-Object -First 1
+          if (-not $iscc) {
+            choco install innosetup --no-progress -y
+            $iscc = Get-ChildItem -Path "${env:ProgramFiles(x86)}\Inno Setup 6" -Filter ISCC.exe | Select-Object -First 1
+          }
+          if (-not $iscc) { throw 'ISCC.exe not found after install' }
+          "ISCC=$($iscc.FullName)" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+
+      - name: Build the installer
+        shell: powershell
+        run: |
+          & $env:ISCC installer\rustcopy.iss
+          if ($LASTEXITCODE -ne 0) { throw "ISCC failed ($LASTEXITCODE)" }
+          Get-ChildItem installer-output
+
+      - name: Install, verify, uninstall
+        shell: powershell
+        run: |
+          $version = (Select-String -Path Cargo.toml -Pattern '^version = "([^"]+)"' | Select-Object -First 1).Matches[0].Groups[1].Value
+          ./scripts/ci-installer-smoke.ps1 -InstallerPath "installer-output\rustcopy-$version-setup.exe" -ExpectedVersion $version -ReportDir "$env:RUNNER_TEMP\rustcopy-install-reports"
+
+      - name: Keep the install report and Setup log
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: install-report-windows-server-2022
+          path: ${{ runner.temp }}/rustcopy-install-reports
+          if-no-files-found: warn
+          retention-days: 14

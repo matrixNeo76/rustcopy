@@ -245,6 +245,33 @@ jobs:
       - name: cargo test (Shell extension crate)
         run: cargo test --locked -p rustcopy-shell --lib
 
+  # F92 / D30 (ANALYSIS.md): the binaries must not import the dynamic C runtime. They did, which made
+  # the installer's DLL registration fail on a machine without the Visual C++ Redistributable and
+  # roll the whole install back; .cargo/config.toml now links it statically. This job keeps that
+  # true: it fails if an artifact imports VCRUNTIME*/MSVCP*/ucrtbase/api-ms-win-crt-* again -- for
+  # instance because a RUSTFLAGS environment variable, which replaces the config's rustflags
+  # entirely, was added to a workflow. The console is not built here (it needs the frontend);
+  # it takes the same config, and is checked by hand before each release.
+  static-crt:
+    timeout-minutes: 25
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache cargo registry and build artifacts
+        uses: Swatinem/rust-cache@v2
+
+      - name: Build the CLI and the Shell extension
+        run: cargo build --locked -p rustcopy-cli -p rustcopy-shell
+
+      - name: No dynamic C runtime imports
+        shell: powershell
+        run: ./scripts/check-static-crt.ps1 -Path target/debug/robocopy_ingest.exe, target/debug/rustcopy_shell.dll
+
   # docs/archive/PIANO_GUI_TAURI.md §8.6: the Rust dependencies have `cargo audit` in security-audit.yml; the
   # npm ones that arrived with the frontend need the equivalent. Kept in the ordinary CI rather
   # than the audit workflow because it is fast and needs no advisory-database checkout. Also

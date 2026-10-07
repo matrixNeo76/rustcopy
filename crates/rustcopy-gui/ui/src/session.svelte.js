@@ -31,6 +31,10 @@ export const session = $state({
   // one-shot navigation signal into it would make the same field mean two different things
   // depending on which pane touched it last.
   pendingEditorJob: null,
+  // F93: QuickSync starts the run itself, then lands on Esegui. One-shot like pendingReportLoad:
+  // Run.svelte consumes it, loads the job list and attaches to the run already in progress, so the
+  // operator does not have to click "Esamina" to see the copy they just started.
+  pendingRunAttach: false,
 });
 
 const RECENT_LIMIT = 8;

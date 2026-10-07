@@ -84,8 +84,10 @@
       await invoke("start_job", { configPath: picked });
       // Lands on Esegui with the new file already loaded, reusing its own tracking (`run_status`,
       // its poll loop, "Apri il report di questa run") rather than a second copy of that logic
-      // here -- one "Esamina" click there, the same as starting any other job from Esegui itself.
+      // here. `pendingRunAttach` (F93) asks Run.svelte to attach to the run now in progress, so
+      // no "Esamina" click is needed.
       session.configPath = picked;
+      session.pendingRunAttach = true;
       session.activeTab = "run";
     } catch (e) {
       error = String(e);
