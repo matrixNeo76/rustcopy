@@ -585,6 +585,63 @@ fn resume_from_reconstructs_and_runs_the_interrupted_invocation() {
     assert_eq!(report["integrity_check"]["status"], "PASSED");
 }
 
+/// D25 black-box test: what the interrupted run was told to leave out is still left out after
+/// `--resume-from`. Before the fix a resumed run copied everything its original had excluded -- the
+/// same silent loss that let a 3 MB/s throttle resume at full speed. Run against the compiled
+/// binary and the real robocopy, with a checkpoint in the shape `Checkpoint::new` writes today.
+#[cfg(windows)]
+#[test]
+fn resume_from_keeps_the_exclusions_of_the_interrupted_run() {
+    let source = fixture_tree(&[("a.csv", 10), ("b.tmp", 20)]);
+    let workdir = tempfile::tempdir().expect("workdir");
+    let dest = workdir.path().join("out");
+    let checkpoint_path = workdir.path().join("run.checkpoint.json");
+
+    let checkpoint_json = format!(
+        r#"{{
+            "schema_version": 1,
+            "timestamp": "2026-10-07T09:14:22Z",
+            "source": {source:?},
+            "dest": {dest:?},
+            "configuration": {{
+                "threads": 2,
+                "retries": 1,
+                "retry_wait_seconds": 1,
+                "pattern": "*",
+                "verify_integrity": false,
+                "compare_baseline": false,
+                "dry_run": false,
+                "exclude_files": ["*.tmp"]
+            }},
+            "extras": {{}},
+            "reason": "interrupted by Ctrl+C"
+        }}"#,
+        source = source.path().to_str().expect("utf8"),
+        dest = dest.to_str().expect("utf8"),
+    );
+    std::fs::write(&checkpoint_path, checkpoint_json).expect("write checkpoint");
+
+    let report_path = workdir.path().join("report.json");
+    let output = run(&[
+        "--resume-from",
+        checkpoint_path.to_str().expect("utf8"),
+        "--log-path",
+        workdir.path().join("resume.log").to_str().expect("utf8"),
+        "--report-path",
+        report_path.to_str().expect("utf8"),
+    ]);
+    assert!(output.status.success(), "stderr: {}", stderr_of(&output));
+
+    assert!(dest.join("a.csv").is_file());
+    assert!(
+        !dest.join("b.tmp").exists(),
+        "b.tmp was excluded by the interrupted run and must stay excluded"
+    );
+    let report: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(&report_path).expect("read")).expect("json");
+    assert_eq!(report["configuration"]["exclude_files"][0], "*.tmp");
+}
+
 /// F31 black-box test: `--restore-from` and `--resume-from` together must be rejected at parse
 /// time (they mean opposite things: reversed direction vs. same direction).
 #[cfg(windows)]

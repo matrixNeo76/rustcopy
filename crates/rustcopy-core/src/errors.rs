@@ -83,6 +83,12 @@ pub enum IngestError {
     #[error("cannot write a drag-and-drop config for {0} with no source/dest pairs")]
     ShellDropConfigEmpty(PathBuf),
 
+    /// The "Copia" tab asked for a copy that cannot be planned safely (F95): a folder copied into
+    /// itself, a drive root with no folder name, two sources that would land in the same place.
+    /// The message is shown to the operator as-is, so it says what to change.
+    #[error("{0}")]
+    CopyPlanInvalid(String),
+
     /// `--cancel-file` names a file that must not exist yet: one left behind by an earlier run
     /// would stop this one the moment it looked, which reads like a crash rather than a stop.
     #[error("the --cancel-file {0} already exists: it would stop this run immediately. Remove it, or name a path that does not exist yet")]
@@ -288,7 +294,8 @@ impl IngestError {
             | IngestError::ExampleWorkspaceAlreadyExists(_)
             | IngestError::CancelFileAlreadyExists(_)
             | IngestError::CliBinaryNotFound(_)
-            | IngestError::ShellDropConfigEmpty(_) => false,
+            | IngestError::ShellDropConfigEmpty(_)
+            | IngestError::CopyPlanInvalid(_) => false,
         }
     }
 }
