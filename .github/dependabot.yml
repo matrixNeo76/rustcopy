@@ -5,6 +5,14 @@ updates:
     schedule:
       interval: "weekly"
     open-pull-requests-limit: 10
+    ignore:
+      # `windows-core` must move together with the `windows` crate: the Shell extension's COM
+      # `#[implement]` code needs both on the same windows-core. Bumped alone (PR #135, 0.62 ->
+      # 0.100) the two end up as incompatible versions and the `shell` CI job stops compiling
+      # (E0603/E0277). Lift this once a release of `windows` depends on the newer windows-core,
+      # and bump the two by hand in one change.
+      - dependency-name: "windows-core"
+        versions: [">=0.63"]
 
   - package-ecosystem: "github-actions"
     directory: "/"
