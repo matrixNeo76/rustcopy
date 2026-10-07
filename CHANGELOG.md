@@ -21,6 +21,11 @@ For full technical detail behind any entry, see `ANALYSIS.md` (defect list, `D<N
 
 ## [Unreleased]
 
+### Fixed
+- **Explorer drag-and-drop no longer offers "Copia con RustCopy" for an unsafe drop** (a target inside
+  a dragged folder, a whole drive, two dragged folders with the same name). Before, dropping a folder
+  into one of its own subfolders started a copy that kept copying itself.
+
 ## [7.8.0] - 2026-10-07
 
 ### Changed
