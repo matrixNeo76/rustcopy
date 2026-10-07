@@ -46,13 +46,16 @@ jobs:
       # nothing ("No vulnerabilities were found" then "Not Found - update-a-check-run", seen on PRs
       # #143/#144). For Dependabot the job therefore runs `cargo audit` itself: same database, same
       # .cargo/audit.toml, a non-zero exit on a real vulnerability, no check run to create.
+      # The restriction follows the pull request, not whoever pressed the button: a Dependabot PR
+      # whose branch was updated by a person (`gh pr update-branch`) still got the read-only token
+      # and the same 404, so the condition also looks at the head branch name.
       - name: "cargo audit (Dependabot - plain run, no check run)"
-        if: github.actor == 'dependabot[bot]'
+        if: github.actor == 'dependabot[bot]' || startsWith(github.head_ref, 'dependabot/')
         run: |
           cargo install cargo-audit --version 0.22.2 --locked
           cargo audit
       - name: cargo audit (RustSec advisory database)
-        if: github.actor != 'dependabot[bot]'
+        if: github.actor != 'dependabot[bot]' && !startsWith(github.head_ref, 'dependabot/')
         uses: rustsec/audit-check@69366f33c96575abad1ee0dba8212993eecbe998 # v2.0.0
         with:
           token: ${{ secrets.GITHUB_TOKEN }}
