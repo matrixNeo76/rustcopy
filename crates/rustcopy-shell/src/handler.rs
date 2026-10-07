@@ -205,11 +205,30 @@ impl IContextMenu_Impl for RustCopyHandler_Impl {
         _idcmdlast: u32,
         _uflags: u32,
     ) -> HRESULT {
-        let dropped = lock_or_recover(&self.dropped_paths);
+        let dropped = lock_or_recover(&self.dropped_paths).clone();
         if !all_are_directories(&dropped) {
             return HRESULT(0);
         }
-        drop(dropped);
+        // A drop that could not be copied safely (a target inside a dragged folder, a drive root,
+        // two folders with the same name) gets no menu entry at all: nothing to click, so nothing
+        // can start, and no dialog has to be raised from inside `explorer.exe`. `None` is
+        // treated the same -- `InvokeCommand` would abort on it anyway.
+        let dest_folder = lock_or_recover(&self.dest_folder).clone();
+        let plannable = dest_folder
+            .as_ref()
+            .map(|dest| spawn::plan_drop(dest, &dropped))
+            .transpose();
+        match plannable {
+            Ok(Some(_)) => {}
+            Ok(None) => return HRESULT(0),
+            Err(error) => {
+                let _ = log::append_line(
+                    &log::log_path(),
+                    &format!("QueryContextMenu: drop refused, no menu entry: {error}"),
+                );
+                return HRESULT(0);
+            }
+        }
 
         let text: Vec<u16> = MENU_TEXT.encode_utf16().collect();
         let inserted = unsafe {
@@ -271,19 +290,22 @@ impl IContextMenu_Impl for RustCopyHandler_Impl {
             }
         };
 
-        let items: Vec<(PathBuf, PathBuf)> = dropped
-            .iter()
-            .filter_map(|item| {
-                spawn::per_item_destination(&dest_folder, item).map(|dest| (item.clone(), dest))
-            })
-            .collect();
-        if items.is_empty() {
-            let _ = log::append_line(
-                &log::log_path(),
-                "InvokeCommand: no item had a usable name, nothing to hand off",
-            );
-            return Ok(());
-        }
+        // Re-planned here, not trusted from `QueryContextMenu`: same discipline as the directory
+        // re-check above.
+        let items = match spawn::plan_drop(&dest_folder, &dropped) {
+            Ok(items) if !items.is_empty() => items,
+            Ok(_) => {
+                let _ = log::append_line(&log::log_path(), "InvokeCommand: nothing to hand off");
+                return Ok(());
+            }
+            Err(error) => {
+                let _ = log::append_line(
+                    &log::log_path(),
+                    &format!("InvokeCommand: drop refused, nothing started: {error}"),
+                );
+                return Ok(());
+            }
+        };
 
         match spawn::spawn_console_run(&gui, &items) {
             Ok(_child) => {
