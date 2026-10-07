@@ -206,6 +206,17 @@
     await start();
   });
 
+  // F93: set by QuickSync after it has already started the run. Attaches to that run (job list,
+  // status, polling) without starting a second one -- `start()` is deliberately not called here.
+  $effect(() => {
+    if (session.pendingRunAttach) {
+      session.pendingRunAttach = false;
+      inspect().then(() => {
+        if (status?.running) poll();
+      });
+    }
+  });
+
   async function stop() {
     error = null;
     try {
@@ -281,8 +292,8 @@
   <PathBar
     bind:value={session.configPath}
     kind="config"
-    label="Percorso del file di configurazione TOML"
-    placeholder="Scegli un file di configurazione TOML"
+    label="File con i job di backup"
+    placeholder="Scegli il file con i tuoi job di backup (.toml)"
     action="Esamina"
     busy={busy}
     onrun={inspect}
@@ -306,10 +317,9 @@
       </p>
       <p class="mt-0.5 text-[11px] text-slate-500">
         Run interrotte che hanno scritto un checkpoint in questa cartella. Riprendere continua nella
-        stessa direzione sorgente→destinazione, con pattern, thread, tentativi e verifica
-        dell'interruzione — <strong>non</strong> il resto della configurazione originale (limite
-        di quota, esclusioni, algoritmo di hash, mirror inclusi: D25 in ANALYSIS.md). Una ripresa
-        può quindi girare più permissiva o più veloce dell'originale, mai più distruttiva.
+        stessa direzione sorgente→destinazione e rimette le impostazioni della run interrotta (banda,
+        esclusioni, filtri di età, verifica, simulazione). Non rimette mai mirror, cancellazioni,
+        comandi, notifiche e chiavi: una ripresa non può fare più di una run nuova.
       </p>
       <ul class="mt-2 space-y-1.5">
         {#each checkpoints as checkpoint}
@@ -380,8 +390,9 @@
         <ShieldAlert size={13} strokeWidth={2.25} class="mt-0.5 shrink-0" aria-hidden="true" />
         <span>
           <strong>{mirrorJobs.join(", ")}</strong> {mirrorJobs.length === 1 ? "cancella" : "cancellano"}
-          in destinazione. Da qui non si può autorizzare: la conferma richiede un terminale, quindi la
-          run si fermerà da sola con esito 3. Eseguila dalla CLI, dove la conferma mostra
+          in destinazione. Da qui non si può avviare: serve una conferma che questa console non può
+          dare, quindi la run si fermerebbe da sola con esito 3. Chiedi a chi gestisce i backup di
+          questo computer di eseguirla dalla riga di comando, dove la conferma mostra
           <em>quali</em> file verrebbero eliminati.
         </span>
       </p>

@@ -23,7 +23,7 @@
 ; this repo before, and the previous wording of this comment admitted it without preventing it.
 
 #define MyAppName "rustcopy (robocopy-ingest-cli)"
-#define MyAppVersion "7.5.0"
+#define MyAppVersion "7.8.0"
 #define MyAppPublisher "matrixNeo76"
 #define MyAppURL "https://github.com/matrixNeo76/rustcopy"
 #define MyAppExeName "robocopy_ingest.exe"
@@ -89,9 +89,10 @@ Source: "..\target\release\{#MyNotifyExeName}"; DestDir: "{app}"; Components: cl
 ; The console carries its frontend inside the executable (Tauri embeds ui/dist), so there is no
 ; web asset directory to install beside it.
 Source: "..\target\release\{#MyGuiExeName}"; DestDir: "{app}"; Components: gui; Flags: ignoreversion
-; regserver calls DllRegisterServer/DllUnregisterServer automatically at install/uninstall --
-; the DLL is self-registering (registry.rs), so no separate [Registry] section is needed here.
-Source: "..\target\release\{#MyShellDllName}"; DestDir: "{app}"; Components: gui\shell; Flags: ignoreversion regserver
+; No regserver flag (F92 / D30): with it, a DLL that cannot register -- e.g. a missing runtime -- made
+; Setup roll the WHOLE install back and exit with code 5. Registration is done from [Code]
+; (RegisterShellExtension, install-report.pas) where a failure is reported and the rest installs.
+Source: "..\target\release\{#MyShellDllName}"; DestDir: "{app}"; Components: gui\shell; Flags: ignoreversion
 Source: "..\README.md"; DestDir: "{app}"; Components: cli; Flags: ignoreversion isreadme
 Source: "..\RUNBOOK.md"; DestDir: "{app}"; Components: cli; Flags: ignoreversion
 Source: "..\CLAUDE.md"; DestDir: "{app}"; DestName: "NOTES.md"; Components: cli; Flags: ignoreversion
@@ -102,31 +103,16 @@ Name: "{group}\Disinstalla rustcopy"; Filename: "{uninstallexe}"
 
 [Code]
 const
-  VC_REDIST_URL = 'https://aka.ms/vs/17/release/vc_redist.x64.exe';
   WEBVIEW2_URL = 'https://developer.microsoft.com/microsoft-edge/webview2/';
   // The Evergreen WebView2 Runtime registers itself under this fixed client id.
   WEBVIEW2_CLIENT = '{F3017226-FE2A-4295-8BDF-00C3A9A7E4C5}';
 
-// robocopy_ingest.exe is a Rust windows-msvc binary: it dynamically links VCRUNTIME140.dll,
-// which does NOT ship with a clean Windows install (unlike the Universal CRT, present by
-// default on Windows 10 1607+/11). Detect it via the registry key the VC++ Redistributable
-// itself installs, rather than bundling a ~25 MB redistributable installer inside this setup
-// (bundling/auto-downloading a second installer wasn't something to decide unilaterally here —
-// flagging it clearly to the user at the end of setup is the safer default).
-function IsVCRedistInstalled(): Boolean;
-var
-  installed: Cardinal;
-begin
-  Result :=
-    (RegQueryDWordValue(HKLM, 'SOFTWARE\Microsoft\VisualStudio\14.0\VC\Runtimes\X64', 'Installed', installed) and (installed = 1)) or
-    (RegQueryDWordValue(HKLM, 'SOFTWARE\WOW6432Node\Microsoft\VisualStudio\14.0\VC\Runtimes\X64', 'Installed', installed) and (installed = 1));
-end;
-
 // The console renders through the system WebView2 Runtime rather than shipping a browser engine
 // — which is why it costs 8.9 MB instead of ~150 — so that runtime has to be present. It ships
 // with Windows 11 and reaches most updated Windows 10 machines through Windows Update, but LTSC
-// and offline images can lack it. Detected and reported the same way as the VC++ redistributable
-// above: warn, do not bundle a second installer, and never block setup.
+// and offline images can lack it. Detected and never blocks setup: warn, do not bundle a second installer.
+// (There is no equivalent check for the Visual C++ Redistributable any more: from 7.7.0 every
+// binary links the C runtime statically -- .cargo/config.toml -- so it is not a requirement.)
 function IsWebView2Installed(): Boolean;
 var
   version: string;
@@ -161,20 +147,19 @@ begin
   Result := installType = 'Server Core';
 end;
 
-// docs/installation.md already documents "Windows 10 1607+/Server 2016+" as the real requirement
-// (Universal CRT, present by default only from there on) but nothing enforced it before this --
-// an older Server would accept the install and only fail later, at first launch, with a cryptic
-// "this app can't run on your PC"-style error instead of a clear message here. Same warn-not-block
-// treatment as IsVCRedistInstalled/IsWebView2Installed below: a hard MinVersion block is a bigger,
-// separate decision, not made here.
+// Rust's x86_64-pc-windows-msvc target requires Windows 10 or Windows Server 2016 and later (its
+// official platform-support page), which docs/installation.md documents as the real requirement.
+// An older system would accept the install and only fail at first launch, with a cryptic "this app
+// can't run on your PC"-style error instead of a clear message here. Same warn-not-block treatment
+// as IsWebView2Installed: a hard MinVersion block is a bigger, separate decision, not made here.
 function IsOsVersionSupported(): Boolean;
 var
   Version: TWindowsVersion;
 begin
   GetWindowsVersionEx(Version);
   // Windows 11 still reports NT major version 10 (same as Windows 10 and Server 2016+) -- only
-  // the build number tells 1607+ apart from an older 10.0 release (1507/1511) that predates the
-  // Universal CRT. 14393 is Windows 10 1607 / Windows Server 2016's build number.
+  // the build number tells 1607+ apart from an older 10.0 release (1507/1511). 14393 is Windows 10
+  // 1607 / Windows Server 2016's build number.
   Result := (Version.Major > 10) or ((Version.Major = 10) and (Version.Build >= 14393));
 end;
 
@@ -217,6 +202,8 @@ begin
     'SYSTEM\CurrentControlSet\Control\Session Manager\Environment', 'Path', Paths);
 end;
 
+#include "install-report.pas"
+
 // Backstop for the gui\shell nesting above: Inno's component tree unchecks/grays out a child
 // when its parent is unchecked, but does not stop a *parent* from being deselected while a
 // child selection from a "full"-type default is still logically pending on the same page (and a
@@ -240,11 +227,36 @@ end;
 
 procedure CurStepChanged(CurStep: TSetupStep);
 begin
+  if CurStep = ssInstall then
+  begin
+    ReportSelection();
+    exit;
+  end;
+  if CurStep = ssDone then
+  begin
+    // Only reached after a successful install: DeinitializeSetup uses it to tell "completed" from
+    // "failed or cancelled" when it writes the report.
+    InstallCompleted := True;
+    exit;
+  end;
   if CurStep <> ssPostInstall then
     exit;
 
+  ReportInstalledFiles();
+
   if WizardIsTaskSelected('addtopath') then
     EnvAddPath(ExpandConstant('{app}'));
+
+  // The Shell extension is optional: if it cannot be registered the rest of rustcopy is already
+  // installed and stays that way. The reason (regsvr32's exit code and what it means) is in the
+  // install report.
+  if WizardIsComponentSelected('gui\shell') then
+    if not RegisterShellExtension(ExpandConstant('{app}\{#MyShellDllName}')) then
+      SuppressibleMsgBox(
+        'L''estensione Shell per Explorer non e'' stata registrata: resta disattivata.' + #13#10 + #13#10 +
+        'Il resto di rustcopy (CLI e console) e'' installato regolarmente. Il motivo e'' nel rapporto di ' +
+        'installazione, in ' + ReportDirectory() + '.',
+        mbInformation, MB_OK, IDOK);
 
   // Checked here rather than in InitializeSetup because components are not chosen yet at that
   // point: warning about WebView2 on a CLI-only install would be noise about a runtime nothing
@@ -279,25 +291,22 @@ end;
 procedure CurUninstallStepChanged(CurUninstallStep: TUninstallStep);
 begin
   if CurUninstallStep = usUninstall then
+  begin
+    // What the regserver flag used to do on uninstall. Done before the files are removed.
+    UnregisterShellExtension(ExpandConstant('{app}\{#MyShellDllName}'));
     EnvRemovePath(ExpandConstant('{app}'));
+  end;
 end;
 
 function InitializeSetup(): Boolean;
 begin
   Result := True;
-  if not IsVCRedistInstalled() then
-    SuppressibleMsgBox(
-      'rustcopy richiede il Visual C++ Redistributable x64 (Microsoft), non rilevato su questo ' +
-      'sistema.' + #13#10 + #13#10 +
-      'Il programma potrebbe non avviarsi senza. Scaricalo da:' + #13#10 +
-      VC_REDIST_URL + #13#10 + #13#10 +
-      'Setup continuera comunque.',
-      mbInformation, MB_OK, IDOK);
+  ReportStart();
 
-  // F90 (ROADMAP.md): the Universal CRT rustcopy relies on ships by default only from Windows 10
-  // 1607+ / Server 2016+ (already documented in docs/installation.md, never enforced before this).
-  // Checked here, unlike the WebView2 warning below, because it applies to every component --
-  // components are not chosen yet at InitializeSetup, but this warning does not depend on them.
+  // F90 (ROADMAP.md): Rust's Windows target needs Windows 10 / Server 2016 or later (already
+  // documented in docs/installation.md, never enforced before this). Checked here, unlike the
+  // WebView2 warning, because it applies to every component -- components are not chosen yet at
+  // InitializeSetup, but this warning does not depend on them.
   if not IsOsVersionSupported() then
     SuppressibleMsgBox(
       'Questa versione di Windows/Windows Server e'' precedente a quella richiesta ' +
@@ -306,4 +315,9 @@ begin
       'questo avviso.' + #13#10 + #13#10 +
       'Setup continuera comunque.',
       mbInformation, MB_OK, IDOK);
+end;
+
+procedure DeinitializeSetup();
+begin
+  ReportFinish();
 end;

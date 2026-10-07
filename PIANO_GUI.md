@@ -500,7 +500,7 @@ Una tabella sola per la domanda "a che punto siamo", sulle due dimensioni di que
 | Visivo — Livello 2 | Sistema di design minimo (scala tipografica, card, icone, larghezza campi editor) | ✅ **fatto, 4 Set 2026** | `@lucide/svelte`, 0 vulnerabilità; un'icona di troppo (Esito in Report) trovata e tolta in verifica — derivava da un campo che `ReportView` non espone |
 | Visivo — Livello 3 | Sidebar di navigazione, dimensione finestra, empty state con ancora visiva | ✅ **fatto, 4 Set 2026** | Sidebar libera la testata per il nome del file caricato (non "tipo/ultimo esito": nessuno stato condiviso li porta oggi); finestra 1440×900; icona per empty state |
 | Difetto trovato per strada | D24 — console che lampeggiava (`schtasks.exe` senza `CREATE_NO_WINDOW`) | ✅ **corretto** | Non era nel piano: scoperto durante l'audit visivo, non una scelta di design |
-| Difetto trovato per strada | D25 — la ripresa non eredita quasi nessuna impostazione originale (solo mirror ne beneficia) | 🟡 **aperto, non bloccante** | Trovato verificando la ripresa contro un trasferimento reale; comportamento preesistente di `checkpoint.rs`, non introdotto dalla console |
+| Difetto trovato per strada | D25 — la ripresa non eredita quasi nessuna impostazione originale (solo mirror ne beneficia) | ✅ **chiuso il 7 Ott 2026** | Trovato verificando la ripresa contro un trasferimento reale; comportamento preesistente di `checkpoint.rs`, non introdotto dalla console |
 | Difetto trovato per strada | D26 — l'anteprima di ripristino (F64) falliva con "fatal error" su un report a percorsi relativi | ✅ **corretto il 6 Set 2026, stesso giorno della scoperta** | Trovato nel primo uso reale di F64 contro il demo eseguibile (§13a); il primo tentativo di fix (cwd sulla cartella del report) si è rivelato sbagliato ed è stato colto dalla stessa verifica — il fix corretto usa la cartella del config, non quella del report |
 | Difetto trovato per strada | D27 — `files_copied`/`bytes_copied` sovrastimati su host non in lingua inglese | ✅ **corretto il 6 Set 2026, stesso giorno della scoperta** | Trovato indagando l'anomalia di conteggio del §13b; `parse_summary_row` non riconosce le etichette italiane, il fallback in streaming contava "Avviato:"/"Terminato:" come file trasferiti per l'assenza di spazio prima dei due punti nella loro localizzazione |
 
@@ -1985,6 +1985,74 @@ Stesso metodo di §14.4/§16.3/§17.5/§18.17/§19.6/§20.5:
 - La prima stesura del Pattern E proponeva di risolvere il vicolo cieco di `Run.svelte` **abilitando** la conferma mirror da console invece di riscrivere solo il messaggio — scartato subito: `runner.rs` ha un test dedicato che verifica che nessuno dei divieti F61 (incluso `--force-purge`/mirror non presidiato) possa mai raggiungere la CLI dalla console, ed è un confine di sicurezza deliberato, non un difetto di percorso. Il fix resta testuale.
 - Il punto 5 (Onda 2) elencava inizialmente una proposta di raggruppamento già "decisa" nel testo. Corretto per essere esplicitamente una proposta da confermare: questo documento non ha mai deciso unilateralmente la forma di un cambio a `Editor.svelte` senza prima passare da conferma dell'utente (F70/F80/F88 lo hanno sempre fatto), e non doveva iniziare a farlo qui.
 
+### 21.7 Esito dell'implementazione (21 Set 2026, Onda 1 e Onda 2) e correzioni a questa stessa analisi
+
+Implementate l'Onda 1 e l'Onda 2; l'Onda 3 (etichette testuali sulle icone, azione guidata
+"converti in `[[jobs]]`") resta aperta. Rileggendo il codice **prima** di scrivere, tre affermazioni
+di §21.3 si sono rivelate imprecise — l'analisi veniva da una lettura delegata, e non va
+trattata come più affidabile del codice:
+
+- **Pattern A: l'etichetta di `PathBar.svelte` è `sr-only`**, cioè visibile solo agli screen reader.
+  Il gergo "TOML/JSON" che un operatore vedeva davvero stava nei **placeholder** di ogni scheda e nei
+  **nomi dei filtri del selettore file** nativo. Corretti quelli (più l'etichetta per gli screen
+  reader, e il testo degli stati vuoti di Job/Impostazioni/Report che nominava ancora il formato).
+- **Pattern D: il badge mirror di `Jobs.svelte` portava già la sua glossa** ("cancella in
+  destinazione"), e il menu "Tipo di backup" di `Editor.svelte` aveva già una didascalia visibile in
+  italiano semplice. Aggiunti solo un tooltip esteso al badge mirror e la glossa nelle voci del
+  menu ("Full (copia tutto)", ...). Il gap vero era la voce **VSS**, assente da `Help.svelte`:
+  aggiunta, e la riga "Istantanea" di `Report.svelte` ora dice "fotografia del disco (VSS)".
+- **Pattern C era più ampio**: oltre ai flag nei tooltip (`/R`, `/MT`, `/XJ`, `/COPYALL`, `/L`) la
+  verifica dal vivo ha trovato nel testo visibile un identificatore Rust (`Args::validate()`),
+  `keep_generations` come etichetta e "namespacizzati" — riscritti.
+
+**Onda 2 (`Editor.svelte`)**: la forma proposta in §21.5 è stata implementata con `<details>` nativi,
+non con una libreria di componenti (valutato shadcn-svelte: +16 pacchetti e +155 KB di JS per tre
+componenti, vedi §21.8). *Base* (Nome, Sorgente, Destinazione, Filtro file) sempre visibile;
+*Comportamento della copia* e *Opzioni avanzate* chiuse. **Vincolo di sicurezza aggiunto rispetto
+alla proposta**: una sezione si apre da sola quando contiene un'impostazione diversa dal default
+(`behaviorCount`/`advancedCount`), e l'intestazione riporta il conteggio — altrimenti una sezione
+chiusa potrebbe nascondere proprio l'avviso "verifica integrità impostata ma senza effetto" o un
+valore personalizzato. Verificato dal vivo sul binario compilato: job di default con entrambe le
+sezioni chiuse ("nessuna impostazione"); job con retries/esclusioni/tipo di backup/verifica con
+entrambe aperte ("2 impostazioni personalizzate", "2 attive") e l'avviso ambra visibile.
+
+### 21.8 Valutazione di shadcn-svelte (2 Ott 2026)
+
+Misurata in una copia di scratch con tre componenti reali (Accordion, Tooltip, Collapsible):
+56 → 72 pacchetti, JS 190,8 → 345,5 KB (+81%), nessuna nuova vulnerabilità. Non adottata: richiede un
+secondo sistema di stile (variabili CSS e alias `$lib` contro le classi `slate-*` esistenti) e non
+risolve nessuno dei finding di §21 (testi, gerarchia, icone senza etichetta). Riconsiderabile solo
+se servissero componenti complessi (combobox, date picker, menu contestuali).
+
+### 21.9 Onda 3 (2 Ott 2026): etichette visibili implementate, "converti in `[[jobs]]`" non fattibile nell'editor
+
+**Punto 6, fatto.** Le affordance solo-icona hanno ora un testo visibile accanto: la striscia di
+`Jobs.svelte` ("Cifrato", "N cicli", "N esclusioni", "N in parallelo"), le tre azioni per riga
+("Impostazioni", "Storico", "Modifica"), le frecce di riordino di `Editor.svelte` ("Ordine di
+esecuzione") e la stella di `PathBar.svelte` ("Aggiungi ai preferiti" / "Nei preferiti"). I
+tooltip restano. Costo dichiarato in §19 come motivo della scelta di sole icone: lo spazio di riga —
+compensato ribilanciando le larghezze di colonna (Sorgente/Destinazione 19% → 17%, ultima colonna
+14% → 20%) e lasciando andare a capo la striscia.
+
+**Punto 7, esplorato e non implementato: non è un problema di interfaccia, è una migrazione di
+dati.** Un file senza `[[jobs]]` esegue un job singolo i cui campi vivono in cima al file; con
+`[[jobs]]` quei campi diventano solo *default ereditati* e il job implicito sparisce. Una
+conversione guidata dovrebbe quindi spostare `source`/`dest` in una voce `[[jobs]]` — fin qui
+scrivibile come proposta — ma c'è un effetto che nessuna proposta di testo può contenere. Letto nel
+codice (`namespaced_path`, `cache::default_cache_path`, `GenerationManifest::path_for`,
+`history`): in modalità multi-job **cinque file di servizio cambiano nome**, perché il nome del job
+viene inserito nel filename — report, report HTML, `.ingest_cache`, `.rustcopy_generations.json` e
+l'indice dello storico — mentre il job singolo implicito usa i nomi senza suffisso. Dopo la
+conversione il primo run non troverebbe più la catena di generazioni (un incrementale senza Full di
+riferimento fallisce, la retention non vede i cicli vecchi), la cache di verifica rapida
+ripartirebbe da zero e lo storico si spezzerebbe in due. Per questo l'editor rifiuta (D12/F33) e per
+questo non può nemmeno farlo "a una condizione": rinominare quei file sul disco è una scrittura
+fuori dal contratto dell'editor ("scrive solo una proposta in un file nuovo", F54/F61). Se mai
+servirà, il posto giusto è la CLI, con un'operazione esplicita di migrazione e un'anteprima
+(`--dry-run`) che elenca i file da rinominare — tracciata come F91 nel backlog, non avviata.
+Nel frattempo il messaggio dell'Editor (riscritto in Onda 1) dice la verità: serve un intervento
+tecnico, da chiedere a chi ha preparato il file.
+
 ## Riferimenti
 
 - [`CLAUDE.md`](CLAUDE.md) — regole operative per `runner.rs`, `job_editor.rs`, `gui_api.rs`.
@@ -1998,3 +2066,59 @@ Stesso metodo di §14.4/§16.3/§17.5/§18.17/§19.6/§20.5:
   vale per ogni voce dell'Onda 3, e D26 (§13a sopra) è l'esempio più recente di quanto costi non
   verificare un'anteprima contro un caso con percorsi relativi, non solo assoluti — e di quanto costi
   fidarsi di un primo tentativo di fix senza riverificarlo dal vivo.
+
+## 22. Onda 0 dell'analisi UI/UX (7 Ott 2026): esiti leggibili e vocabolario condiviso
+
+### 22.1 Contesto
+
+Dopo la 7.7.0 l'utente ha confermato l'analisi di §21 più la richiesta di "solo copiare cartelle" e di
+una resa visiva meno "vintage e spartana". Quell'analisi si articola in sei onde (0, A, B, V, C, D).
+Questa sezione documenta l'Onda 0, la sola interamente frontend; A (scheda Copia), V (sistema visivo e
+Home), B (Semplice/Avanzata), C e D restano proposte, ciascuna con una propria specifica da approvare.
+
+### 22.2 Cosa cambia (implementato come **F93**)
+
+- **Titolo di esito in Report** (`outcome.js::reportOutcome`): riuscito / riuscito con avvisi / non riuscito,
+  da `exit_code_is_success`, `copy_detail.files_failed`, `integrity_status`, `copy_error`,
+  `webhook_error`, `post_command_error`. Il frontend decide come *dirlo*, mai se un backup è riuscito.
+  Un dry-run mantiene il proprio banner (spiega anche perché i numeri non sono un trasferimento reale).
+- **`Badge.svelte`** al posto dei chip a mano: emerald solo per l'esito pulito, ambra altrimenti, mai
+  rosso (convenzione F81: un codice non-zero non è per forza un fallimento; l'icona porta "fallito").
+- **Impostazioni**: etichetta italiana + chiave TOML piccola; booleani come sì/no; rimosso "(F56)".
+- **Esegui dopo QuickSync**: `session.pendingRunAttach` (monouso, come `pendingReportLoad`).
+
+### 22.3 Criticità trovate rileggendo questa sezione
+
+- La prima stesura prevedeva di tradurre la frase di robocopy (`1 — files copied`) nel core. Scartato: è
+  una maschera di bit di cinque frasi componibili (già deciso in Livello 1 punto 4) e il titolo in
+  italiano rende superflua la traduzione; la frase resta, in un riquadro chiuso.
+- Il punto "Storico: note CLI solo se pertinenti" è stato **rimandato**: il testo viene da `advise.rs`,
+  condiviso con `--advise` dove i flag hanno senso. Cambiarlo solo per la console richiede un livello di
+  frasi specifico, non una modifica di Onda 0.
+- Prima verifica dal vivo: il caso "riuscito con avvisi" non aveva icona (solo "riuscito" e "non riuscito"
+  ne avevano una); aggiunta `TriangleAlert`.
+- Il tema scuro non è stato verificato dal vivo.
+
+## 23. Scheda "Copia" (7 Ott 2026): copiare cartelle senza un file di configurazione
+
+### 23.1 Perché
+
+L'utente ha chiesto di poter "semplicemente solo copiare cartelle". L'unico percorso esistente era "Sincronizza due cartelle adesso" (QuickSync, F71): una cartella alla volta, un file `.toml` da salvare ogni volta, un link piccolo visibile solo sulla schermata vuota di Job.
+
+### 23.2 Cosa fa (implementato come **F95**)
+
+Una scheda di primo livello: si scelgono una o più cartelle (selettore nativo multiplo), la destinazione, si può "Controllare prima" (conteggio file e dimensione, mai in automatico), poi "Copia". Ogni cartella finisce **dentro** la destinazione col proprio nome, come un trascinamento in Explorer. Dopo l'avvio la console passa a Esegui già agganciata alla run.
+
+Riuso, non duplicazione: `runner::write_shell_drop_config` (la configurazione usa e getta di Explorer), `start_job`, `inspect_path`, `pendingRunAttach` (F93). La sola logica nuova è `runner::plan_copy`, nel core, con i suoi test.
+
+### 23.3 Decisioni prese per prudenza (da rivedere con l'utente)
+
+- **Solo cartelle**: i file singoli richiedono di estendere il motore (la sorgente oggi è sempre una cartella).
+- **Niente "sposta"**: cancellerebbe l'origine e tocca i divieti F61.
+- **Niente trascinamento sulla finestra** né "salva come job": non inclusi in questa onda, nessun ostacolo di principio.
+- **Controllo lessicale** (nessun accesso al disco, nessuna risoluzione di giunzioni): una destinazione raggiunta attraverso una giunzione dentro la sorgente non viene fermata.
+
+### 23.4 Criticità trovate rileggendo questa sezione
+
+- Leggendo `rustcopy-shell` per riusare la regola di destinazione è emerso che `spawn.rs` fa `drop_target.join(name)` senza alcun controllo di annidamento: trascinare `C:\a` su `C:\a\sub` non è protetto lì. Non corretto in questa onda (altro crate, altro processo di rilascio); segnalato in ROADMAP F95.
+- Il confronto fra percorsi è su stringhe e non su `Path`: i test girano su Linux in CI, dove `Path` non riconosce `\` come separatore (stessa lezione di D16).
