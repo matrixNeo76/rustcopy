@@ -2098,3 +2098,27 @@ Home), B (Semplice/Avanzata), C e D restano proposte, ciascuna con una propria s
 - Prima verifica dal vivo: il caso "riuscito con avvisi" non aveva icona (solo "riuscito" e "non riuscito"
   ne avevano una); aggiunta `TriangleAlert`.
 - Il tema scuro non è stato verificato dal vivo.
+
+## 23. Scheda "Copia" (7 Ott 2026): copiare cartelle senza un file di configurazione
+
+### 23.1 Perché
+
+L'utente ha chiesto di poter "semplicemente solo copiare cartelle". L'unico percorso esistente era "Sincronizza due cartelle adesso" (QuickSync, F71): una cartella alla volta, un file `.toml` da salvare ogni volta, un link piccolo visibile solo sulla schermata vuota di Job.
+
+### 23.2 Cosa fa (implementato come **F95**)
+
+Una scheda di primo livello: si scelgono una o più cartelle (selettore nativo multiplo), la destinazione, si può "Controllare prima" (conteggio file e dimensione, mai in automatico), poi "Copia". Ogni cartella finisce **dentro** la destinazione col proprio nome, come un trascinamento in Explorer. Dopo l'avvio la console passa a Esegui già agganciata alla run.
+
+Riuso, non duplicazione: `runner::write_shell_drop_config` (la configurazione usa e getta di Explorer), `start_job`, `inspect_path`, `pendingRunAttach` (F93). La sola logica nuova è `runner::plan_copy`, nel core, con i suoi test.
+
+### 23.3 Decisioni prese per prudenza (da rivedere con l'utente)
+
+- **Solo cartelle**: i file singoli richiedono di estendere il motore (la sorgente oggi è sempre una cartella).
+- **Niente "sposta"**: cancellerebbe l'origine e tocca i divieti F61.
+- **Niente trascinamento sulla finestra** né "salva come job": non inclusi in questa onda, nessun ostacolo di principio.
+- **Controllo lessicale** (nessun accesso al disco, nessuna risoluzione di giunzioni): una destinazione raggiunta attraverso una giunzione dentro la sorgente non viene fermata.
+
+### 23.4 Criticità trovate rileggendo questa sezione
+
+- Leggendo `rustcopy-shell` per riusare la regola di destinazione è emerso che `spawn.rs` fa `drop_target.join(name)` senza alcun controllo di annidamento: trascinare `C:\a` su `C:\a\sub` non è protetto lì. Non corretto in questa onda (altro crate, altro processo di rilascio); segnalato in ROADMAP F95.
+- Il confronto fra percorsi è su stringhe e non su `Path`: i test girano su Linux in CI, dove `Path` non riconosce `\` come separatore (stessa lezione di D16).

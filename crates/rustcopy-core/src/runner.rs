@@ -311,6 +311,98 @@ pub fn write_shell_drop_config(
         .map_err(|error| IngestError::io(out_path, error))
 }
 
+/// Splits a Windows-style path into comparable components: both separators, case-folded, no
+/// empty or `.` parts. Plain string logic on purpose (see `vss::remap_to_shadow`, D16):
+/// `Path::components` depends on the *host* platform, and the value compared here only makes sense
+/// under Windows rules -- so this must give the same answer on the Linux CI runner.
+fn path_parts(path: &str) -> Vec<String> {
+    path.split(['\\', '/'])
+        .filter(|part| !part.is_empty() && *part != ".")
+        .map(str::to_lowercase)
+        .collect()
+}
+
+/// `true` when `inner` is `outer` itself or lies anywhere beneath it. Lexical: it does not follow
+/// junctions or symlinks, which is the declared limit of [`plan_copy`].
+fn is_same_or_inside(inner: &str, outer: &str) -> bool {
+    let (inner, outer) = (path_parts(inner), path_parts(outer));
+    !outer.is_empty() && inner.len() >= outer.len() && inner[..outer.len()] == outer[..]
+}
+
+/// Plans the "Copia" tab's run (F95): each chosen folder is copied **into** `dest_root`, under its
+/// own name -- the same meaning a drop onto a folder has in Explorer (`rustcopy-shell`'s
+/// `per_item_destination`), so the two entry points cannot disagree about where the files land.
+///
+/// Refuses what would be wrong on any machine, with a message the operator can act on:
+/// - no sources, or an empty destination;
+/// - a source with no folder name (a drive root such as `E:\`);
+/// - two sources with the same folder name (they would merge into one destination);
+/// - a destination inside one of its own sources, or the source itself as its own destination:
+///   robocopy would keep copying the growing copy into itself.
+///
+/// Purely lexical (case-insensitive, both separators): it does not touch the disk and does not
+/// resolve junctions or symlinks, so a destination reached through a junction into a source is not
+/// caught here. It never produces a mirror, a purge or a verification setting -- `Copia` copies,
+/// and what it writes is [`write_shell_drop_config`]'s plain configuration.
+pub fn plan_copy(
+    sources: &[PathBuf],
+    dest_root: &Path,
+) -> Result<Vec<(PathBuf, PathBuf)>, IngestError> {
+    let invalid = |message: String| Err(IngestError::CopyPlanInvalid(message));
+
+    if sources.is_empty() {
+        return invalid("Scegli almeno una cartella da copiare.".to_string());
+    }
+    let dest_text = dest_root.to_string_lossy();
+    if path_parts(&dest_text).is_empty() {
+        return invalid("Scegli la cartella di destinazione.".to_string());
+    }
+
+    let mut planned: Vec<(PathBuf, PathBuf)> = Vec::with_capacity(sources.len());
+    let mut names: Vec<String> = Vec::with_capacity(sources.len());
+    for source in sources {
+        let source_text = source.to_string_lossy();
+        // Taken from the text, not `Path::file_name`, for the same host-independence reason as
+        // `path_parts`. A drive root (`E:\`) leaves only the drive designator, which is not a
+        // folder name.
+        let parts = path_parts(&source_text);
+        let name = source_text
+            .trim_end_matches(['\\', '/'])
+            .rsplit(['\\', '/'])
+            .next()
+            .unwrap_or("");
+        if parts.len() < 2 || name.is_empty() || name.ends_with(':') {
+            return invalid(format!(
+                "\"{source_text}\" è un'intera unità: scegli una cartella al suo interno."
+            ));
+        }
+        if is_same_or_inside(&dest_text, &source_text) {
+            return invalid(format!(
+                "La destinazione \"{dest_text}\" sta dentro \"{source_text}\" (o coincide con essa): la copia continuerebbe a copiare se stessa. Scegli una destinazione fuori da quella cartella."
+            ));
+        }
+        let key = name.to_lowercase();
+        if names.contains(&key) {
+            return invalid(format!(
+                "Due cartelle si chiamano \"{name}\": finirebbero nella stessa cartella di destinazione. Copiale con due operazioni separate."
+            ));
+        }
+        names.push(key);
+        planned.push((source.clone(), dest_root.join(name)));
+    }
+
+    // A source that already *is* a planned destination (copying A into its own parent's `A`).
+    for (source, dest) in &planned {
+        if is_same_or_inside(&source.to_string_lossy(), &dest.to_string_lossy()) {
+            return invalid(format!(
+                "\"{}\" è già la cartella di destinazione: scegli una destinazione diversa.",
+                source.display()
+            ));
+        }
+    }
+    Ok(planned)
+}
+
 /// Where [`write_shell_drop_config`] writes its file — same temp directory as stop/progress files
 /// and F64's restore-preview scratch report ([`cancel_file_dir`]), for the same reason:
 /// guaranteed writable, and namespaced so two drops in quick succession never collide.
@@ -694,6 +786,97 @@ mod tests {
         assert_ne!(
             exit_code_meaning(EXIT_INSUFFICIENT_DISK_SPACE),
             exit_code_meaning(EXIT_UNRECOVERABLE)
+        );
+    }
+
+    // ----- F95: plan_copy ------------------------------------------------------------------
+
+    /// Windows-style text of a planned destination, whatever separator the host's `Path::join`
+    /// used -- the production value only ever reaches Windows, but these tests also run on Linux.
+    fn windows_text(path: &Path) -> String {
+        path.to_string_lossy().replace('/', "\\")
+    }
+
+    fn plan(sources: &[&str], dest: &str) -> Result<Vec<(String, String)>, String> {
+        let sources: Vec<PathBuf> = sources.iter().map(PathBuf::from).collect();
+        plan_copy(&sources, Path::new(dest))
+            .map(|items| {
+                items
+                    .into_iter()
+                    .map(|(s, d)| (windows_text(&s), windows_text(&d)))
+                    .collect()
+            })
+            .map_err(|error| error.to_string())
+    }
+
+    #[test]
+    fn plan_copy_puts_each_folder_under_its_own_name() {
+        let items = plan(&[r"D:\Dati\Foto", r"D:\Dati\Video"], r"\nas01\backup").unwrap();
+        assert_eq!(
+            items,
+            vec![
+                (r"D:\Dati\Foto".into(), r"\nas01\backup\Foto".into()),
+                (r"D:\Dati\Video".into(), r"\nas01\backup\Video".into()),
+            ]
+        );
+    }
+
+    #[test]
+    fn plan_copy_needs_a_source_and_a_destination() {
+        assert!(plan(&[], r"E:\copia")
+            .unwrap_err()
+            .contains("almeno una cartella"));
+        assert!(plan(&[r"D:\Foto"], "")
+            .unwrap_err()
+            .contains("destinazione"));
+        assert!(plan(&[r"D:\Foto"], r"\\")
+            .unwrap_err()
+            .contains("destinazione"));
+    }
+
+    #[test]
+    fn plan_copy_refuses_a_whole_drive() {
+        for drive in [r"E:\", "E:", r"e:/"] {
+            let error = plan(&[drive], r"D:\copia").unwrap_err();
+            assert!(error.contains("intera unità"), "{drive}: {error}");
+        }
+    }
+
+    #[test]
+    fn plan_copy_refuses_a_destination_inside_its_own_source() {
+        // Case and separator differences must not hide it.
+        for dest in [r"D:\Dati\Foto", r"d:/dati/foto/copie", r"D:\DATI\FOTO\a\b"] {
+            let error = plan(&[r"D:\Dati\Foto"], dest).unwrap_err();
+            assert!(error.contains("copiare se stessa"), "{dest}: {error}");
+        }
+    }
+
+    #[test]
+    fn plan_copy_refuses_copying_a_folder_onto_itself() {
+        // Destination is the folder's own parent: `D:\Dati\Foto` would land on `D:\Dati\Foto`.
+        let error = plan(&[r"D:\Dati\Foto"], r"D:\Dati").unwrap_err();
+        assert!(error.contains("già la cartella di destinazione"), "{error}");
+    }
+
+    #[test]
+    fn plan_copy_refuses_two_folders_with_the_same_name() {
+        let error = plan(&[r"D:\a\Foto", r"E:\b\foto"], r"F:\copia").unwrap_err();
+        assert!(error.contains("si chiamano"), "{error}");
+    }
+
+    #[test]
+    fn plan_copy_does_not_mistake_a_name_prefix_for_a_parent() {
+        // `Foto2` is a sibling of `Foto`, not inside it.
+        let items = plan(&[r"D:\Foto"], r"D:\Foto2").unwrap();
+        assert_eq!(items, vec![(r"D:\Foto".into(), r"D:\Foto2\Foto".into())]);
+    }
+
+    #[test]
+    fn plan_copy_accepts_a_trailing_separator_on_a_source() {
+        let items = plan(&[r"D:\Dati\Foto\"], r"E:\copia").unwrap();
+        assert_eq!(
+            items,
+            vec![(r"D:\Dati\Foto\".into(), r"E:\copia\Foto".into())]
         );
     }
 }

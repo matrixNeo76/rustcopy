@@ -1,5 +1,6 @@
 <script>
   import Jobs from "./Jobs.svelte";
+  import Copy from "./Copy.svelte";
   import Settings from "./Settings.svelte";
   import Editor from "./Editor.svelte";
   import Run from "./Run.svelte";
@@ -9,6 +10,7 @@
   import { session } from "./session.svelte.js";
   import {
     ListChecks,
+    Copy as CopyIcon,
     Settings as SettingsIcon,
     SquarePen,
     Play,
@@ -25,6 +27,7 @@
   // One list instead of five near-identical buttons: a sixth pane should not mean copying the
   // same class expression again and getting one of the states wrong.
   const TABS = [
+    { id: "copy", label: "Copia", component: Copy, icon: CopyIcon },
     { id: "jobs", label: "Job", component: Jobs, icon: ListChecks },
     { id: "settings", label: "Impostazioni", component: Settings, icon: SettingsIcon },
     { id: "editor", label: "Modifica", component: Editor, icon: SquarePen },
