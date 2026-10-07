@@ -31,8 +31,10 @@
         known.add(path.toLowerCase());
       }
     }
-    // A different set of folders makes any earlier answer about the destination stale too.
+    // A different set of folders makes any earlier answer about the destination stale too, and
+    // any refusal shown for the previous choice no longer describes this one.
     destCheck = null;
+    error = null;
   }
 
   async function chooseSources() {
@@ -46,12 +48,14 @@
     if (typeof picked === "string" && picked.length > 0) {
       dest = picked;
       destCheck = null;
+      error = null;
     }
   }
 
   function removeSource(path) {
     sources = sources.filter((entry) => entry !== path);
     delete checks[path];
+    error = null;
   }
 
   async function check() {
@@ -174,7 +178,10 @@
         <input
           class="min-w-0 flex-1 rounded border border-slate-300 px-2 py-1.5 font-mono text-sm dark:border-slate-700 dark:bg-slate-900"
           bind:value={dest}
-          oninput={() => (destCheck = null)}
+          oninput={() => {
+            destCheck = null;
+            error = null;
+          }}
           placeholder="Cartella di destinazione, anche di rete (\\server\condivisione)"
           aria-label="Cartella di destinazione"
         />
