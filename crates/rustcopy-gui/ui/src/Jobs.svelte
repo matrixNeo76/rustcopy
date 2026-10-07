@@ -4,6 +4,8 @@
   import EmptyState from "./EmptyState.svelte";
   import QuickSync from "./QuickSync.svelte";
   import NewJobWizard from "./NewJobWizard.svelte";
+  import Badge from "./Badge.svelte";
+  import { cliOutcomeVariant } from "./outcome.js";
   import { session } from "./session.svelte.js";
   import {
     ShieldAlert,
@@ -51,6 +53,9 @@
   // `load()`, not reactively per row: the console never asks the engine to do anything just by
   // rendering, same as every other read in this pane.
   let historyByJob = $state({});
+  // What each exit code in `historyByJob` means, read from the core (`runner::exit_code_meaning`)
+  // for the same reason History.svelte does: one source of truth, no second table here.
+  let meaningByCode = $state({});
   // File-level only (PIANO_GUI.md §19.2): a scheduled task always invokes `--config <file>`,
   // which runs every `[[jobs]]` entry via `run_jobs` -- there is no per-job schedule flag, so this
   // is a single count shown once above the table, never attributed to one row.
@@ -140,7 +145,20 @@
         }
       }),
     );
+    const codes = [
+      ...new Set(entries.map(([, last]) => last?.exit_code).filter((code) => code !== undefined)),
+    ];
+    const meanings = await Promise.all(
+      codes.map(async (code) => {
+        try {
+          return [code, await invoke("exit_code_meaning", { code })];
+        } catch {
+          return [code, null];
+        }
+      }),
+    );
     if (mine !== loadGeneration) return;
+    meaningByCode = Object.fromEntries(meanings);
     historyByJob = Object.fromEntries(entries);
   }
 </script>
@@ -270,19 +288,9 @@
                     mai eseguito
                   </span>
                 {:else}
-                  <span
-                    class="inline-flex items-center gap-1 rounded px-1 text-[10px] font-semibold
-                           {last.exit_code === 0
-                             ? 'bg-emerald-100 text-emerald-900 dark:bg-emerald-950 dark:text-emerald-200'
-                             : 'bg-amber-100 text-amber-900 dark:bg-amber-950 dark:text-amber-200'}"
-                  >
-                    {#if last.exit_code === 0}
-                      <CircleCheck size={11} strokeWidth={2.25} aria-hidden="true" />
-                    {:else}
-                      <CircleX size={11} strokeWidth={2.25} aria-hidden="true" />
-                    {/if}
-                    {last.exit_code}
-                  </span>
+                  <Badge variant={cliOutcomeVariant(last.exit_code)} icon={last.exit_code === 0 ? CircleCheck : CircleX}>
+                    {last.exit_code === 0 ? "Riuscito" : (meaningByCode[last.exit_code] ?? `codice ${last.exit_code}`)}
+                  </Badge>
                   <div class="mt-0.5 text-[10px] text-slate-500">
                     {new Date(last.timestamp).toLocaleString("it-IT")} ·
                     {last.throughput_mbps.toFixed(1)} MB/s

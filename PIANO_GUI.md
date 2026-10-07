@@ -2066,3 +2066,35 @@ tecnico, da chiedere a chi ha preparato il file.
   vale per ogni voce dell'Onda 3, e D26 (§13a sopra) è l'esempio più recente di quanto costi non
   verificare un'anteprima contro un caso con percorsi relativi, non solo assoluti — e di quanto costi
   fidarsi di un primo tentativo di fix senza riverificarlo dal vivo.
+
+## 22. Onda 0 dell'analisi UI/UX (7 Ott 2026): esiti leggibili e vocabolario condiviso
+
+### 22.1 Contesto
+
+Dopo la 7.7.0 l'utente ha confermato l'analisi di §21 più la richiesta di "solo copiare cartelle" e di
+una resa visiva meno "vintage e spartana". Quell'analisi si articola in sei onde (0, A, B, V, C, D).
+Questa sezione documenta l'Onda 0, la sola interamente frontend; A (scheda Copia), V (sistema visivo e
+Home), B (Semplice/Avanzata), C e D restano proposte, ciascuna con una propria specifica da approvare.
+
+### 22.2 Cosa cambia (implementato come **F93**)
+
+- **Titolo di esito in Report** (`outcome.js::reportOutcome`): riuscito / riuscito con avvisi / non riuscito,
+  da `exit_code_is_success`, `copy_detail.files_failed`, `integrity_status`, `copy_error`,
+  `webhook_error`, `post_command_error`. Il frontend decide come *dirlo*, mai se un backup è riuscito.
+  Un dry-run mantiene il proprio banner (spiega anche perché i numeri non sono un trasferimento reale).
+- **`Badge.svelte`** al posto dei chip a mano: emerald solo per l'esito pulito, ambra altrimenti, mai
+  rosso (convenzione F81: un codice non-zero non è per forza un fallimento; l'icona porta "fallito").
+- **Impostazioni**: etichetta italiana + chiave TOML piccola; booleani come sì/no; rimosso "(F56)".
+- **Esegui dopo QuickSync**: `session.pendingRunAttach` (monouso, come `pendingReportLoad`).
+
+### 22.3 Criticità trovate rileggendo questa sezione
+
+- La prima stesura prevedeva di tradurre la frase di robocopy (`1 — files copied`) nel core. Scartato: è
+  una maschera di bit di cinque frasi componibili (già deciso in Livello 1 punto 4) e il titolo in
+  italiano rende superflua la traduzione; la frase resta, in un riquadro chiuso.
+- Il punto "Storico: note CLI solo se pertinenti" è stato **rimandato**: il testo viene da `advise.rs`,
+  condiviso con `--advise` dove i flag hanno senso. Cambiarlo solo per la console richiede un livello di
+  frasi specifico, non una modifica di Onda 0.
+- Prima verifica dal vivo: il caso "riuscito con avvisi" non aveva icona (solo "riuscito" e "non riuscito"
+  ne avevano una); aggiunta `TriangleAlert`.
+- Il tema scuro non è stato verificato dal vivo.

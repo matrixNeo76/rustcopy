@@ -206,6 +206,17 @@
     await start();
   });
 
+  // F93: set by QuickSync after it has already started the run. Attaches to that run (job list,
+  // status, polling) without starting a second one -- `start()` is deliberately not called here.
+  $effect(() => {
+    if (session.pendingRunAttach) {
+      session.pendingRunAttach = false;
+      inspect().then(() => {
+        if (status?.running) poll();
+      });
+    }
+  });
+
   async function stop() {
     error = null;
     try {
