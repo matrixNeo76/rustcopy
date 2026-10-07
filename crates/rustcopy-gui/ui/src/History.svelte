@@ -4,6 +4,8 @@
   import EmptyState from "./EmptyState.svelte";
   import { session } from "./session.svelte.js";
   import { toCsv, downloadCsv } from "./csv.js";
+  import Badge from "./Badge.svelte";
+  import { cliOutcomeVariant } from "./outcome.js";
   import { Clock, CircleCheck, CircleX } from "@lucide/svelte";
 
   // Read-only, like the rest of this version: this pane opens files the CLI already wrote and
@@ -140,8 +142,8 @@
   <PathBar
     bind:value={session.reportPath}
     kind="report"
-    label="Percorso del report JSON"
-    placeholder="Scegli un report JSON (lo storico sta lì accanto)"
+    label="File con il risultato di un backup"
+    placeholder="Scegli il risultato di un backup (.json): lo storico sta lì accanto"
     action="Apri storico"
     busy={loading}
     onrun={load}
@@ -263,21 +265,11 @@
               <tr class="border-b border-slate-200 last:border-0 dark:border-slate-800">
                 <td class="py-1 pr-3 pl-3 font-mono">{new Date(run.timestamp).toLocaleString("it-IT")}</td>
                 <td class="py-1 pr-3">
-                  <span
-                    class="inline-flex items-center gap-1 rounded px-1 text-[10px] font-semibold
-                           {run.exit_code === 0
-                             ? 'bg-emerald-100 text-emerald-900 dark:bg-emerald-950 dark:text-emerald-200'
-                             : 'bg-amber-100 text-amber-900 dark:bg-amber-950 dark:text-amber-200'}"
-                  >
-                    {#if run.exit_code === 0}
-                      <CircleCheck size={11} strokeWidth={2.25} aria-hidden="true" />
-                    {:else}
-                      <CircleX size={11} strokeWidth={2.25} aria-hidden="true" />
-                    {/if}
-                    {run.exit_code} — {meaningFor(run.exit_code)}
-                  </span>
+                  <Badge variant={cliOutcomeVariant(run.exit_code)} icon={run.exit_code === 0 ? CircleCheck : CircleX}>
+                    {run.exit_code === 0 ? "Riuscito" : meaningFor(run.exit_code)}
+                  </Badge>
                   {#if run.dry_run}
-                    <span class="ml-1 text-[10px] text-slate-500">dry-run</span>
+                    <span class="ml-1 text-xs text-slate-500">simulazione</span>
                   {/if}
                 </td>
                 <td class="py-1 pr-3">{run.files_copied} / {run.total_files}</td>

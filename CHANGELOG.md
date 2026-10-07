@@ -21,6 +21,79 @@ For full technical detail behind any entry, see `ANALYSIS.md` (defect list, `D<N
 
 ## [Unreleased]
 
+## [7.8.0] - 2026-10-07
+
+### Changed
+- **Console: outcomes you can read at a glance** (F93). The Report tab opens with one sentence,
+  "Backup riuscito: 150 file (2.0 GB) in 0.09s", "…con avvisi" with the reasons, or "Backup non
+  riuscito", instead of a bare exit code; robocopy's own wording moves under "Dettagli tecnici".
+  Job and History show a status chip ("Riuscito", or what the code means) instead of a number.
+  Settings shows plain-language names (the TOML key stays beside it) and yes/no instead of
+  true/false. After a quick folder sync, Run attaches to the copy by itself.
+
+### Added
+- **"Copia" tab** (F95): copy one or more folders into a destination without writing a configuration
+  file. Pick the folders and the destination, optionally "Controlla prima" for file counts and size,
+  then "Copia"; progress follows in the Esegui tab. It only copies (no mirror, no purge), refuses a
+  destination inside its own source, a whole drive, and two folders with the same name.
+- **Installer smoke test in CI** (F92): a workflow builds the real installer and installs, checks and
+  uninstalls it on a Windows Server 2022 runner (files, Shell extension registration, install report,
+  installed CLI, clean removal).
+
+### Fixed
+- **`--resume-from` now keeps the interrupted run's settings** (D25). A resumed run used to forget the
+  bandwidth limit, the excluded files and folders, the age filters, the hash algorithm and more: a run
+  throttled to 3 MB/s resumed at full speed, and an interrupted `--dry-run` resumed as a real copy. They
+  are now restored, with one rule: a resume never does more than a fresh run would -- `--mirror`,
+  retention, shell commands, webhook URLs and encryption keys are deliberately not restored.
+
+## [7.7.0] - 2026-10-03
+
+### Fixed
+- **Installation on a clean Windows machine** (D30/F92): the installer failed on Windows Server 2016
+  and 2022 (and would on any machine without the Visual C++ Redistributable). Every binary imported
+  the dynamic C runtime, so the optional Explorer Shell extension could not even be loaded, its
+  registration failed, and Setup rolled the **whole** install back (exit code 5). The binaries now
+  link the C runtime statically (`+20 KB` CLI, `+123 KB` console, `+93 KB` Shell DLL), so the
+  Redistributable is no longer a requirement, and registering the Shell extension can no longer
+  take the rest of the install down with it: if it fails it is reported and skipped.
+
+### Added
+- **Automatic install report**: every install run, silent or not, completed or failed,
+  writes `C:\ProgramData\rustcopy\install-reports\install-<date>.txt` plus a copy of Setup's own log
+  beside it, with the operating system and build, privileges, command-line options, chosen
+  components, runtime and WebView2 state, pending reboots, the exit code of the Shell registration
+  and the final outcome. `/ReportDir=<folder>` redirects it. On failure Setup also says where the
+  report is. No PowerShell is started to produce it.
+- `scripts/collect-install-diagnostics.ps1` (read-only deep dive: event log, Defender, AppLocker,
+  Code Integrity) and `scripts/check-static-crt.ps1` (fails if a binary imports the dynamic C
+  runtime again; run by a new CI job).
+
+## [7.6.1] - 2026-10-02
+
+### Changed
+- **Visible labels on icon-only controls** (F89, wave 3): the Job table's settings strip now reads
+  "Cifrato", "N cicli", "N esclusioni", "N in parallelo"; the per-row actions read
+  "Impostazioni", "Storico", "Modifica"; the Editor's reorder arrows are labelled "Ordine di
+  esecuzione"; the path bar's star reads "Aggiungi ai preferiti" / "Nei preferiti". Tooltips are
+  unchanged.
+
+## [7.6.0] - 2026-10-02
+
+### Changed
+- **Plainer language in the console** (F89, waves 1-2): the file pickers, empty states and
+  path fields no longer lead with file-format jargon ("TOML"/"JSON"); raw robocopy flags and
+  developer identifiers (`/MT`, `/XJ`, `Args::validate()`, `keep_generations`) are gone from
+  tooltips and visible text; a "VSS" entry was added to the Aiuto glossary; the two messages that
+  pointed non-technical operators at actions they cannot perform now say so plainly.
+- **Modifica groups its fields**: name/source/destination/file filter stay visible, while
+  "Comportamento della copia" and "Opzioni avanzate" are collapsible sections that open by
+  themselves whenever they hold a non-default setting, so a collapsed section never hides a
+  customised value or the verify-with-generations warning.
+
+### Fixed
+- Bumped the transitive `devalue` dependency of the console's frontend (npm audit, high).
+
 ## [7.5.0] - 2026-09-21
 
 ### Fixed

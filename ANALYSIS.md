@@ -1421,9 +1421,12 @@ verificava l'assenza del flag, quindi nulla si è rotto nell'aggiungerlo).
 
 ---
 
-### D25 — `--resume-from` scarta silenziosamente quasi tutta la configurazione originale, non solo `--mirror` 🟡 APERTO (4 Set 2026)
+### D25 — `--resume-from` scarta silenziosamente quasi tutta la configurazione originale, non solo `--mirror` ✅ CORRETTO (7 Ott 2026)
 
-**Stato: aperto, non bloccante.**
+**Stato: corretto il 7 Ott 2026** — vedi "Esito" in fondo a questa voce. Il testo sotto è la
+diagnosi del 4 Set 2026, lasciata com'era: una sua parte (i "7 campi") era già superata prima della
+correzione, e l'Esito lo dice.
+
 
 **Gravità: MEDIA** — nessun rischio per l'integrità dei dati (l'effetto è quasi sempre "la ripresa
 gira più permissiva o più veloce dell'originale", mai più distruttiva), ma un comportamento che
@@ -1473,6 +1476,35 @@ metà (22%, 30/130 file) via la console, ripreso dalla scheda Esegui — 130/130
 integrità verificata (0 mismatch), ma a 1988,89 MB/s invece che ~3 MB/s. Il comportamento
 *funzionale* della ripresa (copia il resto, verifica l'integrità) è corretto; solo la fedeltà alla
 configurazione originale non lo è.
+
+**Esito (7 Ott 2026).** Rileggendo il codice prima di correggere, la diagnosi aveva un errore: nel
+frattempo `ConfigurationReport` era già cresciuto a **18 campi** (esclusioni, età, banda, hash,
+`fast_verify`, giunzioni, VSS, `mirror`, `backup_type`, per le richieste di arricchimento dei report) e
+il checkpoint li scriveva già tutti su disco — era `build_resume_args` a ripristinarne ancora **5**.
+Quindi il rimedio non richiedeva un tipo dedicato per i campi già catturati, solo di rimetterli; il tipo
+dedicato serve soltanto per i pochi interruttori che `ConfigurationReport` non porta.
+
+- `checkpoint::apply_configuration` ripristina, con una sola regola — *una ripresa può rimettere ciò che
+  restringe o è neutro, mai essere più distruttiva di una run nuova*: banda, esclusioni (unite a quelle
+  digitate sulla riga della ripresa), età, `hash_algo`, `fast_verify`, giunzioni, VSS, `backup_type`, e
+  gli interruttori `ignore_transient_missing`/`no_prescan`/`long_paths`/`preserve_*` (nuovo
+  `ResumeExtras`, `#[serde(default)]`: un checkpoint vecchio si carica e riprende come prima).
+- Gli interruttori si accendono soltanto (`|=`). Conseguenza che la diagnosi non aveva visto: un
+  **`--dry-run` interrotto riprendeva come copia vera**, perché `dry_run` era catturato e non
+  ripristinato. Ora riprende come simulazione.
+- Se entrambe le parti fissano un limite vince il più severo (`bandwidth_limit_mbps` prende il minore).
+- **Volutamente non ripristinati**, ciascuno con un test: `mirror` (e quindi nessuna conferma di purge
+  chiesta a una run lanciata da console), `keep_generations`, `--pre-command`/`--post-command` (un
+  checkpoint è un file modificabile: ripristinare un comando shell da lì renderebbe `--resume-from` un
+  modo per eseguirne uno), `--webhook-url` e `--encrypt-aes256` (credenziali, e il checkpoint sta in
+  chiaro accanto al report), `--compare-baseline` (una misura del motore, non una proprietà dei dati).
+- **Verifica**: 5 test unitari nuovi in `checkpoint.rs` e un test con il binario e robocopy veri
+  (`resume_from_keeps_the_exclusions_of_the_interrupted_run`: `b.tmp` escluso dalla run interrotta resta
+  escluso dopo la ripresa). **Non rifatta**: la riproduzione manuale con una run reale a 3 MB/s dalla
+  console — il comportamento è coperto dai test, non rimisurato.
+- **Limite residuo**: ciò che né `ConfigurationReport` né `ResumeExtras` portano (per esempio
+  `html_report_path`, oltre a quanto escluso di proposito sopra) segue la riga di comando della ripresa.
+  `--resume-from` resta "continua la stessa copia", non "ripeti ogni impostazione".
 
 ---
 
@@ -1747,6 +1779,67 @@ rustcopy-shell --all-targets -D warnings` e con il gate unwrap/expect scoped a `
 trascinamento su una seconda macchina
 con uno stack software diverso da quella di sviluppo — la stessa condizione che ha esposto il
 difetto, non riproducibile senza una macchina del genere disponibile.
+
+### D30 — Installazione fallita su Windows Server 2016 e 2022, riuscita su Server 2019 e Windows 11 🟡 APERTO (2 Ott 2026)
+
+**Stato: aperto. Correzione implementata in 7.7.0 (F92, Onda 1) e verificata con l'installer reale
+su Windows 11 (aggiornamento da 7.3.0, rapporto `COMPLETATA`); non ancora confermata sulle
+macchine che hanno fallito** (nessun Server disponibile in questa sessione; i sintomi esatti non
+sono ancora stati raccolti). Il meccanismo del fallimento, invece, è stato **riprodotto**: vedi sotto.
+
+**Gravità: ALTA** — l'installazione, cioè il primo contatto con il prodotto, non riesce su due
+delle quattro macchine provate, entrambe SKU Server di produzione.
+
+**Cosa è verificato, non ipotizzato.**
+- `dumpbin /dependents` sui quattro artefatti di release: **tutti** importano `VCRUNTIME140.dll`, e
+  la console anche `VCRUNTIME140_1.dll` (presente solo da Visual C++ 2019 in poi). Nessun
+  `crt-static` in `.cargo/` né nei `Cargo.toml`: il runtime è dinamico ovunque.
+- `installer/rustcopy.iss` registra l'estensione Shell con `Flags: regserver`: Inno Setup chiama
+  `DllRegisterServer` durante l'installazione, e questo richiede `LoadLibrary` sulla DLL — che
+  fallisce (errore 126) se `VCRUNTIME140.dll` manca. Per documentazione di Inno Setup un errore di
+  registrazione apre un dialogo Interrompi/Riprova/Ignora e, se interrotto, annulla l'intera
+  installazione: **un componente opzionale (l'estensione Shell) può far fallire tutto il resto**.
+- `InitializeSetup` controlla il Redistributable ma **solo avvisa e prosegue** ("Setup continuera
+  comunque"): l'installazione va avanti fino al punto che poi fallisce. Il controllo, inoltre, legge
+  `Runtimes\X64\Installed = 1`, vero anche per un 14.0 del 2015, che **non** ha `VCRUNTIME140_1.dll`.
+- Rust supporta Windows Server 2016 e successivi (pagina ufficiale di supporto della piattaforma
+  `x86_64-pc-windows-msvc`): la versione del sistema operativo **non** è di per sé la causa. Un primo
+  sospetto su `ProcessPrng` (`bcryptprimitives.dll`) è stato scartato per questa ragione — un
+  risultato di ricerca affermava che Server 2016 non lo ha, ed è contraddetto da quella pagina.
+
+**Meccanismo riprodotto (3 Ott 2026).** Un installer di test minimo, senza privilegi e senza
+toccare il sistema, con una DLL non registrabile marcata `regserver`, sotto `/VERYSILENT
+/SUPPRESSMSGBOXES`: il log di Inno Setup riporta `RegSvr32 failed with exit code 0x3` (3 =
+`LoadLibrary` non riuscita, che è ciò che accade a `rustcopy_shell.dll` senza `VCRUNTIME140.dll`),
+poi `Defaulting to Abort for suppressed message box (Abort/Retry/Ignore)`, `Rolling back changes`,
+codice d'uscita **5** e nessun file installato. Lo stesso test ha mostrato che `DeinitializeSetup`
+viene eseguita anche in caso di fallimento, che `ExpandConstant('{log}')` restituisce il percorso del
+log di Setup, e che un'eccezione nello script di Setup è registrata ma **non** interrompe
+l'installazione. Questo conferma il *meccanismo*; resta da confermare sulle macchine reali che sia
+proprio la mancanza del Redistributable a innescarlo.
+
+**Ipotesi, in ordine di probabilità, con la prova che le distingue** (la raccoglie in una sola
+esecuzione `scripts/collect-install-diagnostics.ps1`, di sola lettura):
+
+| # | Ipotesi | Spiega | Prova decisiva nel report |
+|---|---|---|---|
+| H1 | VC++ Redistributable assente | installazione fallita a `regserver`, CLI che non parte | `vcruntime140.dll` ASSENTE; caricamento di `rustcopy_shell.dll` con errore 126; `robocopy_ingest.exe --version` con codice `0xC0000135` |
+| H2 | Solo VC++ 2015 (senza `VCRUNTIME140_1`) | installazione riuscita ma la console non parte | `vcruntime140_1.dll` ASSENTE, versione `14.0.x` |
+| H3 | WebView2 assente | console che non si apre, CLI e installazione a posto | nessuna chiave `EdgeUpdate\Clients\{F3017226…}` |
+| H4 | Criterio di sicurezza (AppLocker, WDAC, Defender/EDR) su binari non firmati | file messi in quarantena o DLL non caricabile (errore 1260) | eventi Code Integrity che citano rustcopy, `Get-AppLockerPolicy`, stato Defender |
+| H5 | Riavvio in sospeso, permessi, file scaricato e bloccato (Zone.Identifier) | installazione interrotta a metà | flag di riavvio, `Zone.Identifier` dell'installer, `Setup Log` |
+
+**Cosa dice contro H1 e va detto**: se il report mostrerà il Redistributable **presente** sulle
+macchine che hanno fallito, H1 e H2 cadono e restano H3-H5. Che 2019 e Windows 11 funzionino e
+2016/2022 no è coerente con H1 solo se le prime due lo avevano già per altri programmi — da
+confermare, non da assumere.
+
+**Correzione provata in scratch (2 Ott 2026).** Compilando CLI, DLL della Shell e console con
+`RUSTFLAGS="-C target-feature=+crt-static"` in una cartella di build separata, `dumpbin` non mostra
+**nessuna** importazione di `VCRUNTIME*`/`MSVCP*`/`api-ms-win-crt-*` in nessuno dei tre (prima:
+tutte), al costo di +20 KB (CLI), +123 KB (console), +93 KB (DLL Shell). Il binario compilato parte
+(`robocopy_ingest 7.6.1`). Con il CRT statico il Redistributable smette di essere un requisito: H1 e
+H2 non possono più verificarsi, su nessuna versione di Windows. Piano in `ROADMAP.md`, riga F92.
 
 ---
 
