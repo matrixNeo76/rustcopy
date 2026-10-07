@@ -21,6 +21,16 @@ For full technical detail behind any entry, see `ANALYSIS.md` (defect list, `D<N
 
 ## [Unreleased]
 
+## [7.8.0] - 2026-10-07
+
+### Changed
+- **Console: outcomes you can read at a glance** (F93). The Report tab opens with one sentence,
+  "Backup riuscito: 150 file (2.0 GB) in 0.09s", "…con avvisi" with the reasons, or "Backup non
+  riuscito", instead of a bare exit code; robocopy's own wording moves under "Dettagli tecnici".
+  Job and History show a status chip ("Riuscito", or what the code means) instead of a number.
+  Settings shows plain-language names (the TOML key stays beside it) and yes/no instead of
+  true/false. After a quick folder sync, Run attaches to the copy by itself.
+
 ## [7.7.0] - 2026-10-03
 
 ### Fixed

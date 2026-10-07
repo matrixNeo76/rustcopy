@@ -75,10 +75,10 @@ del PATH di sistema, disinstallazione con ripristino del PATH — ciclo completo
 
 ```powershell
 # Installazione silenziosa (utile per deploy automatizzati)
-rustcopy-7.7.0-setup.exe /VERYSILENT /SUPPRESSMSGBOXES /NORESTART /TASKS="addtopath"
+rustcopy-7.8.0-setup.exe /VERYSILENT /SUPPRESSMSGBOXES /NORESTART /TASKS="addtopath"
 
 # Solo CLI, senza console grafica
-rustcopy-7.7.0-setup.exe /VERYSILENT /SUPPRESSMSGBOXES /NORESTART /TYPE=cli /TASKS="addtopath"
+rustcopy-7.8.0-setup.exe /VERYSILENT /SUPPRESSMSGBOXES /NORESTART /TYPE=cli /TASKS="addtopath"
 ```
 
 #### WebView2
@@ -135,7 +135,7 @@ Amministratore (funziona su Windows PowerShell 5.1, quindi anche su Server 2016)
 
 ```powershell
 powershell -ExecutionPolicy Bypass -File .\scripts\collect-install-diagnostics.ps1 `
-  -InstallerPath C:\Temp\rustcopy-7.7.0-setup.exe
+  -InstallerPath C:\Temp\rustcopy-7.8.0-setup.exe
 ```
 
 Lo script **non modifica nulla** (non registra, non installa, non cambia impostazioni): scrive sul
@@ -148,7 +148,7 @@ macchina e dei percorsi.
 Per avere il log dell'installazione anche in modalità silenziosa:
 
 ```powershell
-rustcopy-7.7.0-setup.exe /VERYSILENT /SUPPRESSMSGBOXES /NORESTART /LOG="$env:TEMP\rustcopy-setup.log"
+rustcopy-7.8.0-setup.exe /VERYSILENT /SUPPRESSMSGBOXES /NORESTART /LOG="$env:TEMP\rustcopy-setup.log"
 ```
 
 Cause note (dettaglio in `ANALYSIS.md` D30): fino alla 7.6.1, Visual C++ Redistributable assente

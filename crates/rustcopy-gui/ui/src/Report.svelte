@@ -4,7 +4,10 @@
   import EmptyState from "./EmptyState.svelte";
   import { session } from "./session.svelte.js";
   import { toCsv, downloadCsv } from "./csv.js";
-  import { FileText, CircleCheck, CircleX, RotateCcw } from "@lucide/svelte";
+  import Badge from "./Badge.svelte";
+  import { bytes, duration } from "./format.js";
+  import { reportOutcome } from "./outcome.js";
+  import { FileText, CircleCheck, CircleX, RotateCcw, TriangleAlert } from "@lucide/svelte";
 
   // `read_report`/`read_report_page` existed in the core and on the IPC surface from F53 and no
   // pane ever called them: a complete report viewer with nothing attached to it. This is the pane.
@@ -119,27 +122,7 @@
     }
   });
 
-  function bytes(value) {
-    if (value < 1024) return `${value} B`;
-    const units = ["KB", "MB", "GB", "TB"];
-    let n = value / 1024;
-    let i = 0;
-    while (n >= 1024 && i < units.length - 1) {
-      n /= 1024;
-      i += 1;
-    }
-    return `${n.toFixed(n < 10 ? 1 : 0)} ${units[i]}`;
-  }
-
-  function duration(seconds) {
-    if (seconds < 10) return `${seconds.toFixed(2)}s`;
-    const total = Math.round(seconds);
-    const h = Math.floor(total / 3600);
-    const m = Math.floor((total % 3600) / 60);
-    return h > 0
-      ? `${h}h ${String(m).padStart(2, "0")}m`
-      : `${m}m ${String(total % 60).padStart(2, "0")}s`;
-  }
+  const outcome = $derived(report ? reportOutcome(report) : null);
 
   // The three per-file lists, rendered by one block rather than three near-identical ones.
   const LISTS = [
@@ -266,6 +249,33 @@
       </p>
     {/if}
 
+    {#if outcome && !report.dry_run}
+      <!-- F93: the answer to "did it work?" in one sentence, before any table. Wording comes from
+           `outcome.js`; whether the run succeeded still comes only from the core's own fields. -->
+      <div
+        class="card mt-3 flex items-start gap-3 {outcome.variant === 'ok'
+          ? 'border-emerald-300 bg-emerald-50 dark:border-emerald-800 dark:bg-emerald-950'
+          : outcome.variant === 'attention'
+            ? 'border-amber-300 bg-amber-50 dark:border-amber-800 dark:bg-amber-950'
+            : ''}"
+        role="status"
+      >
+        {#if outcome.variant === "ok"}
+          <CircleCheck size={22} strokeWidth={2} class="mt-0.5 shrink-0 text-emerald-600 dark:text-emerald-400" aria-hidden="true" />
+        {:else if outcome.failed}
+          <CircleX size={22} strokeWidth={2} class="mt-0.5 shrink-0 text-amber-600 dark:text-amber-400" aria-hidden="true" />
+        {:else if outcome.variant === "attention"}
+          <TriangleAlert size={22} strokeWidth={2} class="mt-0.5 shrink-0 text-amber-600 dark:text-amber-400" aria-hidden="true" />
+        {/if}
+        <div>
+          <p class="text-base font-semibold">{outcome.title}</p>
+          {#each outcome.reasons as reason}
+            <p class="mt-0.5 text-sm text-slate-700 dark:text-slate-300">{reason}</p>
+          {/each}
+        </div>
+      </div>
+    {/if}
+
     <!-- Riepilogo -->
     <h2 class="mt-4 text-xs font-semibold uppercase tracking-wide text-slate-500">Riepilogo</h2>
     <div class="card mt-1 grid grid-cols-2 gap-x-6 gap-y-2 text-xs md:grid-cols-4">
@@ -314,25 +324,25 @@
       </div>
     </div>
 
-    <!-- Esito -->
-    <h2 class="mt-4 text-xs font-semibold uppercase tracking-wide text-slate-500">Esito</h2>
-    <div class="card mt-1 flex items-center gap-2 text-xs">
-      <!-- The badge reads `exit_code_is_success` (robocopy's own bitwise success rule,
-           `RobocopyStatus::is_success`), never `exit_code === 0` -- exit code 1 alone means "one
-           or more files copied successfully", the single most common outcome of an ordinary run,
-           and a strict-zero check showed a red ✕ for it (found live, 9 Set 2026, on the very
-           first real report checked against this redesign). The badge and the meaning string
-           below it are still shown together so the badge's certainty never has to stand in for
-           the meaning's own nuance (what exactly happened). -->
-      {#if report.exit_code_is_success === true}
-        <CircleCheck size={14} strokeWidth={2} class="shrink-0 text-emerald-600 dark:text-emerald-400" aria-hidden="true" />
-      {:else if report.exit_code_is_success === false}
-        <CircleX size={14} strokeWidth={2} class="shrink-0 text-amber-600 dark:text-amber-400" aria-hidden="true" />
-      {/if}
-      <span class="font-mono text-sm">
-        {report.exit_code ?? "—"} — {report.exit_code_meaning ?? "nessun codice di uscita"}
-      </span>
-    </div>
+    <!-- Esito: the raw robocopy code and its (English, composable) meaning, kept for whoever
+         looks it up. The badge reads `exit_code_is_success`, never `exit_code === 0`: robocopy's
+         own code 1 alone means "one or more files copied successfully", the most common outcome
+         of an ordinary run (found live, 9 Set 2026). -->
+    <details class="mt-4">
+      <summary class="cursor-pointer text-xs font-semibold uppercase tracking-wide text-slate-500">
+        Dettagli tecnici dell'esito
+      </summary>
+      <div class="card mt-1 flex items-center gap-2 text-xs">
+        {#if report.exit_code_is_success === true}
+          <Badge variant="ok" icon={CircleCheck}>successo</Badge>
+        {:else if report.exit_code_is_success === false}
+          <Badge variant="attention" icon={CircleX}>non riuscito</Badge>
+        {/if}
+        <span class="font-mono text-sm">
+          codice {report.exit_code ?? "—"} — {report.exit_code_meaning ?? "nessun codice di uscita"}
+        </span>
+      </div>
+    </details>
 
     <!-- File e byte -->
     <h2 class="mt-4 text-xs font-semibold uppercase tracking-wide text-slate-500">File e byte</h2>
