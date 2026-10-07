@@ -50,25 +50,25 @@
 
 <div class="flex min-h-screen bg-slate-50 text-slate-900 dark:bg-slate-950 dark:text-slate-100">
   <aside
-    class="flex w-52 shrink-0 flex-col border-r border-slate-200 dark:border-slate-800"
+    class="flex w-56 shrink-0 flex-col border-r border-slate-200 dark:border-slate-800"
     aria-label="Sezioni"
   >
     <div class="border-b border-slate-200 px-3 py-3 dark:border-slate-800">
-      <h1 class="text-sm font-semibold tracking-tight">rustcopy</h1>
-      <p class="text-[11px] text-slate-500 dark:text-slate-400">console</p>
+      <h1 class="text-base font-semibold tracking-tight">rustcopy</h1>
+      <p class="text-xs text-slate-500 dark:text-slate-400">console</p>
     </div>
     <nav class="flex flex-1 flex-col gap-0.5 p-2">
       {#each TABS as entry (entry.id)}
         {@const Icon = entry.icon}
         <button
-          class="flex items-center gap-2 rounded px-2 py-1.5 text-left text-xs {session.activeTab ===
+          class="flex items-center gap-2.5 rounded px-2.5 py-2 text-left text-sm {session.activeTab ===
           entry.id
             ? 'bg-slate-200 font-semibold dark:bg-slate-800'
             : 'text-slate-600 hover:bg-slate-100 dark:text-slate-400 dark:hover:bg-slate-900'}"
           onclick={() => (session.activeTab = entry.id)}
           aria-current={session.activeTab === entry.id ? "page" : undefined}
         >
-          <Icon size={15} strokeWidth={2} aria-hidden="true" />
+          <Icon size={17} strokeWidth={2} aria-hidden="true" />
           {entry.label}
         </button>
       {/each}
@@ -79,11 +79,11 @@
     <header class="border-b border-slate-200 px-4 py-3 dark:border-slate-800">
       {#if activeFileName}
         <p
-          class="truncate font-mono text-xs text-slate-600 dark:text-slate-400"
+          class="truncate font-mono text-sm text-slate-600 dark:text-slate-400"
           title={session.configPath}
         >{activeFileName}</p>
       {:else}
-        <p class="text-xs text-slate-500 dark:text-slate-400">
+        <p class="text-sm text-slate-500 dark:text-slate-400">
           Esegue i job di un file di configurazione avviando la CLI, e ne prepara le modifiche come
           proposte in file nuovi: quello in uso non viene mai toccato.
         </p>

@@ -5,6 +5,7 @@
   import QuickSync from "./QuickSync.svelte";
   import NewJobWizard from "./NewJobWizard.svelte";
   import Badge from "./Badge.svelte";
+  import StatCard from "./StatCard.svelte";
   import { cliOutcomeVariant } from "./outcome.js";
   import { session } from "./session.svelte.js";
   import {
@@ -56,6 +57,23 @@
   // What each exit code in `historyByJob` means, read from the core (`runner::exit_code_meaning`)
   // for the same reason History.svelte does: one source of truth, no second table here.
   let meaningByCode = $state({});
+  // F94: the file at a glance, counted from the same per-job last run the table already shows.
+  // Only a real last run counts as ok / needs-a-look; "never" and "unavailable" are neither.
+  const summary = $derived.by(() => {
+    let ok = 0;
+    let attention = 0;
+    let none = 0;
+    for (const job of jobs) {
+      const last = historyByJob[job.name];
+      if (last && typeof last === "object") {
+        if (last.exit_code === 0) ok += 1;
+        else attention += 1;
+      } else {
+        none += 1;
+      }
+    }
+    return { ok, attention, none, mirror: jobs.filter((job) => job.mirror).length };
+  });
   // File-level only (PIANO_GUI.md §19.2): a scheduled task always invokes `--config <file>`,
   // which runs every `[[jobs]]` entry via `run_jobs` -- there is no per-job schedule flag, so this
   // is a single count shown once above the table, never attributed to one row.
@@ -185,6 +203,21 @@
   {/if}
 
   {#if jobs.length > 0}
+    <div class="mt-4 grid grid-cols-2 gap-3 md:grid-cols-4">
+      <StatCard
+        label="Job"
+        value={jobs.length}
+        hint={summary.mirror > 0 ? `${summary.mirror} con mirror (cancella in destinazione)` : null}
+      />
+      <StatCard label="Ultimo esito riuscito" value={summary.ok} tone={summary.ok > 0 ? "ok" : "neutral"} />
+      <StatCard
+        label="Da controllare"
+        value={summary.attention}
+        tone={summary.attention > 0 ? "attention" : "neutral"}
+        hint={summary.attention > 0 ? "l'ultima run non è pulita" : null}
+      />
+      <StatCard label="Mai eseguiti" value={summary.none} hint="o storico non disponibile" />
+    </div>
     {#if scheduleCount > 0}
       <!-- File-level, never per-row (PIANO_GUI.md §19.2): a scheduled task invokes `--config
            <file>`, which runs every `[[jobs]]` entry -- there is no per-job schedule flag, so
@@ -202,7 +235,7 @@
       </p>
     {/if}
     <div class="card mt-4 overflow-x-auto">
-      <table class="w-full table-fixed text-left text-xs">
+      <table class="w-full table-fixed text-left text-sm">
         <!-- Explicit widths instead of leaving the browser's default table layout put all the
              extra space on whichever column has the widest content — on a wide window that put
              nearly the whole row into "Sorgente" while "Tipo"/"Verifica" stayed cramped, unrelated
@@ -218,20 +251,20 @@
         </colgroup>
         <thead class="border-b border-slate-300 dark:border-slate-700">
           <tr>
-            <th class="py-1 pr-3 font-medium">Job</th>
-            <th class="py-1 pr-3 font-medium">Sorgente</th>
-            <th class="py-1 pr-3 font-medium">Destinazione</th>
-            <th class="py-1 pr-3 font-medium">Tipo</th>
-            <th class="py-1 pr-3 font-medium">Verifica</th>
-            <th class="py-1 pr-3 font-medium">Ultima esecuzione</th>
-            <th class="py-1 pr-3 font-medium">Impostazioni / Azioni</th>
+            <th class="py-2 pr-3 text-xs font-medium uppercase tracking-wide text-slate-500">Job</th>
+            <th class="py-2 pr-3 text-xs font-medium uppercase tracking-wide text-slate-500">Sorgente</th>
+            <th class="py-2 pr-3 text-xs font-medium uppercase tracking-wide text-slate-500">Destinazione</th>
+            <th class="py-2 pr-3 text-xs font-medium uppercase tracking-wide text-slate-500">Tipo</th>
+            <th class="py-2 pr-3 text-xs font-medium uppercase tracking-wide text-slate-500">Verifica</th>
+            <th class="py-2 pr-3 text-xs font-medium uppercase tracking-wide text-slate-500">Ultima esecuzione</th>
+            <th class="py-2 pr-3 text-xs font-medium uppercase tracking-wide text-slate-500">Impostazioni / Azioni</th>
           </tr>
         </thead>
         <tbody>
           {#each jobs as job (job.name)}
             {@const last = historyByJob[job.name]}
             <tr class="border-b border-slate-200 last:border-0 dark:border-slate-800">
-              <td class="py-1 pr-3 font-mono">
+              <td class="py-3 pr-3 font-mono">
                 {job.name}
                 <!-- `--mirror` deletes at the destination, so it must be visible as such and
                      never rendered like an ordinary copy. -->
@@ -239,7 +272,7 @@
                   <!-- A template read as if it were a configured job is how a first look at the
                        product ends in confusion: the row looks complete and points nowhere. -->
                   <span
-                    class="ml-1 inline-flex items-center gap-1 rounded bg-slate-200 px-1 text-[10px]
+                    class="ml-1 inline-flex items-center gap-1 rounded bg-slate-200 px-1 text-xs
                            font-semibold text-slate-700 dark:bg-slate-700 dark:text-slate-200"
                   >
                     <FileQuestionMark size={11} strokeWidth={2.25} aria-hidden="true" />
@@ -248,7 +281,7 @@
                 {/if}
                 {#if job.mirror}
                   <span
-                    class="ml-1 inline-flex items-center gap-1 rounded bg-amber-200 px-1 text-[10px]
+                    class="ml-1 inline-flex items-center gap-1 rounded bg-amber-200 px-1 text-xs
                            font-semibold text-amber-900 dark:bg-amber-900 dark:text-amber-100"
                     title="Mirror: la destinazione diventa identica alla sorgente, quindi i file che nella sorgente non ci sono più vengono cancellati anche lì."
                   >
@@ -257,10 +290,10 @@
                   </span>
                 {/if}
               </td>
-              <td class="truncate py-1 pr-3 font-mono text-slate-600 dark:text-slate-400" title={job.source ?? ""}>{job.source ?? "—"}</td>
-              <td class="truncate py-1 pr-3 font-mono text-slate-600 dark:text-slate-400" title={job.dest ?? ""}>{job.dest ?? "—"}</td>
-              <td class="py-1 pr-3">{job.backup_type ?? "copia"}</td>
-              <td class="py-1 pr-3">
+              <td class="truncate py-3 pr-3 font-mono text-slate-600 dark:text-slate-400" title={job.source ?? ""}>{job.source ?? "—"}</td>
+              <td class="truncate py-3 pr-3 font-mono text-slate-600 dark:text-slate-400" title={job.dest ?? ""}>{job.dest ?? "—"}</td>
+              <td class="py-3 pr-3">{job.backup_type ?? "copia"}</td>
+              <td class="py-3 pr-3">
                 <!-- fast_verify travels beside verify_integrity, never instead of it: it skips
                      files whose source is unchanged, so it is a weaker guarantee and saying only
                      "yes" would overstate it. -->
@@ -270,7 +303,7 @@
                   no
                 {/if}
               </td>
-              <td class="py-1 pr-3">
+              <td class="py-3 pr-3">
                 <!-- Three honest states (PIANO_GUI.md §19.4 Onda 1): a report_path that never
                      resolves (still carries `{timestamp}`), one that resolves but has no run
                      recorded yet, and a real last outcome -- never a guess in place of the first
@@ -291,13 +324,13 @@
                   <Badge variant={cliOutcomeVariant(last.exit_code)} icon={last.exit_code === 0 ? CircleCheck : CircleX}>
                     {last.exit_code === 0 ? "Riuscito" : (meaningByCode[last.exit_code] ?? `codice ${last.exit_code}`)}
                   </Badge>
-                  <div class="mt-0.5 text-[10px] text-slate-500">
+                  <div class="mt-0.5 text-xs text-slate-500">
                     {new Date(last.timestamp).toLocaleString("it-IT")} ·
                     {last.throughput_mbps.toFixed(1)} MB/s
                   </div>
                 {/if}
               </td>
-              <td class="py-1 pr-3">
+              <td class="py-3 pr-3">
                 <div class="flex flex-wrap items-center gap-2">
                   <!-- Onda 2: at-a-glance icons for the settings that change behaviour the most,
                        never a value beyond the two counts already exposed here -- the full
@@ -305,25 +338,25 @@
                   {#if job.encrypt_enabled}
                     <span class="inline-flex items-center gap-0.5 text-slate-500" title="Cifratura attiva">
                       <Lock size={13} strokeWidth={2} aria-hidden="true" />
-                      <span class="text-[10px]">Cifrato</span>
+                      <span class="text-xs">Cifrato</span>
                     </span>
                   {/if}
                   {#if job.keep_generations != null}
                     <span class="inline-flex items-center gap-0.5 text-slate-500" title="Generazioni conservate">
                       <RotateCcwClock size={13} strokeWidth={2} aria-hidden="true" />
-                      <span class="text-[10px]">{job.keep_generations} cicli</span>
+                      <span class="text-xs">{job.keep_generations} cicli</span>
                     </span>
                   {/if}
                   {#if job.exclude_count > 0}
                     <span class="inline-flex items-center gap-0.5 text-slate-500" title="Esclusioni configurate">
                       <Funnel size={13} strokeWidth={2} aria-hidden="true" />
-                      <span class="text-[10px]">{job.exclude_count} {job.exclude_count === 1 ? "esclusione" : "esclusioni"}</span>
+                      <span class="text-xs">{job.exclude_count} {job.exclude_count === 1 ? "esclusione" : "esclusioni"}</span>
                     </span>
                   {/if}
                   {#if job.threads != null && job.threads !== defaultThreads}
                     <span class="inline-flex items-center gap-0.5 text-slate-500" title="Copie in parallelo diverse dal valore consigliato: {job.threads}">
                       <Cpu size={13} strokeWidth={2} aria-hidden="true" />
-                      <span class="text-[10px]">{job.threads} in parallelo</span>
+                      <span class="text-xs">{job.threads} in parallelo</span>
                     </span>
                   {/if}
                 </div>
@@ -331,7 +364,7 @@
                   <!-- Onda 3: un clic verso il dettaglio di questo job in un'altra scheda, invece
                        di ricopiare a mano percorso (e nome job) (PIANO_GUI.md §9g/§19.1). -->
                   <button
-                    class="inline-flex items-center gap-1 text-[11px] text-slate-500 hover:text-slate-800 dark:hover:text-slate-200"
+                    class="inline-flex items-center gap-1 text-xs text-slate-500 hover:text-slate-800 dark:hover:text-slate-200"
                     title="Apri le impostazioni di questo job"
                     onclick={() => {
                       // CodeRabbit finding on this PR: `session.configPath` is a live PathBar
@@ -345,7 +378,7 @@
                     }}
                   ><SettingsIcon size={14} strokeWidth={2} aria-hidden="true" />Impostazioni</button>
                   <button
-                    class="inline-flex items-center gap-1 text-[11px] text-slate-500 hover:text-slate-800 disabled:opacity-30 dark:hover:text-slate-200"
+                    class="inline-flex items-center gap-1 text-xs text-slate-500 hover:text-slate-800 disabled:opacity-30 dark:hover:text-slate-200"
                     title="Apri lo storico di questo job"
                     disabled={job.report_path == null}
                     onclick={() => {
@@ -358,7 +391,7 @@
                     }}
                   ><Clock size={14} strokeWidth={2} aria-hidden="true" />Storico</button>
                   <button
-                    class="inline-flex items-center gap-1 text-[11px] text-slate-500 hover:text-slate-800 dark:hover:text-slate-200"
+                    class="inline-flex items-center gap-1 text-xs text-slate-500 hover:text-slate-800 dark:hover:text-slate-200"
                     title="Modifica questo job"
                     onclick={() => {
                       // Same restoration as Impostazioni above, for the same reason.
