@@ -39,7 +39,20 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           persist-credentials: false
+      # Dependabot runs get a read-only GITHUB_TOKEN whatever `permissions:` says, and
+      # rustsec/audit-check reports through a check run it has to create and update. With the one
+      # standing warning (a yanked `chacha20`, which has no advisory ID and so cannot be put in
+      # .cargo/audit.toml) that update returns 404 and the job fails even though cargo audit found
+      # nothing ("No vulnerabilities were found" then "Not Found - update-a-check-run", seen on PRs
+      # #143/#144). For Dependabot the job therefore runs `cargo audit` itself: same database, same
+      # .cargo/audit.toml, a non-zero exit on a real vulnerability, no check run to create.
+      - name: cargo audit (Dependabot: plain run, no check run)
+        if: github.actor == 'dependabot[bot]'
+        run: |
+          cargo install cargo-audit --version 0.22.2 --locked
+          cargo audit
       - name: cargo audit (RustSec advisory database)
+        if: github.actor != 'dependabot[bot]'
         uses: rustsec/audit-check@69366f33c96575abad1ee0dba8212993eecbe998 # v2.0.0
         with:
           token: ${{ secrets.GITHUB_TOKEN }}
