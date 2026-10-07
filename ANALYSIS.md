@@ -1421,9 +1421,12 @@ verificava l'assenza del flag, quindi nulla si è rotto nell'aggiungerlo).
 
 ---
 
-### D25 — `--resume-from` scarta silenziosamente quasi tutta la configurazione originale, non solo `--mirror` 🟡 APERTO (4 Set 2026)
+### D25 — `--resume-from` scarta silenziosamente quasi tutta la configurazione originale, non solo `--mirror` ✅ CORRETTO (7 Ott 2026)
 
-**Stato: aperto, non bloccante.**
+**Stato: corretto il 7 Ott 2026** — vedi "Esito" in fondo a questa voce. Il testo sotto è la
+diagnosi del 4 Set 2026, lasciata com'era: una sua parte (i "7 campi") era già superata prima della
+correzione, e l'Esito lo dice.
+
 
 **Gravità: MEDIA** — nessun rischio per l'integrità dei dati (l'effetto è quasi sempre "la ripresa
 gira più permissiva o più veloce dell'originale", mai più distruttiva), ma un comportamento che
@@ -1473,6 +1476,35 @@ metà (22%, 30/130 file) via la console, ripreso dalla scheda Esegui — 130/130
 integrità verificata (0 mismatch), ma a 1988,89 MB/s invece che ~3 MB/s. Il comportamento
 *funzionale* della ripresa (copia il resto, verifica l'integrità) è corretto; solo la fedeltà alla
 configurazione originale non lo è.
+
+**Esito (7 Ott 2026).** Rileggendo il codice prima di correggere, la diagnosi aveva un errore: nel
+frattempo `ConfigurationReport` era già cresciuto a **18 campi** (esclusioni, età, banda, hash,
+`fast_verify`, giunzioni, VSS, `mirror`, `backup_type`, per le richieste di arricchimento dei report) e
+il checkpoint li scriveva già tutti su disco — era `build_resume_args` a ripristinarne ancora **5**.
+Quindi il rimedio non richiedeva un tipo dedicato per i campi già catturati, solo di rimetterli; il tipo
+dedicato serve soltanto per i pochi interruttori che `ConfigurationReport` non porta.
+
+- `checkpoint::apply_configuration` ripristina, con una sola regola — *una ripresa può rimettere ciò che
+  restringe o è neutro, mai essere più distruttiva di una run nuova*: banda, esclusioni (unite a quelle
+  digitate sulla riga della ripresa), età, `hash_algo`, `fast_verify`, giunzioni, VSS, `backup_type`, e
+  gli interruttori `ignore_transient_missing`/`no_prescan`/`long_paths`/`preserve_*` (nuovo
+  `ResumeExtras`, `#[serde(default)]`: un checkpoint vecchio si carica e riprende come prima).
+- Gli interruttori si accendono soltanto (`|=`). Conseguenza che la diagnosi non aveva visto: un
+  **`--dry-run` interrotto riprendeva come copia vera**, perché `dry_run` era catturato e non
+  ripristinato. Ora riprende come simulazione.
+- Se entrambe le parti fissano un limite vince il più severo (`bandwidth_limit_mbps` prende il minore).
+- **Volutamente non ripristinati**, ciascuno con un test: `mirror` (e quindi nessuna conferma di purge
+  chiesta a una run lanciata da console), `keep_generations`, `--pre-command`/`--post-command` (un
+  checkpoint è un file modificabile: ripristinare un comando shell da lì renderebbe `--resume-from` un
+  modo per eseguirne uno), `--webhook-url` e `--encrypt-aes256` (credenziali, e il checkpoint sta in
+  chiaro accanto al report), `--compare-baseline` (una misura del motore, non una proprietà dei dati).
+- **Verifica**: 5 test unitari nuovi in `checkpoint.rs` e un test con il binario e robocopy veri
+  (`resume_from_keeps_the_exclusions_of_the_interrupted_run`: `b.tmp` escluso dalla run interrotta resta
+  escluso dopo la ripresa). **Non rifatta**: la riproduzione manuale con una run reale a 3 MB/s dalla
+  console — il comportamento è coperto dai test, non rimisurato.
+- **Limite residuo**: ciò che né `ConfigurationReport` né `ResumeExtras` portano (per esempio
+  `html_report_path`, oltre a quanto escluso di proposito sopra) segue la riga di comando della ripresa.
+  `--resume-from` resta "continua la stessa copia", non "ripeti ogni impostazione".
 
 ---
 

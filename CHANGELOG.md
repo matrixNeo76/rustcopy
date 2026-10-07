@@ -21,12 +21,6 @@ For full technical detail behind any entry, see `ANALYSIS.md` (defect list, `D<N
 
 ## [Unreleased]
 
-### Added
-- **"Copia" tab** (F95): copy one or more folders into a destination without writing a configuration
-  file. Pick the folders and the destination, optionally "Controlla prima" for file counts and size,
-  then "Copia"; progress follows in the Esegui tab. It only copies (no mirror, no purge), refuses a
-  destination inside its own source, a whole drive, and two folders with the same name.
-
 ## [7.8.0] - 2026-10-07
 
 ### Changed
@@ -36,6 +30,22 @@ For full technical detail behind any entry, see `ANALYSIS.md` (defect list, `D<N
   Job and History show a status chip ("Riuscito", or what the code means) instead of a number.
   Settings shows plain-language names (the TOML key stays beside it) and yes/no instead of
   true/false. After a quick folder sync, Run attaches to the copy by itself.
+
+### Added
+- **"Copia" tab** (F95): copy one or more folders into a destination without writing a configuration
+  file. Pick the folders and the destination, optionally "Controlla prima" for file counts and size,
+  then "Copia"; progress follows in the Esegui tab. It only copies (no mirror, no purge), refuses a
+  destination inside its own source, a whole drive, and two folders with the same name.
+- **Installer smoke test in CI** (F92): a workflow builds the real installer and installs, checks and
+  uninstalls it on a Windows Server 2022 runner (files, Shell extension registration, install report,
+  installed CLI, clean removal).
+
+### Fixed
+- **`--resume-from` now keeps the interrupted run's settings** (D25). A resumed run used to forget the
+  bandwidth limit, the excluded files and folders, the age filters, the hash algorithm and more: a run
+  throttled to 3 MB/s resumed at full speed, and an interrupted `--dry-run` resumed as a real copy. They
+  are now restored, with one rule: a resume never does more than a fresh run would -- `--mirror`,
+  retention, shell commands, webhook URLs and encryption keys are deliberately not restored.
 
 ## [7.7.0] - 2026-10-03
 
