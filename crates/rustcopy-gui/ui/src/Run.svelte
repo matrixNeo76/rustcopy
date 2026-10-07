@@ -317,10 +317,9 @@
       </p>
       <p class="mt-0.5 text-[11px] text-slate-500">
         Run interrotte che hanno scritto un checkpoint in questa cartella. Riprendere continua nella
-        stessa direzione sorgente→destinazione, con pattern, thread, tentativi e verifica
-        dell'interruzione — <strong>non</strong> il resto della configurazione originale (limite
-        di quota, esclusioni, algoritmo di hash, mirror inclusi: D25 in ANALYSIS.md). Una ripresa
-        può quindi girare più permissiva o più veloce dell'originale, mai più distruttiva.
+        stessa direzione sorgente→destinazione e rimette le impostazioni della run interrotta (banda,
+        esclusioni, filtri di età, verifica, simulazione). Non rimette mai mirror, cancellazioni,
+        comandi, notifiche e chiavi: una ripresa non può fare più di una run nuova.
       </p>
       <ul class="mt-2 space-y-1.5">
         {#each checkpoints as checkpoint}
