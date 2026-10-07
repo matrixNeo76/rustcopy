@@ -44,11 +44,15 @@
         ],
         [
           "generazione, ciclo",
-          "Con --backup-type il backup diventa una storia: un Full più gli Incremental o Differential che lo seguono formano un ciclo. La retention elimina cicli interi e non singole generazioni, per non lasciare un incrementale senza il full da cui dipende.",
+          "Con un tipo di backup impostato il backup diventa una storia: un Full più gli Incremental o Differential che lo seguono formano un ciclo. La retention elimina cicli interi e non singole generazioni, per non lasciare un incrementale senza il full da cui dipende.",
         ],
         [
           "verifica rapida (fast-verify)",
           "Salta i file la cui sorgente è immutata dall'ultima verifica riuscita. Si fida dell'identità della sorgente invece di rileggere i byte in destinazione: una corruzione nata in destinazione può sfuggire.",
+        ],
+        [
+          "VSS (copia shadow)",
+          "Volume Shadow Copy: Windows scatta una fotografia del disco per un istante e il backup legge da quella invece che dai file vivi, così anche un file aperto o in modifica si può leggere. La copia è coerente come lo sarebbe dopo un'interruzione di corrente, non necessariamente per l'applicazione che usa quei file (per un database serve che l'applicazione stessa partecipi allo snapshot). Richiede i privilegi di Amministratore. Nel risultato di un backup compare come \"Istantanea\".",
         ],
         [
           "ereditato",
@@ -56,7 +60,7 @@
         ],
         [
           "preferiti",
-          "Un elenco di percorsi (config o report) con un'etichetta a scelta, sopra \"Recenti\" in ogni scheda — a differenza di Recenti, che si riempie e svuota da solo, un preferito resta finché non lo rimuovi. Vive solo su questo computer, mai nel file TOML.",
+          "Un elenco di percorsi (config o report) con un'etichetta a scelta, sopra \"Recenti\" in ogni scheda — a differenza di Recenti, che si riempie e svuota da solo, un preferito resta finché non lo rimuovi. Vive solo su questo computer, mai nel file dei job.",
         ],
       ],
     },

@@ -4,6 +4,8 @@
   import EmptyState from "./EmptyState.svelte";
   import QuickSync from "./QuickSync.svelte";
   import NewJobWizard from "./NewJobWizard.svelte";
+  import Badge from "./Badge.svelte";
+  import { cliOutcomeVariant } from "./outcome.js";
   import { session } from "./session.svelte.js";
   import {
     ShieldAlert,
@@ -51,6 +53,9 @@
   // `load()`, not reactively per row: the console never asks the engine to do anything just by
   // rendering, same as every other read in this pane.
   let historyByJob = $state({});
+  // What each exit code in `historyByJob` means, read from the core (`runner::exit_code_meaning`)
+  // for the same reason History.svelte does: one source of truth, no second table here.
+  let meaningByCode = $state({});
   // File-level only (PIANO_GUI.md §19.2): a scheduled task always invokes `--config <file>`,
   // which runs every `[[jobs]]` entry via `run_jobs` -- there is no per-job schedule flag, so this
   // is a single count shown once above the table, never attributed to one row.
@@ -140,7 +145,20 @@
         }
       }),
     );
+    const codes = [
+      ...new Set(entries.map(([, last]) => last?.exit_code).filter((code) => code !== undefined)),
+    ];
+    const meanings = await Promise.all(
+      codes.map(async (code) => {
+        try {
+          return [code, await invoke("exit_code_meaning", { code })];
+        } catch {
+          return [code, null];
+        }
+      }),
+    );
     if (mine !== loadGeneration) return;
+    meaningByCode = Object.fromEntries(meanings);
     historyByJob = Object.fromEntries(entries);
   }
 </script>
@@ -149,8 +167,8 @@
   <PathBar
     bind:value={session.configPath}
     kind="config"
-    label="Percorso del file di configurazione TOML"
-    placeholder="Scegli un file di configurazione TOML"
+    label="File con i job di backup"
+    placeholder="Scegli il file con i tuoi job di backup (.toml)"
     action="Elenca job"
     busy={loading}
     onrun={load}
@@ -190,13 +208,13 @@
              nearly the whole row into "Sorgente" while "Tipo"/"Verifica" stayed cramped, unrelated
              to what either column actually needs (Livello 1, punto 2, PIANO_GUI.md §10). -->
         <colgroup>
-          <col class="w-[16%]" />
-          <col class="w-[19%]" />
-          <col class="w-[19%]" />
+          <col class="w-[15%]" />
+          <col class="w-[17%]" />
+          <col class="w-[17%]" />
           <col class="w-[8%]" />
           <col class="w-[8%]" />
-          <col class="w-[16%]" />
-          <col class="w-[14%]" />
+          <col class="w-[15%]" />
+          <col class="w-[20%]" />
         </colgroup>
         <thead class="border-b border-slate-300 dark:border-slate-700">
           <tr>
@@ -232,6 +250,7 @@
                   <span
                     class="ml-1 inline-flex items-center gap-1 rounded bg-amber-200 px-1 text-[10px]
                            font-semibold text-amber-900 dark:bg-amber-900 dark:text-amber-100"
+                    title="Mirror: la destinazione diventa identica alla sorgente, quindi i file che nella sorgente non ci sono più vengono cancellati anche lì."
                   >
                     <ShieldAlert size={11} strokeWidth={2.25} aria-hidden="true" />
                     MIRROR — cancella in destinazione
@@ -269,19 +288,9 @@
                     mai eseguito
                   </span>
                 {:else}
-                  <span
-                    class="inline-flex items-center gap-1 rounded px-1 text-[10px] font-semibold
-                           {last.exit_code === 0
-                             ? 'bg-emerald-100 text-emerald-900 dark:bg-emerald-950 dark:text-emerald-200'
-                             : 'bg-amber-100 text-amber-900 dark:bg-amber-950 dark:text-amber-200'}"
-                  >
-                    {#if last.exit_code === 0}
-                      <CircleCheck size={11} strokeWidth={2.25} aria-hidden="true" />
-                    {:else}
-                      <CircleX size={11} strokeWidth={2.25} aria-hidden="true" />
-                    {/if}
-                    {last.exit_code}
-                  </span>
+                  <Badge variant={cliOutcomeVariant(last.exit_code)} icon={last.exit_code === 0 ? CircleCheck : CircleX}>
+                    {last.exit_code === 0 ? "Riuscito" : (meaningByCode[last.exit_code] ?? `codice ${last.exit_code}`)}
+                  </Badge>
                   <div class="mt-0.5 text-[10px] text-slate-500">
                     {new Date(last.timestamp).toLocaleString("it-IT")} ·
                     {last.throughput_mbps.toFixed(1)} MB/s
@@ -294,33 +303,35 @@
                        never a value beyond the two counts already exposed here -- the full
                        picture with provenance stays Impostazioni's job alone (§19.2). -->
                   {#if job.encrypt_enabled}
-                    <span title="Cifratura attiva">
-                      <Lock size={13} strokeWidth={2} class="text-slate-500" aria-hidden="true" />
+                    <span class="inline-flex items-center gap-0.5 text-slate-500" title="Cifratura attiva">
+                      <Lock size={13} strokeWidth={2} aria-hidden="true" />
+                      <span class="text-[10px]">Cifrato</span>
                     </span>
                   {/if}
                   {#if job.keep_generations != null}
                     <span class="inline-flex items-center gap-0.5 text-slate-500" title="Generazioni conservate">
                       <RotateCcwClock size={13} strokeWidth={2} aria-hidden="true" />
-                      <span class="text-[10px]">{job.keep_generations}</span>
+                      <span class="text-[10px]">{job.keep_generations} cicli</span>
                     </span>
                   {/if}
                   {#if job.exclude_count > 0}
                     <span class="inline-flex items-center gap-0.5 text-slate-500" title="Esclusioni configurate">
                       <Funnel size={13} strokeWidth={2} aria-hidden="true" />
-                      <span class="text-[10px]">{job.exclude_count}</span>
+                      <span class="text-[10px]">{job.exclude_count} {job.exclude_count === 1 ? "esclusione" : "esclusioni"}</span>
                     </span>
                   {/if}
                   {#if job.threads != null && job.threads !== defaultThreads}
-                    <span title="Thread non-default: {job.threads}">
-                      <Cpu size={13} strokeWidth={2} class="text-slate-500" aria-hidden="true" />
+                    <span class="inline-flex items-center gap-0.5 text-slate-500" title="Copie in parallelo diverse dal valore consigliato: {job.threads}">
+                      <Cpu size={13} strokeWidth={2} aria-hidden="true" />
+                      <span class="text-[10px]">{job.threads} in parallelo</span>
                     </span>
                   {/if}
                 </div>
-                <div class="mt-1 flex items-center gap-2">
+                <div class="mt-1 flex flex-wrap items-center gap-x-3 gap-y-1">
                   <!-- Onda 3: un clic verso il dettaglio di questo job in un'altra scheda, invece
                        di ricopiare a mano percorso (e nome job) (PIANO_GUI.md §9g/§19.1). -->
                   <button
-                    class="text-slate-500 hover:text-slate-800 dark:hover:text-slate-200"
+                    class="inline-flex items-center gap-1 text-[11px] text-slate-500 hover:text-slate-800 dark:hover:text-slate-200"
                     title="Apri le impostazioni di questo job"
                     onclick={() => {
                       // CodeRabbit finding on this PR: `session.configPath` is a live PathBar
@@ -332,9 +343,9 @@
                       session.pendingSettingsLoad = true;
                       session.activeTab = "settings";
                     }}
-                  ><SettingsIcon size={14} strokeWidth={2} aria-hidden="true" /></button>
+                  ><SettingsIcon size={14} strokeWidth={2} aria-hidden="true" />Impostazioni</button>
                   <button
-                    class="text-slate-500 hover:text-slate-800 disabled:opacity-30 dark:hover:text-slate-200"
+                    class="inline-flex items-center gap-1 text-[11px] text-slate-500 hover:text-slate-800 disabled:opacity-30 dark:hover:text-slate-200"
                     title="Apri lo storico di questo job"
                     disabled={job.report_path == null}
                     onclick={() => {
@@ -345,9 +356,9 @@
                       session.pendingHistoryLoad = true;
                       session.activeTab = "history";
                     }}
-                  ><Clock size={14} strokeWidth={2} aria-hidden="true" /></button>
+                  ><Clock size={14} strokeWidth={2} aria-hidden="true" />Storico</button>
                   <button
-                    class="text-slate-500 hover:text-slate-800 dark:hover:text-slate-200"
+                    class="inline-flex items-center gap-1 text-[11px] text-slate-500 hover:text-slate-800 dark:hover:text-slate-200"
                     title="Modifica questo job"
                     onclick={() => {
                       // Same restoration as Impostazioni above, for the same reason.
@@ -355,7 +366,7 @@
                       session.pendingEditorJob = job.name;
                       session.activeTab = "editor";
                     }}
-                  ><SquarePen size={14} strokeWidth={2} aria-hidden="true" /></button>
+                  ><SquarePen size={14} strokeWidth={2} aria-hidden="true" />Modifica</button>
                 </div>
               </td>
             </tr>
@@ -373,7 +384,7 @@
       icon={ListChecks}
       title="Scegli un file di configurazione per cominciare"
       lines={[
-        "Questa scheda elenca i job che un file TOML descrive: sorgente, destinazione, tipo di backup e se la verifica è attiva.",
+        "Questa scheda elenca i job descritti in un file di configurazione: sorgente, destinazione, tipo di backup e se la verifica è attiva.",
         "Un job che cancella in destinazione (mirror) viene segnalato in modo distinto, perché è l'impostazione più distruttiva che possa avere.",
         "Hai clonato il repository? Prova examples/demo-locale.toml: copia qualche file finto in una cartella accanto, quindi non può toccare nulla di tuo.",
       ]}
