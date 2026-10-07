@@ -21,6 +21,12 @@ For full technical detail behind any entry, see `ANALYSIS.md` (defect list, `D<N
 
 ## [Unreleased]
 
+### Added
+- **"Copia" tab** (F95): copy one or more folders into a destination without writing a configuration
+  file. Pick the folders and the destination, optionally "Controlla prima" for file counts and size,
+  then "Copia"; progress follows in the Esegui tab. It only copies (no mirror, no purge), refuses a
+  destination inside its own source, a whole drive, and two folders with the same name.
+
 ## [7.8.0] - 2026-10-07
 
 ### Changed

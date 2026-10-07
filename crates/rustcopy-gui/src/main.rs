@@ -29,6 +29,9 @@
 //! stop path writes the checkpoint `--resume-from` reads and terminating it would skip exactly
 //! that.
 //!
+//! [`prepare_copy`] (F95) also writes, but only a throwaway configuration in the temp directory --
+//! the same file Explorer's drag-and-drop writes -- never anything the operator owns.
+//!
 //! Every command reads, with **one** exception: [`write_proposal`] (F54) writes a proposed
 //! configuration to a new file. It cannot overwrite, cannot enable mirroring or retention, and
 //! cannot remove a job by omission. Those rules live in `robocopy_ingest::job_editor`, where they
@@ -414,6 +417,28 @@ struct ActiveRun {
 }
 
 type RunState = std::sync::Mutex<ActiveRun>;
+
+/// F95: turns the "Copia" tab's choice (folders + a destination) into a throwaway configuration
+/// file and returns its path; the tab then starts it with [`start_job`], exactly like any other
+/// configuration.
+///
+/// A thin wrapper, like every command here: the planning and its refusals (a folder copied into
+/// itself, a whole drive, two folders with the same name) are `runner::plan_copy`, and the file is
+/// `runner::write_shell_drop_config` -- the one Explorer's drag-and-drop uses -- so a copy started
+/// here and one dropped in Explorer are the same job. The file goes to the temp directory next to
+/// the stop and progress files. Nothing here can request mirror, purge or verification: those
+/// fields are not parameters, and `write_shell_drop_config` leaves them at their defaults.
+#[tauri::command]
+async fn prepare_copy(sources: Vec<String>, dest: String) -> Result<String, String> {
+    off_thread(move || {
+        let sources: Vec<PathBuf> = sources.into_iter().map(PathBuf::from).collect();
+        let items = robocopy_ingest::runner::plan_copy(&sources, Path::new(&dest))?;
+        let config_path = robocopy_ingest::runner::shell_drop_config_path()?;
+        robocopy_ingest::runner::write_shell_drop_config(&items, &config_path)?;
+        Ok(config_path.to_string_lossy().into_owned())
+    })
+    .await
+}
 
 /// Starts one configuration file as a child process.
 ///
@@ -855,6 +880,7 @@ fn main() {
             read_job_drafts,
             suggest_proposal_path,
             write_proposal,
+            prepare_copy,
             start_job,
             stop_job,
             run_status,
