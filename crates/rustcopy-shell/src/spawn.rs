@@ -11,14 +11,22 @@
 
 use std::path::{Path, PathBuf};
 
-/// Real destination for one dropped folder: `<drop target>\<basename of the dragged folder>`.
-/// Replicates ordinary Explorer-copy semantics ("drop `Photos` onto `Backup` -> `Backup\Photos`")
-/// rather than robocopy's own `/E` semantics (merge `source`'s *contents* into `dest`) -- which is
-/// why this computation happens here, before `runner::write_shell_drop_config` is ever called,
-/// not inside the core.
-pub fn per_item_destination(drop_target: &Path, dragged_item: &Path) -> Option<PathBuf> {
-    let name = dragged_item.file_name()?;
-    Some(drop_target.join(name))
+/// Plans a drop: where each dropped folder goes (`<drop target>\<basename of the dragged folder>`)
+/// and whether the drop is safe at all. Replicates ordinary Explorer-copy semantics ("drop `Photos`
+/// onto `Backup` -> `Backup\Photos`") rather than robocopy's own `/E` semantics (merge `source`'s
+/// *contents* into `dest`) -- which is why this happens here, before
+/// `runner::write_shell_drop_config` is ever called, not inside it.
+///
+/// It is the console's own `runner::plan_copy` (F95), so an Explorer drop and the "Copia" tab agree
+/// on what is refused: a target inside (or equal to) a dragged folder -- which would keep copying
+/// the growing copy into itself, found by reading this file while building that tab --, a drive
+/// root, two dragged folders with the same name. Purely lexical and allocation-only: no disk
+/// access, no panic, safe to call inside `explorer.exe`.
+pub fn plan_drop(
+    drop_target: &Path,
+    dropped: &[PathBuf],
+) -> Result<Vec<(PathBuf, PathBuf)>, robocopy_ingest::errors::IngestError> {
+    robocopy_ingest::runner::plan_copy(dropped, drop_target)
 }
 
 /// Launches the console on the drop, fire-and-forget: writes the throwaway config
@@ -48,18 +56,49 @@ mod tests {
     use super::*;
 
     #[test]
-    fn per_item_destination_joins_the_drop_target_with_the_dragged_folders_own_name() {
-        let dest =
-            per_item_destination(Path::new(r"D:\Backup"), Path::new(r"C:\Users\demo\Photos"));
-        assert_eq!(dest, Some(PathBuf::from(r"D:\Backup\Photos")));
+    fn plan_drop_joins_the_drop_target_with_each_dragged_folders_own_name() {
+        let items = plan_drop(
+            Path::new(r"D:\Backup"),
+            &[PathBuf::from(r"C:\Users\demo\Photos")],
+        )
+        .expect("plan");
+        assert_eq!(items.len(), 1);
+        assert_eq!(items[0].0, PathBuf::from(r"C:\Users\demo\Photos"));
+        assert_eq!(
+            items[0].1.to_string_lossy().replace('/', "\\"),
+            r"D:\Backup\Photos"
+        );
     }
 
     #[test]
-    fn per_item_destination_is_none_for_a_path_with_no_file_name() {
-        // A bare drive root has no final component -- refusing rather than guessing.
-        assert_eq!(
-            per_item_destination(Path::new(r"D:\Backup"), Path::new(r"C:\")),
-            None
-        );
+    fn plan_drop_refuses_a_drive_root() {
+        // A bare drive root has no folder name -- refusing rather than guessing.
+        assert!(plan_drop(Path::new(r"D:\Backup"), &[PathBuf::from(r"C:\")]).is_err());
+    }
+
+    /// The case that was unguarded: dragging `C:\a` onto `C:\a\sub` (or onto itself).
+    #[test]
+    fn plan_drop_refuses_a_target_inside_a_dragged_folder() {
+        for target in [r"C:\a\sub", r"C:\a", r"c:\A\Sub\deeper"] {
+            assert!(
+                plan_drop(Path::new(target), &[PathBuf::from(r"C:\a")]).is_err(),
+                "{target} must be refused"
+            );
+        }
+    }
+
+    #[test]
+    fn plan_drop_refuses_dropping_a_folder_back_onto_its_own_parent() {
+        // `C:\a\Photos` dropped on `C:\a` would land on itself.
+        assert!(plan_drop(Path::new(r"C:\a"), &[PathBuf::from(r"C:\a\Photos")]).is_err());
+    }
+
+    #[test]
+    fn plan_drop_refuses_two_dragged_folders_with_the_same_name() {
+        assert!(plan_drop(
+            Path::new(r"D:\Backup"),
+            &[PathBuf::from(r"C:\x\Photos"), PathBuf::from(r"E:\y\photos")],
+        )
+        .is_err());
     }
 }
