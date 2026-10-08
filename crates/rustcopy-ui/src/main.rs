@@ -14,7 +14,7 @@ mod run;
 mod single_instance;
 mod state;
 
-use std::cell::RefCell;
+use std::cell::{Cell, RefCell};
 use std::path::{Path, PathBuf};
 use std::rc::Rc;
 use std::sync::{Arc, Mutex};
@@ -51,6 +51,9 @@ struct Ctx {
     /// The session this window is running now, if any (the core needs it to tell "running" from
     /// "interrupted").
     running_id: RefCell<Option<String>>,
+    /// Whether to open the destination folder when the run now going ends clean. A choice about
+    /// this run only: it is not part of a copy's settings, so it is not saved with a task.
+    open_when_done: Cell<bool>,
     sessions: RefCell<Vec<SessionSummary>>,
     /// Discards a slow report read when the user has opened another lavoro meanwhile (E01).
     details: Generation,
@@ -253,6 +256,35 @@ fn algorithm_name(algorithm: HashAlgorithm) -> &'static str {
     }
 }
 
+/// What a person who looked away needs when a copy ends: the taskbar button flashes (nothing to
+/// install, nothing that interrupts) and, if asked, the destination folder opens. The folder opens
+/// only for a clean run: after a problem the person should read the outcome first.
+fn announce_finish(ui: &AppWindow, ctx: &Rc<Ctx>, id: &str, state: Option<SessionState>) {
+    use slint::winit_030::winit::window::UserAttentionType;
+    ui.window().with_winit_window(|window| {
+        if !window.has_focus() {
+            window.request_user_attention(Some(UserAttentionType::Informational));
+        }
+    });
+    if ctx.open_when_done.replace(false) && state == Some(SessionState::Clean) {
+        let dest = ctx
+            .sessions
+            .borrow()
+            .iter()
+            .find(|s| s.id == id)
+            .map(|s| s.dest.clone());
+        if let Some(dest) = dest {
+            open_folder(&dest);
+        }
+    }
+}
+
+/// Opens a folder in Explorer. Failure is silent on purpose: the copy has finished and is reported;
+/// a folder that cannot be shown must not turn that into an error.
+fn open_folder(path: &str) {
+    let _ = std::process::Command::new("explorer.exe").arg(path).spawn();
+}
+
 /// The folder saved tasks go to: `Documents\rustcopy\attivita`.
 fn tasks_dir() -> PathBuf {
     // `RUSTCOPY_TASKS_DIR` lets a test keep its files out of the real Documents folder.
@@ -302,6 +334,7 @@ fn main() -> Result<(), slint::PlatformError> {
         log: SessionLog::default_location(),
         slot: RunSlot::default(),
         running_id: RefCell::new(None),
+        open_when_done: Cell::new(false),
         sessions: RefCell::new(Vec::new()),
         details: Generation::default(),
         speeds: RefCell::new(Vec::new()),
@@ -340,6 +373,7 @@ fn main() -> Result<(), slint::PlatformError> {
                 .cloned();
             if let Some(session) = found {
                 let chosen: Vec<PathBuf> = session.sources.iter().map(PathBuf::from).collect();
+                ctx.open_when_done.set(false);
                 start_copy(&ui, &ctx, &chosen, &session.dest, session.verify);
             }
         });
@@ -469,6 +503,7 @@ fn main() -> Result<(), slint::PlatformError> {
                 .collect();
             let dest = ui.get_dest().to_string();
             let verify = ui.get_verify().then(|| algorithm_for(ui.get_verify_algo()));
+            ctx.open_when_done.set(ui.get_open_when_done());
             start_copy(&ui, &ctx, &chosen, &dest, verify);
         });
     }
@@ -489,6 +524,7 @@ fn main() -> Result<(), slint::PlatformError> {
                 ui.set_error(ui.get_busy_text());
                 return;
             }
+            ctx.open_when_done.set(false);
             match ctx.log.begin_from_config(Path::new(path.as_str())) {
                 Ok(session) => run_session(&ui, &ctx, &session),
                 Err(error) => ui.set_error(error.to_string().into()),
@@ -553,9 +589,10 @@ fn main() -> Result<(), slint::PlatformError> {
                 ui.set_running(false);
                 let id = ctx.running_id.borrow_mut().take();
                 if let Some(id) = id {
-                    let _ = ctx.log.finish(&id, done.exit_code);
+                    let state = ctx.log.finish(&id, done.exit_code);
                     refresh(&ui, &ctx);
                     select_session(&ui, &ctx, &id);
+                    announce_finish(&ui, &ctx, &id, state.ok());
                 }
             }
         });

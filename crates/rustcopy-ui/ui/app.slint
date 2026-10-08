@@ -75,6 +75,7 @@ export component AppWindow inherits Window {
     in property <string> eta-text;
     in property <string> chart-commands;
     // Session option: read the copied files back and compare them. Algorithm index: 0 xxHash3, 1 SHA-256, 2 BLAKE3.
+    in-out property <bool> open-when-done: false;
     in-out property <bool> verify: false;
     in-out property <int> verify-algo: 0;
 
@@ -258,6 +259,11 @@ export component AppWindow inherits Window {
                         enabled: !root.running;
                         accessible-label: Strings.verify-label;
                     }
+                }
+                CheckBox {
+                    text: Strings.open-when-done;
+                    checked <=> root.open-when-done;
+                    enabled: !root.running;
                 }
                 if root.verify: Text {
                     text: root.verify-algo == 0 ? Strings.algo-xxh3-hint : Strings.algo-strong-hint;

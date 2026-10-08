@@ -45,7 +45,7 @@ ogni funzione nuova della Fase 6 entra solo con un predefinito non distruttivo.
 | **0** | Studio, specifica, piano; completamento dello studio dal vivo | questo pacchetto | Tre documenti | **Conferma dell'utente sulle decisioni di §6 e sull'avvio della Fase 1** |
 | **1** | Prova tecnica a tempo (spike) su ramo isolato | 3-5 giorni | Un prototipo **usa e getta** di Copia + Report e una tabella di misure | **Go / No-go** secondo §3. ✅ **Eseguita il 8 Ott 2026: GO condizionato, §3.5** |
 | **2** | Fondamenta e catalogo dei comportamenti | 1-2 settimane | Crate `rustcopy-ui`, tema, componenti, estrazione dei comportamenti validati dal vivo | Conferma prima delle schermate vere. ✅ **Fondamenta pronte l'8 Ott 2026** (catalogo di 65 voci, token, stringhe, componenti, istanza unica, tray, job CI); revisione del catalogo contro D1-D30 fatta |
-| **3** | **Lavoro immediato** (ingresso TeraCopy) | 2-3 settimane | Nuova copia, esecuzione, elenco dei lavori con esito, istanza unica | Prova dal vivo + conferma. 🟡 **3a, 3b e 3c fatte e 3d iniziata l'8 Ott 2026** (elenco dei lavori, ripeti, salva come attività, istanza unica, tempo residuo, grafico di velocità, verifica a fine copia); resta nella 3d solo «al termine» (le collisioni non richiedono nulla, vedi §6 decisione 10) |
+| **3** | **Lavoro immediato** (ingresso TeraCopy) | 2-3 settimane | Nuova copia, esecuzione, elenco dei lavori con esito, istanza unica | Prova dal vivo + conferma. 🟡 **3a, 3b e 3c fatte e 3d iniziata l'8 Ott 2026** (elenco dei lavori, ripeti, salva come attività, istanza unica, tempo residuo, grafico di velocità, verifica a fine copia); **Fase 3 chiusa**: «al termine» ha apri-cartella e lampeggio sulla barra (le collisioni non richiedono nulla, vedi §6 decisione 10; espelli disco e spegni il PC sono una decisione a parte) |
 | **4** | **Lavori salvati e pianificati** (ingresso Cobian) | 3-4 settimane | Salva come attività, griglia proprietà, editor a schede, storico | Prova dal vivo + conferma |
 | **5** | Parità con la console attuale e rimozione di Tauri | 1-2 settimane | Installer unico con la nuova console; Tauri rimosso | **Conferma esplicita prima di cancellare** |
 | **6** | Funzioni nuove che dipendono dal core | a richiesta | Pausa, collisioni, sposta, creazione pianificazioni, posta… | Una decisione per funzione |
@@ -237,6 +237,10 @@ pulizia, non con un parametro libero.
   velocità di una sessione nell'elenco e quella del report avrebbero potuto differire del 5 %.
 - Il blocco «in corso» dice **quale lavoro** sta girando: prima mostrava il modulo con le scelte di un'altra copia mentre ne
   girava una avviata da Esplora file.
+
+### 3.5e «Al termine» (8 Ott 2026)
+
+Una casella «Apri la cartella di destinazione alla fine»: si apre in Esplora file **solo se la copia è finita pulita** (dopo un problema si legge prima l'esito) ed è una scelta di *quella* copia, non una impostazione salvata con l'attività. Se la finestra non ha il focus, il pulsante nella barra delle applicazioni lampeggia. Provato dal vivo l'apertura della cartella; **il lampeggio no** (non l'ho osservato). **Notifica di sistema (toast) non fatta**: richiederebbe una dipendenza nuova da valutare con `cargo audit`; il lampeggio copre il caso «guardavo altrove» senza aggiungere nulla.
 
 ### 3.6 Consegna del cancello
 
