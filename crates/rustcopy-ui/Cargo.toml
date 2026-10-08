@@ -1,0 +1,31 @@
+[package]
+name = "rustcopy-ui"
+description = "SPIKE (PIANO_GUI_SLINT.md Fase 1): Slint prototype of the Copia and Report screens. Throwaway."
+publish = false
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+build = "build.rs"
+
+[dependencies]
+rustcopy-core = { path = "../rustcopy-core" }
+slint = { version = "1.18", default-features = false, features = [
+    "std",
+    "compat-1-2",
+    "backend-winit",
+    "renderer-software",
+    "software-renderer-systemfonts",
+    "accessibility",
+    "unstable-winit-030",
+] }
+rfd = { version = "0.17", default-features = false }
+
+[build-dependencies]
+slint-build = "1.18"
+
+[[bin]]
+name = "rustcopy-ui"
+path = "src/main.rs"

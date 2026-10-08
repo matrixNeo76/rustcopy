@@ -50,10 +50,10 @@ jobs:
         run: cargo fmt --all -- --check
 
       - name: cargo clippy (default features)
-        run: cargo clippy --locked --workspace --exclude rustcopy-gui --exclude rustcopy-shell --all-targets -- -D warnings
+        run: cargo clippy --locked --workspace --exclude rustcopy-gui --exclude rustcopy-ui --exclude rustcopy-shell --all-targets -- -D warnings
 
       - name: cargo clippy (notify-server feature)
-        run: cargo clippy --locked --workspace --exclude rustcopy-gui --exclude rustcopy-shell --all-targets --features rustcopy-cli/notify-server -- -D warnings
+        run: cargo clippy --locked --workspace --exclude rustcopy-gui --exclude rustcopy-ui --exclude rustcopy-shell --all-targets --features rustcopy-cli/notify-server -- -D warnings
 
       # clippy::unwrap_used/expect_used are allow-by-default "restriction" lints, so `-D warnings`
       # alone never catches a new unwrap()/expect() — they have to be turned on explicitly first
@@ -72,10 +72,10 @@ jobs:
           cargo clippy --locked -p rustcopy-cli --bins --features notify-server -- -W clippy::unwrap_used -W clippy::expect_used -D warnings
 
       - name: cargo test (default features)
-        run: cargo test --locked --workspace --exclude rustcopy-gui --exclude rustcopy-shell --all-targets
+        run: cargo test --locked --workspace --exclude rustcopy-gui --exclude rustcopy-ui --exclude rustcopy-shell --all-targets
 
       - name: cargo test (notify-server feature)
-        run: cargo test --locked --workspace --exclude rustcopy-gui --exclude rustcopy-shell --all-targets --features rustcopy-cli/notify-server
+        run: cargo test --locked --workspace --exclude rustcopy-gui --exclude rustcopy-ui --exclude rustcopy-shell --all-targets --features rustcopy-cli/notify-server
 
       # Broken intra-doc links are invisible to clippy and to the test suite, and this crate
       # leans on them heavily (17 in generations.rs alone). Adding this gate immediately
@@ -156,8 +156,8 @@ jobs:
 
       - name: cargo check on MSRV (both feature sets)
         run: |
-          cargo check --workspace --exclude rustcopy-gui --exclude rustcopy-shell --all-targets --locked
-          cargo check --workspace --exclude rustcopy-gui --exclude rustcopy-shell --all-targets --locked --features rustcopy-cli/notify-server
+          cargo check --workspace --exclude rustcopy-gui --exclude rustcopy-ui --exclude rustcopy-shell --all-targets --locked
+          cargo check --workspace --exclude rustcopy-gui --exclude rustcopy-ui --exclude rustcopy-shell --all-targets --locked --features rustcopy-cli/notify-server
 
   # F53: the GUI is Windows-native and depends on Tauri, which needs webkit2gtk system libraries
   # on Linux — so it is excluded from the cross-platform jobs above and checked here instead. That
