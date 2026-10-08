@@ -44,7 +44,7 @@ ogni funzione nuova della Fase 6 entra solo con un predefinito non distruttivo.
 |---|---|---|---|---|
 | **0** | Studio, specifica, piano; completamento dello studio dal vivo | questo pacchetto | Tre documenti | **Conferma dell'utente sulle decisioni di §6 e sull'avvio della Fase 1** |
 | **1** | Prova tecnica a tempo (spike) su ramo isolato | 3-5 giorni | Un prototipo **usa e getta** di Copia + Report e una tabella di misure | **Go / No-go** secondo §3. ✅ **Eseguita il 8 Ott 2026: GO condizionato, §3.5** |
-| **2** | Fondamenta e catalogo dei comportamenti | 1-2 settimane | Crate `rustcopy-ui`, tema, componenti, estrazione dei comportamenti validati dal vivo | Conferma prima delle schermate vere |
+| **2** | Fondamenta e catalogo dei comportamenti | 1-2 settimane | Crate `rustcopy-ui`, tema, componenti, estrazione dei comportamenti validati dal vivo | Conferma prima delle schermate vere. ✅ **Fondamenta pronte l'8 Ott 2026** (catalogo di 65 voci, token, stringhe, componenti, istanza unica, tray, job CI); revisione del catalogo contro D1-D30 fatta |
 | **3** | **Lavoro immediato** (ingresso TeraCopy) | 2-3 settimane | Nuova copia, esecuzione, elenco dei lavori con esito, istanza unica | Prova dal vivo + conferma |
 | **4** | **Lavori salvati e pianificati** (ingresso Cobian) | 3-4 settimane | Salva come attività, griglia proprietà, editor a schede, storico | Prova dal vivo + conferma |
 | **5** | Parità con la console attuale e rimozione di Tauri | 1-2 settimane | Installer unico con la nuova console; Tauri rimosso | **Conferma esplicita prima di cancellare** |
@@ -181,6 +181,18 @@ del toolkit**: sono funzioni da costruire, non limiti della libreria.
 **Decisione sul confronto con Tauri alleggerito (§7):** Tauri alleggerito resta a 116 MB e 7 processi: la strada
 "alleggerire" non raggiunge l'obiettivo, e quindi non è l'alternativa a cui tornare per le priorità dichiarate
 (prestazioni elevate).
+
+### 3.5b Chiusura delle quattro verifiche (Fase 2, 8 Ott 2026)
+
+- **Icona nell'area di notifica: risolta.** Causa: avevo disattivato le feature predefinite di Slint e con esse `system-tray`.
+  Riattivata, l'icona compare; chiudendo la finestra il processo resta vivo (tray-residente) e un clic sull'icona
+  riporta la finestra.
+- **Istanza unica: realizzata e provata.** Mutex nominato più pipe nominata; un secondo avvio con `--auto-config` consegna la
+  richiesta alla finestra aperta e termina (un solo processo rimasto); la prima ha copiato i 30 file e mostrato il report.
+  La pipe accetta solo `activate` e `auto-config <file>` e il file deve essere un `shell-drop-*.toml` nella cartella
+  temporanea di rustcopy; ogni altra richiesta è rifiutata **e mostrata**. Provato in 14 test, uno dei quali a due istanze.
+- **RDP e Narrator: ancora non provati** (nessuna sessione RDP né audio su questa macchina); restano condizioni da chiudere
+  su una macchina adatta, non bloccano la costruzione.
 
 ### 3.6 Consegna del cancello
 

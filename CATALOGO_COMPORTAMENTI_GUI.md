@@ -1,0 +1,145 @@
+---
+type: Reference
+title: Catalogo dei comportamenti della console da portare in Slint
+description: Elenco verificabile dei comportamenti e dei divieti già pagati dalla console Tauri (ricavati dalle prescrizioni di CLAUDE.md, ciascuna nata da un difetto reale), con per ciascuno dove vive oggi, se resta nel core o va riprodotto nell'interfaccia, come si porta in Slint e come si verifica. Prerequisito della Fase 2 di PIANO_GUI_SLINT.md.
+status: draft
+generated:
+  by: process:claude-code
+  at: 2026-10-08T11:15:00Z
+---
+
+# Catalogo dei comportamenti della console
+
+Fase 2 di [PIANO_GUI_SLINT.md](PIANO_GUI_SLINT.md), prerequisito prima di scrivere schermate. [CLAUDE.md](CLAUDE.md)
+contiene decine di prescrizioni sulla console attuale; ciascuna esiste perché un difetto vero è stato trovato, quasi
+sempre **cliccando sul binario compilato** e non leggendo il codice. Riscrivere l'interfaccia senza questo elenco
+significa pagarli di nuovo.
+
+**Come leggerlo.** *Dove vive*: **Core** = logica già in `rustcopy-core` (la nuova interfaccia la eredita chiamando le
+stesse funzioni, nulla da riscrivere ma da **non aggirare**); **UI** = comportamento dell'interfaccia, da
+riprodurre; **Tauri** = specifico di Tauri/Svelte, senza equivalente da portare (con il motivo); **Nuovo** = richiesto
+da specifica o piano, non esiste oggi. *Verifica*: come si prova che la nuova interfaccia lo rispetta; "dal vivo" vuol
+dire sul binario compilato con Windows-MCP, come per la console attuale.
+
+Le regole di sicurezza chiave (nessun comando che copi, cancelli, pianifichi o installi senza il confine descritto in
+[SPEC_GUI_SLINT.md](SPEC_GUI_SLINT.md) §10) valgono per ogni riga.
+
+## 1. Confini e architettura
+
+| ID | Comportamento | Perché (difetto o scelta) | Dove vive | Come si porta in Slint | Verifica |
+|---|---|---|---|---|---|
+| G01 | I comandi della console sono **involucri sottili** su `gui_api`: convertono argomenti, chiamano una funzione, mappano l'errore. Se un ramo decide semantica di backup, va nel core | È ciò che tiene vera la regola "il frontend non decide" | Core | I callback Slint chiamano solo `gui_api`/`runner`. Nessuna decisione di backup nel crate `rustcopy-ui`. Revisione di codice: ogni `if` su mirror, retention, purge, pianificazione è un campanello | Revisione + `grep` in CI per divieti noti (G02) |
+| G02 | La console **non** copia, cancella, pianifica o installa fuori dal confine; i divieti (`--force-purge`, `--mirror` non presidiato, install/uninstall) non possono comparire negli argomenti | Il confine di sicurezza è verificato da un test, non ricordato | Core (`runner::run_arguments` a forma fissa) | Usare `run_arguments`/`resume_arguments`/`restore_preview_arguments`; **mai** un parametro che inoltri flag. I livelli di sicurezza (SPEC §10.1) cambiano cosa si può *preparare*, non questa forma | Test `the_argument_list_cannot_carry_a_destructive_flag` + test del livello |
+| G03 | `cli_beside`: la CLI si cerca **accanto** all'eseguibile della console, mai su `PATH` | Un altro rustcopy su `PATH` sarebbe avviato per errore | Core | Chiamare `runner::cli_beside(current_exe)` | Prova dal vivo con una CLI diversa su `PATH` |
+| G04 | **Fermare = scrivere il file di stop**, mai uccidere il processo | Il checkpoint lo scrive il ramo `--cancel-file`; un kill lo salta | UI + Core | Il pulsante "Ferma" scrive il file restituito da `cancel_file_for_now` (già nel prototipo) | Dal vivo: fermare una copia, controllare il checkpoint |
+| G05 | Il figlio parte con **stdout/stderr catturati su file** e **cwd = cartella della configurazione**; i percorsi relativi in un TOML valgono rispetto al file | `null` nascondeva errori veri; ereditare la cwd faceva risolvere percorsi dal posto sbagliato | UI | `spawn_run` (già nel prototipo): `output_file_for`, `current_dir(parent)`; `--config` assoluto con `std::path::absolute` | Dal vivo con `examples/demo-locale.toml` avviato da un'altra cartella |
+| G06 | Ogni processo figlio a console parte con **`CREATE_NO_WINDOW`** (CLI, `schtasks.exe`) | Altrimenti Windows apre una console nera davanti alla finestra | UI + Core | Già nel prototipo per la CLI; ogni nuovo `Command::new` verso strumenti a console porta la stessa flag | Dal vivo: nessuna finestra nera |
+| G07 | Una sola esecuzione per volta in questa finestra: il controllo "c'è già una run?" e l'assegnazione del figlio sono **un'unica sezione critica** | Due clic rapidi sovrascrivevano il primo figlio, lasciando una copia non fermabile | UI | Lo stato della run vive in un solo posto sul thread grafico (`RefCell`), mai in due passi separati | Test dell'unità di stato + doppio clic dal vivo |
+| G08 | Le **costanti degli exit code** e `exit_code_meaning` stanno solo in `runner`; History legge il significato da lì | Erano duplicate fra CLI e mappa JS | Core | `runner::exit_code_meaning(code)`; nessuna mappa locale | Revisione: nessuna stringa "riuscito/…" nella UI |
+| G09 | **Nessuna icona o pass/fail da `exit_code_meaning` né da `exit_code == 0`**; si usa `ReportView::exit_code_is_success` (il codice 1 di robocopy è un successo) e `integrity_status` | Icona sempre falsa, trovata caricando un report vero | Core + UI | Badge e frase d'esito partono da `exit_code_is_success` | Test con report di codice 1, 0, 8 |
+| G10 | **Ambra, mai rosso** per tutto ciò che non è pulito; l'icona dice "fallito" | Decisione di prodotto F81/F93 | UI | Token di colore `Theme.warning` unico; nessun rosso nei componenti | Revisione dei token + schermate |
+| G11 | `read_settings` **tronca `webhook_url`** a schema e host; i comandi pre/post si mostrano **verbatim** | L'URL è la credenziale e la pagina finisce negli screenshot; un comando mezzo redatto sembra sicuro | Core | La UI mostra ciò che `read_settings` restituisce, senza ricomporre | Test sul core + prova dal vivo |
+| G12 | Le **`caution`** (avvisi di rischio) sono semantica di backup e arrivano dal core | Il frontend non decide cosa è rischioso | Core | Mostrare, non calcolare | Revisione |
+| G13 | I **segreti** (chiavi di cifratura) non viaggiano mai come argomento di processo; `keyring:NOME` | Un argomento è visibile nella lista dei processi | Core + UI | `gui_api::set_credential/delete_credential` in-process; il campo non è mai scritto in log né argomenti | Revisione + dal vivo |
+
+## 2. Esecuzione, avanzamento, report
+
+| ID | Comportamento | Perché | Dove vive | Come si porta | Verifica |
+|---|---|---|---|---|---|
+| E01 | Le risposte asincrone **fuori ordine** si scartano (contatore di generazione sul polling) | Una risposta lenta sovrascriveva una più recente | UI (Tauri: `setTimeout` a catena + generazione) | Un solo `Timer` sul thread grafico; ogni lettura da thread di lavoro riporta il proprio numero di generazione e il risultato più vecchio si scarta | Test di unità con risposte invertite |
+| E02 | Il **polling** è a catena (il prossimo parte a fine del precedente), mai sovrapposto | Letture ravvicinate si accavallavano | UI | `Timer` unico; nessun secondo timer per la stessa risorsa | Revisione |
+| E03 | **Progresso limitato a 0,99** mentre la run è attiva; "100 %" compare solo a run finita | Robocopy conta voci di cartella che l'inventario non conta: `bytes_done` supera il totale prima della fine | UI | `fraction.min(0.99)` finché `running` (già nel prototipo) | Test di unità + prova su run con molte cartelle |
+| E04 | La **posizione nel batch** (`in attesa / in corso / concluso`) si legge da `ProgressSample.batch_index/total`; **non si azzera** quando si riesamina; resta visibile solo se `config_path` coincide; a batch concluso senza `wasStopped` l'ultimo job passa a "concluso" | La coda spariva proprio quando serviva; un ultimo job veloce restava "in attesa" | UI | Stato del batch separato dalla selezione; confronto di `config_path` | Dal vivo con un batch di 3 job |
+| E05 | Il **nome del file in corso** (`current_file`) viene dal progresso, **non** da log a livello `debug` | Il log per file costa 76× (D18) | Core + UI | Mostrare `ProgressSample.current_file` | Dal vivo |
+| E06 | La sezione "Dettagli — file in copia" **resta aperta** mentre il polling aggiorna | Con `open={expr}` a una via si richiudeva a ogni tick | UI (Tauri: `bind:open`) | Lo stato "aperto" è una proprietà dell'interfaccia **non ricostruita** dal modello a ogni tick | Dal vivo: aprire e attendere 5 s |
+| E07 | Il **report** mostra un banner di **simulazione** quando `dry_run`; non si deduce dall'`exit_code_meaning` | Un `--dry-run` sembrava "79 GB in 34 s" | Core + UI | Banner da `ReportView::dry_run` (già nel prototipo) | Report di prova con dry-run |
+| E08 | I report con **placeholder** `{timestamp}` irrisolto mostrano "non disponibile", mai un'euristica | `report_path` può essere `None` | Core | Gestire `None` | Test dedicato |
+| E09 | **Notifica di sistema a fine run** al passaggio `running → false` | Non serve tenere la finestra in primo piano | UI (Tauri: plugin) | Notifica toast di Windows o palloncino del tray; **da realizzare** | Dal vivo |
+| E10 | **Esegui** si aggancia a una run già in corso lanciata dalla Copia o da Explorer (`pendingRunAttach`) e ne mostra lo stato senza un secondo clic | Segnali monouso fra schede | UI (Tauri: flag monouso) | Evento esplicito "apri la run X" verso lo stato condiviso; mai un flag da ricordare di azzerare | Dal vivo |
+| E11 | `--auto-config <toml>`: la console avvia subito il lavoro **dopo aver esaminato** la configurazione, perché è l'esame che popola la schermata | Una copia partiva con la finestra su "scegli un file" | UI | In avvio: carica → mostra → avvia, in quest'ordine | Dal vivo da Explorer |
+| E12 | Un secondo avvio **consegna il lavoro all'istanza aperta** e si chiude | TeraCopy lo fa; evita due finestre su una stessa copia | Nuovo | Mutex nominato + passaggio dell'argomento (RF-Y11) | Dal vivo: due `--auto-config` consecutivi |
+
+## 3. Copia, anteprima, Explorer
+
+| ID | Comportamento | Perché | Dove vive | Come si porta | Verifica |
+|---|---|---|---|---|---|
+| C01 | `plan_copy`: rifiuta destinazione dentro/uguale alla sorgente, radice di un'unità, cartelle con lo stesso nome; **lessicale**, mai metodi di `Path` | Copiare una cartella in sé stessa; stesso risultato su Linux e Windows | Core | Chiamare `plan_copy`; mostrare il messaggio | Test esistenti + dal vivo |
+| C02 | `prepare_copy`/`write_shell_drop_config`: nessun parametro per mirror/purge/verifica; destinazione UNC → `threads: Some(8)` | Sicurezza e 48 connessioni SMB inutili | Core | Stessa coppia di funzioni (già nel prototipo) | Test esistenti |
+| C03 | **"Controlla prima"** conta file e dimensione **solo su pressione**, mai a ogni modifica | Su un profilo vero richiede minuti | UI + Core | Pulsante esplicito; `inspect_path` con ancora (`config_path`) | Dal vivo |
+| C04 | `inspect_path` è **non filtrato** e prende l'**ancora** della configurazione; un risultato non più valido (percorso o file di config cambiati) **non si mostra** | Risposta vecchia accanto a un percorso diverso; due config con "job1" | Core + UI | Chiave di validità = (percorso, job, config); mostrare solo il risultato valido | Test di unità + dal vivo |
+| C05 | I rifiuti e gli avvisi **spariscono** quando l'utente cambia cartelle o destinazione | Messaggio che non descrive più la scelta | UI | `error = ""` a ogni modifica (già nel prototipo) | Dal vivo |
+| C06 | I **selettori nativi** non restituiscono percorsi non esistenti; il campo testo resta modificabile per destinazioni nuove; **nessun `create_dir_all`** per aggirare | Il selettore rifiuta cartelle inesistenti; creare cartelle dall'editor violerebbe "scrive solo proposte" | UI | `rfd` su thread di lavoro (già nel prototipo) + campo testo accanto | Dal vivo con destinazione nuova |
+| C07 | Una **sola** casella di percorso condivisa per config/report (stato di sessione), **non** una per pannello | Era ciò che rendeva l'app inutilizzabile | UI | Stato di sessione unico nel viewmodel | Revisione |
+| C08 | **Recenti/Preferiti** nel selettore: pannello sovrapposto che **non occupa spazio** nel layout | Il pannello copriva il testo seguente; il margine collassava | UI (Tauri: `mb-8`) | `PopupWindow` di Slint: non è nel layout, quindi il difetto non esiste; verificare comunque | Dal vivo con una voce |
+| C09 | **Explorer**: la voce "Copia con RustCopy" **non compare** per un drop non sicuro (`plan_drop`); mai un dialogo né un panic; il drop non lancia mai la CLI in silenzio, passa dalla console | Annidamento; la copia silenziosa lasciava l'operatore senza feedback | Core + DLL Shell | Nessun cambiamento alla DLL; la console accetta `--auto-config` | Dal vivo da Explorer |
+| C11 | Una destinazione **UNC** (`\\server\share`) funziona dalla scheda Copia come dal drop di Explorer (thread conservativi, C02); **D28 è aperto** nel core: `normalize_path_arg` costruisce un prefisso di percorso lungo non valido per UNC | Il difetto vive nel core e la nuova interfaccia lo eredita | Core (aperto) | Nessun codice UI; **provare dal vivo una destinazione UNC** prima del rilascio e non dichiarare risolto ciò che D28 non risolve | Dal vivo con `\\localhost\C$\...` |
+| C10 | **Drop sulla finestra**: una cartella trascinata si aggiunge all'elenco (winit `DroppedFile`) | Gesto primario di TeraCopy | Nuovo | Già nel prototipo; aggiungere gestione file singoli (decisione 12) e conflitti con `plan_copy` | Dal vivo (fatto nella Fase 1) |
+
+## 4. Editor e impostazioni di job
+
+| ID | Comportamento | Perché | Dove vive | Come si porta | Verifica |
+|---|---|---|---|---|---|
+| J01 | L'editor **può restringere il rischio, mai allargarlo**; scrive una **proposta** in un file nuovo, mai il file in uso | F54 | Core (`job_editor`) | Usare `read_drafts`/`write_proposal` | Test esistenti |
+| J02 | Il **mirror resta nella bozza**; un campo di job si scrive solo se il job lo aveva già o se differisce dall'ereditato | Senza, ogni modifica non correlata spegneva il mirror; si "appiattiva" l'ereditarietà | Core | Nessuna logica nel client | Test esistenti |
+| J03 | `mirror` + `backup_type` rifiutati; la `<select>` del tipo è **disattivata** con mirror attivo; il core è l'ultimo argine. Idem `backup_type` + cifratura (F80) | Proposte che fallivano alla prima esecuzione notturna | Core + UI | Controllo disattivato con il motivo (RF-Y07) | Test + dal vivo |
+| J04 | `keep_generations`: campo **solo-in-salita**, il minimo è il valore **caricato** (non quello che si digita), **mai vuoto** | `EditorCannotLowerRetention` non copre `Some→None` | UI + Core | Valore minimo memorizzato al caricamento; il campo non accetta stati intermedi non validati | Test di unità del campo + dal vivo |
+| J05 | `validate_job_name`: nomi con caratteri riservati, controlli C0, nomi di dispositivo (anche `COM¹…`) rifiutati; la UI duplica le liste per un messaggio immediato, il core è il vero argine | Un nome inutilizzabile falliva al primo run pianificato | Core + UI | **Una sola lista**, esposta dal core, nella nuova UI (il duplicato JS era un debito) | Test sul core |
+| J06 | Le sezioni **"Comportamento della copia" e "Opzioni avanzate" si aprono da sole** quando contengono un valore non predefinito; mai chiuse in modo incondizionato | Una sezione chiusa non deve nascondere un valore personalizzato o un avviso | UI | Stato iniziale dedotto dalla bozza + non richiuso dal rendering | Dal vivo con un job non predefinito |
+| J07 | Il campo **Report** mostra il percorso predefinito come **segnaposto**, non lo scrive; **Pattern**: solo singoli (`*`, `*.pdf`) finché non diventa una lista; **Thread**: il segnaposto è `gui_api::default_threads`, non la CPU del browser | Scrivere il valore cambierebbe "eredita" in "fissa"; due estensioni insieme non copiano nulla; il motore decide i thread | Core + UI | Placeholder del `LineEdit` da `gui_api`; nessun suggerimento multi-estensione | Dal vivo |
+| J08 | **F89**: Semplice/Avanzata; **F70**: avvisi su combinazioni; **F68**: cartelle con selettore nativo, campo testo accanto | Vedi `PIANO_GUI.md` | UI | Livelli Semplice / Dettagli / Tecnico (SPEC §1.1) | Dal vivo |
+| J09 | **F79**: la cartella di esempio si crea in "Documenti" con rifiuto di sovrascrittura (`create_dir`); `dirs` solo nella GUI | Non toccare cartelle esistenti | Core + UI | Stessa funzione del core; `dirs` solo nel crate UI | Test esistenti |
+| J10 | **Le pianificazioni** si leggono con un'unica funzione condivisa; ogni nuova variante di filtro è una funzione sottile sopra `parse_scheduled_tasks`, mai una seconda query | Duplicazione del parser CSV | Core | `gui_api::list_all_schedules`/`schedules_referencing` | Test esistenti |
+| J11 | L'**anteprima di una pulizia** (`mirror_purge_candidates`) è la stessa funzione del controllo di sicurezza e **non dipende da `--force-purge`** | Non divergere su cosa "verrebbe cancellato" | Core | Mostrare l'elenco del core | Test esistenti |
+| J12 | **`preview_restore`**: `--restore-from --dry-run` verso un report scratch; la cwd è la **cartella della configurazione caricata**, non quella del report | Percorsi relativi falliti | Core + UI | Passare `config_path` della sessione | Dal vivo con `demo-locale.toml` |
+
+## 5. Aspetto e accessibilità
+
+| ID | Comportamento | Perché | Dove vive | Come si porta | Verifica |
+|---|---|---|---|---|---|
+| A01 | Un chip di stato è un `Badge`, una cifra grande è una `StatCard`, la frase d'esito viene da `outcome` | Niente `<span>` improvvisati | UI | Componenti Slint `Badge`, `StatCard`, `Outcome` nella libreria di Fase 2 | Revisione dei file `.slint` |
+| A02 | Testo del corpo **14 px (min 12)**; niente 10-11 px; righe più alte; barra laterale più grande | Leggibilità (F94) | UI | Token tipografici in un solo file | Dal vivo a 100/150/200 % |
+| A03 | Una libreria di icone **per nome**, mai per sottopercorso; nessuna dipendenza nuova senza controllo di vulnerabilità | Peso del pacchetto e superficie d'attacco | Tauri → Nuovo | Icone come immagini/SVG incorporate; `cargo audit` e `cargo deny` per il crate | CI |
+| A04 | **Chiaro/scuro che segue il sistema**; barra del titolo inclusa | Il titolo nativo non seguiva la palette nel prototipo | Nuovo | Palette di Slint + tema winit per la barra | Dal vivo con il tema scuro |
+| A05 | **Tooltip su ogni controllo**; opzioni non applicabili disattivate con il motivo; avviso inline per le opzioni a rischio | RF-Y07 (osservato in Cobian) | Nuovo | Componente `Hint` + `accessible-description` | Albero UIA + dal vivo |
+| A06 | **Una sola lingua** e stringhe in un solo posto | RF-Y09 | Nuovo | Global `Strings` nel `.slint` (poi `@tr`) | Revisione: nessuna stringa nel Rust |
+| A07 | Ogni controllo ha **nome e ruolo UIA**; ordine di tab sensato | RNF-06 | Nuovo | `accessible-*` su ogni componente; prova con lo script UIA | Albero UIA + Narrator |
+
+## 6. Installer, build, CI
+
+| ID | Comportamento | Perché | Dove vive | Come si porta | Verifica |
+|---|---|---|---|---|---|
+| I01 | Un **solo installer**: la console è un componente opzionale; `bundle.active=false` | Un secondo setup separerebbe la console | Tauri | Il componente installa il nuovo eseguibile; `bundle` sparisce con Tauri | Installer smoke |
+| I02 | **Nome `rustcopy-gui.exe`** cercato da `runner::gui_beside`, `installer/rustcopy.iss`, DLL Shell; argomento `--auto-config` | Contratto fra crate | Core + Shell + Installer | **Tenere il nome** nella Fase 5; fino ad allora la nuova app si chiama `rustcopy-ui.exe` | `check-versions` + test `runner` |
+| I03 | **Runtime C statico**: `+crt-static`, mai `RUSTFLAGS` in CI; `check-static-crt.ps1` su tutti gli artefatti | D30 | Core | Già vero per il prototipo (21 DLL di sistema) | CI `static-crt` e installer smoke |
+| I04 | **`Flags: regserver` mai** sulla DLL Shell; registrazione non fatale; il rapporto di installazione si scrive anche in caso di errore | Un errore di registrazione annullava l'intera installazione | Installer | Nessun cambiamento | Installer smoke |
+| I05 | **Quattro file dichiarano la versione**; `scripts/check-versions.sh` | Nessun passo di build li allinea | Core | Il crate eredita `version.workspace`; `tauri.conf.json` e `package.json` spariscono con Tauri | CI |
+| I06 | La GUI è **esclusa** dai job cross-platform e ha job propri; **non rientra in `--workspace`** senza le librerie | `webkit2gtk` su Linux (Tauri); Slint non lo richiede ma il prodotto è Windows-nativo | CI | `--exclude rustcopy-ui` (fatto) + job `windows-latest` | CI |
+| I07 | `cargo` in CI **sempre `--locked`**; mai tolto per far tornare verde un job | Un `Cargo.lock` non allineato è un errore del ramo | CI | Stesso | CI |
+| I08 | **Chiudere `rustcopy-gui.exe` prima di una build release** e controllarne `ProductVersion` prima di ISCC | Il file bloccato nascondeva un fallimento | Procedura | Vale anche per `rustcopy-ui.exe` | Procedura di rilascio |
+| I10 | Il binario **installato** non dipende da risorse di sviluppo né da un server locale: parte da solo su una macchina pulita (D22: la console Tauri caricava il server di sviluppo e mostrava `ERR_CONNECTION_REFUSED`) | Una release costruita nel modo sbagliato falliva ovunque tranne sul PC dello sviluppatore | Tauri → Nuovo | Slint non ha un server di sviluppo da caricare; resta da provare **dall'installer** su una macchina senza il repository (job `install-windows-server-2022` e prova a mano) | Installer smoke + prova su macchina pulita |
+| I09 | **Niente `unwrap`/`expect` in codice di produzione** senza `#[allow]` motivato | Panic in un'interfaccia o nella shell | CI | Il job clippy include `rustcopy-ui --bins` | CI |
+
+## 7. Stato e conteggi
+
+Righe: 13 confini, 12 esecuzione, 11 copia/Explorer, 12 editor, 7 aspetto, 10 build. **65** voci. Quelle marcate **Nuovo**
+(E09, E12, A04, A05, A06, A07, C10 in parte) sono i requisiti che nascono dalla specifica, non da un difetto passato.
+
+## 8. Come si usa questo catalogo
+
+1. Ogni voce **UI** o **Nuovo** diventa un test o una prova dal vivo prima del rilascio della schermata che la riguarda;
+   la colonna *Verifica* dice quale.
+2. Una voce **Core** non richiede lavoro, ma richiede di **non aggirare il core**: la revisione di codice guarda ogni
+   chiamata dell'interfaccia al core.
+3. Una voce **Tauri** non si porta; il suo *perché* resta (es. C08): va riverificato, non assunto risolto.
+4. Quando si trova un nuovo difetto in Slint, **si aggiunge qui una riga**, non in CLAUDE.md (che resta per le
+   prescrizioni operative in una riga, come da convenzione B5b).
+
+## 9. Criticità trovate rileggendo questo catalogo
+
+- **Non esaustivo per costruzione**: ricavato da CLAUDE.md, non dai test della console. Le prescrizioni di
+  `ROADMAP.md`/`ANALYSIS.md` che non sono finite in CLAUDE.md possono mancare; la revisione del catalogo contro i
+  difetti D1-D30 resta da fare quando si arriva alle schermate corrispondenti.
+- **C08 è un'ipotesi favorevole**: `PopupWindow` non sta nel layout, ma non ho provato un pannello Recenti reale.
+- **E09 e A04** sono funzioni che non esistono ancora; la verifica "dal vivo" dipende dal tray (non riuscito nella Fase 1).
+- **Il conteggio 65** è fatto a mano e può non riflettere righe aggiunte dopo.
+- **Revisione contro D1-D30 fatta (8 Ott 2026)**: dei difetti documentati, quelli che toccano la console sono D22, D24, D25, D26, D28, D29, D30; D24 (G06), D26 (J12), D30 (I03) e D25 (core, `--resume-from`) erano già coperti; D22 (I10) e D28 (C11) sono state aggiunte; D29 riguarda solo la DLL Shell, invariata. D1-D21, D23 e D27 vivono nel core o nella CLI e la nuova interfaccia li eredita senza codice proprio.

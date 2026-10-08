@@ -1,6 +1,6 @@
 [package]
 name = "rustcopy-ui"
-description = "SPIKE (PIANO_GUI_SLINT.md Fase 1): Slint prototype of the Copia and Report screens. Throwaway."
+description = "Slint console for rustcopy (PIANO_GUI_SLINT.md phase 2 foundations)."
 publish = false
 version.workspace = true
 edition.workspace = true
@@ -19,9 +19,13 @@ slint = { version = "1.18", default-features = false, features = [
     "renderer-software",
     "software-renderer-systemfonts",
     "accessibility",
+    "system-tray",
     "unstable-winit-030",
 ] }
 rfd = { version = "0.17", default-features = false }
+# Named mutex and pipe for the single window. Already the effective version in the tree (see the
+# workspace comment on windows-sys): only the Win32 modules this crate needs are enabled.
+windows-sys = { version = "0.61", features = ["Win32_Foundation", "Win32_Security", "Win32_Storage_FileSystem", "Win32_System_IO", "Win32_System_Pipes", "Win32_System_Threading"] }
 
 [build-dependencies]
 slint-build = "1.18"

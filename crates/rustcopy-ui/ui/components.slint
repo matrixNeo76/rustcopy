@@ -1,0 +1,114 @@
+// Shared components (CATALOGO_COMPORTAMENTI_GUI.md A01): a status chip is a Badge, a headline number
+// is a StatCard, an inline notice is a Banner. No hand-built look-alikes in the screens.
+import { Theme } from "theme.slint";
+
+export enum BadgeKind { neutral, ok, warning, info }
+
+// A small status chip.
+export component Badge inherits Rectangle {
+    in property <string> text;
+    in property <BadgeKind> kind: BadgeKind.neutral;
+    property <color> tone: root.kind == BadgeKind.ok ? Theme.ok : root.kind == BadgeKind.warning ? Theme.warning : root.kind == BadgeKind.info ? Theme.info : Theme.text-muted;
+    height: 22px;
+    border-radius: 11px;
+    background: root.tone.with-alpha(0.15);
+    accessible-role: AccessibleRole.text;
+    accessible-label: root.text;
+    HorizontalLayout {
+        padding-left: 10px;
+        padding-right: 10px;
+        Text {
+            text: root.text;
+            font-size: Theme.small;
+            font-weight: 600;
+            color: root.tone;
+            vertical-alignment: center;
+        }
+    }
+}
+
+// A headline figure with its label.
+export component StatCard inherits Rectangle {
+    in property <string> label;
+    in property <string> value;
+    min-width: 120px;
+    border-radius: Theme.radius;
+    border-width: 1px;
+    border-color: Theme.border;
+    background: Theme.surface;
+    accessible-role: AccessibleRole.text;
+    accessible-label: root.label + ": " + root.value;
+    VerticalLayout {
+        padding: 12px;
+        spacing: 4px;
+        Text {
+            text: root.label;
+            font-size: Theme.small;
+            color: Theme.text-muted;
+        }
+        Text {
+            text: root.value;
+            font-size: Theme.stat;
+            font-weight: 700;
+            color: Theme.text;
+        }
+    }
+}
+
+// An inline notice shown next to the control it is about.
+export component Banner inherits Rectangle {
+    in property <string> text;
+    in property <string> label-prefix;
+    in property <BadgeKind> kind: BadgeKind.warning;
+    property <color> tone: root.kind == BadgeKind.ok ? Theme.ok : root.kind == BadgeKind.info ? Theme.info : Theme.warning;
+    border-radius: Theme.radius;
+    background: root.tone.with-alpha(0.12);
+    border-width: 1px;
+    border-color: root.tone.with-alpha(0.5);
+    accessible-role: AccessibleRole.text;
+    accessible-label: root.label-prefix + ": " + root.text;
+    HorizontalLayout {
+        padding: 10px;
+        Text {
+            text: root.text;
+            wrap: word-wrap;
+            font-size: Theme.body;
+            color: Theme.text;
+        }
+    }
+}
+
+// An upper-case section label.
+export component SectionLabel inherits Text {
+    font-size: Theme.small;
+    font-weight: 700;
+    color: Theme.text-faint;
+}
+
+// A sidebar entry.
+export component NavItem inherits Rectangle {
+    in property <string> label;
+    in property <bool> selected;
+    callback clicked();
+    height: 40px;
+    border-radius: 6px;
+    background: root.selected ? Theme.accent.with-alpha(0.18) : (ta.has-hover ? Theme.surface.with-alpha(0.6) : transparent);
+    accessible-role: button;
+    accessible-label: root.label;
+    accessible-action-default => {
+        root.clicked();
+    }
+    ta := TouchArea {
+        clicked => {
+            root.clicked();
+        }
+    }
+    Text {
+        x: 12px;
+        text: root.label;
+        vertical-alignment: center;
+        font-size: Theme.body;
+        color: Theme.text;
+        font-weight: root.selected ? 700 : 400;
+    }
+}
