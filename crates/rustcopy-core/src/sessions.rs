@@ -57,6 +57,9 @@ enum Line {
         /// The verification chosen for this copy, if any (an older line has none).
         #[serde(default)]
         verify: Option<HashAlgorithm>,
+        /// The saved task this run executes in place (its configuration file), if any.
+        #[serde(default)]
+        task: Option<String>,
     },
     Finished {
         id: String,
@@ -93,6 +96,8 @@ pub struct SessionSummary {
     pub reports: Vec<PathBuf>,
     /// The configuration file this session was saved as, if it was.
     pub saved_as: Option<PathBuf>,
+    /// The saved task this run executed in place, if it was one (not a copy chosen in the window).
+    pub task: Option<PathBuf>,
 }
 
 /// A session just begun: where its configuration is, and its id.
@@ -191,6 +196,7 @@ impl SessionLog {
                 .collect(),
             dest: dest.to_string_lossy().into_owned(),
             verify,
+            task: None,
         })?;
         Ok(Session { id, dir, config })
     }
@@ -200,25 +206,8 @@ impl SessionLog {
     /// the same thing whichever way the copy was started. A file with no source/destination pair is
     /// refused.
     pub fn begin_from_config(&self, config: &Path) -> Result<Session, IngestError> {
-        let parsed = crate::config::IngestConfig::load_from(config)?;
-        let jobs: Vec<&crate::config::JobConfig> = match parsed.jobs.as_ref() {
-            Some(jobs) if !jobs.is_empty() => jobs.iter().collect(),
-            _ => vec![&parsed.defaults],
-        };
-        let pairs: Vec<(PathBuf, PathBuf)> = jobs
-            .iter()
-            .filter_map(|job| Some((job.source.clone()?, job.dest.clone()?)))
-            .collect();
-        if pairs.is_empty() {
-            return Err(IngestError::CopyPlanInvalid(
-                "La configurazione non contiene nessuna coppia cartella di origine / destinazione."
-                    .to_string(),
-            ));
-        }
+        let (pairs, verify) = read_pairs(config)?;
         let sources: Vec<PathBuf> = pairs.iter().map(|(source, _)| source.clone()).collect();
-        let verify = jobs.first().and_then(|job| {
-            (job.verify_integrity == Some(true)).then(|| job.hash_algo.unwrap_or_default())
-        });
         // A drop puts each folder *under* the destination the person chose: that parent is the
         // destination to show and to repeat with.
         let dest = lexical_parent(&pairs[0].1);
@@ -237,12 +226,38 @@ impl SessionLog {
                 .collect(),
             dest: dest.to_string_lossy().into_owned(),
             verify,
+            task: None,
         })?;
         Ok(Session {
             id,
             dir,
             config: copied,
         })
+    }
+
+    /// Begins a session that runs a **saved task in place**: the configuration is not copied, because
+    /// the CLI runs in the configuration's own folder (relative paths mean "relative to the file")
+    /// and the task's report and run history live there. The session's folder only holds its id.
+    pub fn begin_task(&self, config: &Path) -> Result<Session, IngestError> {
+        let config = std::path::absolute(config).map_err(|e| IngestError::io(config, e))?;
+        let (pairs, verify) = read_pairs(&config)?;
+        let sources: Vec<String> = pairs
+            .iter()
+            .map(|(source, _)| source.to_string_lossy().into_owned())
+            .collect();
+        let dest = pairs[0].1.to_string_lossy().into_owned();
+        let id = self.new_id();
+        let dir = self.base.join(SESSIONS_DIR).join(&id);
+        std::fs::create_dir_all(&dir).map_err(|e| IngestError::io(&dir, e))?;
+        self.append(&Line::Started {
+            id: id.clone(),
+            at: Utc::now(),
+            sources,
+            dest,
+            verify,
+            task: Some(config.to_string_lossy().into_owned()),
+        })?;
+        Ok(Session { id, dir, config })
     }
 
     fn new_id(&self) -> String {
@@ -257,7 +272,17 @@ impl SessionLog {
     /// the clean / needs-a-look reading is `exit_code_is_success`, never derived from the exit code.
     pub fn finish(&self, id: &str, exit_code: i32) -> Result<SessionState, IngestError> {
         let dir = self.base.join(SESSIONS_DIR).join(id);
-        let reports = find_reports(&dir);
+        let started = self.list(usize::MAX, None).into_iter().find(|s| s.id == id);
+        let reports = match started
+            .as_ref()
+            .and_then(|s| s.task.as_deref().map(|t| (t, s.started_at)))
+        {
+            // A task runs in its own folder: its reports are where its configuration says, and only
+            // a file written since this run began counts (a report left by an earlier run must never
+            // make a run that wrote nothing look clean).
+            Some((task, since)) => task_reports(task, since),
+            None => find_reports(&dir),
+        };
         let mut files = 0u64;
         let mut bytes = 0u64;
         let mut seconds = 0.0f64;
@@ -318,6 +343,7 @@ impl SessionLog {
                     sources,
                     dest,
                     verify,
+                    task,
                 } => {
                     order.push(id.clone());
                     by_id.insert(
@@ -335,6 +361,7 @@ impl SessionLog {
                             elapsed_seconds: 0.0,
                             reports: Vec::new(),
                             saved_as: None,
+                            task: task.map(PathBuf::from),
                         },
                     );
                 }
@@ -392,8 +419,12 @@ impl SessionLog {
         let items = runner::plan_copy(&sources, Path::new(&session.dest))?;
         let text = runner::shell_drop_config_text(&items, Some(name), session.verify)?;
 
-        std::fs::create_dir_all(dir).map_err(|e| IngestError::io(dir, e))?;
-        let target = dir.join(format!("{name}.toml"));
+        // Each task gets a folder of its own: the configuration runs with that folder as its working
+        // directory, so its report and its run history land there and cannot overwrite another
+        // task's (one shared folder would give every task the same default report file).
+        let task_dir = dir.join(name);
+        std::fs::create_dir_all(&task_dir).map_err(|e| IngestError::io(&task_dir, e))?;
+        let target = task_dir.join(format!("{name}.toml"));
         let mut file = std::fs::OpenOptions::new()
             .write(true)
             .create_new(true)
@@ -408,6 +439,112 @@ impl SessionLog {
         })?;
         Ok(target)
     }
+}
+
+/// The folder pairs of a configuration and the verification it asks for.
+type ConfigPairs = (Vec<(PathBuf, PathBuf)>, Option<HashAlgorithm>);
+
+/// The source/destination pairs of a configuration, and the verification it asks for.
+fn read_pairs(config: &Path) -> Result<ConfigPairs, IngestError> {
+    let parsed = crate::config::IngestConfig::load_from(config)?;
+    let jobs: Vec<&crate::config::JobConfig> = match parsed.jobs.as_ref() {
+        Some(jobs) if !jobs.is_empty() => jobs.iter().collect(),
+        _ => vec![&parsed.defaults],
+    };
+    let pairs: Vec<(PathBuf, PathBuf)> = jobs
+        .iter()
+        .filter_map(|job| Some((job.source.clone()?, job.dest.clone()?)))
+        .collect();
+    if pairs.is_empty() {
+        return Err(IngestError::CopyPlanInvalid(
+            "La configurazione non contiene nessuna coppia cartella di origine / destinazione."
+                .to_string(),
+        ));
+    }
+    let verify = jobs.first().and_then(|job| {
+        (job.verify_integrity == Some(true)).then(|| job.hash_algo.unwrap_or_default())
+    });
+    Ok((pairs, verify))
+}
+
+/// The reports a saved task wrote **since `since`**: the report paths its configuration resolves to
+/// (`gui_api::list_jobs`) that exist and were modified after the run began (with two seconds of slack
+/// for clock granularity). A report from an earlier run is not evidence about this one.
+fn task_reports(config: &Path, since: DateTime<Utc>) -> Vec<PathBuf> {
+    let Ok(jobs) = gui_api::list_jobs(config) else {
+        return Vec::new();
+    };
+    let floor = std::time::SystemTime::from(since) - std::time::Duration::from_secs(2);
+    let mut found: Vec<PathBuf> = jobs
+        .into_iter()
+        .filter_map(|job| job.report_path)
+        .map(PathBuf::from)
+        .filter(|path| {
+            std::fs::metadata(path)
+                .and_then(|meta| meta.modified())
+                .is_ok_and(|modified| modified >= floor)
+        })
+        .collect();
+    found.sort();
+    found.dedup();
+    found
+}
+
+/// A saved task as the list of attività shows it.
+#[derive(Debug, Clone, PartialEq)]
+pub struct TaskEntry {
+    pub name: String,
+    pub path: PathBuf,
+    pub sources: Vec<String>,
+    pub dest: String,
+    pub verify: Option<HashAlgorithm>,
+}
+
+/// The saved tasks under `dir`: every `*.toml` in each sub-folder (`dir/<name>/<name>.toml`), sorted
+/// by name. A file that cannot be read as a configuration with at least one folder pair is skipped,
+/// not fatal: the folder may hold something the person put there.
+pub fn list_tasks(dir: &Path) -> Vec<TaskEntry> {
+    let Ok(entries) = std::fs::read_dir(dir) else {
+        return Vec::new();
+    };
+    let mut tasks: Vec<TaskEntry> = Vec::new();
+    for folder in entries
+        .filter_map(Result::ok)
+        .map(|e| e.path())
+        .filter(|p| p.is_dir())
+    {
+        let Ok(files) = std::fs::read_dir(&folder) else {
+            continue;
+        };
+        for file in files.filter_map(Result::ok).map(|e| e.path()) {
+            let is_toml = file
+                .extension()
+                .and_then(|e| e.to_str())
+                .is_some_and(|e| e.eq_ignore_ascii_case("toml"));
+            if !is_toml {
+                continue;
+            }
+            let Ok((pairs, verify)) = read_pairs(&file) else {
+                continue;
+            };
+            let name = file
+                .file_stem()
+                .map(|n| n.to_string_lossy().into_owned())
+                .unwrap_or_default();
+            tasks.push(TaskEntry {
+                name,
+                path: file,
+                sources: pairs
+                    .iter()
+                    .map(|(s, _)| s.to_string_lossy().into_owned())
+                    .collect(),
+                dest: pairs[0].1.to_string_lossy().into_owned(),
+                verify,
+            });
+        }
+    }
+    tasks.sort_by_key(|t| t.name.to_lowercase());
+    tasks
 }
 
 /// The folder that contains `path`, by string logic with both separators: `Path::parent` follows the
@@ -735,6 +872,104 @@ mod tests {
             log.list(10, Some(&session.id))[0].verify,
             Some(HashAlgorithm::Blake3)
         );
+    }
+
+    const CLEAN_REPORT: &str = r#"{"schema_version":2,"timestamp":"2026-08-31T00:00:00Z","tool_version":"6.0.0","host_platform":"windows","host_metadata":{"hostname":"HOST","os_name":"windows","logical_cpus":8},"source":"D:/src","dest":"E:/dst","total_files":1,"total_bytes":2,"robocopy_transfer":{"engine":"robocopy","elapsed_seconds":0.058,"throughput_mbps":0.001,"bytes_copied":64,"files_copied":3,"exit_code":1,"exit_code_meaning":"files copied","retry_attempts_used":0,"dry_run":false},"phase_timing":{"inventory_seconds":0.0049447,"transfer_seconds":0.0607128,"verification_seconds":0.0072939,"total_seconds":0.0737639},"configuration":{"threads":48,"retries":3,"retry_wait_seconds":5,"pattern":"*","verify_integrity":false,"compare_baseline":false,"dry_run":false},"log_lines_dropped":0,"encrypted":false,"decrypted":false}"#;
+
+    fn saved_task(log: &SessionLog, tasks: &Path, name: &str) -> PathBuf {
+        let session = log
+            .begin(
+                &[PathBuf::from(r"C:\Dati\Foto")],
+                Path::new(r"D:\out"),
+                &[pair(r"C:\Dati\Foto", r"D:\out\Foto")],
+            )
+            .expect("begin");
+        log.save_as_task(&session.id, tasks, name).expect("save")
+    }
+
+    #[test]
+    fn each_saved_task_lives_in_a_folder_of_its_own() {
+        let base = tempfile::tempdir().expect("tempdir");
+        let tasks = tempfile::tempdir().expect("tempdir");
+        let log = SessionLog::at(base.path());
+        let a = saved_task(&log, tasks.path(), "foto");
+        let b = saved_task(&log, tasks.path(), "video");
+        assert_ne!(
+            a.parent(),
+            b.parent(),
+            "two tasks must not share a working folder"
+        );
+        assert_eq!(
+            a.parent()
+                .and_then(|p| p.file_name())
+                .and_then(|n| n.to_str()),
+            Some("foto")
+        );
+        let listed = list_tasks(tasks.path());
+        assert_eq!(
+            listed.iter().map(|t| t.name.as_str()).collect::<Vec<_>>(),
+            vec!["foto", "video"]
+        );
+        assert_eq!(listed[0].sources, vec![r"C:\Dati\Foto".to_string()]);
+    }
+
+    #[test]
+    fn a_stray_file_in_the_tasks_folder_is_skipped() {
+        let tasks = tempfile::tempdir().expect("tempdir");
+        std::fs::create_dir_all(tasks.path().join("x")).expect("dir");
+        std::fs::write(tasks.path().join("x").join("note.toml"), "threads = 2\n").expect("write");
+        std::fs::write(tasks.path().join("loose.toml"), "threads = 2\n").expect("write");
+        assert!(list_tasks(tasks.path()).is_empty());
+        assert!(list_tasks(&tasks.path().join("missing")).is_empty());
+    }
+
+    #[test]
+    fn a_task_runs_in_place_and_only_a_fresh_report_counts() {
+        let base = tempfile::tempdir().expect("tempdir");
+        let tasks = tempfile::tempdir().expect("tempdir");
+        let log = SessionLog::at(base.path());
+        let config = saved_task(&log, tasks.path(), "foto");
+
+        // An earlier run left a clean report. A run that then writes nothing must not inherit it.
+        let report = config
+            .parent()
+            .expect("folder")
+            .join("robocopy_ingest_report.json");
+        std::fs::write(&report, CLEAN_REPORT).expect("report");
+        let old = std::time::SystemTime::now() - std::time::Duration::from_secs(3600);
+        std::fs::File::options()
+            .write(true)
+            .open(&report)
+            .expect("open")
+            .set_modified(old)
+            .expect("mtime");
+
+        let stale = log.begin_task(&config).expect("begin");
+        assert_eq!(
+            stale.config,
+            std::path::absolute(&config).expect("abs"),
+            "the file is not copied"
+        );
+        assert_eq!(
+            log.finish(&stale.id, 1).expect("finish"),
+            SessionState::NeedsLook
+        );
+
+        // The next run writes a fresh report: now it counts.
+        std::fs::write(&report, CLEAN_REPORT).expect("fresh report");
+        let fresh = log.begin_task(&config).expect("begin");
+        std::fs::write(&report, CLEAN_REPORT).expect("rewrite after start");
+        assert_eq!(
+            log.finish(&fresh.id, 1).expect("finish"),
+            SessionState::Clean
+        );
+
+        let listed = log.list(10, None);
+        assert_eq!(
+            listed[0].task.as_deref(),
+            Some(std::path::absolute(&config).expect("abs").as_path())
+        );
+        assert_eq!(listed[0].files_copied, 3);
     }
 
     #[test]

@@ -1,6 +1,7 @@
 // One row of the list of lavori (CATALOGO: the list shows life and outcome at a glance). The state
 // numbers are the interface's reading of `sessions::SessionState`:
 // 0 clean, 1 dry run, 2 needs a look, 3 interrupted, 4 running.
+import { Button } from "std-widgets.slint";
 import { Theme } from "theme.slint";
 import { Strings } from "strings.slint";
 import { Badge, BadgeKind } from "components.slint";
@@ -14,6 +15,15 @@ export struct SessionRow {
     size: string,
     state: int,
     saved: bool,
+}
+
+export struct TaskRow {
+    path: string,
+    name: string,
+    folders: string,
+    last-state: int,
+    last-when: string,
+    verify: string,
 }
 
 export global SessionUi {
@@ -71,6 +81,69 @@ export component SessionItem inherits Rectangle {
             overflow: elide;
             font-size: Theme.small;
             color: Theme.text-muted;
+        }
+    }
+}
+
+// One saved task on the Attività page. `last-state` is the number of `SessionState`, or -1 when the
+// task has never run from this console.
+export component TaskItem inherits Rectangle {
+    in property <TaskRow> entry;
+    in property <bool> enabled: true;
+    callback run();
+    height: 76px;
+    border-radius: Theme.radius;
+    border-width: 1px;
+    border-color: Theme.border;
+    background: Theme.surface;
+    HorizontalLayout {
+        padding: 10px;
+        spacing: 10px;
+        VerticalLayout {
+            horizontal-stretch: 1;
+            spacing: 3px;
+            Text {
+                text: root.entry.name;
+                overflow: elide;
+                font-size: Theme.body;
+                font-weight: 700;
+                color: Theme.text;
+            }
+            Text {
+                text: root.entry.folders;
+                overflow: elide;
+                font-size: Theme.small;
+                color: Theme.text-muted;
+            }
+            HorizontalLayout {
+                spacing: 8px;
+                alignment: start;
+                if root.entry.last-state >= 0: Badge {
+                    text: SessionUi.state-text(root.entry.last-state);
+                    kind: SessionUi.state-kind(root.entry.last-state);
+                }
+                Text {
+                    text: root.entry.last-state >= 0 ? root.entry.last-when : Strings.task-never;
+                    font-size: Theme.small;
+                    color: Theme.text-muted;
+                    vertical-alignment: center;
+                }
+                if root.entry.verify != "": Text {
+                    text: @tr("Verifica: {}", root.entry.verify);
+                    font-size: Theme.small;
+                    color: Theme.text-muted;
+                    vertical-alignment: center;
+                }
+            }
+        }
+        Button {
+            text: Strings.task-run;
+            primary: true;
+            enabled: root.enabled;
+            horizontal-stretch: 0;
+            clicked => {
+                root.run();
+            }
         }
     }
 }
