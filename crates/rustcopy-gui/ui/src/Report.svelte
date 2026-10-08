@@ -5,6 +5,7 @@
   import { session } from "./session.svelte.js";
   import { toCsv, downloadCsv } from "./csv.js";
   import Badge from "./Badge.svelte";
+  import StatCard from "./StatCard.svelte";
   import { bytes, duration } from "./format.js";
   import { reportOutcome } from "./outcome.js";
   import { FileText, CircleCheck, CircleX, RotateCcw, TriangleAlert } from "@lucide/svelte";
@@ -276,9 +277,27 @@
       </div>
     {/if}
 
+    <!-- F94: the four numbers an operator reads first, set large. The phase breakdown stays with
+         the duration (only the phases that actually ran: a run without --verify-integrity has no
+         verification_seconds, and a "0s" next to it would claim a phase happened). -->
+    <div class="mt-3 grid grid-cols-2 gap-3 md:grid-cols-4">
+      <StatCard
+        label="File copiati"
+        value="{report.files_copied} / {report.total_files}"
+        hint={report.copy_detail ? `${report.copy_detail.files_skipped} già aggiornati` : null}
+      />
+      <StatCard label="Dimensione" value={bytes(report.bytes_copied)} hint="su {bytes(report.total_bytes)}" />
+      <StatCard
+        label="Durata"
+        value={duration(report.elapsed_seconds)}
+        hint="inventario {duration(report.inventory_seconds)} · trasferimento {duration(report.transfer_seconds)}{report.verification_seconds != null ? ` · verifica ${duration(report.verification_seconds)}` : ''}{report.baseline_seconds != null ? ` · baseline ${duration(report.baseline_seconds)}` : ''}"
+      />
+      <StatCard label="Velocità media" value="{report.throughput_mbps.toFixed(1)} MB/s" />
+    </div>
+
     <!-- Riepilogo -->
     <h2 class="mt-4 text-xs font-semibold uppercase tracking-wide text-slate-500">Riepilogo</h2>
-    <div class="card mt-1 grid grid-cols-2 gap-x-6 gap-y-2 text-xs md:grid-cols-4">
+    <div class="card mt-1 grid grid-cols-2 gap-x-6 gap-y-3 text-sm md:grid-cols-4">
       <div>
         <p class="text-slate-500">Iniziata</p>
         <p class="font-mono text-sm">
@@ -288,25 +307,6 @@
       <div>
         <p class="text-slate-500">Terminata</p>
         <p class="font-mono text-sm">{new Date(report.finished_at).toLocaleString("it-IT")}</p>
-      </div>
-      <div>
-        <p class="text-slate-500">Durata totale</p>
-        <p class="font-mono text-sm">{duration(report.elapsed_seconds)}</p>
-        <!-- Only the phases that actually ran: a run without --verify-integrity has no
-             verification_seconds, and showing "0s" next to it would claim a phase happened. -->
-        <p class="mt-0.5 text-[11px] text-slate-500">
-          inventario {duration(report.inventory_seconds)} · trasferimento {duration(report.transfer_seconds)}
-          {#if report.verification_seconds != null}
-            · verifica {duration(report.verification_seconds)}
-          {/if}
-          {#if report.baseline_seconds != null}
-            · baseline {duration(report.baseline_seconds)}
-          {/if}
-        </p>
-      </div>
-      <div>
-        <p class="text-slate-500">Throughput medio</p>
-        <p class="font-mono text-sm">{report.throughput_mbps.toFixed(1)} MB/s</p>
       </div>
       <div class="col-span-2">
         <p class="text-slate-500">Sorgente</p>
@@ -332,7 +332,7 @@
       <summary class="cursor-pointer text-xs font-semibold uppercase tracking-wide text-slate-500">
         Dettagli tecnici dell'esito
       </summary>
-      <div class="card mt-1 flex items-center gap-2 text-xs">
+      <div class="card mt-1 flex items-center gap-2 text-sm">
         {#if report.exit_code_is_success === true}
           <Badge variant="ok" icon={CircleCheck}>successo</Badge>
         {:else if report.exit_code_is_success === false}
@@ -347,7 +347,7 @@
     <!-- File e byte -->
     <h2 class="mt-4 text-xs font-semibold uppercase tracking-wide text-slate-500">File e byte</h2>
     <div class="card mt-1 overflow-x-auto">
-      <table class="w-full text-xs">
+      <table class="w-full text-sm">
         <thead>
           <tr class="text-left text-slate-500">
             <th class="pb-1 pr-3 font-normal"></th>
@@ -390,7 +390,7 @@
         </tbody>
       </table>
       {#if !report.copy_detail}
-        <p class="mt-2 text-[11px] text-slate-500">
+        <p class="mt-2 text-xs text-slate-500">
           Dettaglio non disponibile per questa run (motore senza riepilogo, ad es. backup a
           generazioni, oppure output di robocopy interrotto o non riconosciuto).
         </p>
@@ -399,7 +399,7 @@
 
     <!-- Verifica -->
     <h2 class="mt-4 text-xs font-semibold uppercase tracking-wide text-slate-500">Verifica</h2>
-    <div class="card mt-1 grid grid-cols-2 gap-x-6 gap-y-2 text-xs md:grid-cols-4">
+    <div class="card mt-1 grid grid-cols-2 gap-x-6 gap-y-3 text-sm md:grid-cols-4">
       <div>
         <p class="text-slate-500">Esito</p>
         <!-- Absent is not the same as passed: a run without --verify-integrity compared nothing,
@@ -446,7 +446,7 @@
       <h2 class="mt-4 text-xs font-semibold uppercase tracking-wide text-slate-500">
         Configurazione usata
       </h2>
-      <div class="card mt-1 grid grid-cols-2 gap-x-6 gap-y-2 text-xs md:grid-cols-4">
+      <div class="card mt-1 grid grid-cols-2 gap-x-6 gap-y-3 text-sm md:grid-cols-4">
         <!-- Solo le impostazioni non-default per questa run: thread/pattern/tentativi restano
              sempre gli stessi in ogni run e affollerebbero questa sezione senza dire nulla di
              specifico su cosa è successo qui. -->
@@ -488,7 +488,7 @@
         Job, Esegui o Modifica), poi torna qui.
       </p>
     {:else}
-      <p class="mt-2 text-[11px] text-slate-500">
+      <p class="mt-2 text-xs text-slate-500">
         Percorsi relativi risolti rispetto a <code class="font-mono">{session.configPath}</code>.
       </p>
     {/if}
@@ -505,7 +505,7 @@
            has no file-level error lists worth paginating (a --dry-run makes nothing to verify),
            and rendering it identically to a real report risked the two being confused at a
            glance — the heading and the closing note below exist to keep that from happening. -->
-      <div class="card mt-2 grid grid-cols-2 gap-x-6 gap-y-2 text-xs md:grid-cols-4">
+      <div class="card mt-2 grid grid-cols-2 gap-x-6 gap-y-3 text-sm md:grid-cols-4">
         <p class="col-span-2 text-xs font-semibold uppercase tracking-wide text-slate-500 md:col-span-4">
           Anteprima ripristino — simulazione, nessun file toccato
         </p>
@@ -530,7 +530,7 @@
           <p class="font-mono text-sm">{restorePreview.exit_code_meaning ?? "—"}</p>
         </div>
       </div>
-      <p class="mt-1 text-[11px] text-slate-500">
+      <p class="mt-1 text-xs text-slate-500">
         Simulazione (<code>--dry-run</code>): nessun byte è stato copiato o eliminato. Per ripristinare
         davvero, esegui <code>--restore-from</code> dalla CLI.
       </p>
@@ -602,7 +602,7 @@
           {#if filtered.length > 0}
             <ul class="mt-1 max-h-64 overflow-y-auto rounded border border-slate-200 dark:border-slate-800">
               {#each filtered as path}
-                <li class="truncate px-2 py-0.5 font-mono text-[11px]" title={path}>{path}</li>
+                <li class="truncate px-2 py-0.5 font-mono text-xs" title={path}>{path}</li>
               {/each}
             </ul>
           {/if}
