@@ -46,7 +46,7 @@ spunta solo dopo che è in `main`, con la CI verde e, se è un comportamento, pr
 | 6 | `.toml` scritto a mano con percorsi relativi | Provato dal vivo da «Esegui un file di configurazione...»: `source = "src"`, `dest = "out"`, 5 file copiati in `out` accanto al file, report accanto al file | [x] |
 | 7 | Espelli disco e spegni il PC «al termine» | **Spegni il PC: scartato** (lavori su server, dove non serve e sarebbe pericoloso). **Espelli disco: rimandato alla Fase 6**, con la casella visibile solo se la destinazione è su un'unità rimovibile; richiede una chiamata al sistema o al guscio di Windows e la gestione del caso «il disco è ancora in uso», che non vale la fase corrente per un uso raro su server | [ ] Fase 6 |
 | 8 | Allentare la regola di sicurezza (livelli Prudente / Standard / Esperto, creare pianificazioni, Sposta) | Fase 6, una funzione per volta, con i tre livelli come da §6 e SPEC §10.1 | [ ] |
-| 9 | D28: destinazione UNC con prefisso di percorso lungo errato nel core | Analisi e, se confermato, correzione in una PR del core a parte | [ ] in corso |
+| 9 | D28: destinazione UNC con prefisso di percorso lungo errato nel core | **Analizzato il 9 Ott 2026: era già corretto e chiuso il 21 Set** (`normalize_path_arg` produce `\\?\UNC\server\share\...`, con test su Windows); era la nota di `CLAUDE.md` a essere rimasta indietro, ora corretta. Provato anche dal vivo con una destinazione `\\localhost\C$` | [x] |
 
 ### Controlli finali (su macchina adatta, prima di chiudere la Fase 5)
 - [ ] lampeggio del pulsante nella barra delle applicazioni quando una copia finisce e la finestra non ha il focus
