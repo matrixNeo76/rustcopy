@@ -1,0 +1,387 @@
+// SPIKE (PIANO_GUI_SLINT.md Fase 1): throwaway prototype of the Copia and Report screens.
+// Colours come from Slint's own Palette so the window follows the system light/dark scheme;
+// "amber, never red" (F81/F93) is kept for anything that is not a clean outcome.
+import { Button, LineEdit, ProgressIndicator, ListView, Palette } from "std-widgets.slint";
+
+component Card inherits Rectangle {
+    in property <string> label;
+    in property <string> value;
+    background: Palette.alternate-background;
+    border-radius: 8px;
+    border-width: 1px;
+    border-color: Palette.border;
+    min-width: 120px;
+    accessible-role: text;
+    accessible-label: root.label + ": " + root.value;
+    VerticalLayout {
+        padding: 12px;
+        spacing: 4px;
+        Text {
+            text: root.label;
+            font-size: 12px;
+            color: Palette.foreground.with-alpha(0.7);
+        }
+        Text {
+            text: root.value;
+            font-size: 22px;
+            font-weight: 700;
+            color: Palette.foreground;
+        }
+    }
+}
+
+component NavItem inherits Rectangle {
+    in property <string> label;
+    in property <bool> selected;
+    callback clicked();
+    height: 40px;
+    border-radius: 6px;
+    background: root.selected ? Palette.accent-background.with-alpha(0.18) : (ta.has-hover ? Palette.background.with-alpha(0.6) : transparent);
+    accessible-role: button;
+    accessible-label: root.label;
+    accessible-action-default => {
+        root.clicked();
+    }
+    ta := TouchArea {
+        clicked => {
+            root.clicked();
+        }
+    }
+    Text {
+        x: 12px;
+        text: root.label;
+        vertical-alignment: center;
+        color: Palette.foreground;
+        font-weight: root.selected ? 700 : 400;
+    }
+}
+
+export component AppTray inherits SystemTrayIcon {
+    icon: @image-url("icon.png");
+    tooltip: "rustcopy";
+    callback show-window();
+    callback quit();
+    clicked => {
+        root.show-window();
+    }
+    Menu {
+        MenuItem {
+            title: "Apri rustcopy";
+            activated => {
+                root.show-window();
+            }
+        }
+        MenuSeparator {}
+        MenuItem {
+            title: "Esci";
+            activated => {
+                root.quit();
+            }
+        }
+    }
+}
+
+export component AppWindow inherits Window {
+    title: "rustcopy - prova Slint";
+    preferred-width: 980px;
+    preferred-height: 680px;
+    min-width: 640px;
+    min-height: 480px;
+    background: Palette.background;
+
+    in-out property <int> page: 0;
+    // Test only: RUSTCOPY_UI_DARK=1 forces the dark palette (the real app follows the system scheme).
+    in property <bool> force-dark: false;
+    changed force-dark => {
+        if (root.force-dark) {
+            Palette.color-scheme = ColorScheme.dark;
+        }
+    }
+    // Copia
+    in property <[string]> sources;
+    in-out property <string> dest;
+    in property <string> error;
+    in property <bool> running;
+    in property <float> fraction: -1;
+    in property <string> status-line;
+    in property <string> current-file;
+    // Report
+    in property <bool> has-report;
+    in property <string> r-outcome;
+    in property <bool> r-ok;
+    in property <string> r-files;
+    in property <string> r-size;
+    in property <string> r-time;
+    in property <string> r-speed;
+    in property <string> r-where;
+    // Long-list probe (M16)
+    in property <[string]> rows;
+    in property <string> rows-info;
+
+    callback add-folders();
+    callback remove-source(int);
+    callback browse-dest();
+    callback start-copy();
+    callback stop-copy();
+    callback open-report();
+    callback load-rows(int);
+
+    HorizontalLayout {
+        Rectangle {
+            width: 200px;
+            background: Palette.alternate-background;
+            VerticalLayout {
+                padding: 12px;
+                spacing: 6px;
+                alignment: start;
+                Text {
+                    text: "rustcopy";
+                    font-size: 20px;
+                    font-weight: 700;
+                    color: Palette.foreground;
+                }
+                Rectangle {
+                    height: 12px;
+                }
+                NavItem {
+                    label: "Copia";
+                    selected: root.page == 0;
+                    clicked => {
+                        root.page = 0;
+                    }
+                }
+                NavItem {
+                    label: "Report";
+                    selected: root.page == 1;
+                    clicked => {
+                        root.page = 1;
+                    }
+                }
+            }
+        }
+
+        if root.page == 0: VerticalLayout {
+            padding: 20px;
+            spacing: 12px;
+            alignment: start;
+            Text {
+                text: "Copia cartelle";
+                font-size: 22px;
+                font-weight: 700;
+                color: Palette.foreground;
+            }
+            Text {
+                text: "Scegli una o più cartelle e dove metterle. Copia solo i file nuovi o cambiati e non cancella nulla.";
+                wrap: word-wrap;
+                color: Palette.foreground.with-alpha(0.75);
+            }
+            Text {
+                text: "COSA COPIARE";
+                font-size: 12px;
+                font-weight: 700;
+                color: Palette.foreground.with-alpha(0.6);
+            }
+            Rectangle {
+                height: 130px;
+                border-radius: 8px;
+                border-width: 1px;
+                border-color: Palette.border;
+                background: Palette.alternate-background;
+                ListView {
+                    for s[i] in root.sources: Rectangle {
+                        height: 36px;
+                        HorizontalLayout {
+                            padding-left: 10px;
+                            padding-right: 6px;
+                            spacing: 8px;
+                            Text {
+                                text: s;
+                                horizontal-stretch: 1;
+                                vertical-alignment: center;
+                                overflow: elide;
+                                color: Palette.foreground;
+                            }
+                            Button {
+                                text: "Togli";
+                                horizontal-stretch: 0;
+                                clicked => {
+                                    root.remove-source(i);
+                                }
+                            }
+                        }
+                    }
+                }
+                if root.sources.length == 0: Text {
+                    text: "Nessuna cartella scelta.";
+                    color: Palette.foreground.with-alpha(0.6);
+                }
+            }
+            Button {
+                text: "Aggiungi cartelle...";
+                clicked => {
+                    root.add-folders();
+                }
+            }
+            Text {
+                text: "DOVE METTERLE";
+                font-size: 12px;
+                font-weight: 700;
+                color: Palette.foreground.with-alpha(0.6);
+            }
+            HorizontalLayout {
+                spacing: 8px;
+                LineEdit {
+                    text <=> root.dest;
+                    placeholder-text: "Cartella di destinazione, anche di rete";
+                    accessible-label: "Cartella di destinazione";
+                }
+                Button {
+                    text: "Sfoglia...";
+                    clicked => {
+                        root.browse-dest();
+                    }
+                }
+            }
+            if root.error != "": Text {
+                text: root.error;
+                wrap: word-wrap;
+                color: #b45309;
+                accessible-role: text;
+                accessible-label: "Avviso: " + root.error;
+            }
+            HorizontalLayout {
+                spacing: 10px;
+                alignment: start;
+                Button {
+                    text: "Copia";
+                    primary: true;
+                    enabled: !root.running && root.sources.length > 0 && root.dest != "";
+                    clicked => {
+                        root.start-copy();
+                    }
+                }
+                if root.running: Button {
+                    text: "Ferma";
+                    clicked => {
+                        root.stop-copy();
+                    }
+                }
+            }
+            if root.running: VerticalLayout {
+                spacing: 6px;
+                ProgressIndicator {
+                    progress: root.fraction < 0 ? 0 : root.fraction;
+                    indeterminate: root.fraction < 0;
+                }
+                Text {
+                    text: root.status-line;
+                    color: Palette.foreground;
+                }
+                Text {
+                    text: root.current-file;
+                    overflow: elide;
+                    font-size: 12px;
+                    color: Palette.foreground.with-alpha(0.7);
+                }
+            }
+        }
+
+        if root.page == 1: VerticalLayout {
+            padding: 20px;
+            spacing: 12px;
+            alignment: start;
+            Text {
+                text: "Report";
+                font-size: 22px;
+                font-weight: 700;
+                color: Palette.foreground;
+            }
+            Button {
+                text: "Apri un report...";
+                clicked => {
+                    root.open-report();
+                }
+            }
+            if root.has-report: VerticalLayout {
+                spacing: 10px;
+                Text {
+                    text: root.r-outcome;
+                    wrap: word-wrap;
+                    font-size: 16px;
+                    font-weight: 700;
+                    color: root.r-ok ? Palette.foreground : #b45309;
+                }
+                HorizontalLayout {
+                    spacing: 10px;
+                    Card {
+                        label: "File";
+                        value: root.r-files;
+                    }
+                    Card {
+                        label: "Dimensione";
+                        value: root.r-size;
+                    }
+                    Card {
+                        label: "Durata";
+                        value: root.r-time;
+                    }
+                    Card {
+                        label: "Velocità";
+                        value: root.r-speed;
+                    }
+                }
+                Text {
+                    text: root.r-where;
+                    wrap: word-wrap;
+                    font-size: 12px;
+                    color: Palette.foreground.with-alpha(0.7);
+                }
+            }
+            if !root.has-report: Text {
+                text: "Nessun report aperto. Dopo una copia compare qui da solo.";
+                color: Palette.foreground.with-alpha(0.7);
+            }
+            Text {
+                text: "PROVA LISTA LUNGA (M16)";
+                font-size: 12px;
+                font-weight: 700;
+                color: Palette.foreground.with-alpha(0.6);
+            }
+            HorizontalLayout {
+                spacing: 10px;
+                alignment: start;
+                Button {
+                    text: "Carica 100.000 righe";
+                    clicked => {
+                        root.load-rows(100000);
+                    }
+                }
+                Button {
+                    text: "Svuota";
+                    clicked => {
+                        root.load-rows(0);
+                    }
+                }
+                Text {
+                    text: root.rows-info;
+                    vertical-alignment: center;
+                    color: Palette.foreground.with-alpha(0.7);
+                }
+            }
+            Rectangle {
+                height: 220px;
+                border-radius: 8px;
+                border-width: 1px;
+                border-color: Palette.border;
+                ListView {
+                    for r in root.rows: Text {
+                        text: r;
+                        height: 22px;
+                        font-size: 13px;
+                        color: Palette.foreground;
+                    }
+                }
+            }
+        }
+    }
+}
