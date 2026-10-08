@@ -15,6 +15,47 @@ Documento 3 di 3 del pacchetto "GUI Slint": [studio delle GUI di riferimento](ST
 autorizzato finché l'utente non conferma.** Ogni fase termina con un **cancello**: ci si ferma, si riferisce
 con i numeri e si aspetta una conferma esplicita prima della fase successiva.
 
+## 0. Registro di avanzamento (si aggiorna a ogni PR)
+
+Elenco spuntabile, **l'unico posto dove si tiene il conto di cosa è fatto, cosa manca e cosa è un limite noto**. Una voce si
+spunta solo dopo che è in `main`, con la CI verde e, se è un comportamento, provata sul binario compilato. Legenda: `[x]` fatto ·
+`[ ]` da fare · `[~]` fatto in parte (la nota dice cosa manca) · `[?]` serve una persona o una macchina che qui non ho.
+
+### Fasi
+- [x] Fase 0 — studio, specifica, piano, catalogo dei comportamenti (77 voci)
+- [x] Fase 1 — prova a tempo, esito GO condizionato
+- [x] Fase 2 — fondamenta (tema, stringhe, componenti, istanza unica, icona di notifica, job CI)
+- [x] Fase 3 — lavoro immediato: elenco dei lavori, ripeti, salva come attività, verifica, tempo residuo, grafico, apri cartella
+- [~] Fase 4 — attività salvate e pianificate
+  - [x] 4a attività salvate, esecuzione sul posto, esegui un file di configurazione
+  - [ ] 4b griglia delle proprietà di un'attività, di sola lettura, con da dove viene ogni valore
+  - [ ] 4c editor a schede (scrive solo proposte; può restringere il rischio, mai allargarlo)
+  - [ ] 4d storico delle esecuzioni e analisi `--advise`
+  - [ ] 4e report completo di una run (liste di errori, fasi) nella console Slint
+- [ ] Fase 5 — parità con la console Tauri, installer, rimozione di Tauri (**con tua conferma esplicita**)
+- [ ] Fase 6 — funzioni che toccano il core (vedi sotto)
+
+### Limiti noti e come li tratto
+| # | Limite | Cosa faccio | Stato |
+|---|---|---|---|
+| 1 | Con **pochi file enormi** la barra resta indeterminata e tempo residuo/grafico non dicono nulla fino alla fine di ciascun file | Voce da indagare nel core: verificare se il poller della destinazione può dare byte a metà file senza toccare il parser di robocopy. Se sì, lo propongo come modifica del core con test; se no, resta documentato | [ ] da indagare (dopo 4b) |
+| 2 | Notifica di sistema (toast) a fine copia non c'è; c'è solo il lampeggio sulla barra | Nessuna dipendenza nuova senza tua conferma. Proposta: valutare un crate con `cargo audit` e metterlo dietro una scelta tua | [?] decisione tua |
+| 3 | Il **lampeggio** della barra delle applicazioni non l'ho osservato | Lo verifichi tu: avvia una copia lunga, passa a un'altra finestra, guarda il pulsante di rustcopy | [?] verifica tua |
+| 4 | **RDP / macchina senza GPU**, **Narrator**, **DPI reale** non provati | Servono una sessione RDP, un audio e il cambio di scala di Windows: non li ho qui. Li elenco in una scheda di prova da eseguire su una macchina adatta prima della Fase 5 | [?] macchina adatta |
+| 5 | Stato *Interrotta* | Provato dal vivo: finestra chiusa a metà di una copia da 8 GB, al riavvio il lavoro risulta *Interrotta* | [x] |
+| 6 | `.toml` scritto a mano con percorsi relativi | Provato dal vivo da «Esegui un file di configurazione...»: `source = "src"`, `dest = "out"`, 5 file copiati in `out` accanto al file, report accanto al file | [x] |
+| 7 | Espelli disco e spegni il PC «al termine» | Non li costruisco senza una tua decisione separata (cambiano lo stato del computer) | [?] decisione tua |
+| 8 | Allentare la regola di sicurezza (livelli Prudente / Standard / Esperto, creare pianificazioni, Sposta) | Fase 6, una funzione per volta, con i tre livelli come da §6 e SPEC §10.1 | [ ] |
+| 9 | D28: destinazione UNC con prefisso di percorso lungo errato nel core | Difetto del core, ereditato dalla console; da correggere in una PR del core, non dell'interfaccia | [ ] |
+
+### Fase 6
+- [ ] livello di sicurezza nelle Impostazioni (predefinito Prudente)
+- [ ] creare/modificare pianificazioni (la GUI prepara, la CLI installa dopo UAC)
+- [ ] Sposta a due passi con conferma
+- [ ] pausa/riprendi (Livello A, prova su SMB reale)
+- [ ] file singoli come origine
+- [ ] notifica via posta
+
 ## 1. Principi del piano
 
 1. **Prima si prova, poi si decide, poi si costruisce.** Slint non è ancora stato usato in questo progetto; le
