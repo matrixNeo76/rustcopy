@@ -59,6 +59,17 @@ Le regole di sicurezza chiave (nessun comando che copi, cancelli, pianifichi o i
 | E11 | `--auto-config <toml>`: la console avvia subito il lavoro **dopo aver esaminato** la configurazione, perché è l'esame che popola la schermata | Una copia partiva con la finestra su "scegli un file" | UI | In avvio: carica → mostra → avvia, in quest'ordine | Dal vivo da Explorer |
 | E12 | Un secondo avvio **consegna il lavoro all'istanza aperta** e si chiude | TeraCopy lo fa; evita due finestre su una stessa copia | Nuovo | Mutex nominato + passaggio dell'argomento (RF-Y11) | Dal vivo: due `--auto-config` consecutivi |
 
+## 2b. Lavori (elenco, ripeti, salva come attività)
+
+| ID | Comportamento | Perché | Dove vive | Come si porta | Verifica |
+|---|---|---|---|---|---|
+| L01 | Come **finisce** un lavoro lo decide il core: pulita secondo `exit_code_is_success` (mai `exit_code == 0`), simulazione, da controllare; **nessun report = mai pulita**; una copia avviata e mai finita, non in corso nella finestra, è **interrotta** | Lo stesso errore già fatto con i badge del Report | Core (`sessions`) | La UI mostra lo stato che il core restituisce | 10 test del core + dal vivo |
+| L02 | Il log dei lavori è **append-only**; una riga troncata da un crash si salta, non rompe l'elenco | Stessa disciplina di cronologia e manifest | Core | Nessuna logica UI | Test della riga troncata |
+| L03 | **Salva come attività** scrive la configurazione semplice di un drop più un nome validato, con `create_new` (**mai sovrascrive**), e non può contenere mirror, pulizia, verifica o cifratura | Una console che salva configurazioni non deve poterle allargare | Core | Chiamare `SessionLog::save_as_task` | Test: nessuna parola vietata nel file; secondo salvataggio rifiutato |
+| L04 | Una copia **ripetuta** è pianificata di nuovo dal core (`plan_copy`), non riusa il vecchio file | Le cartelle possono essere cambiate nel frattempo | Core + UI | `start_copy` con le cartelle del lavoro | Dal vivo: Ripeti dà 0 file se è già aggiornata |
+| L05 | Il motivo di un "da controllare" si legge dal report **su un thread a parte** e si scarta se nel frattempo si apre un altro lavoro | Un report grande non deve bloccare la finestra; risposta lenta sopra risposta nuova | UI | `Generation` + `upgrade_in_event_loop` | Test del contatore + dal vivo |
+| L06 | Un lavoro che **non è partito** (un'altra copia attiva, errore di avvio) è chiuso nel log, non lasciato "avviato" | Altrimenti comparirebbe come interrotto | UI | `finish` con codice -1 | Revisione |
+
 ## 3. Copia, anteprima, Explorer
 
 | ID | Comportamento | Perché | Dove vive | Come si porta | Verifica |
@@ -121,7 +132,7 @@ Le regole di sicurezza chiave (nessun comando che copi, cancelli, pianifichi o i
 
 ## 7. Stato e conteggi
 
-Righe: 13 confini, 12 esecuzione, 11 copia/Explorer, 12 editor, 7 aspetto, 10 build. **65** voci. Quelle marcate **Nuovo**
+Righe: 13 confini, 12 esecuzione, 6 lavori, 11 copia/Explorer, 12 editor, 7 aspetto, 10 build. **71** voci. Quelle marcate **Nuovo**
 (E09, E12, A04, A05, A06, A07, C10 in parte) sono i requisiti che nascono dalla specifica, non da un difetto passato.
 
 ## 8. Come si usa questo catalogo
@@ -141,5 +152,5 @@ Righe: 13 confini, 12 esecuzione, 11 copia/Explorer, 12 editor, 7 aspetto, 10 bu
   difetti D1-D30 resta da fare quando si arriva alle schermate corrispondenti.
 - **C08 è un'ipotesi favorevole**: `PopupWindow` non sta nel layout, ma non ho provato un pannello Recenti reale.
 - **E09 e A04** sono funzioni che non esistono ancora; la verifica "dal vivo" dipende dal tray (non riuscito nella Fase 1).
-- **Il conteggio 65** è fatto a mano e può non riflettere righe aggiunte dopo.
+- **Il conteggio 71** è fatto a mano e può non riflettere righe aggiunte dopo.
 - **Revisione contro D1-D30 fatta (8 Ott 2026)**: dei difetti documentati, quelli che toccano la console sono D22, D24, D25, D26, D28, D29, D30; D24 (G06), D26 (J12), D30 (I03) e D25 (core, `--resume-from`) erano già coperti; D22 (I10) e D28 (C11) sono state aggiunte; D29 riguarda solo la DLL Shell, invariata. D1-D21, D23 e D27 vivono nel core o nella CLI e la nuova interfaccia li eredita senza codice proprio.

@@ -34,9 +34,81 @@ pub fn human_speed(mbps: f64) -> String {
     )
 }
 
+/// The last component of a path, whichever separator it uses and with trailing ones ignored:
+/// `D:\Dati\Foto\` -> `Foto`. A drive root (`E:\`) has no folder name, so it is returned as given.
+pub fn folder_name(path: &str) -> String {
+    let trimmed = path.trim_end_matches(['\\', '/']);
+    match trimmed.rsplit(['\\', '/']).next() {
+        Some(name) if !name.is_empty() && trimmed.len() != path.len().min(2) => name.to_string(),
+        _ => path.to_string(),
+    }
+}
+
+/// Names for a list row: the first two folder names, then `+N` for the rest.
+pub fn folder_names(paths: &[String]) -> String {
+    let mut names: Vec<String> = paths.iter().take(2).map(|p| folder_name(p)).collect();
+    if paths.len() > 2 {
+        names.push(format!("+{}", paths.len() - 2));
+    }
+    names.join(", ")
+}
+
+/// `2026-10-08 12:19 UTC` -> the local `08/10/2026 14:19`.
+pub fn when_text(at: chrono::DateTime<chrono::Utc>) -> String {
+    at.with_timezone(&chrono::Local)
+        .format("%d/%m/%Y %H:%M")
+        .to_string()
+}
+
+/// `08/10 14:19`, the short form for a list row where space is tight.
+pub fn when_short(at: chrono::DateTime<chrono::Utc>) -> String {
+    at.with_timezone(&chrono::Local)
+        .format("%d/%m %H:%M")
+        .to_string()
+}
+
+/// Average MB/s over a whole session (all its reports); `0` when the time is unknown.
+pub fn throughput_mbps(bytes: u64, seconds: f64) -> f64 {
+    if seconds > 0.0 {
+        bytes as f64 / (1024.0 * 1024.0) / seconds
+    } else {
+        0.0
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn folder_names_ignore_separators_and_trailing_slashes() {
+        assert_eq!(folder_name(r"D:\Dati\Foto"), "Foto");
+        assert_eq!(folder_name(r"D:\Dati\Foto\"), "Foto");
+        assert_eq!(folder_name("D:/Dati/Video/"), "Video");
+        assert_eq!(folder_name(r"\\nas01\backup"), "backup");
+    }
+
+    #[test]
+    fn a_drive_root_keeps_its_own_spelling() {
+        assert_eq!(folder_name(r"E:\"), r"E:\");
+    }
+
+    #[test]
+    fn a_long_list_of_folders_is_shortened() {
+        let paths: Vec<String> = ["A", "B", "C", "D"]
+            .iter()
+            .map(|n| format!(r"C:\{n}"))
+            .collect();
+        assert_eq!(folder_names(&paths[..1]), "A");
+        assert_eq!(folder_names(&paths[..2]), "A, B");
+        assert_eq!(folder_names(&paths), "A, B, +2");
+    }
+
+    #[test]
+    fn throughput_is_zero_when_the_time_is_unknown() {
+        assert_eq!(throughput_mbps(1024 * 1024 * 100, 0.0), 0.0);
+        assert_eq!(throughput_mbps(1024 * 1024 * 100, 2.0), 50.0);
+    }
 
     #[test]
     fn bytes_use_a_decimal_comma_and_stay_whole_below_one_kb() {

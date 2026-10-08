@@ -7,7 +7,9 @@ export global Strings {
 
     // Navigation
     out property <string> nav-copy: @tr("Copia");
-    out property <string> nav-report: @tr("Report");
+    out property <string> new-copy: @tr("Nuova copia");
+    out property <string> jobs-heading: @tr("LAVORI");
+    out property <string> jobs-empty: @tr("Nessun lavoro ancora. Le copie che avvii compaiono qui, con il loro esito.");
 
     // Copia
     out property <string> copy-title: @tr("Copia cartelle");
@@ -24,7 +26,24 @@ export global Strings {
     out property <string> stop: @tr("Ferma");
     out property <string> starting: @tr("Avvio...");
     out property <string> warning-prefix: @tr("Avviso");
+    out property <string> busy: @tr("Un backup è già in corso in questa finestra.");
     out property <string> request-refused: @tr("Richiesta di un'altra finestra rifiutata: non è una copia avviata da Esplora file.");
+
+    // Lavoro (detail of one copy)
+    out property <string> state-clean: @tr("Riuscita");
+    out property <string> state-dry-run: @tr("Simulazione");
+    out property <string> state-look: @tr("Da controllare");
+    out property <string> state-interrupted: @tr("Interrotta");
+    out property <string> state-running: @tr("In corso");
+    out property <string> saved-badge: @tr("Salvata");
+    out property <string> repeat: @tr("Ripeti");
+    out property <string> save-as-task: @tr("Salva come attività...");
+    out property <string> task-name-label: @tr("Nome dell'attività");
+    out property <string> save: @tr("Salva");
+    out property <string> cancel: @tr("Annulla");
+    out property <string> save-hint: @tr("Salva le stesse cartelle come un'attività che potrai rilanciare o pianificare. Non cambia nulla nelle impostazioni di sicurezza.");
+    out property <string> interrupted-text: @tr("Questa copia non è arrivata alla fine: la finestra o il computer si sono chiusi mentre andava. Puoi ripeterla.");
+    out property <string> in-progress-text: @tr("Copia in corso. L'avanzamento è nella scheda Nuova copia.");
 
     // Report
     out property <string> report-title: @tr("Report");

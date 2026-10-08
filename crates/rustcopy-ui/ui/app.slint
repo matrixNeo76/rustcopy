@@ -1,9 +1,15 @@
-// rustcopy console, Slint. Phase 2 foundations: the screens only compose components from
-// components.slint, tokens from theme.slint and text from strings.slint (CATALOGO A01, A02, A06).
+// rustcopy console, Slint. The screens only compose components from components.slint and
+// sessions.slint, tokens from theme.slint and text from strings.slint (CATALOGO A01, A02, A06).
+//
+// One entity, the "lavoro" (SPEC §5.0): the sidebar lists every copy started from here with how it
+// went; "Nuova copia" is the quick way in, a row opens the detail of one copy.
 import { Button, LineEdit, ProgressIndicator, ListView, Palette } from "std-widgets.slint";
 import { Theme } from "theme.slint";
 import { Strings } from "strings.slint";
-import { Badge, BadgeKind, StatCard, Banner, SectionLabel, NavItem } from "components.slint";
+import { Badge, BadgeKind, StatCard, Banner, SectionLabel } from "components.slint";
+import { SessionRow, SessionItem, SessionUi } from "sessions.slint";
+
+export { SessionRow }
 
 export component AppTray inherits SystemTrayIcon {
     icon: @image-url("icon.png");
@@ -32,15 +38,17 @@ export component AppTray inherits SystemTrayIcon {
 
 export component AppWindow inherits Window {
     title: Strings.window-title;
-    preferred-width: 980px;
-    preferred-height: 680px;
-    min-width: 640px;
-    min-height: 480px;
+    preferred-width: 1040px;
+    preferred-height: 700px;
+    min-width: 720px;
+    min-height: 500px;
     background: Palette.background;
 
+    // 0 = new copy, 1 = detail of the selected lavoro
     in-out property <int> page: 0;
     // Text the Rust side shows when a second launch asks for something the first window refuses.
     out property <string> refused-request-text: Strings.request-refused;
+    out property <string> busy-text: Strings.busy;
     // Test only: RUSTCOPY_UI_DARK=1 forces the dark palette (the real app follows the system scheme).
     in property <bool> force-dark: false;
     changed force-dark => {
@@ -49,7 +57,11 @@ export component AppWindow inherits Window {
         }
     }
 
-    // Copia
+    // The list
+    in property <[SessionRow]> sessions;
+    in-out property <string> selected-id;
+
+    // New copy
     in property <[string]> sources;
     in-out property <string> dest;
     in property <string> error;
@@ -60,27 +72,35 @@ export component AppWindow inherits Window {
     in property <string> speed-text;
     in property <string> current-file;
 
-    // Report. `r-kind`: 0 clean, 1 dry run, 2 needs a look (then `r-detail` says why).
-    in property <bool> has-report;
-    in property <int> r-kind;
-    in property <string> r-detail;
-    in property <string> r-files;
-    in property <string> r-size;
-    in property <string> r-time;
-    in property <string> r-speed;
-    in property <string> r-where;
+    // Detail of the selected lavoro
+    in property <int> d-state;
+    in property <string> d-where;
+    in property <string> d-when;
+    in property <string> d-files;
+    in property <string> d-size;
+    in property <string> d-time;
+    in property <string> d-speed;
+    in property <string> d-detail;
+    in property <string> d-saved;
+    in property <bool> d-has-numbers;
 
-    // Long-list probe (prototype only)
-    in property <[string]> rows;
-    in property <string> rows-info;
+    // Save as task
+    in-out property <bool> saving: false;
+    in-out property <string> save-name;
+    in property <string> save-dir;
+    in property <string> save-message;
+    in property <bool> save-ok;
 
+    callback new-copy();
+    callback select-session(string);
+    callback repeat-session(string);
+    callback begin-save(string);
+    callback confirm-save(string);
     callback add-folders();
     callback remove-source(int);
     callback browse-dest();
     callback start-copy();
     callback stop-copy();
-    callback open-report();
-    callback load-rows(int);
     // The first window is asked, by a second launch or by the Explorer extension, to run a configuration.
     callback external-open(string);
 
@@ -91,28 +111,40 @@ export component AppWindow inherits Window {
             VerticalLayout {
                 padding: Theme.gap;
                 spacing: Theme.gap-small;
-                alignment: start;
                 Text {
                     text: Strings.brand;
                     font-size: Theme.brand;
                     font-weight: 700;
                     color: Theme.text;
                 }
-                Rectangle {
-                    height: Theme.gap;
-                }
-                NavItem {
-                    label: Strings.nav-copy;
-                    selected: root.page == 0;
+                Button {
+                    text: Strings.new-copy;
+                    primary: true;
                     clicked => {
-                        root.page = 0;
+                        root.new-copy();
                     }
                 }
-                NavItem {
-                    label: Strings.nav-report;
-                    selected: root.page == 1;
-                    clicked => {
-                        root.page = 1;
+                SectionLabel {
+                    text: Strings.jobs-heading;
+                }
+                Rectangle {
+                    vertical-stretch: 1;
+                    ListView {
+                        for row[i] in root.sessions: SessionItem {
+                            entry: row;
+                            selected: root.page == 1 && row.id == root.selected-id;
+                            clicked => {
+                                root.select-session(row.id);
+                            }
+                        }
+                    }
+                    if root.sessions.length == 0: Text {
+                        text: Strings.jobs-empty;
+                        wrap: word-wrap;
+                        horizontal-alignment: center;
+                        vertical-alignment: center;
+                        font-size: Theme.small;
+                        color: Theme.text-faint;
                     }
                 }
             }
@@ -247,96 +279,144 @@ export component AppWindow inherits Window {
             padding: Theme.page-padding;
             spacing: Theme.gap;
             alignment: start;
+            HorizontalLayout {
+                spacing: 10px;
+                alignment: start;
+                Text {
+                    text: Strings.report-title;
+                    font-size: Theme.title;
+                    font-weight: 700;
+                    color: Theme.text;
+                    vertical-alignment: center;
+                }
+                Badge {
+                    text: SessionUi.state-text(root.d-state);
+                    kind: SessionUi.state-kind(root.d-state);
+                }
+                if root.d-saved != "": Badge {
+                    text: Strings.saved-badge;
+                    kind: BadgeKind.neutral;
+                }
+            }
             Text {
-                text: Strings.report-title;
-                font-size: Theme.title;
-                font-weight: 700;
+                text: root.d-where;
+                wrap: word-wrap;
+                font-size: Theme.body;
                 color: Theme.text;
             }
-            Button {
-                text: Strings.open-report;
-                clicked => {
-                    root.open-report();
-                }
+            Text {
+                text: root.d-when;
+                font-size: Theme.small;
+                color: Theme.text-muted;
             }
-            if root.has-report: VerticalLayout {
-                spacing: 10px;
-                Text {
-                    text: root.r-kind == 0 ? Strings.outcome-ok : (root.r-kind == 1 ? Strings.outcome-dry-run : @tr("Da controllare: {}", root.r-detail));
-                    wrap: word-wrap;
-                    font-size: Theme.heading;
-                    font-weight: 700;
-                    color: root.r-kind == 0 ? Theme.text : Theme.warning;
-                }
-                HorizontalLayout {
-                    spacing: 10px;
-                    StatCard {
-                        label: Strings.stat-files;
-                        value: root.r-files;
-                    }
-                    StatCard {
-                        label: Strings.stat-size;
-                        value: root.r-size;
-                    }
-                    StatCard {
-                        label: Strings.stat-time;
-                        value: root.r-time;
-                    }
-                    StatCard {
-                        label: Strings.stat-speed;
-                        value: root.r-speed;
-                    }
-                }
-                Text {
-                    text: root.r-where;
-                    wrap: word-wrap;
-                    font-size: Theme.small;
-                    color: Theme.text-muted;
-                }
-            }
-            if !root.has-report: Text {
-                text: Strings.no-report;
+            if root.d-state == 4: Text {
+                text: Strings.in-progress-text;
+                wrap: word-wrap;
                 font-size: Theme.body;
                 color: Theme.text-muted;
             }
-            SectionLabel {
-                text: Strings.longlist-title;
+            if root.d-state == 3: Banner {
+                text: Strings.interrupted-text;
+                label-prefix: Strings.warning-prefix;
+                kind: BadgeKind.warning;
+            }
+            if root.d-state == 1: Banner {
+                text: Strings.outcome-dry-run;
+                label-prefix: Strings.state-dry-run;
+                kind: BadgeKind.info;
+            }
+            if root.d-state == 2 && root.d-detail != "": Banner {
+                text: @tr("Da controllare: {}", root.d-detail);
+                label-prefix: Strings.warning-prefix;
+                kind: BadgeKind.warning;
+            }
+            if root.d-has-numbers: HorizontalLayout {
+                spacing: 10px;
+                StatCard {
+                    label: Strings.stat-files;
+                    value: root.d-files;
+                }
+                StatCard {
+                    label: Strings.stat-size;
+                    value: root.d-size;
+                }
+                StatCard {
+                    label: Strings.stat-time;
+                    value: root.d-time;
+                }
+                StatCard {
+                    label: Strings.stat-speed;
+                    value: root.d-speed;
+                }
             }
             HorizontalLayout {
                 spacing: 10px;
                 alignment: start;
                 Button {
-                    text: Strings.longlist-load;
+                    text: Strings.repeat;
+                    primary: true;
+                    enabled: !root.running && root.d-state != 4;
                     clicked => {
-                        root.load-rows(100000);
+                        root.repeat-session(root.selected-id);
                     }
                 }
-                Button {
-                    text: Strings.longlist-clear;
+                if root.d-saved == "" && root.d-state != 4: Button {
+                    text: Strings.save-as-task;
                     clicked => {
-                        root.load-rows(0);
+                        root.begin-save(root.selected-id);
                     }
-                }
-                Text {
-                    text: root.rows-info;
-                    vertical-alignment: center;
-                    font-size: Theme.body;
-                    color: Theme.text-muted;
                 }
             }
-            Rectangle {
-                height: 220px;
-                border-radius: Theme.radius;
-                border-width: 1px;
-                border-color: Theme.border;
-                ListView {
-                    for r in root.rows: Text {
-                        text: r;
-                        height: 22px;
-                        font-size: 13px;
-                        color: Theme.text;
+            if root.d-saved != "": Text {
+                text: root.d-saved;
+                wrap: word-wrap;
+                font-size: Theme.small;
+                color: Theme.text-muted;
+            }
+            if root.saving: VerticalLayout {
+                spacing: Theme.gap-small;
+                Text {
+                    text: Strings.save-hint;
+                    wrap: word-wrap;
+                    font-size: Theme.small;
+                    color: Theme.text-muted;
+                }
+                SectionLabel {
+                    text: Strings.task-name-label;
+                }
+                LineEdit {
+                    text <=> root.save-name;
+                    accessible-label: Strings.task-name-label;
+                }
+                Text {
+                    text: root.save-dir;
+                    wrap: word-wrap;
+                    font-size: Theme.small;
+                    color: Theme.text-muted;
+                }
+                HorizontalLayout {
+                    spacing: 10px;
+                    alignment: start;
+                    Button {
+                        text: Strings.save;
+                        primary: true;
+                        enabled: root.save-name != "";
+                        clicked => {
+                            root.confirm-save(root.selected-id);
+                        }
+                    }
+                    Button {
+                        text: Strings.cancel;
+                        clicked => {
+                            root.saving = false;
+                        }
                     }
                 }
+            }
+            if root.save-message != "": Banner {
+                text: root.save-ok ? @tr("Salvata in {}", root.save-message) : root.save-message;
+                label-prefix: Strings.warning-prefix;
+                kind: root.save-ok ? BadgeKind.ok : BadgeKind.warning;
             }
         }
     }
