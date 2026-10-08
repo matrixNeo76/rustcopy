@@ -1,0 +1,37 @@
+// Design tokens (CATALOGO_COMPORTAMENTI_GUI.md A01, A02, A04). One file, so a colour or a size is
+// changed in one place. Colours come from Slint's Palette, which follows the system light/dark scheme.
+import { Palette } from "std-widgets.slint";
+
+export global Theme {
+    out property <bool> dark: Palette.color-scheme == ColorScheme.dark;
+
+    // Type scale: body 14 px, never below 12 px (F94).
+    out property <length> body: 14px;
+    out property <length> small: 12px;
+    out property <length> heading: 16px;
+    out property <length> title: 22px;
+    out property <length> stat: 22px;
+    out property <length> brand: 20px;
+
+    // Spacing and shape.
+    out property <length> gap: 12px;
+    out property <length> gap-small: 6px;
+    out property <length> page-padding: 20px;
+    out property <length> radius: 8px;
+    out property <length> row-height: 36px;
+    out property <length> sidebar-width: 200px;
+
+    // Colours.
+    out property <color> text: Palette.foreground;
+    out property <color> text-muted: Palette.foreground.with-alpha(0.7);
+    out property <color> text-faint: Palette.foreground.with-alpha(0.6);
+    out property <color> surface: Palette.alternate-background;
+    out property <color> border: Palette.border;
+    out property <color> accent: Palette.accent-background;
+
+    // Outcome colours. Amber for anything that is not clean, never red: the icon or the words say
+    // "failed" (F81/F93).
+    out property <color> ok: dark ? #34d399 : #047857;
+    out property <color> warning: dark ? #fbbf24 : #b45309;
+    out property <color> info: dark ? #60a5fa : #1d4ed8;
+}

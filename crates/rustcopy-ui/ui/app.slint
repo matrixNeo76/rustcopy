@@ -1,64 +1,13 @@
-// SPIKE (PIANO_GUI_SLINT.md Fase 1): throwaway prototype of the Copia and Report screens.
-// Colours come from Slint's own Palette so the window follows the system light/dark scheme;
-// "amber, never red" (F81/F93) is kept for anything that is not a clean outcome.
+// rustcopy console, Slint. Phase 2 foundations: the screens only compose components from
+// components.slint, tokens from theme.slint and text from strings.slint (CATALOGO A01, A02, A06).
 import { Button, LineEdit, ProgressIndicator, ListView, Palette } from "std-widgets.slint";
-
-component Card inherits Rectangle {
-    in property <string> label;
-    in property <string> value;
-    background: Palette.alternate-background;
-    border-radius: 8px;
-    border-width: 1px;
-    border-color: Palette.border;
-    min-width: 120px;
-    accessible-role: text;
-    accessible-label: root.label + ": " + root.value;
-    VerticalLayout {
-        padding: 12px;
-        spacing: 4px;
-        Text {
-            text: root.label;
-            font-size: 12px;
-            color: Palette.foreground.with-alpha(0.7);
-        }
-        Text {
-            text: root.value;
-            font-size: 22px;
-            font-weight: 700;
-            color: Palette.foreground;
-        }
-    }
-}
-
-component NavItem inherits Rectangle {
-    in property <string> label;
-    in property <bool> selected;
-    callback clicked();
-    height: 40px;
-    border-radius: 6px;
-    background: root.selected ? Palette.accent-background.with-alpha(0.18) : (ta.has-hover ? Palette.background.with-alpha(0.6) : transparent);
-    accessible-role: button;
-    accessible-label: root.label;
-    accessible-action-default => {
-        root.clicked();
-    }
-    ta := TouchArea {
-        clicked => {
-            root.clicked();
-        }
-    }
-    Text {
-        x: 12px;
-        text: root.label;
-        vertical-alignment: center;
-        color: Palette.foreground;
-        font-weight: root.selected ? 700 : 400;
-    }
-}
+import { Theme } from "theme.slint";
+import { Strings } from "strings.slint";
+import { Badge, BadgeKind, StatCard, Banner, SectionLabel, NavItem } from "components.slint";
 
 export component AppTray inherits SystemTrayIcon {
     icon: @image-url("icon.png");
-    tooltip: "rustcopy";
+    tooltip: Strings.tray-tooltip;
     callback show-window();
     callback quit();
     clicked => {
@@ -66,14 +15,14 @@ export component AppTray inherits SystemTrayIcon {
     }
     Menu {
         MenuItem {
-            title: "Apri rustcopy";
+            title: Strings.tray-open;
             activated => {
                 root.show-window();
             }
         }
-        MenuSeparator {}
+        MenuSeparator { }
         MenuItem {
-            title: "Esci";
+            title: Strings.tray-quit;
             activated => {
                 root.quit();
             }
@@ -82,7 +31,7 @@ export component AppTray inherits SystemTrayIcon {
 }
 
 export component AppWindow inherits Window {
-    title: "rustcopy - prova Slint";
+    title: Strings.window-title;
     preferred-width: 980px;
     preferred-height: 680px;
     min-width: 640px;
@@ -90,6 +39,8 @@ export component AppWindow inherits Window {
     background: Palette.background;
 
     in-out property <int> page: 0;
+    // Text the Rust side shows when a second launch asks for something the first window refuses.
+    out property <string> refused-request-text: Strings.request-refused;
     // Test only: RUSTCOPY_UI_DARK=1 forces the dark palette (the real app follows the system scheme).
     in property <bool> force-dark: false;
     changed force-dark => {
@@ -97,24 +48,29 @@ export component AppWindow inherits Window {
             Palette.color-scheme = ColorScheme.dark;
         }
     }
+
     // Copia
     in property <[string]> sources;
     in-out property <string> dest;
     in property <string> error;
     in property <bool> running;
     in property <float> fraction: -1;
-    in property <string> status-line;
+    in property <string> files-done-text;
+    in property <string> files-total-text;
+    in property <string> speed-text;
     in property <string> current-file;
-    // Report
+
+    // Report. `r-kind`: 0 clean, 1 dry run, 2 needs a look (then `r-detail` says why).
     in property <bool> has-report;
-    in property <string> r-outcome;
-    in property <bool> r-ok;
+    in property <int> r-kind;
+    in property <string> r-detail;
     in property <string> r-files;
     in property <string> r-size;
     in property <string> r-time;
     in property <string> r-speed;
     in property <string> r-where;
-    // Long-list probe (M16)
+
+    // Long-list probe (prototype only)
     in property <[string]> rows;
     in property <string> rows-info;
 
@@ -125,33 +81,35 @@ export component AppWindow inherits Window {
     callback stop-copy();
     callback open-report();
     callback load-rows(int);
+    // The first window is asked, by a second launch or by the Explorer extension, to run a configuration.
+    callback external-open(string);
 
     HorizontalLayout {
         Rectangle {
-            width: 200px;
-            background: Palette.alternate-background;
+            width: Theme.sidebar-width;
+            background: Theme.surface;
             VerticalLayout {
-                padding: 12px;
-                spacing: 6px;
+                padding: Theme.gap;
+                spacing: Theme.gap-small;
                 alignment: start;
                 Text {
-                    text: "rustcopy";
-                    font-size: 20px;
+                    text: Strings.brand;
+                    font-size: Theme.brand;
                     font-weight: 700;
-                    color: Palette.foreground;
+                    color: Theme.text;
                 }
                 Rectangle {
-                    height: 12px;
+                    height: Theme.gap;
                 }
                 NavItem {
-                    label: "Copia";
+                    label: Strings.nav-copy;
                     selected: root.page == 0;
                     clicked => {
                         root.page = 0;
                     }
                 }
                 NavItem {
-                    label: "Report";
+                    label: Strings.nav-report;
                     selected: root.page == 1;
                     clicked => {
                         root.page = 1;
@@ -161,35 +119,33 @@ export component AppWindow inherits Window {
         }
 
         if root.page == 0: VerticalLayout {
-            padding: 20px;
-            spacing: 12px;
+            padding: Theme.page-padding;
+            spacing: Theme.gap;
             alignment: start;
             Text {
-                text: "Copia cartelle";
-                font-size: 22px;
+                text: Strings.copy-title;
+                font-size: Theme.title;
                 font-weight: 700;
-                color: Palette.foreground;
+                color: Theme.text;
             }
             Text {
-                text: "Scegli una o più cartelle e dove metterle. Copia solo i file nuovi o cambiati e non cancella nulla.";
+                text: Strings.copy-intro;
                 wrap: word-wrap;
-                color: Palette.foreground.with-alpha(0.75);
+                font-size: Theme.body;
+                color: Theme.text-muted;
             }
-            Text {
-                text: "COSA COPIARE";
-                font-size: 12px;
-                font-weight: 700;
-                color: Palette.foreground.with-alpha(0.6);
+            SectionLabel {
+                text: Strings.section-what;
             }
             Rectangle {
                 height: 130px;
-                border-radius: 8px;
+                border-radius: Theme.radius;
                 border-width: 1px;
-                border-color: Palette.border;
-                background: Palette.alternate-background;
+                border-color: Theme.border;
+                background: Theme.surface;
                 ListView {
                     for s[i] in root.sources: Rectangle {
-                        height: 36px;
+                        height: Theme.row-height;
                         HorizontalLayout {
                             padding-left: 10px;
                             padding-right: 6px;
@@ -199,10 +155,11 @@ export component AppWindow inherits Window {
                                 horizontal-stretch: 1;
                                 vertical-alignment: center;
                                 overflow: elide;
-                                color: Palette.foreground;
+                                font-size: Theme.body;
+                                color: Theme.text;
                             }
                             Button {
-                                text: "Togli";
+                                text: Strings.remove-folder;
                                 horizontal-stretch: 0;
                                 clicked => {
                                     root.remove-source(i);
@@ -212,48 +169,47 @@ export component AppWindow inherits Window {
                     }
                 }
                 if root.sources.length == 0: Text {
-                    text: "Nessuna cartella scelta.";
-                    color: Palette.foreground.with-alpha(0.6);
+                    text: Strings.no-folders;
+                    wrap: word-wrap;
+                    horizontal-alignment: center;
+                    vertical-alignment: center;
+                    font-size: Theme.body;
+                    color: Theme.text-faint;
                 }
             }
             Button {
-                text: "Aggiungi cartelle...";
+                text: Strings.add-folders;
                 clicked => {
                     root.add-folders();
                 }
             }
-            Text {
-                text: "DOVE METTERLE";
-                font-size: 12px;
-                font-weight: 700;
-                color: Palette.foreground.with-alpha(0.6);
+            SectionLabel {
+                text: Strings.section-where;
             }
             HorizontalLayout {
                 spacing: 8px;
                 LineEdit {
                     text <=> root.dest;
-                    placeholder-text: "Cartella di destinazione, anche di rete";
-                    accessible-label: "Cartella di destinazione";
+                    placeholder-text: Strings.dest-placeholder;
+                    accessible-label: Strings.dest-label;
                 }
                 Button {
-                    text: "Sfoglia...";
+                    text: Strings.browse;
                     clicked => {
                         root.browse-dest();
                     }
                 }
             }
-            if root.error != "": Text {
+            if root.error != "": Banner {
                 text: root.error;
-                wrap: word-wrap;
-                color: #b45309;
-                accessible-role: text;
-                accessible-label: "Avviso: " + root.error;
+                label-prefix: Strings.warning-prefix;
+                kind: BadgeKind.warning;
             }
             HorizontalLayout {
                 spacing: 10px;
                 alignment: start;
                 Button {
-                    text: "Copia";
+                    text: Strings.copy;
                     primary: true;
                     enabled: !root.running && root.sources.length > 0 && root.dest != "";
                     clicked => {
@@ -261,43 +217,44 @@ export component AppWindow inherits Window {
                     }
                 }
                 if root.running: Button {
-                    text: "Ferma";
+                    text: Strings.stop;
                     clicked => {
                         root.stop-copy();
                     }
                 }
             }
             if root.running: VerticalLayout {
-                spacing: 6px;
+                spacing: Theme.gap-small;
                 ProgressIndicator {
                     progress: root.fraction < 0 ? 0 : root.fraction;
                     indeterminate: root.fraction < 0;
                 }
                 Text {
-                    text: root.status-line;
-                    color: Palette.foreground;
+                    text: root.files-done-text == "" ? Strings.starting : @tr("{} / {} file  -  {}", root.files-done-text, root.files-total-text, root.speed-text);
+                    font-size: Theme.body;
+                    color: Theme.text;
                 }
                 Text {
                     text: root.current-file;
                     overflow: elide;
-                    font-size: 12px;
-                    color: Palette.foreground.with-alpha(0.7);
+                    font-size: Theme.small;
+                    color: Theme.text-muted;
                 }
             }
         }
 
         if root.page == 1: VerticalLayout {
-            padding: 20px;
-            spacing: 12px;
+            padding: Theme.page-padding;
+            spacing: Theme.gap;
             alignment: start;
             Text {
-                text: "Report";
-                font-size: 22px;
+                text: Strings.report-title;
+                font-size: Theme.title;
                 font-weight: 700;
-                color: Palette.foreground;
+                color: Theme.text;
             }
             Button {
-                text: "Apri un report...";
+                text: Strings.open-report;
                 clicked => {
                     root.open-report();
                 }
@@ -305,59 +262,57 @@ export component AppWindow inherits Window {
             if root.has-report: VerticalLayout {
                 spacing: 10px;
                 Text {
-                    text: root.r-outcome;
+                    text: root.r-kind == 0 ? Strings.outcome-ok : (root.r-kind == 1 ? Strings.outcome-dry-run : @tr("Da controllare: {}", root.r-detail));
                     wrap: word-wrap;
-                    font-size: 16px;
+                    font-size: Theme.heading;
                     font-weight: 700;
-                    color: root.r-ok ? Palette.foreground : #b45309;
+                    color: root.r-kind == 0 ? Theme.text : Theme.warning;
                 }
                 HorizontalLayout {
                     spacing: 10px;
-                    Card {
-                        label: "File";
+                    StatCard {
+                        label: Strings.stat-files;
                         value: root.r-files;
                     }
-                    Card {
-                        label: "Dimensione";
+                    StatCard {
+                        label: Strings.stat-size;
                         value: root.r-size;
                     }
-                    Card {
-                        label: "Durata";
+                    StatCard {
+                        label: Strings.stat-time;
                         value: root.r-time;
                     }
-                    Card {
-                        label: "Velocità";
+                    StatCard {
+                        label: Strings.stat-speed;
                         value: root.r-speed;
                     }
                 }
                 Text {
                     text: root.r-where;
                     wrap: word-wrap;
-                    font-size: 12px;
-                    color: Palette.foreground.with-alpha(0.7);
+                    font-size: Theme.small;
+                    color: Theme.text-muted;
                 }
             }
             if !root.has-report: Text {
-                text: "Nessun report aperto. Dopo una copia compare qui da solo.";
-                color: Palette.foreground.with-alpha(0.7);
+                text: Strings.no-report;
+                font-size: Theme.body;
+                color: Theme.text-muted;
             }
-            Text {
-                text: "PROVA LISTA LUNGA (M16)";
-                font-size: 12px;
-                font-weight: 700;
-                color: Palette.foreground.with-alpha(0.6);
+            SectionLabel {
+                text: Strings.longlist-title;
             }
             HorizontalLayout {
                 spacing: 10px;
                 alignment: start;
                 Button {
-                    text: "Carica 100.000 righe";
+                    text: Strings.longlist-load;
                     clicked => {
                         root.load-rows(100000);
                     }
                 }
                 Button {
-                    text: "Svuota";
+                    text: Strings.longlist-clear;
                     clicked => {
                         root.load-rows(0);
                     }
@@ -365,20 +320,21 @@ export component AppWindow inherits Window {
                 Text {
                     text: root.rows-info;
                     vertical-alignment: center;
-                    color: Palette.foreground.with-alpha(0.7);
+                    font-size: Theme.body;
+                    color: Theme.text-muted;
                 }
             }
             Rectangle {
                 height: 220px;
-                border-radius: 8px;
+                border-radius: Theme.radius;
                 border-width: 1px;
-                border-color: Palette.border;
+                border-color: Theme.border;
                 ListView {
                     for r in root.rows: Text {
                         text: r;
                         height: 22px;
                         font-size: 13px;
-                        color: Palette.foreground;
+                        color: Theme.text;
                     }
                 }
             }

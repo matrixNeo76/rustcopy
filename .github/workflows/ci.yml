@@ -245,6 +245,44 @@ jobs:
       - name: cargo test (Shell extension crate)
         run: cargo test --locked -p rustcopy-shell --lib
 
+  # rustcopy-ui (the Slint console, PIANO_GUI_SLINT.md phase 2). Windows-only by construction like
+  # the Shell extension: the product is Windows-native and the single-instance code uses Win32 named
+  # pipes, so it is excluded from the cross-platform jobs and checked here. It needs no npm toolchain
+  # and no system libraries beyond the OS; the static C runtime check runs on the release binary.
+  ui:
+    timeout-minutes: 30
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache cargo registry and build artifacts
+        uses: Swatinem/rust-cache@v2
+
+      - name: cargo check (Slint console)
+        run: cargo check --locked -p rustcopy-ui --all-targets
+
+      - name: cargo clippy (Slint console)
+        run: cargo clippy --locked -p rustcopy-ui --all-targets -- -D warnings
+
+      # Production code only, same discipline as the other crates (a panic in an interface closes the
+      # window on the operator's work).
+      - name: cargo clippy (unwrap/expect discipline, production code only)
+        run: cargo clippy --locked -p rustcopy-ui --bins -- -W clippy::unwrap_used -W clippy::expect_used -D warnings
+
+      - name: cargo test (Slint console)
+        run: cargo test --locked -p rustcopy-ui --bins
+
+      - name: Build release binary
+        run: cargo build --release --locked -p rustcopy-ui
+
+      - name: No dynamic C runtime import
+        shell: pwsh
+        run: ./scripts/check-static-crt.ps1 -Path target/release/rustcopy-ui.exe
+
   # F92 / D30 (ANALYSIS.md): the binaries must not import the dynamic C runtime. They did, which made
   # the installer's DLL registration fail on a machine without the Visual C++ Redistributable and
   # roll the whole install back; .cargo/config.toml now links it statically. This job keeps that
