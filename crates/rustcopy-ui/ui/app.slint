@@ -7,9 +7,9 @@ import { Button, LineEdit, ProgressIndicator, ListView, Palette, CheckBox, Combo
 import { Theme } from "theme.slint";
 import { Strings } from "strings.slint";
 import { Badge, BadgeKind, StatCard, Banner, SectionLabel, SpeedChart } from "components.slint";
-import { SessionRow, SessionItem, SessionUi } from "sessions.slint";
+import { SessionRow, SessionItem, SessionUi, TaskRow, TaskItem } from "sessions.slint";
 
-export { SessionRow }
+export { SessionRow, TaskRow }
 
 export component AppTray inherits SystemTrayIcon {
     icon: @image-url("icon.png");
@@ -44,7 +44,7 @@ export component AppWindow inherits Window {
     min-height: 500px;
     background: Palette.background;
 
-    // 0 = new copy, 1 = detail of the selected lavoro
+    // 0 = new copy, 1 = detail of the selected lavoro, 2 = saved tasks
     in-out property <int> page: 0;
     // Text the Rust side shows when a second launch asks for something the first window refuses.
     out property <string> refused-request-text: Strings.request-refused;
@@ -59,6 +59,7 @@ export component AppWindow inherits Window {
 
     // The list
     in property <[SessionRow]> sessions;
+    in property <[TaskRow]> tasks;
     in-out property <string> selected-id;
 
     // New copy
@@ -100,6 +101,9 @@ export component AppWindow inherits Window {
     in property <bool> save-ok;
 
     callback new-copy();
+    callback show-tasks();
+    callback run-task(string);
+    callback run-config-file();
     callback select-session(string);
     callback repeat-session(string);
     callback begin-save(string);
@@ -130,6 +134,12 @@ export component AppWindow inherits Window {
                     primary: true;
                     clicked => {
                         root.new-copy();
+                    }
+                }
+                Button {
+                    text: Strings.nav-tasks;
+                    clicked => {
+                        root.show-tasks();
                     }
                 }
                 SectionLabel {
@@ -327,6 +337,68 @@ export component AppWindow inherits Window {
                 SpeedChart {
                     commands: root.chart-commands;
                     label: Strings.chart-label;
+                }
+            }
+        }
+
+        if root.page == 2: VerticalLayout {
+            padding: Theme.page-padding;
+            spacing: Theme.gap;
+            alignment: start;
+            Text {
+                text: Strings.tasks-title;
+                font-size: Theme.title;
+                font-weight: 700;
+                color: Theme.text;
+            }
+            Text {
+                text: Strings.tasks-intro;
+                wrap: word-wrap;
+                font-size: Theme.body;
+                color: Theme.text-muted;
+            }
+            if root.error != "": Banner {
+                text: root.error;
+                label-prefix: Strings.warning-prefix;
+                kind: BadgeKind.warning;
+            }
+            Rectangle {
+                vertical-stretch: 1;
+                min-height: 260px;
+                clip: true;
+                ListView {
+                    for task in root.tasks: TaskItem {
+                        entry: task;
+                        enabled: !root.running;
+                        run => {
+                            root.run-task(task.path);
+                        }
+                    }
+                }
+                if root.tasks.length == 0: Text {
+                    text: Strings.tasks-empty;
+                    wrap: word-wrap;
+                    x: 6px;
+                    y: 8px;
+                    width: parent.width - 12px;
+                    font-size: Theme.body;
+                    color: Theme.text-faint;
+                }
+            }
+            Text {
+                text: Strings.run-config-hint;
+                wrap: word-wrap;
+                font-size: Theme.small;
+                color: Theme.text-muted;
+            }
+            HorizontalLayout {
+                alignment: start;
+                Button {
+                    text: Strings.run-config-file;
+                    enabled: !root.running;
+                    clicked => {
+                        root.run-config-file();
+                    }
                 }
             }
         }

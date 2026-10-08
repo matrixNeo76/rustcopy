@@ -46,7 +46,7 @@ ogni funzione nuova della Fase 6 entra solo con un predefinito non distruttivo.
 | **1** | Prova tecnica a tempo (spike) su ramo isolato | 3-5 giorni | Un prototipo **usa e getta** di Copia + Report e una tabella di misure | **Go / No-go** secondo §3. ✅ **Eseguita il 8 Ott 2026: GO condizionato, §3.5** |
 | **2** | Fondamenta e catalogo dei comportamenti | 1-2 settimane | Crate `rustcopy-ui`, tema, componenti, estrazione dei comportamenti validati dal vivo | Conferma prima delle schermate vere. ✅ **Fondamenta pronte l'8 Ott 2026** (catalogo di 65 voci, token, stringhe, componenti, istanza unica, tray, job CI); revisione del catalogo contro D1-D30 fatta |
 | **3** | **Lavoro immediato** (ingresso TeraCopy) | 2-3 settimane | Nuova copia, esecuzione, elenco dei lavori con esito, istanza unica | Prova dal vivo + conferma. 🟡 **3a, 3b e 3c fatte e 3d iniziata l'8 Ott 2026** (elenco dei lavori, ripeti, salva come attività, istanza unica, tempo residuo, grafico di velocità, verifica a fine copia); **Fase 3 chiusa**: «al termine» ha apri-cartella e lampeggio sulla barra (le collisioni non richiedono nulla, vedi §6 decisione 10; espelli disco e spegni il PC sono una decisione a parte) |
-| **4** | **Lavori salvati e pianificati** (ingresso Cobian) | 3-4 settimane | Salva come attività, griglia proprietà, editor a schede, storico | Prova dal vivo + conferma |
+| **4** | **Lavori salvati e pianificati** (ingresso Cobian) | 3-4 settimane | Salva come attività, griglia proprietà, editor a schede, storico | Prova dal vivo + conferma. 🟡 **4a fatta l'8 Ott 2026** (attività salvate, esegui sul posto, esegui un file di configurazione); restano 4b griglia proprietà, 4c editor a schede, 4d storico |
 | **5** | Parità con la console attuale e rimozione di Tauri | 1-2 settimane | Installer unico con la nuova console; Tauri rimosso | **Conferma esplicita prima di cancellare** |
 | **6** | Funzioni nuove che dipendono dal core | a richiesta | Pausa, collisioni, sposta, creazione pianificazioni, posta… | Una decisione per funzione |
 
@@ -241,6 +241,15 @@ pulizia, non con un parametro libero.
 ### 3.5e «Al termine» (8 Ott 2026)
 
 Una casella «Apri la cartella di destinazione alla fine»: si apre in Esplora file **solo se la copia è finita pulita** (dopo un problema si legge prima l'esito) ed è una scelta di *quella* copia, non una impostazione salvata con l'attività. Se la finestra non ha il focus, il pulsante nella barra delle applicazioni lampeggia. Provato dal vivo l'apertura della cartella; **il lampeggio no** (non l'ho osservato). **Notifica di sistema (toast) non fatta**: richiederebbe una dipendenza nuova da valutare con `cargo audit`; il lampeggio copre il caso «guardavo altrove» senza aggiungere nulla.
+
+### 3.5f Fase 4a: attività salvate ed esecuzione sul posto (8 Ott 2026)
+
+- **Ogni attività salvata ha una cartella sua** (`attivita\<nome>\<nome>.toml`): la CLI gira con quella cartella come cartella di lavoro, quindi report e storico delle esecuzioni finiscono lì. Con un'unica cartella condivisa due attività avrebbero scritto lo **stesso** `robocopy_ingest_report.json` e si sarebbero sovrascritte; l'ho visto leggendo il codice prima che accadesse, non dopo.
+- **Pagina Attività**: elenco delle attività salvate con l'esito dell'ultima esecuzione da questa console («Mai eseguita» se non c'è), pulsante **Esegui**, e **Esegui un file di configurazione...** per i `.toml` già esistenti (si eseguono dove sono, con le loro impostazioni; mirror e pulizie restano protetti dalla conferma della CLI, che senza terminale si rifiuta).
+- **Un'attività eseguita è un lavoro** come gli altri: compare nell'elenco, **Ripeti** la rilancia dal suo file (non la ripianifica da cartelle) e il lavoro ricorda quale attività era.
+- **Il report conta solo se è fresco**: per un'attività il core cerca i report dove li scrive la sua configurazione e accetta solo quelli modificati dopo l'inizio dell'esecuzione (test con un report vecchio di un'ora: non rende pulita una run che non ha scritto nulla).
+- Provato dal vivo: salvata una copia da 25 file, aggiunto un file nuovo nella sorgente, **Esegui** dalla pagina Attività: ha copiato **1 file (32 B)** e saltato i 25 già presenti, cioè l'aggiornamento incrementale di robocopy che è il punto di forza di rustcopy.
+- Limiti: l'editor, la griglia delle proprietà e la creazione di pianificazioni non ci sono ancora (4b-4d e Fase 6). Un file `.toml` con percorsi relativi funziona perché la CLI parte nella sua cartella, ma non l'ho provato con un file «vero» dell'utente.
 
 ### 3.6 Consegna del cancello
 

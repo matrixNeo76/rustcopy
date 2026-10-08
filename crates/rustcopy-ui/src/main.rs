@@ -21,7 +21,7 @@ use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use robocopy_ingest::integrity::HashAlgorithm;
-use robocopy_ingest::sessions::{Session, SessionLog, SessionState, SessionSummary};
+use robocopy_ingest::sessions::{list_tasks, Session, SessionLog, SessionState, SessionSummary};
 use robocopy_ingest::{gui_api, runner};
 use slint::winit_030::{winit::event::WindowEvent, EventResult, WinitWindowAccessor};
 use slint::{ComponentHandle, ModelRc, SharedString, Timer, TimerMode, VecModel, Weak};
@@ -37,7 +37,7 @@ use crate::state::{running_fraction, Generation, RunSlot, Running};
 mod generated {
     slint::include_modules!();
 }
-use generated::{AppTray, AppWindow, SessionRow};
+use generated::{AppTray, AppWindow, SessionRow, TaskRow};
 
 /// Names the mutex and the pipe of the single window (E12).
 const INSTANCE_TAG: &str = "rustcopy-ui";
@@ -109,9 +109,49 @@ fn refresh(ui: &AppWindow, ctx: &Rc<Ctx>) {
     let rows: Vec<SessionRow> = list.iter().map(row_for).collect();
     ui.set_sessions(ModelRc::new(VecModel::from(rows)));
     *ctx.sessions.borrow_mut() = list;
+    refresh_tasks(ui, ctx);
     if ui.get_page() == 1 {
         let id = ui.get_selected_id().to_string();
         fill_detail(ui, ctx, &id);
+    }
+}
+
+/// Rereads the saved tasks and pairs each with how its latest run from this console went.
+fn refresh_tasks(ui: &AppWindow, ctx: &Rc<Ctx>) {
+    let sessions = ctx.sessions.borrow();
+    let rows: Vec<TaskRow> = list_tasks(&tasks_dir())
+        .into_iter()
+        .map(|task| {
+            let last = sessions
+                .iter()
+                .find(|s| s.task.as_deref() == Some(task.path.as_path()));
+            TaskRow {
+                path: task.path.to_string_lossy().into_owned().into(),
+                name: task.name.as_str().into(),
+                folders: format!("{}  →  {}", format::folder_names(&task.sources), task.dest)
+                    .into(),
+                last_state: last.map_or(-1, |s| state_number(s.state)),
+                last_when: last
+                    .map(|s| format::when_short(s.started_at))
+                    .unwrap_or_default()
+                    .into(),
+                verify: task.verify.map_or("", algorithm_name).into(),
+            }
+        })
+        .collect();
+    ui.set_tasks(ModelRc::new(VecModel::from(rows)));
+}
+
+/// Runs a saved task (or any configuration file) in place, as a lavoro of the list.
+fn start_task(ui: &AppWindow, ctx: &Rc<Ctx>, config: &Path) {
+    if ctx.slot.with(|run| run.is_running()) == Some(true) {
+        ui.set_error(ui.get_busy_text());
+        return;
+    }
+    ctx.open_when_done.set(false);
+    match ctx.log.begin_task(config) {
+        Ok(session) => run_session(ui, ctx, &session),
+        Err(error) => ui.set_error(error.to_string().into()),
     }
 }
 
@@ -372,6 +412,11 @@ fn main() -> Result<(), slint::PlatformError> {
                 .find(|s| s.id == id.as_str())
                 .cloned();
             if let Some(session) = found {
+                // A saved task is run again from its file, not re-planned from folders.
+                if let Some(task) = session.task.as_deref() {
+                    start_task(&ui, &ctx, task);
+                    return;
+                }
                 let chosen: Vec<PathBuf> = session.sources.iter().map(PathBuf::from).collect();
                 ctx.open_when_done.set(false);
                 start_copy(&ui, &ctx, &chosen, &session.dest, session.verify);
@@ -415,6 +460,44 @@ fn main() -> Result<(), slint::PlatformError> {
                     ui.set_save_message(error.to_string().into());
                 }
             }
+        });
+    }
+
+    // Saved tasks.
+    {
+        let weak = ui.as_weak();
+        let ctx = ctx.clone();
+        ui.on_show_tasks(move || {
+            if let Some(ui) = weak.upgrade() {
+                ui.set_error("".into());
+                refresh_tasks(&ui, &ctx);
+                ui.set_page(2);
+            }
+        });
+    }
+    {
+        let weak = ui.as_weak();
+        let ctx = ctx.clone();
+        ui.on_run_task(move |path| {
+            if let Some(ui) = weak.upgrade() {
+                start_task(&ui, &ctx, Path::new(path.as_str()));
+            }
+        });
+    }
+    {
+        let weak = ui.as_weak();
+        ui.on_run_config_file(move || {
+            let weak = weak.clone();
+            std::thread::spawn(move || {
+                let picked = rfd::FileDialog::new()
+                    .add_filter("Configurazione TOML", &["toml"])
+                    .pick_file();
+                let _ = weak.upgrade_in_event_loop(move |ui| {
+                    if let Some(path) = picked {
+                        ui.invoke_run_task(path.to_string_lossy().into_owned().into());
+                    }
+                });
+            });
         });
     }
 
