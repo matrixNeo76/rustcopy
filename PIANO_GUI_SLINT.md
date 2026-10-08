@@ -32,21 +32,29 @@ spunta solo dopo che è in `main`, con la CI verde e, se è un comportamento, pr
   - [ ] 4c editor a schede (scrive solo proposte; può restringere il rischio, mai allargarlo)
   - [ ] 4d storico delle esecuzioni e analisi `--advise`
   - [ ] 4e report completo di una run (liste di errori, fasi) nella console Slint
-- [ ] Fase 5 — parità con la console Tauri, installer, rimozione di Tauri (**con tua conferma esplicita**)
+- [ ] Fase 5 — parità con la console Tauri, installer, **toast di sistema (con AppUserModelID creato dall'installer)**, rimozione di Tauri (**con tua conferma esplicita**)
 - [ ] Fase 6 — funzioni che toccano il core (vedi sotto)
 
 ### Limiti noti e come li tratto
 | # | Limite | Cosa faccio | Stato |
 |---|---|---|---|
 | 1 | Con **pochi file enormi** la barra resta indeterminata e tempo residuo/grafico non dicono nulla fino alla fine di ciascun file | Voce da indagare nel core: verificare se il poller della destinazione può dare byte a metà file senza toccare il parser di robocopy. Se sì, lo propongo come modifica del core con test; se no, resta documentato | [ ] da indagare (dopo 4b) |
-| 2 | Notifica di sistema (toast) a fine copia non c'è; c'è solo il lampeggio sulla barra | Nessuna dipendenza nuova senza tua conferma. Proposta: valutare un crate con `cargo audit` e metterlo dietro una scelta tua | [?] decisione tua |
-| 3 | Il **lampeggio** della barra delle applicazioni non l'ho osservato | Lo verifichi tu: avvia una copia lunga, passa a un'altra finestra, guarda il pulsante di rustcopy | [?] verifica tua |
-| 4 | **RDP / macchina senza GPU**, **Narrator**, **DPI reale** non provati | Servono una sessione RDP, un audio e il cambio di scala di Windows: non li ho qui. Li elenco in una scheda di prova da eseguire su una macchina adatta prima della Fase 5 | [?] macchina adatta |
+| 2 | Notifica di sistema (toast) a fine copia non c'è; c'è solo il lampeggio sulla barra | **Decisione mia (9 Ott 2026): va fatta, ma nella Fase 5, non ora.** Un toast di un'applicazione non pacchettizzata funziona solo se l'applicazione ha un identificativo registrato (AppUserModelID) legato a un collegamento nel menu Start, e quel collegamento lo crea l'**installer**: senza, Windows scarta il toast in silenzio. Costo a regime: nessuno in prestazioni (una chiamata a fine copia, nessun processo residente); in compilazione e dimensione sì, perché porta con sé i binding WinRT. Sui Server con desktop funziona (Server 2016 e successivi); non su Server Core, dove la console non gira. Nel frattempo copre il caso il lampeggio della barra | [ ] Fase 5 (con l'installer) |
+| 3 | Il **lampeggio** della barra delle applicazioni non l'ho osservato | Nei **controlli finali** (§0, ultima sezione): copia lunga, passare a un'altra finestra, osservare il pulsante di rustcopy | [ ] controllo finale |
+| 4 | **RDP / macchina senza GPU**, **Narrator**, **DPI reale** non provati | Stesso trattamento del lampeggio: nei **controlli finali** (§0), da eseguire su una macchina adatta prima di dichiarare chiusa la Fase 5. Il rendering software non usa né OpenGL né Direct3D, quindi l'attesa è che funzioni, ma non è una prova | [ ] controllo finale |
 | 5 | Stato *Interrotta* | Provato dal vivo: finestra chiusa a metà di una copia da 8 GB, al riavvio il lavoro risulta *Interrotta* | [x] |
 | 6 | `.toml` scritto a mano con percorsi relativi | Provato dal vivo da «Esegui un file di configurazione...»: `source = "src"`, `dest = "out"`, 5 file copiati in `out` accanto al file, report accanto al file | [x] |
-| 7 | Espelli disco e spegni il PC «al termine» | Non li costruisco senza una tua decisione separata (cambiano lo stato del computer) | [?] decisione tua |
+| 7 | Espelli disco e spegni il PC «al termine» | **Spegni il PC: scartato** (lavori su server, dove non serve e sarebbe pericoloso). **Espelli disco: rimandato alla Fase 6**, con la casella visibile solo se la destinazione è su un'unità rimovibile; richiede una chiamata al sistema o al guscio di Windows e la gestione del caso «il disco è ancora in uso», che non vale la fase corrente per un uso raro su server | [ ] Fase 6 |
 | 8 | Allentare la regola di sicurezza (livelli Prudente / Standard / Esperto, creare pianificazioni, Sposta) | Fase 6, una funzione per volta, con i tre livelli come da §6 e SPEC §10.1 | [ ] |
-| 9 | D28: destinazione UNC con prefisso di percorso lungo errato nel core | Difetto del core, ereditato dalla console; da correggere in una PR del core, non dell'interfaccia | [ ] |
+| 9 | D28: destinazione UNC con prefisso di percorso lungo errato nel core | **Analizzato il 9 Ott 2026: era già corretto e chiuso il 21 Set** (`normalize_path_arg` produce `\\?\UNC\server\share\...`, con test su Windows); era la nota di `CLAUDE.md` a essere rimasta indietro, ora corretta. Provato anche dal vivo con una destinazione `\\localhost\C$` | [x] |
+
+### Controlli finali (su macchina adatta, prima di chiudere la Fase 5)
+- [ ] lampeggio del pulsante nella barra delle applicazioni quando una copia finisce e la finestra non ha il focus
+- [ ] avvio e uso in una sessione RDP e in una macchina virtuale senza accelerazione grafica
+- [ ] Narrator legge le schermate principali (Nuova copia, Attività, dettaglio di un lavoro)
+- [ ] scala di Windows al 125 %, 150 %, 200 %: nessun testo tagliato
+- [ ] tema scuro che segue il sistema, barra del titolo compresa
+- [ ] installazione su un Windows Server senza Visual C++ (D30)
 
 ### Fase 6
 - [ ] livello di sicurezza nelle Impostazioni (predefinito Prudente)
@@ -55,6 +63,7 @@ spunta solo dopo che è in `main`, con la CI verde e, se è un comportamento, pr
 - [ ] pausa/riprendi (Livello A, prova su SMB reale)
 - [ ] file singoli come origine
 - [ ] notifica via posta
+- [ ] «espelli il disco alla fine» (solo unità rimovibili)
 
 ## 1. Principi del piano
 
