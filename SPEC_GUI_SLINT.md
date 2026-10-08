@@ -40,7 +40,7 @@ Quando due requisiti confliggono, decidono questi tre, **in quest'ordine di impo
    PIANO §3.3) e della **copia** (non peggio di `robocopy` puro; il paragone "più veloce di TeraCopy e Cobian"
    va **dimostrato con un benchmark**, non assunto: `scripts/benchmark-threads.ps1`, `--compare-baseline`).
 2. **Robustezza.** Nessun dato perso o corrotto se il processo viene interrotto; un errore su un file non ferma
-   il resto (T4); predefiniti **non distruttivi** (TeraCopy propone *Salta*, Cobian non spunta "elimina i file di
+   il resto (T4); predefiniti **non distruttivi** (Cobian non spunta "elimina i file di
    backup"); scritture atomiche; ripresa da checkpoint; la finestra non si blocca mai; istanza unica.
 3. **Semplicità con profondità.** *Tutte* le funzioni raggiungibili in modo intuitivo, e **più tecnico quando serve**.
    Tre livelli per lo stesso lavoro, senza cambiare schermata:
@@ -175,7 +175,7 @@ Una **barra laterale** (come oggi, scala meglio dei menu classici di Cobian) con
 |  +--------------------------------------------------------------------------+     |
 |  Dove:  [ \\nas01\backup                              ]  [ Sfoglia... ]  < recenti >|
 |  Verifica: ( ) nessuna  (o) dopo la copia   Algoritmo: [ xxHash3  v ] veloce, non crittografico |
-|  Se il file esiste gia: [ Salta se uguale v ]                                       |
+|  Se il file esiste gia: copia solo se nuovo o cambiato (come sempre)                  |
 |  [ COPIA ]   [ Sposta ]  [ Verifica soltanto ]        < Opzioni avanzate v >        |
 |-----------------------------------------------------------------------------------|
 |  Elenco file | Destinazioni | Opzioni | Stato | Registro                            |
@@ -184,7 +184,7 @@ Una **barra laterale** (come oggi, scala meglio dei menu classici di Cobian) con
 - **Un solo punto d'azione** con i verbi vicini (T3). *Sposta* e *Elimina* sono visibili **solo dopo** la
   decisione sulla regola di sicurezza e su F46 🔒; fino ad allora non compaiono, non restano disattivati come promessa vuota.
 - **Anteprima** ("Controlla prima", già esistente in F95) integrata nell'elenco: file, cartelle, byte, spazio libero.
-- **Politica di collisione scelta prima di avviare** (T8), perché robocopy non può chiedere durante 🔒.
+- **Nessuna politica di collisione da scegliere: il comportamento di rustcopy è già quello giusto.** Robocopy copia i file nuovi o cambiati e salta quelli identici (stessa dimensione e stessa data): è ciò che rende un secondo passaggio quasi istantaneo e un aggiornamento veloce. Un «Salta se esiste già» alla TeraCopy **romperebbe** questo uso, perché non aggiornerebbe più i file modificati. Resta, solo se lo si vorrà, un'opzione facoltativa e disattivata di base: *non toccare i file più recenti in destinazione* (`/XO`). Vedi PIANO §6, decisione 10.
 - **Dopo la copia**: il riepilogo in una frase (già F93), con il pulsante **Salva come attività** (C1/C4) e
   **Ripeti**.
 
@@ -262,7 +262,7 @@ Legenda priorità: **M**ust, **S**hould, **C**ould, **W**on't (per ora). Stato: 
 | RF-C04 | Destinazione con recenti e preferiti, anche di rete | M | ✅ (F66) |
 | RF-C05 | Anteprima: file, cartelle, byte, spazio libero in destinazione | M | 🟡 (spazio libero solo a run avviata, F65) |
 | RF-C06 | Verifica dopo la copia con algoritmo visibile (pillola) e nota "veloce/non crittografico" | M | ✅ |
-| RF-C07 | Politica di collisione scelta prima (salta se uguale, sovrascrivi più recenti, sovrascrivi tutto) | S | 🟡 🔒 |
+| RF-C07 | **Aggiornamento incrementale**: copia solo i file nuovi o cambiati e salta gli identici (comportamento di robocopy, già in uso, invariato). Facoltativo e spento di base: «non toccare i file più recenti in destinazione» | M | ✅ il predefinito; 🟡 🔒 l'opzione facoltativa |
 | RF-C08 | "Mantieni entrambi" (rinomina) | C | ❌ 🔒 non esprimibile in robocopy |
 | RF-C09 | Sposta (copia, verifica, poi elimina l'origine) | S | ❌ 🔒 tocca la regola di sicurezza |
 | RF-C10 | Verifica soltanto (confronto origine/destinazione senza copiare) | S | 🟡 |
