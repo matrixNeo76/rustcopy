@@ -198,11 +198,7 @@ impl SessionLog {
         let sources: Vec<PathBuf> = pairs.iter().map(|(source, _)| source.clone()).collect();
         // A drop puts each folder *under* the destination the person chose: that parent is the
         // destination to show and to repeat with.
-        let dest = pairs[0]
-            .1
-            .parent()
-            .map(Path::to_path_buf)
-            .unwrap_or_else(|| pairs[0].1.clone());
+        let dest = lexical_parent(&pairs[0].1);
 
         let id = self.new_id();
         let dir = self.base.join(SESSIONS_DIR).join(&id);
@@ -385,6 +381,18 @@ impl SessionLog {
             saved_as: target.to_string_lossy().into_owned(),
         })?;
         Ok(target)
+    }
+}
+
+/// The folder that contains `path`, by string logic with both separators: `Path::parent` follows the
+/// *host's* separator rules, and these are Windows paths that must read the same on the Linux CI
+/// runner (the same reason `runner::plan_copy` is lexical). A path with no parent is returned as is.
+fn lexical_parent(path: &Path) -> PathBuf {
+    let text = path.to_string_lossy();
+    let trimmed = text.trim_end_matches(['\\', '/']);
+    match trimmed.rfind(['\\', '/']) {
+        Some(at) if at > 0 => PathBuf::from(&trimmed[..at]),
+        _ => path.to_path_buf(),
     }
 }
 
@@ -599,6 +607,27 @@ mod tests {
             listed[0].dest, r"D:\Archivio",
             "the destination the person chose, not the folder under it"
         );
+    }
+
+    #[test]
+    fn the_lexical_parent_reads_windows_paths_on_any_host() {
+        assert_eq!(
+            lexical_parent(Path::new(r"D:\Archivio\Foto")),
+            PathBuf::from(r"D:\Archivio")
+        );
+        assert_eq!(
+            lexical_parent(Path::new(r"D:\Archivio\Foto\")),
+            PathBuf::from(r"D:\Archivio")
+        );
+        assert_eq!(
+            lexical_parent(Path::new("D:/Archivio/Foto")),
+            PathBuf::from("D:/Archivio")
+        );
+        assert_eq!(
+            lexical_parent(Path::new(r"\\nas\share\x")),
+            PathBuf::from(r"\\nas\share")
+        );
+        assert_eq!(lexical_parent(Path::new("Foto")), PathBuf::from("Foto"));
     }
 
     #[test]
