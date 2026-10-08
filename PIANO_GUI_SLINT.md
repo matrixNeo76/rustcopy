@@ -28,7 +28,7 @@ spunta solo dopo che è in `main`, con la CI verde e, se è un comportamento, pr
 - [x] Fase 3 — lavoro immediato: elenco dei lavori, ripeti, salva come attività, verifica, tempo residuo, grafico, apri cartella
 - [~] Fase 4 — attività salvate e pianificate
   - [x] 4a attività salvate, esecuzione sul posto, esegui un file di configurazione
-  - [ ] 4b griglia delle proprietà di un'attività, di sola lettura, con da dove viene ogni valore
+  - [x] 4b griglia delle proprietà di un'attività, di sola lettura, con da dove viene ogni valore (pulsante «Proprietà» nella pagina Attività; tutto da `gui_api::read_settings`)
   - [ ] 4c editor a schede (scrive solo proposte; può restringere il rischio, mai allargarlo)
   - [ ] 4d storico delle esecuzioni e analisi `--advise`
   - [ ] 4e report completo di una run (liste di errori, fasi) nella console Slint

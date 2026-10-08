@@ -26,6 +26,16 @@ export struct TaskRow {
     verify: string,
 }
 
+// One line of the properties grid. `kind`: 0 job heading, 1 group heading, 2 setting.
+// `origin`: 0 written in the file, 1 inherited from the file's defaults, 2 rustcopy's own default.
+export struct PropRow {
+    kind: int,
+    key: string,
+    value: string,
+    origin: int,
+    caution: string,
+}
+
 export global SessionUi {
     pure public function state-text(state: int) -> string {
         return state == 0 ? Strings.state-clean : (state == 1 ? Strings.state-dry-run : (state == 2 ? Strings.state-look : (state == 3 ? Strings.state-interrupted : Strings.state-running)));
@@ -91,6 +101,7 @@ export component TaskItem inherits Rectangle {
     in property <TaskRow> entry;
     in property <bool> enabled: true;
     callback run();
+    callback details();
     height: 76px;
     border-radius: Theme.radius;
     border-width: 1px;
@@ -134,6 +145,13 @@ export component TaskItem inherits Rectangle {
                     color: Theme.text-muted;
                     vertical-alignment: center;
                 }
+            }
+        }
+        Button {
+            text: Strings.task-details;
+            horizontal-stretch: 0;
+            clicked => {
+                root.details();
             }
         }
         Button {
