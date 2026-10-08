@@ -21,23 +21,29 @@ For full technical detail behind any entry, see `ANALYSIS.md` (defect list, `D<N
 
 ## [Unreleased]
 
-### Fixed
-- **The console no longer imports the dynamic C runtime again** (F92). Updating `tauri-build` to 2.7 turned
-  on a new default (`staticVCRuntime`) that linked the Visual C++ runtime statically but the Universal C
-  runtime dynamically, so `rustcopy-gui.exe` started importing `api-ms-win-crt-*` DLLs. It is switched off
-  in the console's Tauri configuration, and the installer test in CI now also runs when `Cargo.lock` or the
-  console changes.
+## [7.8.1] - 2026-10-08
 
 ### Changed
 - **Console: a clearer visual system on Job and Report** (F94). Larger text (14px body, 12px minimum),
   headline numbers in cards (files, size, duration, speed) on Report and a summary row (jobs, last run ok,
   to check, never run) on Job, taller table rows, a bigger sidebar. The other tabs keep their current look
   until the same rules are applied to them.
+- Dependencies: `tauri` 2.12, `tauri-build` 2.7, the dialog and notification plugins, `tokio`, `toml`,
+  `clap`, `dirs` 7, `xxhash-rust`, `thiserror`. Tried on a release build of the console (folder picker,
+  copy, run attach, end-of-run notification) and on the full test suites before merging.
 
 ### Fixed
 - **Explorer drag-and-drop no longer offers "Copia con RustCopy" for an unsafe drop** (a target inside
   a dragged folder, a whole drive, two dragged folders with the same name). Before, dropping a folder
   into one of its own subfolders started a copy that kept copying itself.
+- **The console no longer imports the dynamic C runtime again** (F92). Updating `tauri-build` to 2.7 turned
+  on a new default (`staticVCRuntime`) that linked the Visual C++ runtime statically but the Universal C
+  runtime dynamically, so `rustcopy-gui.exe` started importing `api-ms-win-crt-*` DLLs. It is switched off
+  in the console's Tauri configuration, and the installer test in CI now also runs when `Cargo.lock` or the
+  console changes.
+- The "Copia" tab clears a refusal message as soon as the folders or the destination change.
+- CI: the dependency audit no longer fails on Dependabot pull requests (their read-only token cannot
+  create the check run the audit action reports through).
 
 ## [7.8.0] - 2026-10-07
 
