@@ -72,6 +72,7 @@ Le regole di sicurezza chiave (nessun comando che copi, cancelli, pianifichi o i
 | C07 | Una **sola** casella di percorso condivisa per config/report (stato di sessione), **non** una per pannello | Era ciò che rendeva l'app inutilizzabile | UI | Stato di sessione unico nel viewmodel | Revisione |
 | C08 | **Recenti/Preferiti** nel selettore: pannello sovrapposto che **non occupa spazio** nel layout | Il pannello copriva il testo seguente; il margine collassava | UI (Tauri: `mb-8`) | `PopupWindow` di Slint: non è nel layout, quindi il difetto non esiste; verificare comunque | Dal vivo con una voce |
 | C09 | **Explorer**: la voce "Copia con RustCopy" **non compare** per un drop non sicuro (`plan_drop`); mai un dialogo né un panic; il drop non lancia mai la CLI in silenzio, passa dalla console | Annidamento; la copia silenziosa lasciava l'operatore senza feedback | Core + DLL Shell | Nessun cambiamento alla DLL; la console accetta `--auto-config` | Dal vivo da Explorer |
+| C11 | Una destinazione **UNC** (`\\server\share`) funziona dalla scheda Copia come dal drop di Explorer (thread conservativi, C02); **D28 è aperto** nel core: `normalize_path_arg` costruisce un prefisso di percorso lungo non valido per UNC | Il difetto vive nel core e la nuova interfaccia lo eredita | Core (aperto) | Nessun codice UI; **provare dal vivo una destinazione UNC** prima del rilascio e non dichiarare risolto ciò che D28 non risolve | Dal vivo con `\\localhost\C$\...` |
 | C10 | **Drop sulla finestra**: una cartella trascinata si aggiunge all'elenco (winit `DroppedFile`) | Gesto primario di TeraCopy | Nuovo | Già nel prototipo; aggiungere gestione file singoli (decisione 12) e conflitti con `plan_copy` | Dal vivo (fatto nella Fase 1) |
 
 ## 4. Editor e impostazioni di job
@@ -115,11 +116,12 @@ Le regole di sicurezza chiave (nessun comando che copi, cancelli, pianifichi o i
 | I06 | La GUI è **esclusa** dai job cross-platform e ha job propri; **non rientra in `--workspace`** senza le librerie | `webkit2gtk` su Linux (Tauri); Slint non lo richiede ma il prodotto è Windows-nativo | CI | `--exclude rustcopy-ui` (fatto) + job `windows-latest` | CI |
 | I07 | `cargo` in CI **sempre `--locked`**; mai tolto per far tornare verde un job | Un `Cargo.lock` non allineato è un errore del ramo | CI | Stesso | CI |
 | I08 | **Chiudere `rustcopy-gui.exe` prima di una build release** e controllarne `ProductVersion` prima di ISCC | Il file bloccato nascondeva un fallimento | Procedura | Vale anche per `rustcopy-ui.exe` | Procedura di rilascio |
+| I10 | Il binario **installato** non dipende da risorse di sviluppo né da un server locale: parte da solo su una macchina pulita (D22: la console Tauri caricava il server di sviluppo e mostrava `ERR_CONNECTION_REFUSED`) | Una release costruita nel modo sbagliato falliva ovunque tranne sul PC dello sviluppatore | Tauri → Nuovo | Slint non ha un server di sviluppo da caricare; resta da provare **dall'installer** su una macchina senza il repository (job `install-windows-server-2022` e prova a mano) | Installer smoke + prova su macchina pulita |
 | I09 | **Niente `unwrap`/`expect` in codice di produzione** senza `#[allow]` motivato | Panic in un'interfaccia o nella shell | CI | Il job clippy include `rustcopy-ui --bins` | CI |
 
 ## 7. Stato e conteggi
 
-Righe: 13 confini, 12 esecuzione, 10 copia/Explorer, 12 editor, 7 aspetto, 9 build. **63** voci. Quelle marcate **Nuovo**
+Righe: 13 confini, 12 esecuzione, 11 copia/Explorer, 12 editor, 7 aspetto, 10 build. **65** voci. Quelle marcate **Nuovo**
 (E09, E12, A04, A05, A06, A07, C10 in parte) sono i requisiti che nascono dalla specifica, non da un difetto passato.
 
 ## 8. Come si usa questo catalogo
@@ -139,4 +141,5 @@ Righe: 13 confini, 12 esecuzione, 10 copia/Explorer, 12 editor, 7 aspetto, 9 bui
   difetti D1-D30 resta da fare quando si arriva alle schermate corrispondenti.
 - **C08 è un'ipotesi favorevole**: `PopupWindow` non sta nel layout, ma non ho provato un pannello Recenti reale.
 - **E09 e A04** sono funzioni che non esistono ancora; la verifica "dal vivo" dipende dal tray (non riuscito nella Fase 1).
-- **Il conteggio 63** è fatto a mano e può non riflettere righe aggiunte dopo.
+- **Il conteggio 65** è fatto a mano e può non riflettere righe aggiunte dopo.
+- **Revisione contro D1-D30 fatta (8 Ott 2026)**: dei difetti documentati, quelli che toccano la console sono D22, D24, D25, D26, D28, D29, D30; D24 (G06), D26 (J12), D30 (I03) e D25 (core, `--resume-from`) erano già coperti; D22 (I10) e D28 (C11) sono state aggiunte; D29 riguarda solo la DLL Shell, invariata. D1-D21, D23 e D27 vivono nel core o nella CLI e la nuova interfaccia li eredita senza codice proprio.

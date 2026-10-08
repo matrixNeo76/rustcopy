@@ -44,7 +44,7 @@ ogni funzione nuova della Fase 6 entra solo con un predefinito non distruttivo.
 |---|---|---|---|---|
 | **0** | Studio, specifica, piano; completamento dello studio dal vivo | questo pacchetto | Tre documenti | **Conferma dell'utente sulle decisioni di §6 e sull'avvio della Fase 1** |
 | **1** | Prova tecnica a tempo (spike) su ramo isolato | 3-5 giorni | Un prototipo **usa e getta** di Copia + Report e una tabella di misure | **Go / No-go** secondo §3. ✅ **Eseguita il 8 Ott 2026: GO condizionato, §3.5** |
-| **2** | Fondamenta e catalogo dei comportamenti | 1-2 settimane | Crate `rustcopy-ui`, tema, componenti, estrazione dei comportamenti validati dal vivo | Conferma prima delle schermate vere. ✅ **Fondamenta pronte l'8 Ott 2026** (catalogo di 63 voci, token, stringhe, componenti, istanza unica, tray, job CI); resta da fare la revisione del catalogo contro D1-D30 |
+| **2** | Fondamenta e catalogo dei comportamenti | 1-2 settimane | Crate `rustcopy-ui`, tema, componenti, estrazione dei comportamenti validati dal vivo | Conferma prima delle schermate vere. ✅ **Fondamenta pronte l'8 Ott 2026** (catalogo di 65 voci, token, stringhe, componenti, istanza unica, tray, job CI); revisione del catalogo contro D1-D30 fatta |
 | **3** | **Lavoro immediato** (ingresso TeraCopy) | 2-3 settimane | Nuova copia, esecuzione, elenco dei lavori con esito, istanza unica | Prova dal vivo + conferma |
 | **4** | **Lavori salvati e pianificati** (ingresso Cobian) | 3-4 settimane | Salva come attività, griglia proprietà, editor a schede, storico | Prova dal vivo + conferma |
 | **5** | Parità con la console attuale e rimozione di Tauri | 1-2 settimane | Installer unico con la nuova console; Tauri rimosso | **Conferma esplicita prima di cancellare** |
