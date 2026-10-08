@@ -21,6 +21,13 @@ For full technical detail behind any entry, see `ANALYSIS.md` (defect list, `D<N
 
 ## [Unreleased]
 
+### Fixed
+- **The console no longer imports the dynamic C runtime again** (F92). Updating `tauri-build` to 2.7 turned
+  on a new default (`staticVCRuntime`) that linked the Visual C++ runtime statically but the Universal C
+  runtime dynamically, so `rustcopy-gui.exe` started importing `api-ms-win-crt-*` DLLs. It is switched off
+  in the console's Tauri configuration, and the installer test in CI now also runs when `Cargo.lock` or the
+  console changes.
+
 ### Changed
 - **Console: a clearer visual system on Job and Report** (F94). Larger text (14px body, 12px minimum),
   headline numbers in cards (files, size, duration, speed) on Report and a summary row (jobs, last run ok,

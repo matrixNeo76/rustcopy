@@ -23,7 +23,11 @@ on:
       - ".github/workflows/installer-smoke.yml"
       - ".cargo/**"
       - "Cargo.toml"
-      - "crates/rustcopy-gui/tauri.conf.json"
+      - "crates/rustcopy-gui/**"
+      # A lockfile-only change can still change what the binaries link: tauri-build 2.7 turned on
+      # `staticVCRuntime` by default and the console quietly started importing the dynamic UCRT
+      # (found by this very job, on a Dependabot lockfile bump that touched no installer file).
+      - "Cargo.lock"
   workflow_dispatch:
 
 env:

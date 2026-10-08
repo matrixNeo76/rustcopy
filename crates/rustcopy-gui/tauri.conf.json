@@ -7,7 +7,10 @@
     "frontendDist": "ui/dist",
     "devUrl": "http://localhost:5173",
     "beforeDevCommand": "npm --prefix ui run dev",
-    "beforeBuildCommand": "npm --prefix ui run build"
+    "beforeBuildCommand": "npm --prefix ui run build",
+    "windows": {
+      "staticVCRuntime": false
+    }
   },
   "app": {
     "windows": [
