@@ -65,7 +65,9 @@ pub fn is_shell_drop_config(path: &Path, dir: &Path) -> bool {
     // The temp directory may be spelled in its 8.3 short form by one process and in its long form by
     // another; resolving both avoids refusing the Explorer extension's own file.
     let same = |a: &Path, b: &Path| match (std::fs::canonicalize(a), std::fs::canonicalize(b)) {
-        (Ok(x), Ok(y)) => x.to_string_lossy().eq_ignore_ascii_case(&y.to_string_lossy()),
+        (Ok(x), Ok(y)) => x
+            .to_string_lossy()
+            .eq_ignore_ascii_case(&y.to_string_lossy()),
         _ => a
             .to_string_lossy()
             .trim_end_matches(['\\', '/'])
