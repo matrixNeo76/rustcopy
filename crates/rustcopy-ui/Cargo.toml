@@ -23,6 +23,10 @@ slint = { version = "1.18", default-features = false, features = [
     "unstable-winit-030",
 ] }
 rfd = { version = "0.17", default-features = false }
+chrono.workspace = true
+# Resolves the real "Documents" folder where saved tasks go; already the effective version in the tree
+# (the Tauri console declares it too).
+dirs = "7"
 # Named mutex and pipe for the single window. Already the effective version in the tree (see the
 # workspace comment on windows-sys): only the Win32 modules this crate needs are enabled.
 windows-sys = { version = "0.61", features = ["Win32_Foundation", "Win32_Security", "Win32_Storage_FileSystem", "Win32_System_IO", "Win32_System_Pipes", "Win32_System_Threading"] }

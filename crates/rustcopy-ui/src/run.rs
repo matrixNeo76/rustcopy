@@ -16,7 +16,6 @@ use crate::state::Running;
 pub struct ActiveRun {
     child: Child,
     cancel_file: PathBuf,
-    config: PathBuf,
 }
 
 impl Running for ActiveRun {
@@ -25,10 +24,9 @@ impl Running for ActiveRun {
     }
 }
 
-/// How a run ended, with the report it left (if any).
+/// How a run ended. The reports it left are found and read by the core's sessions log.
 pub struct Finished {
     pub exit_code: i32,
-    pub report: Option<PathBuf>,
 }
 
 impl ActiveRun {
@@ -70,7 +68,6 @@ impl ActiveRun {
         Ok(Self {
             child,
             cancel_file: cancel,
-            config,
         })
     }
 
@@ -88,14 +85,8 @@ impl ActiveRun {
     /// `Some` once the child has exited.
     pub fn finished(&mut self) -> Option<Finished> {
         let status = self.child.try_wait().ok().flatten()?;
-        let report = self
-            .config
-            .parent()
-            .map(|dir| dir.join("robocopy_ingest_report.json"))
-            .filter(|path| path.exists());
         Some(Finished {
             exit_code: status.code().unwrap_or(-1),
-            report,
         })
     }
 }

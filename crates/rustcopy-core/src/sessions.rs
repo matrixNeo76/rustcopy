@@ -158,11 +158,7 @@ impl SessionLog {
         dest: &Path,
         items: &[(PathBuf, PathBuf)],
     ) -> Result<Session, IngestError> {
-        let id = format!(
-            "{}-{:03}",
-            chrono::Local::now().format("%Y%m%d-%H%M%S"),
-            SEQUENCE.fetch_add(1, Ordering::Relaxed) % 1000
-        );
+        let id = self.new_id();
         let dir = self.base.join(SESSIONS_DIR).join(&id);
         std::fs::create_dir_all(&dir).map_err(|e| IngestError::io(&dir, e))?;
         let config = dir.join("config.toml");
@@ -177,6 +173,64 @@ impl SessionLog {
             dest: dest.to_string_lossy().into_owned(),
         })?;
         Ok(Session { id, dir, config })
+    }
+
+    /// Begins a session for a configuration written elsewhere (the Explorer extension's drop file):
+    /// the file is copied into the session's folder and its folders are read back, so the list shows
+    /// the same thing whichever way the copy was started. A file with no source/destination pair is
+    /// refused.
+    pub fn begin_from_config(&self, config: &Path) -> Result<Session, IngestError> {
+        let parsed = crate::config::IngestConfig::load_from(config)?;
+        let jobs: Vec<&crate::config::JobConfig> = match parsed.jobs.as_ref() {
+            Some(jobs) if !jobs.is_empty() => jobs.iter().collect(),
+            _ => vec![&parsed.defaults],
+        };
+        let pairs: Vec<(PathBuf, PathBuf)> = jobs
+            .iter()
+            .filter_map(|job| Some((job.source.clone()?, job.dest.clone()?)))
+            .collect();
+        if pairs.is_empty() {
+            return Err(IngestError::CopyPlanInvalid(
+                "La configurazione non contiene nessuna coppia cartella di origine / destinazione."
+                    .to_string(),
+            ));
+        }
+        let sources: Vec<PathBuf> = pairs.iter().map(|(source, _)| source.clone()).collect();
+        // A drop puts each folder *under* the destination the person chose: that parent is the
+        // destination to show and to repeat with.
+        let dest = pairs[0]
+            .1
+            .parent()
+            .map(Path::to_path_buf)
+            .unwrap_or_else(|| pairs[0].1.clone());
+
+        let id = self.new_id();
+        let dir = self.base.join(SESSIONS_DIR).join(&id);
+        std::fs::create_dir_all(&dir).map_err(|e| IngestError::io(&dir, e))?;
+        let copied = dir.join("config.toml");
+        std::fs::copy(config, &copied).map_err(|e| IngestError::io(&copied, e))?;
+        self.append(&Line::Started {
+            id: id.clone(),
+            at: Utc::now(),
+            sources: sources
+                .iter()
+                .map(|p| p.to_string_lossy().into_owned())
+                .collect(),
+            dest: dest.to_string_lossy().into_owned(),
+        })?;
+        Ok(Session {
+            id,
+            dir,
+            config: copied,
+        })
+    }
+
+    fn new_id(&self) -> String {
+        format!(
+            "{}-{:03}",
+            chrono::Local::now().format("%Y%m%d-%H%M%S"),
+            SEQUENCE.fetch_add(1, Ordering::Relaxed) % 1000
+        )
     }
 
     /// Logs how a session ended. The reports it left are found in its folder and read by the core, so
@@ -526,6 +580,34 @@ mod tests {
                 .is_none(),
             "nothing written"
         );
+    }
+
+    #[test]
+    fn a_drop_configuration_becomes_a_session_with_its_folders() {
+        let base = tempfile::tempdir().expect("tempdir");
+        let drops = tempfile::tempdir().expect("tempdir");
+        let log = SessionLog::at(base.path());
+        let drop = drops.path().join("shell-drop-1.toml");
+        runner::write_shell_drop_config(&[pair(r"C:\Dati\Foto", r"D:\Archivio\Foto")], &drop)
+            .expect("write");
+
+        let session = log.begin_from_config(&drop).expect("begin");
+        assert!(session.config.exists());
+        let listed = log.list(10, Some(&session.id));
+        assert_eq!(listed[0].sources, vec![r"C:\Dati\Foto".to_string()]);
+        assert_eq!(
+            listed[0].dest, r"D:\Archivio",
+            "the destination the person chose, not the folder under it"
+        );
+    }
+
+    #[test]
+    fn a_configuration_without_folders_is_refused() {
+        let base = tempfile::tempdir().expect("tempdir");
+        let empty = base.path().join("empty.toml");
+        std::fs::write(&empty, "threads = 4\n").expect("write");
+        let log = SessionLog::at(base.path());
+        assert!(log.begin_from_config(&empty).is_err());
     }
 
     #[test]

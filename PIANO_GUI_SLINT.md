@@ -45,7 +45,7 @@ ogni funzione nuova della Fase 6 entra solo con un predefinito non distruttivo.
 | **0** | Studio, specifica, piano; completamento dello studio dal vivo | questo pacchetto | Tre documenti | **Conferma dell'utente sulle decisioni di §6 e sull'avvio della Fase 1** |
 | **1** | Prova tecnica a tempo (spike) su ramo isolato | 3-5 giorni | Un prototipo **usa e getta** di Copia + Report e una tabella di misure | **Go / No-go** secondo §3. ✅ **Eseguita il 8 Ott 2026: GO condizionato, §3.5** |
 | **2** | Fondamenta e catalogo dei comportamenti | 1-2 settimane | Crate `rustcopy-ui`, tema, componenti, estrazione dei comportamenti validati dal vivo | Conferma prima delle schermate vere. ✅ **Fondamenta pronte l'8 Ott 2026** (catalogo di 65 voci, token, stringhe, componenti, istanza unica, tray, job CI); revisione del catalogo contro D1-D30 fatta |
-| **3** | **Lavoro immediato** (ingresso TeraCopy) | 2-3 settimane | Nuova copia, esecuzione, elenco dei lavori con esito, istanza unica | Prova dal vivo + conferma |
+| **3** | **Lavoro immediato** (ingresso TeraCopy) | 2-3 settimane | Nuova copia, esecuzione, elenco dei lavori con esito, istanza unica | Prova dal vivo + conferma. 🟡 **3a e 3c fatte l'8 Ott 2026** (elenco dei lavori con esito, ripeti, salva come attività, istanza unica); restano 3b (ETA e grafico di velocità) e 3d (opzioni della sessione) |
 | **4** | **Lavori salvati e pianificati** (ingresso Cobian) | 3-4 settimane | Salva come attività, griglia proprietà, editor a schede, storico | Prova dal vivo + conferma |
 | **5** | Parità con la console attuale e rimozione di Tauri | 1-2 settimane | Installer unico con la nuova console; Tauri rimosso | **Conferma esplicita prima di cancellare** |
 | **6** | Funzioni nuove che dipendono dal core | a richiesta | Pausa, collisioni, sposta, creazione pianificazioni, posta… | Una decisione per funzione |
@@ -193,6 +193,28 @@ del toolkit**: sono funzioni da costruire, non limiti della libreria.
   temporanea di rustcopy; ogni altra richiesta è rifiutata **e mostrata**. Provato in 14 test, uno dei quali a due istanze.
 - **RDP e Narrator: ancora non provati** (nessuna sessione RDP né audio su questa macchina); restano condizioni da chiudere
   su una macchina adatta, non bloccano la costruzione.
+
+### 3.5c Fase 3, prima parte (8 Ott 2026)
+
+Costruito e provato sul binario compilato:
+
+- **Elenco dei lavori** nella barra laterale, con vita ed esito a colpo d'occhio (*Riuscita, Simulazione, Da controllare,
+  Interrotta, In corso*), data breve e, a copia finita, file e dimensione. Il giudizio "come è finita" è del core
+  (`sessions::SessionLog`, nuovo modulo con 10 test): pulita secondo la lettura di successo di robocopy, mai dal codice di
+  uscita; nessun report non è mai "riuscita"; una copia partita e mai finita è "interrotta".
+- **Dettaglio di un lavoro** con le quattro schede numeriche, il motivo se c'è qualcosa da controllare (letto dal report su un
+  thread a parte, scartato se nel frattempo si apre un altro lavoro) e i due gesti **Ripeti** (stesse cartelle, di nuovo
+  pianificate dal core) e **Salva come attività** (stesso testo di configurazione di un drop più un nome validato; non
+  sovrascrive mai; non può contenere mirror, pulizia, verifica né cifratura: lo prova un test).
+- **Un lavoro nasce allo stesso modo** dalla finestra, da un secondo avvio e da Esplora file (`begin_from_config`).
+- Prova dal vivo: tre lavori in elenco, Ripeti (0 file, già aggiornata), salvataggio in un file `.toml` con solo nome, origine
+  e destinazione, copia di 2,2 GB su una condivisione di rete a 291 MB/s con la riga che passa da *In corso* a *Riuscita*.
+- Impronta dopo questa fase: 1 processo, 7 MB privati, 27 MB di working set, 0,23 s al primo contenuto, 14,9 MB di eseguibile.
+
+Non ancora: ETA e grafico di velocità (3b), opzioni della sessione dentro la sessione (3d), la verifica a fine copia dalla
+scheda Copia. Quest'ultima richiede di cambiare una prescrizione di CLAUDE.md (`prepare_copy` non inoltra la verifica):
+non è un divieto di sicurezza, la verifica non cancella nulla, ma lo faccio con un tipo che **non può** portare mirror né
+pulizia, non con un parametro libero.
 
 ### 3.6 Consegna del cancello
 

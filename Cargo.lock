@@ -5887,6 +5887,8 @@ dependencies = [
 name = "rustcopy-ui"
 version = "7.8.1"
 dependencies = [
+ "chrono",
+ "dirs",
  "rfd 0.17.2",
  "rustcopy-core",
  "slint",
