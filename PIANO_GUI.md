@@ -2122,3 +2122,10 @@ Riuso, non duplicazione: `runner::write_shell_drop_config` (la configurazione us
 
 - Leggendo `rustcopy-shell` per riusare la regola di destinazione è emerso che `spawn.rs` fa `drop_target.join(name)` senza alcun controllo di annidamento: trascinare `C:\a` su `C:\a\sub` non è protetto lì. Non corretto in questa onda (altro crate, altro processo di rilascio); segnalato in ROADMAP F95.
 - Il confronto fra percorsi è su stringhe e non su `Path`: i test girano su Linux in CI, dove `Path` non riconosce `\` come separatore (stessa lezione di D16).
+
+### 22.4 Esito del prototipo V (8 Ott 2026, implementato come **F94**)
+
+Il prototipo su Job e Report (schede numeriche, testo 14px/12px, riepilogo di Job) è stato visto dall'utente
+sul binario reale e approvato. Resta da estendere il sistema alle altre schede: non è stato fatto, e non lo
+fa nessun documento qui sopra per lui. La barra di avanzamento con velocità e tempo residuo dipende da
+un dato che il core non pubblica ancora per la fase di verifica (avanza per file, non per byte).
