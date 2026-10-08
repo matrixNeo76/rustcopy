@@ -112,3 +112,29 @@ export component NavItem inherits Rectangle {
         font-weight: root.selected ? 700 : 400;
     }
 }
+
+// A line of recent speeds. `commands` is an SVG path in a 240 x 56 box, built by the Rust side from
+// the samples (so the drawing rule is unit-tested, not buried in the layout).
+export component SpeedChart inherits Rectangle {
+    in property <string> commands;
+    in property <string> label;
+    height: 64px;
+    border-radius: Theme.radius;
+    border-width: 1px;
+    border-color: Theme.border;
+    background: Theme.surface;
+    accessible-role: AccessibleRole.text;
+    accessible-label: root.label;
+    Path {
+        x: 4px;
+        y: 4px;
+        width: parent.width - 8px;
+        height: parent.height - 8px;
+        viewbox-width: 240;
+        viewbox-height: 56;
+        commands: root.commands;
+        stroke: Theme.info;
+        stroke-width: 2px;
+        fill: transparent;
+    }
+}

@@ -69,6 +69,9 @@ Le regole di sicurezza chiave (nessun comando che copi, cancelli, pianifichi o i
 | L04 | Una copia **ripetuta** è pianificata di nuovo dal core (`plan_copy`), non riusa il vecchio file | Le cartelle possono essere cambiate nel frattempo | Core + UI | `start_copy` con le cartelle del lavoro | Dal vivo: Ripeti dà 0 file se è già aggiornata |
 | L05 | Il motivo di un "da controllare" si legge dal report **su un thread a parte** e si scarta se nel frattempo si apre un altro lavoro | Un report grande non deve bloccare la finestra; risposta lenta sopra risposta nuova | UI | `Generation` + `upgrade_in_event_loop` | Test del contatore + dal vivo |
 | L06 | Un lavoro che **non è partito** (un'altra copia attiva, errore di avvio) è chiuso nel log, non lasciato "avviato" | Altrimenti comparirebbe come interrotto | UI | `finish` con codice -1 | Revisione |
+| L07 | La **verifica** è l'unica opzione che una copia della console può aggiungere: tipo `Option<HashAlgorithm>`, mai un campo libero; il lavoro la ricorda, la ripete e la porta nell'attività salvata | Una console che avvia copie non deve poter allargare il rischio | Core | `begin_with(..., verify)` | Test: nessuna parola vietata con la verifica attiva |
+| L08 | Il **tempo residuo** lo calcola il core e sa tacere (fase diversa, totale ignoto, troppo presto, assurdo) | Una stima inventata da un numero mancante sembra conoscenza | Core | Mostrare `eta_seconds()` solo se `Some` | 3 test del core |
+| L09 | Il **grafico** non disegna nulla senza dati; la velocità usa MB = 10⁶ byte come il core | Una linea piatta dice «fermo»; due unità diverse mostrano numeri diversi per la stessa copia | UI | `format::chart_path`, `throughput_mbps` | Test di unità |
 
 ## 3. Copia, anteprima, Explorer
 
@@ -132,7 +135,7 @@ Le regole di sicurezza chiave (nessun comando che copi, cancelli, pianifichi o i
 
 ## 7. Stato e conteggi
 
-Righe: 13 confini, 12 esecuzione, 6 lavori, 11 copia/Explorer, 12 editor, 7 aspetto, 10 build. **71** voci. Quelle marcate **Nuovo**
+Righe: 13 confini, 12 esecuzione, 9 lavori, 11 copia/Explorer, 12 editor, 7 aspetto, 10 build. **74** voci. Quelle marcate **Nuovo**
 (E09, E12, A04, A05, A06, A07, C10 in parte) sono i requisiti che nascono dalla specifica, non da un difetto passato.
 
 ## 8. Come si usa questo catalogo
@@ -152,5 +155,5 @@ Righe: 13 confini, 12 esecuzione, 6 lavori, 11 copia/Explorer, 12 editor, 7 aspe
   difetti D1-D30 resta da fare quando si arriva alle schermate corrispondenti.
 - **C08 è un'ipotesi favorevole**: `PopupWindow` non sta nel layout, ma non ho provato un pannello Recenti reale.
 - **E09 e A04** sono funzioni che non esistono ancora; la verifica "dal vivo" dipende dal tray (non riuscito nella Fase 1).
-- **Il conteggio 71** è fatto a mano e può non riflettere righe aggiunte dopo.
+- **Il conteggio 74** è fatto a mano e può non riflettere righe aggiunte dopo.
 - **Revisione contro D1-D30 fatta (8 Ott 2026)**: dei difetti documentati, quelli che toccano la console sono D22, D24, D25, D26, D28, D29, D30; D24 (G06), D26 (J12), D30 (I03) e D25 (core, `--resume-from`) erano già coperti; D22 (I10) e D28 (C11) sono state aggiunte; D29 riguarda solo la DLL Shell, invariata. D1-D21, D23 e D27 vivono nel core o nella CLI e la nuova interfaccia li eredita senza codice proprio.

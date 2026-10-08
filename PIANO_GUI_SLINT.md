@@ -45,7 +45,7 @@ ogni funzione nuova della Fase 6 entra solo con un predefinito non distruttivo.
 | **0** | Studio, specifica, piano; completamento dello studio dal vivo | questo pacchetto | Tre documenti | **Conferma dell'utente sulle decisioni di §6 e sull'avvio della Fase 1** |
 | **1** | Prova tecnica a tempo (spike) su ramo isolato | 3-5 giorni | Un prototipo **usa e getta** di Copia + Report e una tabella di misure | **Go / No-go** secondo §3. ✅ **Eseguita il 8 Ott 2026: GO condizionato, §3.5** |
 | **2** | Fondamenta e catalogo dei comportamenti | 1-2 settimane | Crate `rustcopy-ui`, tema, componenti, estrazione dei comportamenti validati dal vivo | Conferma prima delle schermate vere. ✅ **Fondamenta pronte l'8 Ott 2026** (catalogo di 65 voci, token, stringhe, componenti, istanza unica, tray, job CI); revisione del catalogo contro D1-D30 fatta |
-| **3** | **Lavoro immediato** (ingresso TeraCopy) | 2-3 settimane | Nuova copia, esecuzione, elenco dei lavori con esito, istanza unica | Prova dal vivo + conferma. 🟡 **3a e 3c fatte l'8 Ott 2026** (elenco dei lavori con esito, ripeti, salva come attività, istanza unica); restano 3b (ETA e grafico di velocità) e 3d (opzioni della sessione) |
+| **3** | **Lavoro immediato** (ingresso TeraCopy) | 2-3 settimane | Nuova copia, esecuzione, elenco dei lavori con esito, istanza unica | Prova dal vivo + conferma. 🟡 **3a, 3b e 3c fatte e 3d iniziata l'8 Ott 2026** (elenco dei lavori, ripeti, salva come attività, istanza unica, tempo residuo, grafico di velocità, verifica a fine copia); restano nella 3d le politiche di collisione e «al termine» |
 | **4** | **Lavori salvati e pianificati** (ingresso Cobian) | 3-4 settimane | Salva come attività, griglia proprietà, editor a schede, storico | Prova dal vivo + conferma |
 | **5** | Parità con la console attuale e rimozione di Tauri | 1-2 settimane | Installer unico con la nuova console; Tauri rimosso | **Conferma esplicita prima di cancellare** |
 | **6** | Funzioni nuove che dipendono dal core | a richiesta | Pausa, collisioni, sposta, creazione pianificazioni, posta… | Una decisione per funzione |
@@ -215,6 +215,28 @@ Non ancora: ETA e grafico di velocità (3b), opzioni della sessione dentro la se
 scheda Copia. Quest'ultima richiede di cambiare una prescrizione di CLAUDE.md (`prepare_copy` non inoltra la verifica):
 non è un divieto di sicurezza, la verifica non cancella nulla, ma lo faccio con un tipo che **non può** portare mirror né
 pulizia, non con un parametro libero.
+
+### 3.5d Fase 3, seconda parte (8 Ott 2026): verifica, tempo residuo, grafico
+
+- **Verifica a fine copia** dalla scheda Nuova copia: una casella e tre algoritmi (xxHash3 veloce, SHA-256, BLAKE3), con la
+  frase onesta accanto: xxHash3 scopre gli errori di copia ma non è crittografico. È **l'unica opzione che una copia della
+  console può aggiungere**, ed è un tipo (`Option<HashAlgorithm>`), non un campo libero: non esiste un parametro da cui
+  possano entrare mirror, pulizia o altro (`runner::shell_drop_config_text`, con test). Il lavoro ricorda la verifica, la
+  mostra nel dettaglio, la riporta in **Ripeti** e nell'attività salvata. Provata dal vivo: 14 file, 840 MB, verificata con
+  xxHash3, anche verso una destinazione di rete.
+- **Tempo residuo** calcolato dal core (`ProgressSample::eta_seconds`): solo durante la copia, mai nei primi 2 secondi, mai
+  con totale ignoto o a zero, mai oltre una settimana, sulla velocità media dall'inizio (si muove piano e non salta).
+- **Grafico della velocità** degli ultimi 30 secondi (campioni a 250 ms), disegnato da una funzione testata
+  (`format::chart_path`); **non disegna nulla finché non si è mosso qualcosa**, perché una linea piatta sul fondo direbbe «fermo»,
+  che è un'affermazione, non l'assenza di dati.
+- **Limite onesto, visto dal vivo:** il motore pubblica i byte quando un file finisce, quindi con **pochi file enormi**
+  (due da 3 GB) la barra resta indeterminata e tempo residuo e grafico non hanno nulla da dire fino alla fine di ogni file.
+  Con molti file funzionano; con file giganti serve un avanzamento a metà file, che non è nel motore e non è una scelta della
+  console. Resta dichiarato, non nascosto.
+- **Errore trovato e corretto:** `format::throughput_mbps` usava 1024² byte per MB mentre il core usa 10⁶ (`progress`): la
+  velocità di una sessione nell'elenco e quella del report avrebbero potuto differire del 5 %.
+- Il blocco «in corso» dice **quale lavoro** sta girando: prima mostrava il modulo con le scelte di un'altra copia mentre ne
+  girava una avviata da Esplora file.
 
 ### 3.6 Consegna del cancello
 

@@ -67,18 +67,93 @@ pub fn when_short(at: chrono::DateTime<chrono::Utc>) -> String {
         .to_string()
 }
 
-/// Average MB/s over a whole session (all its reports); `0` when the time is unknown.
+/// Average MB/s over a whole session (all its reports); `0` when the time is unknown. MB is 10^6
+/// bytes, the same unit the core uses everywhere (`progress::throughput_mbps`), so the figure here
+/// and the one in a report cannot disagree.
 pub fn throughput_mbps(bytes: u64, seconds: f64) -> f64 {
     if seconds > 0.0 {
-        bytes as f64 / (1024.0 * 1024.0) / seconds
+        bytes as f64 / 1_000_000.0 / seconds
     } else {
         0.0
     }
 }
 
+/// How many samples the speed chart holds: 120 ticks of 250 ms, the last 30 seconds.
+pub const CHART_SAMPLES: usize = 120;
+
+/// The SVG path of a speed chart in a `width` x `height` box: the newest sample at the right edge,
+/// scaled to the fastest sample seen (never to zero, so a flat line stays flat). Empty until there
+/// are two samples to join.
+pub fn chart_path(samples: &[f64], width: f64, height: f64) -> String {
+    // Nothing to draw until something has actually moved: a flat line at the bottom would read as
+    // "stuck at zero", which is a claim, not an absence of data.
+    if samples.len() < 2 || !samples.iter().any(|v| v.is_finite() && *v > 0.0) {
+        return String::new();
+    }
+    let step = width / (CHART_SAMPLES as f64 - 1.0);
+    let first_x = width - step * (samples.len() as f64 - 1.0);
+    let peak = samples
+        .iter()
+        .copied()
+        .filter(|v| v.is_finite())
+        .fold(1.0_f64, f64::max);
+    let mut path = String::new();
+    for (index, value) in samples.iter().enumerate() {
+        let value = if value.is_finite() {
+            value.max(0.0)
+        } else {
+            0.0
+        };
+        let x = first_x + step * index as f64;
+        let y = height - (value / peak) * (height - 2.0) - 1.0;
+        path.push_str(if index == 0 { "M " } else { " L " });
+        path.push_str(&format!("{x:.1} {y:.1}"));
+    }
+    path
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_chart_needs_two_samples_and_grows_from_the_right() {
+        assert_eq!(chart_path(&[], 240.0, 56.0), "");
+        assert_eq!(chart_path(&[5.0], 240.0, 56.0), "");
+        let two = chart_path(&[0.0, 10.0], 240.0, 56.0);
+        assert!(two.starts_with("M "), "{two}");
+        assert!(
+            two.contains(" L 240.0 "),
+            "the newest sample is at the right edge: {two}"
+        );
+    }
+
+    #[test]
+    fn a_chart_scales_to_the_fastest_sample_and_survives_bad_numbers() {
+        let path = chart_path(&[0.0, 50.0, f64::NAN, -3.0, 100.0], 240.0, 56.0);
+        assert!(!path.contains("NaN") && !path.contains("inf"), "{path}");
+        // The fastest sample is drawn at the top, the slowest at the bottom, inside the box.
+        assert!(
+            path.contains(" 1.0"),
+            "the peak touches the top margin: {path}"
+        );
+        assert!(
+            path.contains(" 55.0"),
+            "zero sits on the bottom margin: {path}"
+        );
+    }
+
+    #[test]
+    fn a_chart_of_nothing_is_not_drawn() {
+        assert_eq!(chart_path(&[0.0, 0.0, 0.0], 240.0, 56.0), "");
+        assert_eq!(chart_path(&[f64::NAN, 0.0], 240.0, 56.0), "");
+    }
+
+    #[test]
+    fn a_chart_that_has_moved_and_then_idled_keeps_its_shape() {
+        let path = chart_path(&[0.0, 40.0, 0.0], 240.0, 56.0);
+        assert_eq!(path.matches(" 55.0").count(), 2, "{path}");
+    }
 
     #[test]
     fn folder_names_ignore_separators_and_trailing_slashes() {
@@ -106,8 +181,8 @@ mod tests {
 
     #[test]
     fn throughput_is_zero_when_the_time_is_unknown() {
-        assert_eq!(throughput_mbps(1024 * 1024 * 100, 0.0), 0.0);
-        assert_eq!(throughput_mbps(1024 * 1024 * 100, 2.0), 50.0);
+        assert_eq!(throughput_mbps(100_000_000, 0.0), 0.0);
+        assert_eq!(throughput_mbps(100_000_000, 2.0), 50.0);
     }
 
     #[test]
