@@ -21,6 +21,12 @@ For full technical detail behind any entry, see `ANALYSIS.md` (defect list, `D<N
 
 ## [Unreleased]
 
+### Changed
+- **Console: a clearer visual system on Job and Report** (F94). Larger text (14px body, 12px minimum),
+  headline numbers in cards (files, size, duration, speed) on Report and a summary row (jobs, last run ok,
+  to check, never run) on Job, taller table rows, a bigger sidebar. The other tabs keep their current look
+  until the same rules are applied to them.
+
 ### Fixed
 - **Explorer drag-and-drop no longer offers "Copia con RustCopy" for an unsafe drop** (a target inside
   a dragged folder, a whole drive, two dragged folders with the same name). Before, dropping a folder
