@@ -1,9 +1,11 @@
 <script>
+  import { onMount } from "svelte";
   import { invoke } from "@tauri-apps/api/core";
   import { isPermissionGranted, requestPermission, sendNotification } from "@tauri-apps/plugin-notification";
   import PathBar from "./PathBar.svelte";
   import EmptyState from "./EmptyState.svelte";
   import { session } from "./session.svelte.js";
+  import { Play, ShieldAlert, CircleCheck, CircleX, LoaderCircle, RotateCcw } from "@lucide/svelte";
 
   // The console does not run backups itself: it starts the same CLI a scheduled task would, so a
   // job behaves identically whether a person launched it or Task Scheduler did.
@@ -16,6 +18,71 @@
   // once per "Esamina", advisory only. Never blocks starting a job, never offers to touch a
   // schedule from here (F61's prohibitions apply to this console as a whole).
   let existingSchedules = $state([]);
+  // Onda 3: checkpoints found beside the config, read once per "Esamina" like the schedule badge
+  // above. Independent of `jobs` on purpose — a checkpoint's own existence does not depend on the
+  // config still parsing the same way it did when the interrupted run wrote it.
+  let checkpoints = $state([]);
+
+  // The batch position last seen in a live progress sample. Held apart from `status` itself
+  // because `run_status`'s finished branch clears `progress` entirely — without this, the queue
+  // view below would go blank at the exact moment a batch finishes, which is when an operator
+  // most wants to see "all done" rather than nothing.
+  //
+  // Never reset on `inspect()` (an earlier version did, and lost the queue on re-examining the
+  // very file that just finished — CodeRabbit review on #73). Instead `queue` below only renders
+  // when `status?.config_path` matches `session.configPath`: `status` always reflects whichever
+  // run this window is actually tracking (or last tracked), independent of what the operator has
+  // typed into the path field, so the comparison alone keeps a stale retained position from a
+  // *different* file from ever being shown, without needing to throw the value away.
+  let lastBatchIndex = $state(null);
+  let lastBatchTotal = $state(null);
+  // Set only by `stop()`, this window's own only way to interrupt a run. Distinguishes "the batch
+  // reached its natural end" from "it was cut short", which the `else` branch below needs: `run_
+  // jobs` records a per-job failure and moves on regardless (only Ctrl+C/--cancel-file breaks out
+  // early), so a batch that finished *without* ever being stopped from here is one where every
+  // job's position was genuinely reached — even if the last job's own phases were too fast for a
+  // single publisher tick to ever land, which the live samples alone cannot show (also #73).
+  let wasStopped = $state(false);
+
+  // Whether the details disclosure below is open. A plain `open={expr}` attribute is a one-way
+  // binding: Svelte re-applies it on every `status` update, which every 1s poll tick produces —
+  // so it would force the panel shut again a second after an operator clicked it open to watch
+  // files scroll by (found live, not by reading the code: clicking it during a real run visibly
+  // snapped straight back to collapsed). `bind:open` here instead treats the DOM's own open/closed
+  // state as the source of truth; this variable only ever pushes it open on a genuine failure,
+  // never closed, so a manual toggle in either direction survives the next poll.
+  let detailsOpen = $state(false);
+
+  function rememberBatchPosition(s) {
+    if (s?.progress?.batch_total > 1) {
+      lastBatchIndex = s.progress.batch_index;
+      lastBatchTotal = s.progress.batch_total;
+    } else if (s && !s.running && !wasStopped && lastBatchTotal > 1) {
+      lastBatchIndex = lastBatchTotal;
+    }
+  }
+
+  // Onda 2, F49: a coarse queue, not a per-job outcome. `report_path` can carry `{timestamp}`
+  // (P1), so which exact report file a given job wrote is not reliably knowable ahead of the run
+  // — the queue only ever claims what `batch_index`/`batch_total` themselves can honestly say
+  // (position), never a guessed riuscito/fallito. That distinction is what Report and Storico are
+  // for, on the report the run actually wrote.
+  const queue = $derived(
+    jobs.length > 1 && lastBatchTotal > 1 && status?.config_path === session.configPath
+      ? jobs.map((job, i) => {
+          const position = i + 1;
+          const state =
+            position < lastBatchIndex
+              ? "concluso"
+              : position === lastBatchIndex
+                ? status?.running
+                  ? "in corso"
+                  : "concluso"
+                : "in attesa";
+          return { name: job.name, state };
+        })
+      : [],
+  );
 
   // A mirroring job cannot be authorised from here: the confirmation `check_mirror_safety` asks
   // for needs a terminal, and a child process launched from a window has none, so the run aborts
@@ -23,12 +90,44 @@
   const mirrorJobs = $derived(jobs.filter((job) => job.mirror).map((job) => job.name));
   const unconfigured = $derived(jobs.filter((job) => job.unconfigured).map((job) => job.name));
 
+  // Livello 1, punto 5 (PIANO_GUI.md §10): a finished run's own report is one click away instead
+  // of retyping or re-browsing to a path the console already knows. Deliberately narrow — only
+  // when there is exactly one job (a batch has one report per job, and guessing which one just
+  // finished is exactly the guess §7's queue view already refuses to make), the status still
+  // belongs to the config currently open here (not a checkpoint resume, whose config_path is the
+  // checkpoint's own path), and `report_path` is non-null (gui_api::list_jobs already declines to
+  // guess one that still carries {timestamp}, resolved fresh per run — see its own doc comment).
+  const finishedRunReportPath = $derived(
+    !status?.running &&
+      status?.exit_code !== null &&
+      status?.exit_code !== undefined &&
+      status?.config_path === session.configPath &&
+      jobs.length === 1 &&
+      jobs[0]?.report_path
+      ? jobs[0].report_path
+      : null,
+  );
+
+  function openThisRunReport() {
+    session.reportPath = finishedRunReportPath;
+    session.pendingReportLoad = true;
+    session.activeTab = "report";
+  }
+
   async function inspect() {
     error = null;
     busy = true;
     try {
       jobs = await invoke("list_jobs", { configPath: session.configPath });
       status = await invoke("run_status");
+      rememberBatchPosition(status);
+      // A run that already failed before this window ever polled it (opened fresh, or "Esamina"
+      // clicked again later) still deserves the details open by default -- `poll()`'s own
+      // running→finished check only ever fires for a failure this window watched happen live
+      // (CodeRabbit finding on this PR).
+      if (!status?.running && status?.exit_code != null && status.exit_code !== 0) {
+        detailsOpen = true;
+      }
     } catch (e) {
       error = String(e);
       jobs = [];
@@ -43,13 +142,23 @@
     } catch {
       existingSchedules = [];
     }
+    // Same tolerance: a directory that cannot be scanned (permissions, a network share gone
+    // missing) is "no checkpoints found", not a reason to fail the whole examination.
+    try {
+      checkpoints = await invoke("list_checkpoints", { configPath: session.configPath });
+    } catch {
+      checkpoints = [];
+    }
   }
 
-  async function start() {
+  async function resumeJob(checkpoint) {
     error = null;
     busy = true;
+    wasStopped = false;
+    detailsOpen = false;
     try {
-      status = await invoke("start_job", { configPath: session.configPath });
+      status = await invoke("resume_job", { checkpointPath: checkpoint.path });
+      rememberBatchPosition(status);
       poll();
     } catch (e) {
       error = String(e);
@@ -58,10 +167,61 @@
     }
   }
 
+  async function start() {
+    error = null;
+    busy = true;
+    // A fresh run has not been stopped yet, whatever a previous one ended with.
+    wasStopped = false;
+    detailsOpen = false;
+    try {
+      status = await invoke("start_job", { configPath: session.configPath });
+      rememberBatchPosition(status);
+      poll();
+    } catch (e) {
+      error = String(e);
+    } finally {
+      busy = false;
+    }
+  }
+
+  // `rustcopy-shell`'s drag-and-drop handler (`tidy-sniffing-river.md`, Milestone 3) launches this
+  // window with `--auto-config <path>` instead of spawning `robocopy_ingest.exe` silently, so a
+  // drop lands the operator on a job already visibly running instead of nothing on screen at all.
+  // Every pane in `App.svelte` stays mounted regardless of which tab is active, so this fires at
+  // startup even when Job is the tab actually shown first.
+  //
+  // Calls `inspect()` before `start()`, not after -- `jobs.length > 0` is what makes this whole
+  // pane render anything beyond the empty state (see the template below), and `inspect()` is the
+  // only thing that populates it (`list_jobs`). Skipping this step is exactly the bug found live,
+  // 10 Set 2026: `start_job` alone really did start the copy, but with `jobs` still empty the
+  // window showed "Scegli un file di configurazione" the whole time regardless, and the operator
+  // had to click Esamina themselves to see anything -- indistinguishable from nothing having
+  // started at all.
+  onMount(async () => {
+    const autoConfig = await invoke("initial_auto_config");
+    if (!autoConfig) return;
+    session.configPath = autoConfig;
+    session.activeTab = "run";
+    await inspect();
+    await start();
+  });
+
+  // F93: set by QuickSync after it has already started the run. Attaches to that run (job list,
+  // status, polling) without starting a second one -- `start()` is deliberately not called here.
+  $effect(() => {
+    if (session.pendingRunAttach) {
+      session.pendingRunAttach = false;
+      inspect().then(() => {
+        if (status?.running) poll();
+      });
+    }
+  });
+
   async function stop() {
     error = null;
     try {
       status = await invoke("stop_job");
+      wasStopped = true;
     } catch (e) {
       error = String(e);
     }
@@ -106,10 +266,12 @@
         if (mine !== generation) return;
         const wasRunning = status?.running === true;
         status = next;
+        rememberBatchPosition(status);
         if (next.running) {
           timer = setTimeout(tick, 1000);
         } else if (wasRunning) {
           notifyFinished(next);
+          if (next.exit_code !== 0) detailsOpen = true;
         }
       } catch (e) {
         if (mine !== generation) return;
@@ -130,8 +292,8 @@
   <PathBar
     bind:value={session.configPath}
     kind="config"
-    label="Percorso del file di configurazione TOML"
-    placeholder="Scegli un file di configurazione TOML"
+    label="File con i job di backup"
+    placeholder="Scegli il file con i tuoi job di backup (.toml)"
     action="Esamina"
     busy={busy}
     onrun={inspect}
@@ -147,11 +309,71 @@
     </p>
   {/if}
 
+  {#if checkpoints.length > 0}
+    <div class="card mt-3">
+      <p class="flex items-center gap-1.5 text-xs font-semibold uppercase tracking-wide text-slate-500">
+        <RotateCcw size={13} strokeWidth={2.25} aria-hidden="true" />
+        {checkpoints.length === 1 ? "Ripresa disponibile" : "Riprese disponibili"}
+      </p>
+      <p class="mt-0.5 text-[11px] text-slate-500">
+        Run interrotte che hanno scritto un checkpoint in questa cartella. Riprendere continua nella
+        stessa direzione sorgente→destinazione e rimette le impostazioni della run interrotta (banda,
+        esclusioni, filtri di età, verifica, simulazione). Non rimette mai mirror, cancellazioni,
+        comandi, notifiche e chiavi: una ripresa non può fare più di una run nuova.
+      </p>
+      <ul class="mt-2 space-y-1.5">
+        {#each checkpoints as checkpoint}
+          <li class="flex items-center justify-between gap-2 rounded border border-slate-200 px-2 py-1
+                     text-xs dark:border-slate-800">
+            <div class="min-w-0">
+              <p class="font-mono truncate" title="{checkpoint.source} → {checkpoint.dest}">
+                {checkpoint.source} → {checkpoint.dest}
+              </p>
+              <p class="text-[11px] text-slate-500">
+                {new Date(checkpoint.timestamp).toLocaleString("it-IT")} — {checkpoint.reason}
+              </p>
+            </div>
+            <button
+              class="shrink-0 rounded border border-slate-300 px-2 py-1 text-[11px]
+                     disabled:opacity-40 dark:border-slate-700"
+              onclick={() => resumeJob(checkpoint)}
+              disabled={busy || status?.running}
+            >Riprendi</button>
+          </li>
+        {/each}
+      </ul>
+    </div>
+  {/if}
+
   {#if jobs.length > 0}
     <p class="mt-3 text-xs text-slate-600 dark:text-slate-400">
       {jobs.length}
       {jobs.length === 1 ? "job" : "job"} in questo file: <span class="font-mono">{jobs.map((j) => j.name).join(", ")}</span>
     </p>
+
+    {#if queue.length > 0}
+      <ul class="mt-2 flex flex-wrap gap-1.5">
+        {#each queue as entry}
+          {@const cls =
+            entry.state === "in corso"
+              ? "bg-blue-100 text-blue-900 dark:bg-blue-950 dark:text-blue-200"
+              : entry.state === "concluso"
+                ? "bg-emerald-100 text-emerald-900 dark:bg-emerald-950 dark:text-emerald-200"
+                : "bg-slate-100 text-slate-600 dark:bg-slate-800 dark:text-slate-400"}
+          <li
+            class="rounded px-1.5 py-0.5 text-[11px] font-mono {cls}"
+            title={entry.state}
+            aria-label="{entry.name}: {entry.state}"
+          >
+            {entry.name}
+          </li>
+        {/each}
+      </ul>
+      <p class="mt-1 text-[11px] text-slate-500">
+        Solo la posizione nel batch: quale job è concluso, in corso o in attesa. L'esito di ciascuno
+        — riuscito o fallito — resta nel Report o nello Storico di quella run.
+      </p>
+    {/if}
 
     {#if unconfigured.length > 0}
       <p class="mt-2 rounded border border-slate-300 bg-slate-50 px-2 py-1 text-xs
@@ -163,12 +385,16 @@
     {/if}
 
     {#if mirrorJobs.length > 0}
-      <p class="mt-2 rounded border border-amber-300 bg-amber-50 px-2 py-1 text-xs text-amber-900
-                dark:border-amber-800 dark:bg-amber-950 dark:text-amber-200">
-        <strong>{mirrorJobs.join(", ")}</strong> {mirrorJobs.length === 1 ? "cancella" : "cancellano"}
-        in destinazione. Da qui non si può autorizzare: la conferma richiede un terminale, quindi la
-        run si fermerà da sola con esito 3. Eseguila dalla CLI, dove la conferma mostra
-        <em>quali</em> file verrebbero eliminati.
+      <p class="mt-2 flex items-start gap-1.5 rounded border border-amber-300 bg-amber-50 px-2 py-1
+                text-xs text-amber-900 dark:border-amber-800 dark:bg-amber-950 dark:text-amber-200">
+        <ShieldAlert size={13} strokeWidth={2.25} class="mt-0.5 shrink-0" aria-hidden="true" />
+        <span>
+          <strong>{mirrorJobs.join(", ")}</strong> {mirrorJobs.length === 1 ? "cancella" : "cancellano"}
+          in destinazione. Da qui non si può avviare: serve una conferma che questa console non può
+          dare, quindi la run si fermerebbe da sola con esito 3. Chiedi a chi gestisce i backup di
+          questo computer di eseguirla dalla riga di comando, dove la conferma mostra
+          <em>quali</em> file verrebbero eliminati.
+        </span>
       </p>
     {/if}
 
@@ -186,10 +412,13 @@
 
     <div class="mt-3 flex items-center gap-2">
       <button
-        class="rounded bg-blue-600 px-3 py-1 text-sm text-white disabled:opacity-50"
+        class="flex items-center gap-1.5 rounded bg-blue-600 px-3 py-1 text-sm text-white disabled:opacity-50"
         onclick={start}
         disabled={busy || status?.running}
-      >Avvia</button>
+      >
+        <Play size={14} strokeWidth={2.25} aria-hidden="true" />
+        Avvia
+      </button>
       <button
         class="rounded border border-slate-300 px-3 py-1 text-sm disabled:opacity-40
                dark:border-slate-700"
@@ -198,28 +427,49 @@
       >{status?.stopping ? "Arresto in corso…" : "Ferma"}</button>
 
       {#if status?.running}
-        <span class="text-xs text-slate-600 dark:text-slate-400">
+        <span class="flex items-center gap-1.5 text-xs text-slate-600 dark:text-slate-400">
+          <LoaderCircle size={13} strokeWidth={2.25} class="animate-spin" aria-hidden="true" />
           {status.stopping
             ? "sto scrivendo il checkpoint, poi la run esce"
             : (status.phase_label ?? "in esecuzione")}
         </span>
       {:else if status?.exit_code !== null && status?.exit_code !== undefined}
-        <span class="text-xs">
+        <span class="flex items-center gap-1 text-xs">
           <span
-            class="rounded px-1 font-mono text-[10px] font-semibold {status.exit_code === 0
+            class="inline-flex items-center gap-1 rounded px-1 font-mono text-[10px] font-semibold {status.exit_code === 0
               ? 'bg-emerald-100 text-emerald-900 dark:bg-emerald-950 dark:text-emerald-200'
               : 'bg-amber-100 text-amber-900 dark:bg-amber-950 dark:text-amber-200'}"
-          >{status.exit_code}</span>
+          >
+            {#if status.exit_code === 0}
+              <CircleCheck size={11} strokeWidth={2.25} aria-hidden="true" />
+            {:else}
+              <CircleX size={11} strokeWidth={2.25} aria-hidden="true" />
+            {/if}
+            {status.exit_code}
+          </span>
           <!-- The meaning comes from the core: what an exit code means is a contract with
                schedulers, not a label this pane invents. -->
           {status.meaning}
         </span>
       {/if}
+
+      {#if finishedRunReportPath}
+        <button
+          class="rounded border border-slate-300 px-2 py-0.5 text-[11px] dark:border-slate-700"
+          onclick={openThisRunReport}
+        >Apri il report di questa run</button>
+      {/if}
     </div>
 
     {#if status?.running && status?.progress}
       {@const p = status.progress}
-      {@const fraction = p.bytes_total ? Math.min(1, p.bytes_done / p.bytes_total) : null}
+      <!-- Capped at 0.99, not 1: this whole block only ever renders while `status.running` is
+           true (the enclosing condition above), so "100%" here would always be a contradiction —
+           found live, 9 Set 2026: robocopy's own per-line byte reports count directory entries
+           the inventory total doesn't, so bytes_done legitimately passes bytes_total (and this
+           already-capped-at-1 fraction) well before the transfer is actually done, and the bar
+           sat at a literal "100%" for however much real copying was still left. -->
+      {@const fraction = p.bytes_total ? Math.min(0.99, p.bytes_done / p.bytes_total) : null}
       <div class="mt-3 max-w-2xl">
         <!-- A bar only where a percentage can honestly be computed. During the inventory there is
              no total, and a bar sitting at 0% for the twenty minutes a 1.34M-file prescan takes
@@ -243,16 +493,33 @@
             — {p.throughput_mbps.toFixed(0)} MB/s
           {/if}
         </p>
+        {#if p.current_file}
+          <!-- The engine's own most-recently-completed file, not a guess: robocopy always logs
+               one line per transferred file (no /NFL), so this is exactly as current as the
+               phase's own progress numbers above — the direct answer to "what is it copying
+               right now", asked live after a run gave no such visibility while in progress. -->
+          <p class="mt-0.5 truncate text-[11px] text-slate-500" title={p.current_file}>
+            {p.current_file}
+          </p>
+        {/if}
       </div>
     {/if}
 
     {#if status?.output_tail}
-      <!-- Shown whenever the run ended, not only on failure: a successful run's summary is worth
-           reading too, and hiding it until something breaks means the operator only ever meets
-           this panel in a bad moment. -->
-      <details class="mt-3" open={status.exit_code !== 0}>
+      <!-- Collapsed by default — a choice the operator makes, not something forced on them mid-run
+           (live output was requested after a run started with no way to see which files were
+           actually moving). `bind:open`, not a one-way `open={expr}`: the latter looked right but
+           re-applied on every poll tick, snapping straight back to collapsed the instant an
+           operator clicked it open mid-run — found by actually clicking it during a real run, not
+           by reading the code. `detailsOpen` only ever pushes this open (on a real failure), never
+           closed, so a manual toggle in either direction survives the next poll. -->
+      <details class="mt-3" bind:open={detailsOpen}>
         <summary class="cursor-pointer text-xs text-slate-600 dark:text-slate-400">
-          Output della run {status.exit_code === 0 ? "(riuscita)" : "— qui c'è il motivo"}
+          {#if status.running}
+            Dettagli — file in copia
+          {:else}
+            Output della run {status.exit_code === 0 ? "(riuscita)" : "— qui c'è il motivo"}
+          {/if}
         </summary>
         <pre class="mt-1 max-h-64 overflow-auto rounded border border-slate-200 bg-slate-50 p-2
                     text-[11px] leading-snug whitespace-pre-wrap dark:border-slate-800
@@ -267,10 +534,12 @@
     </p>
   {:else if !error}
     <EmptyState
+      icon={Play}
       title="Scegli un file di configurazione per eseguirlo"
       lines={[
         "Questa scheda avvia la stessa CLI che eseguirebbe un'attività pianificata, come processo separato: un job si comporta allo stesso modo che lo lanci tu o Task Scheduler.",
         "Non può accendere il mirror, forzare un purge, installare servizi o pianificazioni: la lista degli argomenti è costruita nel core con una forma fissa, e un test verifica che quei flag non possano comparire.",
+        "Se una run interrotta ha scritto un checkpoint in questa cartella, questa scheda lo trova e propone di riprenderla.",
         "A run conclusa, apri il report che ha prodotto nella scheda Report.",
       ]}
     />

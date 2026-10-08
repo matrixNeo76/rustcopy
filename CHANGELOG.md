@@ -21,7 +21,249 @@ For full technical detail behind any entry, see `ANALYSIS.md` (defect list, `D<N
 
 ## [Unreleased]
 
+### Changed
+- **Console: a clearer visual system on Job and Report** (F94). Larger text (14px body, 12px minimum),
+  headline numbers in cards (files, size, duration, speed) on Report and a summary row (jobs, last run ok,
+  to check, never run) on Job, taller table rows, a bigger sidebar. The other tabs keep their current look
+  until the same rules are applied to them.
+
+### Fixed
+- **Explorer drag-and-drop no longer offers "Copia con RustCopy" for an unsafe drop** (a target inside
+  a dragged folder, a whole drive, two dragged folders with the same name). Before, dropping a folder
+  into one of its own subfolders started a copy that kept copying itself.
+
+## [7.8.0] - 2026-10-07
+
+### Changed
+- **Console: outcomes you can read at a glance** (F93). The Report tab opens with one sentence,
+  "Backup riuscito: 150 file (2.0 GB) in 0.09s", "…con avvisi" with the reasons, or "Backup non
+  riuscito", instead of a bare exit code; robocopy's own wording moves under "Dettagli tecnici".
+  Job and History show a status chip ("Riuscito", or what the code means) instead of a number.
+  Settings shows plain-language names (the TOML key stays beside it) and yes/no instead of
+  true/false. After a quick folder sync, Run attaches to the copy by itself.
+
 ### Added
+- **"Copia" tab** (F95): copy one or more folders into a destination without writing a configuration
+  file. Pick the folders and the destination, optionally "Controlla prima" for file counts and size,
+  then "Copia"; progress follows in the Esegui tab. It only copies (no mirror, no purge), refuses a
+  destination inside its own source, a whole drive, and two folders with the same name.
+- **Installer smoke test in CI** (F92): a workflow builds the real installer and installs, checks and
+  uninstalls it on a Windows Server 2022 runner (files, Shell extension registration, install report,
+  installed CLI, clean removal).
+
+### Fixed
+- **`--resume-from` now keeps the interrupted run's settings** (D25). A resumed run used to forget the
+  bandwidth limit, the excluded files and folders, the age filters, the hash algorithm and more: a run
+  throttled to 3 MB/s resumed at full speed, and an interrupted `--dry-run` resumed as a real copy. They
+  are now restored, with one rule: a resume never does more than a fresh run would -- `--mirror`,
+  retention, shell commands, webhook URLs and encryption keys are deliberately not restored.
+
+## [7.7.0] - 2026-10-03
+
+### Fixed
+- **Installation on a clean Windows machine** (D30/F92): the installer failed on Windows Server 2016
+  and 2022 (and would on any machine without the Visual C++ Redistributable). Every binary imported
+  the dynamic C runtime, so the optional Explorer Shell extension could not even be loaded, its
+  registration failed, and Setup rolled the **whole** install back (exit code 5). The binaries now
+  link the C runtime statically (`+20 KB` CLI, `+123 KB` console, `+93 KB` Shell DLL), so the
+  Redistributable is no longer a requirement, and registering the Shell extension can no longer
+  take the rest of the install down with it: if it fails it is reported and skipped.
+
+### Added
+- **Automatic install report**: every install run, silent or not, completed or failed,
+  writes `C:\ProgramData\rustcopy\install-reports\install-<date>.txt` plus a copy of Setup's own log
+  beside it, with the operating system and build, privileges, command-line options, chosen
+  components, runtime and WebView2 state, pending reboots, the exit code of the Shell registration
+  and the final outcome. `/ReportDir=<folder>` redirects it. On failure Setup also says where the
+  report is. No PowerShell is started to produce it.
+- `scripts/collect-install-diagnostics.ps1` (read-only deep dive: event log, Defender, AppLocker,
+  Code Integrity) and `scripts/check-static-crt.ps1` (fails if a binary imports the dynamic C
+  runtime again; run by a new CI job).
+
+## [7.6.1] - 2026-10-02
+
+### Changed
+- **Visible labels on icon-only controls** (F89, wave 3): the Job table's settings strip now reads
+  "Cifrato", "N cicli", "N esclusioni", "N in parallelo"; the per-row actions read
+  "Impostazioni", "Storico", "Modifica"; the Editor's reorder arrows are labelled "Ordine di
+  esecuzione"; the path bar's star reads "Aggiungi ai preferiti" / "Nei preferiti". Tooltips are
+  unchanged.
+
+## [7.6.0] - 2026-10-02
+
+### Changed
+- **Plainer language in the console** (F89, waves 1-2): the file pickers, empty states and
+  path fields no longer lead with file-format jargon ("TOML"/"JSON"); raw robocopy flags and
+  developer identifiers (`/MT`, `/XJ`, `Args::validate()`, `keep_generations`) are gone from
+  tooltips and visible text; a "VSS" entry was added to the Aiuto glossary; the two messages that
+  pointed non-technical operators at actions they cannot perform now say so plainly.
+- **Modifica groups its fields**: name/source/destination/file filter stay visible, while
+  "Comportamento della copia" and "Opzioni avanzate" are collapsible sections that open by
+  themselves whenever they hold a non-default setting, so a collapsed section never hides a
+  customised value or the verify-with-generations warning.
+
+### Fixed
+- Bumped the transitive `devalue` dependency of the console's frontend (npm audit, high).
+
+## [7.5.0] - 2026-09-21
+
+### Fixed
+- A backup destination on a network share (UNC path) longer than 240 characters with
+  `--long-paths` produced an invalid long-path prefix (`\\?\` glued onto the original path
+  instead of the real `\\?\UNC\server\share\...` convention), which Windows does not resolve —
+  robocopy would fail loudly rather than silently lose data, but the run itself never worked.
+  Full write-up: `ANALYSIS.md` D28.
+
+### Added
+- **Windows Server hardening for the installer** (F90): detects Server Core (no desktop shell at
+  all) and hides the console/Shell-extension components entirely instead of offering something
+  that could never run; warns — without blocking setup, same as the existing VC++/WebView2
+  checks — when the detected Windows/Server version predates the Universal CRT requirement
+  (Windows 10 1607+ / Server 2016+); warns when the Shell extension is selected on a detected
+  Server SKU, since it loads into every signed-in user's Explorer process on a Remote Desktop
+  Session Host, not just one desktop.
+- **Production deployment guidance** (F90): a new section in `RUNBOOK.md` covers recommended
+  antivirus/EDR exclusions for backup source/destination paths, checking VSS writer health before
+  relying on `--vss-snapshot` against an application server, and partial mitigations for the
+  still-open code-signing gap (F60).
+
+## [7.4.1] - 2026-09-15
+
+### Fixed
+- **Critical**: the Explorer Shell extension (F85) could crash `explorer.exe` itself — taking
+  down the desktop, taskbar and every open window at once, on some machines requiring a full
+  reboot to recover — for any right-click or cross-drive drag onto any folder or drive, not just
+  a drag between two rustcopy-managed folders. The handler read a Windows drag-and-drop data
+  structure without first checking which of its union fields was actually valid; a non-standard
+  drag source (a cloud-sync folder, another Shell extension, antivirus Shell hooks) could trigger
+  undefined behavior inside Explorer's own process. Installations that never selected the Shell
+  extension component, or never used the affected drag gesture, were not exposed. Full write-up:
+  `ANALYSIS.md` D29.
+
+## [7.4.0] - 2026-09-14
+
+### Added
+- **Operational status on the Job screen** (F86): each job now shows an "Ultima esecuzione"
+  column — outcome, date and throughput from its own run history, honestly distinguishing "never
+  run" from "no data available yet" (an unresolved `{timestamp}` report path) rather than guessing.
+  A compact icon strip flags encryption, retention, exclusions and non-default thread counts at a
+  glance. Three new per-row actions jump straight to that job's Impostazioni, Storico or Modifica,
+  instead of retyping a path in another tab. A "pianificato" badge appears once per file when a
+  Windows scheduled task references it — file-level, since a scheduled run always executes every
+  job in the file, never a single one.
+
+### Fixed
+- The verification algorithm on the Report screen never translated to a friendly label ("SHA-256",
+  "BLAKE3") — a casing mismatch between the lookup table and the real value meant it silently
+  always fell back to the raw wire form ("sha256"); BLAKE3 was missing from the table outright.
+- The Help screen's introduction still claimed the console never runs backups, copies, or deletes
+  anything — false since the Esegui tab was added, and contradicted by the very next section of
+  the same page.
+- The Report screen could show a stale report if two loads overlapped (a manual open racing a
+  cross-tab jump from Esegui) — the same out-of-order-response guard already added to every other
+  pane that loads from more than one trigger.
+
+## [7.3.0] - 2026-09-11
+
+### Added
+- **Richer Report screen** (F84): the exit-code icon is now derived server-side
+  (`RobocopyStatus::is_success()`) instead of a naive "exit code 0" check, which is wrong for
+  robocopy — a `1` alone is a genuine success. A new "File e byte" section surfaces robocopy's
+  full summary (skipped/mismatch/failed/extra, both counts and bytes), previously parsed and then
+  discarded down to just the copied total. "Configurazione usata" now shows every non-default
+  setting that was active for the run, not only a handful. A real start timestamp
+  (`started_at`) sits alongside the pre-existing finish time.
+- **Explorer Shell extension** (F85, closes the long-backlogged F51): dragging one or more
+  folders onto another with the right mouse button (or across drives) now offers "Copia con
+  RustCopy" on Explorer's own drop-confirmation menu, alongside the native Copy/Move. Picking it
+  hands the drop straight to the desktop console with the copy already queued and visible — not a
+  silent background process. Network (UNC) destinations default to a conservative 8 threads
+  instead of this machine's full logical-CPU count, a safety choice validated against a real cold
+  NAS benchmark that found no throughput benefit past a handful of threads. Installed as an
+  optional component of the existing setup (`gui\shell`, nested under the desktop console, which
+  it requires to function) — no separate installer, no manual registry step.
+
+### Fixed
+- The Report screen's "File e byte" section showed "dettaglio non disponibile" on any
+  Italian-locale Windows install, because the underlying parser only recognized the English
+  `Files`/`Bytes` row labels robocopy prints — it now tries the Italian forms too.
+- A truncated robocopy summary line (fewer than six columns) was previously accepted and
+  zero-filled, showing a real count as if it were a confirmed zero; it is now rejected outright.
+- The Report screen's file/byte counts could come from only one of robocopy's two summary rows
+  (Files or Bytes) instead of requiring both, risking a real file count paired with silently
+  zeroed bytes.
+
+## [7.2.0] - 2026-09-09
+
+### Added
+- **Live "what's copying now"** in *Esegui*: the console shows the most recently completed
+  file's name next to the progress bar while a sync is running, reusing the same robocopy line
+  already parsed for byte/file counts — no new log volume, no new flag reaching the child
+  process. The "Dettagli" output panel can also now be opened while a run is still in progress,
+  not only after it finishes.
+
+### Fixed
+- The panel above stayed collapsed by default and, once opened during a run, snapped shut again
+  on the next 1-second poll (a one-way Svelte binding re-applying itself); both are now respected
+  as an explicit choice the operator makes, not something reset out from under them.
+- `run_status`'s live-progress path no longer holds the console's run-state lock while reading
+  files from disk — a slow or network destination could otherwise stall the "Ferma" button for as
+  long as that read took.
+- The current-file name preserved spaces correctly instead of only the trailing word when
+  robocopy's own output used space-padded columns instead of tabs.
+
+## [7.1.0] - 2026-09-08
+
+### Added
+- **Guided creation of a real job** from Job's empty state (F83): a new "Crea la tua
+  configurazione" wizard — name, source/destination via native folder pickers, a
+  Verifica integrità checkbox — writes a real, reusable TOML without starting it, filling a gap
+  neither the existing fake-data example (F79) nor QuickSync (F71, fixed name, starts
+  immediately) actually covered.
+- **Path inspection** (F73): a "Verifica" button next to Sorgente/Destinazione in *Modifica*
+  reports existence and file/folder counts on demand.
+- **Job name validation** (F72): the editor rejects Windows-reserved characters, control
+  characters, reserved device names (including legacy superscript forms), and — as of this
+  release — a trailing `.`/space, before the name is ever written to disk.
+- **Inline guidance throughout *Modifica*** (F74/F75/F77): suggestions for Pattern and Escludi
+  file, the real per-machine default shown for Thread, and tooltips reusing *Aiuto*'s own text
+  for `backup_type` and every checkbox.
+- **Friendlier errors**: the single-job-to-multi-job split error (F78) now shows a concrete TOML
+  example with the real job name instead of the raw English message; a Report placeholder shows
+  the real default path (F76); *Storico* exposes the exit-code meaning through a single shared
+  core function instead of a second hardcoded table (F81); the restore-preview button in *Report*
+  now warns up front when no configuration has been loaded in the session, instead of failing
+  silently on a relative-path report (F82).
+
+### Fixed
+- `History.svelte`'s CSV export could include the `"…"` placeholder instead of the real exit-code
+  meaning if triggered in the brief window before every code's meaning had resolved.
+- The Pattern field's own multi-extension suggestion (`*.jpg;*.png;*.gif`) was verified against
+  real `robocopy.exe` and found to silently copy zero files — corrected to single-pattern
+  suggestions only.
+- Thread's placeholder read `navigator.hardwareConcurrency`, which Chromium can clamp for
+  fingerprinting protection; now reads the same value the core would actually use.
+
+## [7.0.0] - 2026-09-07
+
+### Added
+- The console can now **resume an interrupted run from a checkpoint**: the *Run* pane finds any
+  `*.checkpoint.json` beside the loaded config and offers to continue it, going through the same
+  fixed-argument builder (`runner::resume_arguments`) that already covers `run_arguments`, so the
+  F61 prohibitions (`--force-purge`, `--mirror`, install/uninstall) apply identically. A resumed
+  run only inherits pattern/threads/retries/verify-integrity from the interruption, not the rest
+  of the original configuration (bandwidth limit, exclusions, hash algorithm, mirror included) —
+  pre-existing behaviour of `checkpoint::build_resume_args`, documented for the first time here.
+- The console shows a **coarse job queue** while a `[[jobs]]` batch runs (which job is waiting,
+  running or done — never a guessed per-job outcome, which stays in Report/Storico), and can
+  **save or delete a credential** in the Windows Credential Manager directly from *Impostazioni*
+  (the same store `keyring:NAME` already reads) — the secret travels only over Tauri's IPC
+  channel, never a process argument.
+- **A visual rework of the console**, in three risk-ordered levels (`PIANO_GUI.md` §10): the
+  layout now fills the window instead of hugging the top-left corner, tables use explicit column
+  widths, a vertical sidebar with icons (`@lucide/svelte`) replaces the row of text buttons and
+  frees the header to show the loaded config's filename, related content is grouped into cards,
+  and the default window size grew from 1100×700 to 1440×900.
 - **A desktop console** (milestone 7.0.0), shipped as an **optional component** of the installer.
   It reads what rustcopy already wrote and prepares configuration proposals. It does not run
   backups, and it never copies, deletes, schedules or installs. Five panes: the jobs a TOML
@@ -48,6 +290,33 @@ For full technical detail behind any entry, see `ANALYSIS.md` (defect list, `D<N
 - `scripts/check-versions.sh` and a CI job behind it: four files declare the release version and no
   build step held them together. The installer script's own header had admitted the drift without
   preventing it.
+- **F62**: `--list-schedules` lists every Task Scheduler entry that invokes this binary (filtered on
+  the binary's own path, not a specific config), reusing the CSV query/parsing already built for
+  `schedule::referencing_config`. Exposed to the console as `gui_api::list_all_schedules`.
+- **F63**: `--purge-preview-path <PATH>` (requires `--mirror`) writes the complete, untruncated list
+  of files a mirror run would delete, without ever asking for confirmation or looking at
+  `--force-purge` — a preview is a read, never an authorization. The retention (`--keep-generations`)
+  half of this is deliberately not done yet.
+- **F64**: the console's *Report* pane can preview a restore before it happens — it runs
+  `--restore-from <report> --dry-run` against the real CLI in a throwaway report path and shows the
+  swapped source/destination, file/byte counts and robocopy's own outcome, then deletes the scratch
+  report. No new core logic: `--dry-run` already composed with `--restore-from`.
+- **F65**: a preflight free-space check runs after the prescan and aborts with a new dedicated exit
+  code (`6`) if the destination doesn't have enough room, plus a configurable safety margin
+  (`--space-safety-margin-percent`, default 5%) and an opt-out (`--skip-space-check`) for
+  destinations where free space can't be queried reliably (e.g. some network shares).
+- **F66**: the console can save named favorites (job configs and reports) above the existing
+  "Recent" list, entirely client-side — no new Tauri command, no new `JobConfig`/`Args` field.
+- **F67**: the editor's job tabs gained move-up/move-down controls to reorder `[[jobs]]` before
+  a batch runs (run order follows file order, fixed once a batch starts).
+- **F68**: native folder pickers for the editor's *Sorgente*/*Destinazione* fields, replacing
+  hand-typed paths — the console's last remaining path field without one.
+- **F69**: the editor's `keep_generations` field is now editable to **raise** an existing value
+  (never to introduce or lower one — the core already permitted raising it, the console just
+  didn't expose it).
+- **F70**: `backup_type` (full/incremental/differential) is now selectable in the editor,
+  disabled whenever the job mirrors. Closed a real gap in the core along the way: `apply_draft`
+  had no check at all for the `mirror`+`backup_type` combination.
 
 ### Changed
 - The installer is now a **single** setup with the console as an optional component, rather than a
@@ -58,6 +327,14 @@ For full technical detail behind any entry, see `ANALYSIS.md` (defect list, `D<N
   selected — without blocking setup.
 
 ### Fixed
+- **D24**: the console flashed a black console window every time it invoked `schtasks.exe`
+  (scheduling checks, install/uninstall) — two spawns were missing `CREATE_NO_WINDOW`, the same
+  flag the CLI's own child-process spawn already carried. Found in the same visual audit as the
+  rework above, not a design choice.
+- **D23**: `--bandwidth-limit-mbps` always fatal-errored against a real `robocopy.exe` (exit 16,
+  zero files copied) — real robocopy refuses `/IPG` combined with `/MT` outright, and `build_args`
+  pushed `/MT` unconditionally regardless of the bandwidth flag. `/MT` is now omitted entirely
+  (robocopy's own single-threaded default) whenever a bandwidth limit is set.
 - The installed console loaded the **dev server** instead of its own frontend, showing
   `ERR_CONNECTION_REFUSED` on any machine without Vite running — which is every machine an
   installer reaches. Tauri decides dev-vs-production from the `custom-protocol` feature, not from
@@ -218,7 +495,8 @@ For full technical detail behind any entry, see `ANALYSIS.md` (defect list, `D<N
 
 Initial commit.
 
-[Unreleased]: https://github.com/matrixNeo76/rustcopy/compare/v6.0.0...HEAD
+[Unreleased]: https://github.com/matrixNeo76/rustcopy/compare/v7.0.0...HEAD
+[7.0.0]: https://github.com/matrixNeo76/rustcopy/compare/v6.0.0...v7.0.0
 [6.0.0]: https://github.com/matrixNeo76/rustcopy/compare/v5.4.2...v6.0.0
 [5.4.2]: https://github.com/matrixNeo76/rustcopy/compare/v5.4.1...v5.4.2
 [5.4.1]: https://github.com/matrixNeo76/rustcopy/compare/v5.4.0...v5.4.1

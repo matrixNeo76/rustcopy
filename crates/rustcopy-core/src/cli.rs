@@ -37,8 +37,11 @@ impl LogLevel {
     }
 }
 
-/// Number of copy threads to use when --threads is not specified.
-fn default_threads() -> u16 {
+/// Number of copy threads to use when --threads is not specified. `pub` so `gui_api::default_threads`
+/// can expose the same value the CLI would actually use to the console -- `navigator.hardwareConcurrency`
+/// is not a safe substitute: Chromium (WebView2's engine) can clamp or mask it for fingerprinting
+/// protection, so it is not guaranteed to equal what this function returns on the same machine.
+pub fn default_threads() -> u16 {
     // num_cpus::get() returns logical CPUs, which is a sensible starting point.
     // Clamped to [1, 128] to honour robocopy's /MT constraints.
     (num_cpus::get() as u16).clamp(MIN_THREADS as u16, MAX_THREADS)
@@ -94,7 +97,8 @@ pub struct Args {
             "uninstall_service",
             "advise",
             "set_credential",
-            "delete_credential"
+            "delete_credential",
+            "list_schedules"
         ]
     )]
     pub source: Option<PathBuf>,
@@ -113,7 +117,8 @@ pub struct Args {
             "uninstall_service",
             "advise",
             "set_credential",
-            "delete_credential"
+            "delete_credential",
+            "list_schedules"
         ]
     )]
     pub dest: Option<PathBuf>,
@@ -248,6 +253,13 @@ pub struct Args {
     #[arg(long, default_value_t = false)]
     pub force_purge: bool,
 
+    /// F63: write the full, untruncated list of files --mirror would delete to PATH as JSON, then
+    /// exit without copying or deleting anything. Requires --mirror (there is nothing to preview
+    /// otherwise). Unlike the interactive confirmation this never asks and never purges — a
+    /// preview is a read, not an authorization, and runs regardless of --force-purge.
+    #[arg(long, value_name = "PATH", requires = "mirror")]
+    pub purge_preview_path: Option<PathBuf>,
+
     // ── F4.1: Exclusion filters ─────────────────────────────────────────────
     /// Exclude files matching the given pattern(s) (repeatable, maps to /XF).
     /// Example: --exclude-files "*.tmp" --exclude-files "thumbs.db"
@@ -284,6 +296,21 @@ pub struct Args {
     /// Useful for very large trees (millions of files) where the walk itself takes minutes.
     #[arg(long, default_value_t = false)]
     pub no_prescan: bool,
+
+    // ── F65: preflight free-space check ──────────────────────────────────────
+    /// Skip the preflight check that the destination volume has enough free space for what the
+    /// prescan found. On by default; needed for destinations where free space cannot be queried
+    /// reliably (some network shares) and for --no-prescan, which has no byte total to check
+    /// against — that combination behaves as if this flag were given, with a warning instead of
+    /// an error.
+    #[arg(long, default_value_t = false)]
+    pub skip_space_check: bool,
+
+    /// Extra slack required on top of the prescan's byte total before the free-space check
+    /// (above) passes — 5 means "require the total plus 5% more free". Has no effect with
+    /// --skip-space-check.
+    #[arg(long, default_value_t = 5, value_name = "PERCENT")]
+    pub space_safety_margin_percent: u32,
 
     // ── F6.1: Windows Long Path support ─────────────────────────────────────
     /// Prepend Windows long path prefix `\\?\` for deep path structures (> 260 chars).
@@ -445,6 +472,19 @@ pub struct Args {
     )]
     pub advise: bool,
 
+    /// List every Windows Task Scheduler entry that invokes this binary, then exit.
+    ///
+    /// Closes a gap left by --install-schedule/--uninstall-schedule: neither one could previously
+    /// show what is already scheduled, short of running `schtasks /Query` directly and reading
+    /// its output by hand. Needs neither --source nor --dest, like --advise: it inspects the
+    /// scheduler and copies nothing. Read-only — never installs, updates or removes a schedule.
+    #[arg(
+        long,
+        default_value_t = false,
+        conflicts_with_all = ["restore_from", "resume_from", "install_service", "uninstall_service"]
+    )]
+    pub list_schedules: bool,
+
     /// Store a secret in the Windows Credential Manager under this name, then exit.
     ///
     /// The secret itself is read from **stdin**, never from the command line: an argument would be
@@ -463,6 +503,7 @@ pub struct Args {
         conflicts_with_all = [
             "delete_credential",
             "advise",
+            "list_schedules",
             "install_schedule",
             "uninstall_schedule",
             "install_service",
@@ -479,6 +520,7 @@ pub struct Args {
         value_name = "NAME",
         conflicts_with_all = [
             "advise",
+            "list_schedules",
             "install_schedule",
             "uninstall_schedule",
             "install_service",
@@ -542,6 +584,7 @@ impl Args {
     /// isn't short-circuited by restore mode (`validate()` returns early for that case, and
     /// `restore::build_restore_args` always supplies both paths explicitly), so this is an
     /// invariant violation, not a user-facing error, if it ever fires.
+    #[allow(clippy::expect_used)]
     pub fn source(&self) -> &Path {
         self.source
             .as_deref()
@@ -549,6 +592,7 @@ impl Args {
     }
 
     /// Real path to the destination directory. See [`Self::source`] for the invariant.
+    #[allow(clippy::expect_used)]
     pub fn dest(&self) -> &Path {
         self.dest
             .as_deref()
@@ -654,6 +698,12 @@ impl Args {
         if let Some(no_pre) = job.no_prescan {
             self.no_prescan = no_pre;
         }
+        if let Some(skip) = job.skip_space_check {
+            self.skip_space_check = skip;
+        }
+        if let Some(margin) = job.space_safety_margin_percent {
+            self.space_safety_margin_percent = margin;
+        }
         if let Some(lp) = job.long_paths {
             self.long_paths = lp;
         }
@@ -671,6 +721,13 @@ impl Args {
         }
         if let Some(post) = &job.post_command {
             self.post_command = Some(post.clone());
+        }
+        // F80: does not run inside `execute_generation_backup` -- `encrypt_destination` is only
+        // ever called from the plain-sync pipeline (`execute()`), same declared limitation as
+        // `--compare-baseline`/`--verify-integrity`/VSS-on-the-destination-side for a job that
+        // also sets `backup_type`. Accepted and stored regardless; silently has no effect there.
+        if let Some(key) = &job.encrypt_aes256 {
+            self.encrypt_aes256 = Some(key.clone());
         }
     }
     /// Rejects a `--cancel-file` that already exists, once, before any job starts.
@@ -700,6 +757,13 @@ impl Args {
         if self.backup_type.is_some() && self.mirror {
             return Err(IngestError::BackupTypeAndMirrorConflict);
         }
+        // F80: `execute_generation_backup` never calls `encrypt_destination` (declared scope gap,
+        // see CLAUDE.md's F34 note) -- without this check, `encrypt_aes256` set alongside
+        // `backup_type` (now reachable per-job from JobConfig, not just on the CLI) would silently
+        // produce an unencrypted generation backup while the operator believes it is encrypted.
+        if self.backup_type.is_some() && self.encrypt_aes256.is_some() {
+            return Err(IngestError::BackupTypeAndEncryptionConflict);
+        }
         // F35: nothing to rotate without a generation history in the first place.
         if self.keep_generations.is_some() && self.backup_type.is_none() {
             return Err(IngestError::KeepGenerationsWithoutBackupType);
@@ -712,6 +776,8 @@ impl Args {
             // --advise reads a history file and prints; none of the transfer-shaped checks below
             // (thread range, source exists, dest writable) describe anything it does.
             || self.advise
+            // --list-schedules queries the task scheduler and prints; same reasoning as --advise.
+            || self.list_schedules
             // Credential management touches no path: none of the transfer checks below apply.
             || self.set_credential.is_some()
             || self.delete_credential.is_some()
@@ -940,6 +1006,24 @@ mod tests {
         assert_eq!(args.pattern, "*.csv");
     }
 
+    /// F80: `--encrypt-aes256` was CLI-only; this is the one line that makes a per-job
+    /// `[[jobs]]` value actually reach the invocation `execute()` reads (`config::JobConfig`'s
+    /// own field and `merged_over` only build the resolved value -- this call site is what
+    /// copies it onto `Args`, the same as every other job-config field).
+    #[test]
+    fn apply_job_config_applies_encrypt_aes256() {
+        let mut args =
+            Args::try_parse_from(["robocopy_ingest", "--source", ".", "--dest", "./out"])
+                .expect("parses");
+        let job = crate::config::JobConfig {
+            encrypt_aes256: Some("keyring:backup-nas".to_string()),
+            ..crate::config::JobConfig::default()
+        };
+        args.apply_job_config(&job);
+
+        assert_eq!(args.encrypt_aes256, Some("keyring:backup-nas".to_string()));
+    }
+
     /// Deliberate asymmetry between the two exclude-merge call sites (documented in
     /// `ROADMAP.md` and `PIANO_MIGLIORAMENTI.md`, not a bug): `apply_job_config` (this call
     /// site, shared by single-job `merge_config` and multi-job mode) ACCUMULATES CLI-provided
@@ -1021,6 +1105,22 @@ mod tests {
         assert!(matches!(
             args.validate(),
             Err(IngestError::BackupTypeAndMirrorConflict)
+        ));
+    }
+
+    /// F80: the generation pipeline doesn't call `encrypt_destination` yet, so accepting both
+    /// would silently produce an unencrypted backup the operator believes is encrypted.
+    #[test]
+    fn backup_type_and_encrypt_aes256_together_are_rejected() {
+        use crate::generations::BackupType;
+        let mut args =
+            Args::try_parse_from(["robocopy_ingest", "--source", ".", "--dest", "./out"])
+                .expect("parse");
+        args.backup_type = Some(BackupType::Full);
+        args.encrypt_aes256 = Some("keyring:backup-nas".to_string());
+        assert!(matches!(
+            args.validate(),
+            Err(IngestError::BackupTypeAndEncryptionConflict)
         ));
     }
 

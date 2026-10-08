@@ -8,7 +8,7 @@ okf_version: "0.2"
 
 # Log
 
-* [Analisi di Robustezza e Ottimizzazione Prestazioni](ANALYSIS.md) - Audit trail dei difetti D1-D23 e delle opportunità di miglioramento O1-O10.
+* [Analisi di Robustezza e Ottimizzazione Prestazioni](ANALYSIS.md) - Audit trail dei difetti D1-D27 e delle opportunità di miglioramento O1-O10.
 * [Changelog](CHANGELOG.md) - Cronologia lineare delle versioni, in stile Keep a Changelog.
 
 # Reference
@@ -16,10 +16,9 @@ okf_version: "0.2"
 * [AGENTS.md — Developer \& AI Agent Guidelines](AGENTS.md) - Architectural rules, directory tree, and testing conventions for this codebase.
 * [Architettura di Sistema — robocopy-ingest-cli](ARCHITECTURE.md) - Diagrammi Mermaid, tabella moduli, pipeline di esecuzione, pattern trasversali (D13/D14).
 * [CLAUDE.md — Claude Code \& AI Agent Prompt Instructions](CLAUDE.md) - Technical notes and hard constraints for AI agents working on this codebase.
-* [Come procedere con la GUI Tauri — piano operativo e vincoli](PIANO_GUI_TAURI.md) - Percorso per la GUI Tauri (milestone 7.0.0): impatto misurato sulle prestazioni del motore di copia, tre decisioni con raccomandazione motivata, e il registro della rinumerazione 7.0.0/8.0.0 che ha rimosso uno stallo nella roadmap.
-* [Piano di ampliamento della console rustcopy](PIANO_GUI_ESPANSIONE.md) - Inventario di ciò che la console (F52-F60) espone oggi rispetto alla CLI, analisi delle lacune per categoria, e un piano prioritizzato in tre onde per ampliarla senza allargare il confine di sicurezza F53/F54.
+* [Piano della console rustcopy](PIANO_GUI.md) - Documento unico e vivo per la console (F52-F60) — consolida il piano pre-implementazione (stack, ambito, distribuzione, vincoli permanenti) con l'inventario di ciò che espone oggi rispetto alla CLI, le lacune funzionali con un piano in tre onde, un audit visivo/di usabilità con un piano di rifacimento a tre livelli (chiuso), una valutazione di una metodologia a workspace più cinque funzionalità CLI non ancora costruite (implementate), un audit visivo/funzionale reale post-implementazione, un confronto con TeraCopy/Cobian Reflector sulle capacità della GUI, l'analisi di rischio del motore pilotabile (sospesa), un piano per la selezione di percorsi e i campi di configurazione ancora irraggiungibili dalla GUI, una sincronizzazione rapida senza un file di configurazione esistente, e un'analisi di usabilità della scheda Modifica (validazione, verifica percorsi, suggerimenti, esempio funzionante) da un uso estensivo reale. Sostituisce PIANO_GUI_TAURI.md (archiviato) e PIANO_GUI_ESPANSIONE.md (questo stesso file, rinominato).
 * [Piano di Miglioramento Consolidato — robocopy-ingest-cli](PIANO_MIGLIORAMENTI.md) - Piano operativo unico — lacune documentazione, economia di contesto, debito tecnico, launcher PowerShell, performance.
-* [Roadmap di Progetto — robocopy-ingest-cli](ROADMAP.md) - Milestone, elenco feature F1-F61, backlog, debito tecnico noto.
+* [Roadmap di Progetto — robocopy-ingest-cli](ROADMAP.md) - Milestone, elenco feature F1-F66, backlog, debito tecnico noto.
 * [robocopy-ingest-cli (rustcopy) — README](README.md) - Panoramica del progetto — cosa fa, come si installa, primi comandi e indice della documentazione.
 * [Runbook Operativo — robocopy-ingest-cli](RUNBOOK.md) - Guide operative pratiche, esempi reali, benchmark SMB/NAS.
 * [Security Policy](SECURITY.md) - How to report vulnerabilities, and the security scope of this project.

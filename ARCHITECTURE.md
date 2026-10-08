@@ -11,7 +11,7 @@ verified:
   at: 2026-09-02T00:00:00Z
 ---
 
-# Architettura di Sistema — robocopy-ingest-cli (v6.0.0)
+# Architettura di Sistema — robocopy-ingest-cli (v7.8.0)
 
 Questo documento descrive in dettaglio l'**architettura interna, la pipeline di esecuzione, i pattern di progettazione ed i meccanismi di sicurezza e performance** implementati nella libreria `robocopy_ingest`.
 
@@ -28,18 +28,30 @@ Dal 31 Agosto 2026 il terzo membro **esiste**: `crates/rustcopy-gui`, la console
 Svelte 5 + Tailwind 4). Non esegue backup e ha un solo percorso di scrittura, `job_editor`, che
 produce proposte di configurazione in file nuovi.
 
+Dal 10 Settembre 2026 esiste un quarto membro: `crates/rustcopy-shell` (F85), l'estensione Shell
+di Windows che propone "Copia con RustCopy" sul menu di conferma del drag & drop di Explorer. È la
+prima vera eccezione nel progetto al pattern "delega a un tool nativo invece di legare API COM
+direttamente" (VSS via `vssadmin.exe`, pianificazione via `schtasks.exe`) — giustificata solo
+perché non esiste un tool nativo da shellare per "aggiungi una voce al menu di conferma del drop":
+l'unica via è COM (`IShellExtInit`+`IContextMenu`). Dall'11 Settembre 2026 è anche un componente
+dell'installer (`installer/rustcopy.iss`): `gui\shell`, annidato sotto `gui` invece che affiancato
+— `InvokeCommand` cerca `rustcopy-gui.exe` accanto al proprio DLL (`gui_beside`, Milestone 3), quindi
+l'estensione è inerte senza la console. `Flags: regserver` chiama `DllRegisterServer`/
+`DllUnregisterServer` in automatico a install/disinstalla; nessuna sezione `[Registry]` manuale.
+
 | Membro | Contiene | Produce |
 |---|---|---|
 | `crates/rustcopy-core` | Tutta la logica: scansione, motori di copia, integrità, crypto, VSS, generazioni, storico, report | La libreria **`robocopy_ingest`** |
 | `crates/rustcopy-cli` | Solo gli entry point e la loro orchestrazione | I binari **`robocopy_ingest`** e **`notify-server`** |
 | `crates/rustcopy-gui` | La console desktop: comandi Tauri come involucri sottili su `gui_api`/`job_editor`, più il frontend Svelte in `ui/` | Il binario **`rustcopy-gui`**, componente opzionale dell'installer |
+| `crates/rustcopy-shell` | L'handler COM del drag & drop di Explorer: `IClassFactory`/`DllGetClassObject`/`DllRegisterServer` come involucri sottili, la vera logica (classificazione cartelle, calcolo percorsi, scrittura del TOML monouso) in funzioni pure testabili | La libreria dinamica **`rustcopy_shell.dll`** (`cdylib`), componente `gui\shell` dell'installer (F85, 11 Set 2026) |
 
 **Il nome della libreria e quelli dei binari non sono cambiati.** Il package si chiama
 `rustcopy-core` ma la sua `[lib]` resta `robocopy_ingest`, quindi ogni `use robocopy_ingest::…`
 continua a valere; i binari mantengono i nomi che installer e script già usano. La
 ristrutturazione non ha rinominato nulla di visibile a un utente o a uno script.
 
-Due invarianti sono presidiate da altrettanti gate in `ci.yml`, entrambi nella forma `if … then …
+Tre invarianti sono presidiate da altrettanti gate in `ci.yml`, tutti nella forma `if … then …
 fi` (mai `… | grep -q … && exit 1`, che fallisce quando l'albero è **pulito**):
 
 - `cargo tree --locked -p rustcopy-cli | grep -qi axum` deve essere vuoto senza la feature
@@ -47,6 +59,15 @@ fi` (mai `… | grep -q … && exit 1`, che fallisce quando l'albero è **pulito
 - `cargo tree --locked -p rustcopy-cli | grep -qiE 'tauri|wry|tao'` deve essere sempre vuoto: la
   CLI non acquisisce mai una dipendenza dalla GUI, ed è ciò che garantisce che un backup
   schedulato esegua lo stesso codice con o senza GUI installata.
+- `cargo tree --locked -p rustcopy-cli | grep -qiE 'windows(-core)? v[0-9]'` deve essere sempre
+  vuoto: la CLI non acquisisce mai una dipendenza dal toolchain COM di `rustcopy-shell` — il
+  pattern che cerca `windows(-core)? v<cifra>`, non una sottostringa `windows` nuda, per non dare
+  falsi positivi sulle dipendenze `windows-service`/`windows-sys` già legittime della CLI.
+
+`rustcopy-shell` è escluso dai job cross-platform di `ci.yml` esattamente come `rustcopy-gui` (la
+sua dipendenza `windows` è dichiarata solo sotto `[target.'cfg(windows)'.dependencies]`, quindi non
+compila affatto su Linux) — ha un proprio job dedicato `windows-latest` (`check`/`clippy`/`test`),
+speculare a quello della GUI.
 
 > **Nota sui percorsi negli altri documenti.** `ANALYSIS.md`, `ROADMAP.md`, `CLAUDE.md` e
 > `AGENTS.md` citano i moduli come `src/nome.rs` in racconti di lavori passati. I nomi dei moduli
@@ -141,6 +162,7 @@ graph TD
 | `crates/rustcopy-core/src/cloud.rs` | **[NON IMPLEMENTATO]** Sincronizzazione Cloud diretta. | `sync_to_cloud` è un mock che ritorna sempre `Ok(100)`; `--cloud-sync-target` non ha effetto. |
 | `crates/rustcopy-core/src/service.rs` | Integrazione **generica** e riutilizzabile al Service Control Manager di Windows (F37/F41). | `windows-service` crate (dipendenza `[target.'cfg(windows)'.dependencies]`). Espone `install_named`/`uninstall_named`/`start_dispatcher`/`register_and_wait_for_stop`/`ServiceStatusHandle`, parametrizzati per nome/display-name — nessuna dipendenza da axum. Usato da **due** identità di servizio indipendenti: `robocopy_ingest` (`"RustcopyIngestService"`, F37, resta **inattivo** — risponde solo a Stop/Interrogate, `install()`/`uninstall()`/`run_service_dispatcher()` restano wrapper a zero argomenti) e `notify-server` (`"RustcopyNotifyServer"`, F41, esegue davvero axum). Entrambi i `main()` non sono più `#[tokio::main]`: controllano l'argv grezzo per il marker interno `--run-as-service` prima di costruire il runtime tokio, perché `service_dispatcher::start` blocca il thread OS chiamante. |
 | `crates/rustcopy-core/src/crypto.rs` | Cifratura/decifratura Zero-Trust. | **AES-256-GCM a blocchi da 1 MiB**, nonce fresco per blocco, header `RCE1` + record length-prefixed, file temporaneo sibling + rename atomico. `--decrypt <KEY>` è il simmetrico di `--encrypt-aes256`. |
+| `crates/rustcopy-core/src/example_workspace.rs` | Genera un esempio funzionante per chi ha installato la console senza clonare il repository (F79). | Rifiuto atomico via `std::fs::create_dir` (mai `create_dir_all`) se la cartella esiste già — stessa disciplina di `create_new` in `job_editor::propose_config`. Modulo a sé, non dentro `gui_api.rs` (documentato read-only), per la stessa ragione di `crypto.rs`. |
 | `crates/rustcopy-core/src/exit_code.rs` | Decodifica bitmask exit code robocopy. | Interpreta i codici di uscita di robocopy; `EXIT_INTEGRITY_FAILED = 4` distingue fallimento di integrità da fallimento di trasferimento. |
 | `crates/rustcopy-core/src/errors.rs` | Enum `IngestError` con classificazione retry. | Errori tipizzati con `is_retryable()` per il backoff automatico. |
 | `crates/rustcopy-core/src/progress.rs` | Progress bar monotonica con throughput. | Observer pattern per aggiornamenti in tempo reale dalla pipeline di trasferimento. |
@@ -227,7 +249,7 @@ Per garantire la stabilità su dataset da **milioni di file**:
 
 ## 5. Matrice di Cross-Platform & Mock Testability
 
-Nonostante `robocopy.exe` sia un binario esclusivamente Windows, l'intera suite di **422 test** (`cargo test --workspace --exclude rustcopy-gui`, la configurazione di base che gira in CI) viene eseguita ed è al 100% passante sia su Windows che su Linux (le due piattaforme coperte da `.github/workflows/ci.yml` — affiancato da `.github/workflows/security-audit.yml`, che esegue `rustsec/audit-check` contro il database advisory RustSec ad ogni modifica di `Cargo.toml`/`Cargo.lock` più un cron settimanale; macOS non fa parte della matrice CI, anche se nulla nel codice lo esclude a priori) grazie al trait `CommandRunner` ed al mock `ScriptedRunner` che simula perfettamente gli exit code ed i flussi stdout di Robocopy. Su Windows, i test aggiuntivi eseguono `robocopy.exe` realmente (dry-run, cifratura AES-256-GCM end-to-end, blocco del mirror-purge, webhook irraggiungibile, **ripristino completo end-to-end da perdita simulata di file — F24**, **backup cifrato → perdita → `--restore-from --decrypt` end-to-end — F25b**, **backup generazionale full → incrementale → differenziale — F34**, **ritenzione/rotazione delle generazioni per cicli — F35**, **comandi pre/post job — F39**, **installazione/rimozione reale di una voce Task Scheduler via `schtasks.exe` — F36**, **checkpoint e resume — F31**, **due job dello stesso batch `[[jobs]]` che condividono la stessa `dest` ottengono manifest generazioni e cache indipendenti — D12**, **le righe di log di ogni job in un batch `[[jobs]]`, incluse quelle emesse dentro `spawn_blocking` come l'invocazione di robocopy, sono taggate con il nome del job che le ha prodotte — D13**, **nessun file temporaneo residuo dopo la scrittura atomica del manifest generazioni/cache fast-verify — D14**, **un fallimento di copia in `--backup-type` restituisce l'exit code 1 (non 2) e scrive comunque un report — D15**). Con `cargo test --workspace --exclude rustcopy-gui --features rustcopy-cli/notify-server` (**437 test** totali) si aggiungono i test unitari sul router axum (su socket TCP reale) e test end-to-end che eseguono i binari `notify-server` e `robocopy_ingest` realmente compilati l'uno contro l'altro. `--install-service`/`--uninstall-service` su entrambi i binari (F37, F41) sono coperti solo dal fallimento pulito senza elevazione e dai conflitti clap — il vero round trip `CreateService`/`StartService`/`DeleteService` contro il Service Control Manager richiede elevazione ad Amministratore reale e **non è automatizzato**, stesso limite dichiarato per `--vss-snapshot` (F30); vedi `CLAUDE.md` e `ROADMAP.md` (righe F37/F41) per il dettaglio.
+Nonostante `robocopy.exe` sia un binario esclusivamente Windows, l'intera suite di **506 test** (`cargo test --locked --workspace --exclude rustcopy-gui --all-targets`, la configurazione di base che gira in CI) viene eseguita ed è al 100% passante sia su Windows che su Linux (le due piattaforme coperte da `.github/workflows/ci.yml` — affiancato da `.github/workflows/security-audit.yml`, che esegue `rustsec/audit-check` contro il database advisory RustSec ad ogni modifica di `Cargo.toml`/`Cargo.lock` più un cron settimanale; macOS non fa parte della matrice CI, anche se nulla nel codice lo esclude a priori) grazie al trait `CommandRunner` ed al mock `ScriptedRunner` che simula perfettamente gli exit code ed i flussi stdout di Robocopy. Su Windows, i test aggiuntivi eseguono `robocopy.exe` realmente (dry-run, cifratura AES-256-GCM end-to-end, blocco del mirror-purge, webhook irraggiungibile, **ripristino completo end-to-end da perdita simulata di file — F24**, **backup cifrato → perdita → `--restore-from --decrypt` end-to-end — F25b**, **backup generazionale full → incrementale → differenziale — F34**, **ritenzione/rotazione delle generazioni per cicli — F35**, **comandi pre/post job — F39**, **installazione/rimozione reale di una voce Task Scheduler via `schtasks.exe` — F36**, **checkpoint e resume — F31**, **due job dello stesso batch `[[jobs]]` che condividono la stessa `dest` ottengono manifest generazioni e cache indipendenti — D12**, **le righe di log di ogni job in un batch `[[jobs]]`, incluse quelle emesse dentro `spawn_blocking` come l'invocazione di robocopy, sono taggate con il nome del job che le ha prodotte — D13**, **nessun file temporaneo residuo dopo la scrittura atomica del manifest generazioni/cache fast-verify — D14**, **un fallimento di copia in `--backup-type` restituisce l'exit code 1 (non 2) e scrive comunque un report — D15**). Con `cargo test --locked --workspace --exclude rustcopy-gui --all-targets --features rustcopy-cli/notify-server` (**521 test** totali) si aggiungono i test unitari sul router axum (su socket TCP reale) e test end-to-end che eseguono i binari `notify-server` e `robocopy_ingest` realmente compilati l'uno contro l'altro. `--install-service`/`--uninstall-service` su entrambi i binari (F37, F41) sono coperti solo dal fallimento pulito senza elevazione e dai conflitti clap — il vero round trip `CreateService`/`StartService`/`DeleteService` contro il Service Control Manager richiede elevazione ad Amministratore reale e **non è automatizzato**, stesso limite dichiarato per `--vss-snapshot` (F30); vedi `CLAUDE.md` e `ROADMAP.md` (righe F37/F41) per il dettaglio.
 
 ---
 

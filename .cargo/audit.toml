@@ -1,0 +1,62 @@
+# cargo-audit reads this automatically (verified empirically: an entry here silently drops that
+# advisory from `cargo audit`'s output, confirmed by removing it and watching the warning
+# reappear — not assumed from documentation). security-audit.yml's `rustsec/audit-check` wraps
+# the same `cargo audit`, so this file governs both the local and the CI run.
+#
+# Every entry below is a "warning" (unmaintained/unsound/yanked), never an actual vulnerability —
+# `cargo audit`'s own `-D` flag distinguishes them, and none of these change that class on their
+# own. An entry here is a reviewed, dated decision, not a blanket "make it quiet": if a *new*
+# advisory appears against any of these crates (a real vulnerability, not just "still
+# unmaintained"), it gets its own ID and this list does not suppress it.
+#
+# Re-review this file whenever `cargo audit` reports something not listed here, and periodically
+# regardless — an "unmaintained" crate accepted today because it's inert on this platform can stop
+# being inert if a future dependency bump changes what actually gets compiled.
+
+[advisories]
+ignore = [
+    # --- GTK3/ATK/GDK/glib cluster (12 IDs), reviewed 4 Set 2026 ---
+    # Pulled transitively by tao/wry (Tauri's cross-platform windowing/webview layer) for its
+    # *Linux* backend (webkit2gtk). Verified with `cargo tree -p rustcopy-gui -i gtk` (and -i glib,
+    # -i atk): empty without `--target all`, meaning Cargo resolves these into Cargo.lock for
+    # every platform Tauri supports, but the target-cfg excludes them from an actual Windows
+    # build — this project's only shipped target (CLAUDE.md: "il prodotto è Windows-native").
+    # `cargo audit` scans Cargo.lock, not the compiled binary, so it flags code that is never
+    # compiled here. Nothing to fix on this project's side short of Tauri dropping GTK3 support.
+    "RUSTSEC-2024-0413", # atk — unmaintained
+    "RUSTSEC-2024-0416", # atk-sys — unmaintained
+    "RUSTSEC-2024-0412", # gdk — unmaintained
+    "RUSTSEC-2024-0418", # gdk-sys — unmaintained
+    "RUSTSEC-2024-0411", # gdkwayland-sys — unmaintained
+    "RUSTSEC-2024-0417", # gdkx11 — unmaintained
+    "RUSTSEC-2024-0414", # gdkx11-sys — unmaintained
+    "RUSTSEC-2024-0415", # gtk — unmaintained
+    "RUSTSEC-2024-0420", # gtk-sys — unmaintained
+    "RUSTSEC-2024-0419", # gtk3-macros — unmaintained
+    "RUSTSEC-2024-0370", # proc-macro-error — unmaintained (pulled by glib-macros/gtk3-macros)
+    "RUSTSEC-2024-0429", # glib — unsound VariantStrIter iterator impl; same target-gated cluster
+
+    # --- unic-* Unicode-property cluster (5 IDs), reviewed 4 Set 2026 ---
+    # Unlike the GTK cluster, these ARE compiled into the Windows build: `cargo tree -p
+    # rustcopy-gui -i unic-ucd-ident` (no --target all needed) resolves through
+    # unic-ucd-ident -> urlpattern -> tauri-utils -> tauri, i.e. Tauri's own IPC/protocol URL
+    # matching, used on every platform. All five crates are "unmaintained" (stale upstream, no
+    # known vulnerability), transitive through Tauri itself — nothing actionable here short of
+    # Tauri migrating off `urlpattern`. Re-check if `urlpattern`'s dependency on the unic-* family
+    # ever changes to something maintained, at which point these entries should be removed rather
+    # than left stale.
+    "RUSTSEC-2025-0081", # unic-char-property — unmaintained
+    "RUSTSEC-2025-0075", # unic-char-range — unmaintained
+    "RUSTSEC-2025-0080", # unic-common — unmaintained
+    "RUSTSEC-2025-0100", # unic-ucd-ident — unmaintained
+    "RUSTSEC-2025-0098", # unic-ucd-version — unmaintained
+]
+
+# `chacha20 0.10.1` (pulled by `rand`, real dependency of `crypto.rs`'s CSPRNG use, compiled on
+# every platform) shows as "yanked" rather than an advisory ID — cargo-audit's `ignore` list only
+# takes RUSTSEC IDs, so a yanked-without-an-ID crate can't be silenced here; it stays visible on
+# every run. Reviewed 4 Set 2026: `rand` is an actively maintained, extremely widely used crate,
+# and a yank typically means "don't newly resolve to this exact patch version" (a metadata/publish
+# issue upstream), not a disclosed vulnerability — `cargo audit` would have surfaced this as an
+# advisory with an ID if it were one. Re-review if `cargo audit`'s summary for this entry changes
+# from "yanked" to a real advisory.

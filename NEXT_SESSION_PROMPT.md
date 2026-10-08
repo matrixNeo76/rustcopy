@@ -5,50 +5,333 @@ description: Handoff di sessione — stato progetto, aree da investigare, conven
 status: draft
 generated:
   by: process:claude-code
-  at: 2026-08-20T00:00:00Z
+  at: 2026-09-05T00:00:00Z
 ---
 
 # Prompt per la prossima sessione — robocopy-ingest-cli (rustcopy)
 
-## Stato del progetto (2 Settembre 2026)
+## Stato del progetto (7 Settembre 2026)
 
-`Cargo.toml` = **6.0.0**. Suite di test: **422** (`cargo test --workspace --exclude rustcopy-gui`), **437** con `--features rustcopy-cli/notify-server` (più test `#[ignore]` — round-trip reali dei servizi Windows che richiedono elevazione, più due probe di misurazione a scala reale). CI verde su `windows-latest` e `ubuntu-latest` per entrambe le configurazioni, più i job dedicati `gui`, `gui-npm-audit`, `versions` e `docs`.
+`Cargo.toml` = **7.0.0** (bump da 6.0.0, 7 Set 2026 — v6.0.0 era stato taggato 216 commit prima
+ancora che la milestone 7.0.0/console partisse; mai più aggiornato da allora, corretto su decisione
+esplicita dell'utente). Suite di test: **506** (`cargo test --locked --workspace --exclude rustcopy-gui --all-targets`), **521** con `--features rustcopy-cli/notify-server` (più test `#[ignore]` — round-trip reali dei servizi Windows che richiedono elevazione, più due probe di misurazione a scala reale). CI verde su `windows-latest` e `ubuntu-latest` per entrambe le configurazioni, più i job dedicati `gui`, `gui-npm-audit`, `versions` e `docs`.
 
-**Ultimo lavoro: la milestone 7.0.0 (console desktop), sette voci su otto chiuse.** F52 workspace, F53 scheletro Tauri 2 + Svelte 5 + Tailwind 4 (il viewer dei report è parte di `gui_api`, **non** F58: quella è della 8.0.0 condizionale e dipende da F47), F59 storico navigabile e advisor deterministico, F56 credenziali nel Windows Credential Manager (`keyring:NOME`, estende `resolve_key` senza sostituire `env:`/`file:`), F55 **metà in lettura** (impostazioni risolte, con provenienza del valore e conseguenze), F54 editor dei job (creazione e modifica; **l'esecuzione resta fuori ambito**), F60 installer unico con la console come componente opzionale.
+**Prima GitHub Release pubblicata, v7.0.0 (7 Set 2026)**: tag e Release annotati sul commit di
+`main` dopo il merge di F70 (F62-F70 tutte incluse), installer `rustcopy-7.0.0-setup.exe` allegato
+come asset. Vedi https://github.com/matrixNeo76/rustcopy/releases/tag/v7.0.0.
 
-**La garanzia "non può danneggiare un backup" è decaduta di proposito con F54**, e al suo posto vale una regola sola: *l'editor può restringere il rischio, mai allargarlo* — `mirror` non passa da spento ad acceso, `keep_generations` non si introduce né si abbassa, `no_prescan` non si accende su un job che fa mirror, l'omissione non cancella mai, e la scrittura produce sempre un file **nuovo** senza toccare la configurazione in uso. Dettaglio nella riga F54 di `ROADMAP.md`.
+**Ultimo lavoro: F68/F69/F70/F71 chiuse (7 Set 2026, PR #97-#99 più F71), dopo F62-F67 (5-7 Set 2026, PR #87-#96).**
+Selettori di cartella nativi per Sorgente/Destinazione (F68), `keep_generations`
+editabile per alzarlo (F69), `backup_type` selezionabile (F70) in Modifica, e sincronizzazione
+rapida senza config esistente (F71, chiude il piano di §16.4+§17) — dettaglio completo più
+sotto. Il paragrafo che segue racconta invece l'origine più a monte,
+F62-F66, nate da un'analisi richiesta dall'utente su una metodologia a workspace per la GUI e su
+funzionalità CLI non ancora valutate — formalizzata come backlog in `ROADMAP.md`, poi implementata
+su richiesta esplicita ("procedi con il piano e punti creati da F62 a F66"):
 
-**Il difetto più istruttivo della sessione è D22** e va letto prima di toccare la GUI: la console installata caricava il server di sviluppo invece del proprio frontend, e `cargo build`, `clippy` e 422 test erano **tutti verdi** su quel binario, perché nessuno di loro apre una finestra. L'ha trovato l'utente avviandola. Nella stessa sessione, usando l'applicazione invece di rileggere il diff, sono emersi altri due difetti che i controlli non vedevano: bozze dell'editor legate al percorso condiviso invece che al file da cui venivano, e il cambio scheda che distruggeva ogni altro pannello perdendo le modifiche in silenzio. **Per una GUI non esiste sostituto all'aprire la finestra e cliccarci dentro.**
+- **F62** `--list-schedules` (PR #87) — elenca ogni attività di Task Scheduler che invoca il
+  binario corrente, riusando il motore CSV già scritto per `schedule::referencing_config`.
+- **F63** `--purge-preview-path` (PR #88) — anteprima completa e non troncata di cosa `--mirror`
+  cancellerebbe, senza mai chiedere conferma né autorizzare nulla (vincolo F61). Solo la metà
+  mirror; la metà retention (`--keep-generations`) resta backlog per scelta deliberata.
+- **F65** controllo preventivo di spazio libero (PR #89) — nuovo `disk_space.rs`, nuovo exit code
+  `6`. **Bug reale trovato scrivendo i test**: `needed_bytes / 100 * percent` azzerava il margine
+  sotto i 100 byte; corretto moltiplicando prima di dividere. **Secondo difetto, dalla CI Linux**:
+  un test assumeva l'exit 6 su ogni piattaforma, ma `free_bytes` non ha implementazione non-Windows
+  — stessa classe di lacuna già vista in D16, corretto gating il test a `#[cfg(windows)]`.
+- **F64** anteprima di ripristino in console (PR #91) — verificato per primo, come da spec, che
+  `--restore-from --dry-run` componesse già correttamente; il comando Tauri `preview_restore` è un
+  involucro sottile su quello, nessuna nuova logica core.
+- **F66** preferiti nominati in console (PR #90) — quarta lista in `session.svelte.js` accanto a
+  "Recenti", interamente client-side, zero comandi Tauri nuovi.
 
-Prima della 7.0.0: D18-D21 (22-23 Agosto) su log, formato manifest NDJSON, letture streaming e `Arc<[ScannedFile]>` — vedi `ANALYSIS.md` per il dettaglio, non ripetuto qui.
+**Incidente di workflow, risolto**: PR #90 (F66) era stata branchata prima che PR #89 (F65) fosse
+mergiata, e le due toccavano la stessa riga di `ROADMAP.md` — merge conflict trovato e risolto
+manualmente (unite entrambe le righe "✅ completato" invece di sceglierne una), poi l'intera
+pipeline di verifica rieseguita sul branch risultante prima del push. **Lezione per la prossima
+volta**: quando più PR sequenziali toccano la stessa sezione di un file di documentazione condiviso
+(qui la tabella backlog di `ROADMAP.md`), aggiornare/rebasare il branch più vecchio *prima* di aprire
+la PR successiva evita il conflitto invece di doverlo risolvere dopo.
 
-Milestone 5.2.0/5.3.0/6.0.0/6.1.0 chiuse; 7.0.0 chiusa a sette voci su otto (resta la metà in **scrittura** di F55, gli script pre/post; **F57**, i ruoli, è ferma a P2 con una raccomandazione esplicita di non farla — F54 impedisce già per costruzione l'errore che il ruolo "operatore" doveva prevenire, e una schermata di login suggerirebbe una garanzia che in un'app desktop non può dare). Difetti storici: **D1-D22**, **nessuno aperto** — D10 (strumentazione grafo Graphify) è stato riclassificato il 23 Agosto 2026 come limite noto dello strumento di estrazione, non come lavoro da pianificare: la sua parte azionabile era già stata fatta e ciò che resta (dispatch indiretto non tracciato) non ha un fix. Non riaprirlo; se serve, rimisurare la reachability. Feature F1-F61 tutte classificate (chiuse, o rimandate al backlog con motivazione — vedi `ROADMAP.md`).
+**Lacune documentali trovate e corrette in una sessione successiva, sempre 5 Set 2026**:
+`CHANGELOG.md` non menzionava affatto F62-F66 (aggiunto sotto `## [Unreleased]`); `PIANO_GUI.md`
+§12.2 aveva ancora, sotto le intestazioni "✅ completato", un paragrafo di chiusura che diceva
+"nessuna di queste cinque voci è stata implementata" — contraddizione lasciata da un aggiornamento
+riga-per-riga che non aveva toccato il paragrafo finale. **Lezione**: quando un documento ha sia
+righe di stato per-voce sia un paragrafo di riepilogo, aggiornare entrambi nello stesso giro — un
+`grep` dei soli numeri (test/difetti) non li avrebbe trovati, serviva rileggere il paragrafo intero.
 
-**Questa sessione ha chiuso l'intero `PIANO_MIGLIORAMENTI.md`** ad eccezione di due voci a bassa priorità mai promosse (P3/P4, vedi sotto):
+**Lavoro precedente: espansione ed rifacimento visivo della console, dopo la chiusura della
+milestone 7.0.0 (2 Set 2026).** Ordine cronologico delle PR #63-#83:
 
-- **Pilastro A** (lacune README) — chiuso 17 Agosto 2026.
-- **Pilastro B / B5+B5b** (`CLAUDE.md` 50.108 → 34.203 caratteri, convenzione anti-ricrescita) — chiuso 20 Agosto 2026, PR #16.
-- **Pilastro C / B3-B4** (bug/debito tecnico: semantiche di merge TOML, `unsafe` senza `// SAFETY:`) — chiuso 17 Agosto 2026.
-- **Pilastro D** (launcher PowerShell interattivo `rustcopy-launcher.ps1` + refactor script→wrapper) — chiuso 18-19 Agosto 2026.
-- **Pilastro E / P1-P2** (placeholder `{timestamp}` in `--report-path`, `previous_run_comparison` nel report JSON) — chiuso 19 Agosto 2026.
-- **Pilastro E / P3-P4** — **ancora aperti**, priorità bassa (🟢), mai richiesti esplicitamente: P3 (cache dell'inventario di scan — verificare prima la sovrapposizione con `cache.rs`/`generations.rs` esistenti, rischio concreto di terza struttura duplicata) e P4 (retention dei report JSON, tipo `--report-retention-days N`).
+- **Onda 1 e 2** del piano di espansione (`PIANO_GUI.md`, ex `PIANO_GUI_ESPANSIONE.md`): progress bar con etichetta di batch, badge pianificazione, drag&drop su `PathBar`, export CSV, notifiche desktop a fine run, filtro Storico/Report, coda job durante un batch (F49), gestione credenziali dalla console (F56 metà GUI) — tutte chiuse.
+- **D23** (3 Set): `--bandwidth-limit-mbps` falliva sempre contro `robocopy.exe` reale per il conflitto `/IPG`+`/MT` mai gestito in `build_args` — risolto omettendo `/MT` quando il limite di banda è impostato.
+- **D24** (4 Set): `schedule.rs` faceva lampeggiare una console nera davanti alla GUI ad ogni `schtasks.exe` per un `CREATE_NO_WINDOW` mancante su due spawn — risolto.
+- **Consolidamento documentale** (4 Set): `PIANO_GUI_TAURI.md` (il piano pre-implementazione) archiviato in `docs/archive/`, `PIANO_GUI_ESPANSIONE.md` rinominato `PIANO_GUI.md` — **da qui in avanti è l'unico piano attivo della console**, non duplicarlo né riaprire un terzo file.
+- **Onda 3, metà GUI di F31** (4 Set): ripresa da checkpoint dalla console — `gui_api::list_checkpoints` scansiona la cartella del config per `*.checkpoint.json` (non calcola un percorso atteso), `resume_job` avvia `runner::resume_arguments`. Verificato contro un trasferimento reale interrotto a metà. **Trovato in verifica, non nel disegno**: la ripresa eredita solo pattern/thread/tentativi/verifica dell'interruzione, non il resto della configurazione originale — comportamento preesistente di `checkpoint::build_resume_args`, mai dichiarato prima d'ora → **D25, aperto, non bloccante** (l'asimmetria gioca a favore della sicurezza, mai verso il distruttivo).
+- **Rifacimento visivo, tutti e tre i livelli** (4 Set, PIANO_GUI.md §10): Livello 1 (4/5 — contenimento layout, colonne tabella esplicite, badge di provenienza inline, traduzione di `integrity_status`, collegamento "Apri il report di questa run"; `exit_code_meaning` **non** tradotto di proposito, non è un enum chiuso), Livello 2 (`@lucide/svelte` per le icone — 0 vulnerabilità, tree-shaken — card di raggruppamento, scala tipografica, larghezza campi editor), Livello 3 (sidebar verticale al posto dei pulsanti in testa, finestra di apertura 1440×900, empty state con icona). **Bug trovato e corretto durante la verifica live**: una prima bozza derivava un'icona ✓/✗ per "Esito" in Report da `report.exit_code`, un campo che `ReportView` non espone affatto (solo `exit_code_meaning`, la stessa frase bitmask aperta già esclusa dalla traduzione al Livello 1) — icona sempre-falsa, rimossa.
 
-**Coerenza documentale verificata e corretta nella sessione del 20 Agosto** (l'utente ha chiesto esplicitamente un controllo di coerenza ROADMAP/OKF dopo la chiusura di B5): conteggi test allineati a 302/317 in `README.md`/`ARCHITECTURE.md`/`AGENTS.md`/`ROADMAP.md`/`RUNBOOK.md` (erano fermi a 286/301 o 284/299) — **da allora aggiornati di nuovo a 307/322 dopo D17 (21 Agosto), vedi sopra**; `ROADMAP.md` riga sulla dimensione di `CLAUDE.md` aggiornata per riflettere la chiusura di B5 (misure e stato, non più "approvato, in attesa"); `docs/archive/AGENT_HARNESS_PLAN.md` (file orfano trovato in root, creato il 10 Agosto 2026, mai eseguito, senza frontmatter OKF) spostato in `docs/archive/` con frontmatter e nota, aggiunto al loop `okf parse` in CI — **13 file** coperti ora (11 root + 2 archiviati), non più 12. Nessuna azione da riaprire su questo fronte salvo nuove derive rilevate in futuro.
+**Il difetto più istruttivo resta D22** (2 Set, non di questa sessione, ma da rileggere prima di toccare la GUI): la console installata caricava il server di sviluppo invece del proprio frontend, e `cargo build`/`clippy`/tutti i test erano verdi, perché nessuno di loro apre una finestra. **Per una GUI non esiste sostituto all'aprire la finestra e cliccarci dentro** — ogni bug di questa sessione (D23, D24, il bug dell'icona morta) è stato trovato così, mai leggendo solo il diff.
+
+Milestone 5.2.0/5.3.0/6.0.0/6.1.0/7.0.0 chiuse (7.0.0 a sette voci su otto: resta la metà in **scrittura** di F55 — script pre/post — e F57, i ruoli, fermo con raccomandazione esplicita di non farlo). Difetti storici: **D1-D27**, **un solo aperto (D25)**, non bloccante. Feature F1-F67 tutte classificate — **F62, F64, F65, F66, F67 chiuse per intero; F63 chiusa per la sola metà mirror** (5-7 Set 2026, PR #87-#93 più F67) — spec tecnica completa e cronologia d'implementazione in `ROADMAP.md`.
+
+**Confronto GUI con TeraCopy/Cobian Reflector (6 Set 2026, `PIANO_GUI.md` §14)**, richiesto
+dall'utente dopo l'audit di §13: non un confronto di motore (già in `ROADMAP.md`) ma "cosa può fare
+un operatore dalla finestra". Tre categorie: costruibile ora (riordino job pre-esecuzione, slider
+banda), bloccato da una decisione già presa (motore non pilotabile, F47/F48/F58), e presente negli
+altri strumenti ma **deliberatamente escluso** da un confine di sicurezza già scritto (wizard di
+pianificazione dalla GUI, ruoli admin/operatore — non sono gap, sono limiti voluti). **Rianalisi
+critica della prima stesura (§14.4)** ha corretto due errori: F49 ("coda gestibile") mescolava due
+capacità di costo diverso — riordinare *prima* di eseguire è economico, riordinare *durante* un
+batch sbatte contro lo stesso muro di F47/F58 (verificato in `run_jobs`, `main.rs`: l'elenco job è
+un `for` letto una volta sola all'avvio del processo); un visualizzatore di log grezzo proposto come
+gap è stato retrocesso — nessun bisogno concreto dimostrato, stessa barra già usata per F38/F40.
+
+**F67, riordino job in Modifica, implementato e verificato 7 Set 2026**: due pulsanti sposta-su/giù
+in `Editor.svelte` sulla scheda selezionata. **Bug reale trovato scrivendo il file e rileggendolo,
+non fidandosi della sola UI**: `job_editor::build_proposal` ignorava l'ordine di `drafts` per i job
+già noti, riscrivendoli sempre alla posizione originale nel file — le schede si scambiavano
+correttamente a schermo, il file no. Corretto ricostruendo l'elenco nell'ordine dei draft; un test
+esistente codificava l'ordinamento vecchio ed è stato aggiornato, uno nuovo scrive una proposta
+reale e ne rilegge l'ordine. Dettaglio completo: riga F67 di `ROADMAP.md`, `PIANO_GUI.md` §14.5.
+
+**Audit visivo/funzionale reale della console (6 Set 2026)**, richiesto dall'utente subito dopo la
+chiusura di F62-F66 ("controlla lo stato attuale delle funzionalità e aspetto della GUI"): console
+ricompilata da `main` aggiornato e riaperta con Windows-MCP, `demo-locale.toml` eseguito per davvero,
+non solo letto nel sorgente. Quattro difetti trovati, **tutti e quattro corretti lo stesso giorno**
+(dettaglio completo: `ANALYSIS.md` D26/D27, `PIANO_GUI.md` §13, riga F64 di `ROADMAP.md`):
+
+- **D26, P0**: "Anteprima ripristino" (F64) restituiva "fatal error, no files copied" invece di
+  un'anteprima su un report a percorsi relativi (il caso di `examples/demo-locale.toml`, l'unico
+  esempio pensato per essere eseguito così com'è) — `preview_restore` non impostava alcuna cwd per
+  il processo figlio. **Un primo tentativo di fix era sbagliato**: `command.current_dir(report.parent())`,
+  lo stesso pattern di `run_arguments`/`resume_arguments`, ricompilato e riprovato ha riprodotto lo
+  stesso identico fallimento — la cartella del *file* del report è spesso un livello più in
+  profondità di quella da cui i suoi `source`/`dest` sono relativi. **Fix corretto**: un nuovo
+  parametro `config_path` (da `session.configPath`) la cui cartella, non quella del report, è quella
+  che la run originale ha davvero usato.
+- **D27, P1**: lo stesso audit mostrava "File copiati: 6 / 4" — il copiato che supera il totale.
+  Isolato con `RUST_LOG=debug`, non per ipotesi: su un host non in lingua inglese, `parse_summary_row`
+  non riconosce le etichette italiane "File:"/"Byte:" (singolare, non "Files"/"Bytes"), quindi il
+  codice ricade su un conteggio riga-per-riga che a sua volta non riconosceva "Avviato:"/"Terminato:"
+  come intestazioni (nessuno spazio prima dei due punti nella loro localizzazione, a differenza
+  dell'inglese) — ciascuna contava come un file fantasma. Corretto in `is_labelled_line`
+  (`engine/robocopy.rs`): controlla ora se il testo dopo i due punti inizia con un separatore di
+  percorso, invece di richiedere uno spazio prima — robusto per costruzione rispetto alla lingua.
+- Glitch visivo: il pannello "Preferiti" si sovrapponeva all'intestazione della tabella Job — non un
+  bug di stacking CSS (verificato con coordinate reali via Snapshot: sovrapposizione geometrica vera,
+  non un artefatto), ma mancanza di spazio. Corretto dando a `PathBar.svelte` un proprio `mb-8` — non
+  `mb-4`: un primo tentativo con `mb-4` non ha spostato nulla, perché i margini fra fratelli di
+  blocco adiacenti collassano al maggiore dei due, non si sommano.
+- Aiuto non menzionava "preferiti" né "anteprima ripristino" (stessa causa già nota al §9h) —
+  aggiunte entrambe le voci, più l'esito `6` (F65) mancante dalla tabella degli esiti.
+
+**Analisi dei gap GUI dopo la sospensione del motore pilotabile (7 Set 2026, `PIANO_GUI.md` §16)**:
+confronto diretto fra i 34 campi di `JobConfig` e i 16 raggiungibili da `Editor.svelte` — 15 campi
+mai renderizzati, in nessuna forma. Speccati **F68** (selettori di cartella), **F69**
+(`keep_generations` editabile per alzarlo — il core lo permette già, la GUI no) e **F70**
+(`backup_type` selezionabile), più **F71** (sincronizzazione rapida senza un config esistente,
+`PIANO_GUI.md` §17) dopo aver verificato che "copia solo i file nuovi/aggiornati" è già il
+comportamento di default di robocopy senza `--mirror` — il gap è solo che la GUI non può iniziare
+senza un file TOML già presente. Rilettura critica di entrambi i documenti appena scritti (stesso
+metodo di §14.4) ha trovato due criticità reali prima di scrivere codice: F69 avrebbe permesso di
+svuotare il campo per "ereditare", aggirando silenziosamente `EditorCannotLowerRetention` (che
+intercetta solo `Some→Some` più basso, non `Some→None`); F71 metteva scrittura+esecuzione dentro
+`Jobs.svelte`, contraddicendo la sua stessa caratterizzazione "Scrive? No" in `PIANO_GUI.md` §3.
+Entrambe corrette nella spec prima di ogni implementazione.
+
+**F68, selettori di cartella, implementato e verificato 7 Set 2026** (priorità 1 di §16.4):
+`browseFolder(field)` in `Editor.svelte`, due pulsanti "Sfoglia…" accanto a Sorgente/Destinazione,
+stesso plugin già in uso (`@tauri-apps/plugin-dialog`, zero dipendenze nuove). Verificato dal vivo
+contro il binario ricompilato: entrambi i pulsanti aggiornano correttamente `draft.source`/
+`draft.dest`. **Comportamento scoperto solo in verifica, non anticipato in spec**: il dialogo
+nativo di Windows rifiuta un percorso non ancora esistente (tipico per una destinazione a prima
+sincronizzazione) — comportamento standard di Explorer, non un difetto; il campo di testo resta
+comunque editabile in parallelo. Dettaglio: riga F68 di `ROADMAP.md`, `PIANO_GUI.md` §16.1.
+
+**F69, `keep_generations` editabile per alzarlo, implementato e verificato 7 Set 2026** (priorità 2
+di §16.4, dopo F68): `draft.keep_generations` arriva dal core già come valore **effettivo**
+(`job_editor::read_drafts` fonde il job sui default di primo livello prima di passarlo alla form),
+quindi la GUI non deve ricalcolare l'ereditarietà. Il floor da non superare al ribasso è catturato
+una sola volta al caricamento in una mappa separata (`originalKeepGenerations`, per nome job) — mai
+dal valore live che l'input stesso muta, altrimenti il vincolo varrebbe zero ad ogni tasto premuto.
+**Nessuna via per svuotare il campo**: `EditorCannotLowerRetention` lato core intercetta solo
+`Some(from)→Some(to)` con `to<from`, non `Some(from)→None` — l'unico presidio contro lo svuotamento
+è l'`oninput` della form stessa, che rifiuta e ripristina l'ultimo valore valido. Verificato dal vivo
+con un file di test a due stati (job con retention già impostata alzata e scritta correttamente
+nella proposta; `demo-locale.toml`, senza retention, mostra ancora il testo di sola lettura). Ogni
+tentativo di svuotare il campo durante la verifica è scattato nel ripristino immediato all'ultimo
+valore valido, mai un vuoto o un valore sotto il floor visibile nemmeno per un istante. Dettaglio:
+riga F69 di `ROADMAP.md`, `PIANO_GUI.md` §16.2.
+
+**F70, `backup_type` selezionabile, implementato e verificato 7 Set 2026** (priorità 3 di §16.4,
+ultima del gruppo F68-F70): nuovo `<select>` in `Editor.svelte` con le tre opzioni più "Nessuno
+(copia semplice)". **Criticità reale trovata prima della verifica dal vivo**: `job_editor::apply_draft`
+non aveva alcun controllo proattivo sulla combinazione `mirror`+`backup_type` — solo
+`Args::validate()` la intercettava, ore dopo, al prossimo avvio pianificato del job. Aggiunto un
+controllo analogo a quello già esistente per `no_prescan` (stessa disciplina "valore risultante, non
+quello memorizzato": un job che spegne mirror nella stessa modifica non è in conflitto), riusando
+`IngestError::BackupTypeAndMirrorConflict` condiviso con la CLI. Lato UI il selettore si disabilita
+quando `draft.mirror` è vero, con una nota — un'affordance, l'enforcement reale resta nel core.
+Verificato dal vivo con un file a due job: quello senza mirror scrive `backup_type = "full"`
+correttamente nella proposta (confermato leggendo il TOML su disco); quello con `mirror = true`
+mostra il selettore disabilitato, invariato. Dettaglio: riga F70 di `ROADMAP.md`, `PIANO_GUI.md`
+§16.2.
+
+**F71, sincronizzazione rapida senza config esistente, implementato e verificato 7 Set 2026**
+(chiude il piano — dopo §16.4, l'ultima voce restava §17): nuovo `QuickSync.svelte`, collegato da
+un link nell'empty state iniziale di `Jobs.svelte` — nessuna sesta scheda in sidebar, `Jobs.svelte`
+continua a non scrivere/eseguire nulla di suo (`showQuickSync` è solo stato locale che decide cosa
+mostrare). Zero codice nuovo nel core: `job_editor::build_proposal`'s `existing: None` branch
+gestiva già la creazione da zero. **Una scelta non anticipata in fase di analisi**: dopo
+`start_job`, il pannello non reimplementa il poll/notifica di `Run.svelte` (`setTimeout` incatenato
+con contatore di generazione, notifica desktop di fine run) — naviga a Esegui con
+`session.configPath` già impostato e lascia che sia quella scheda, già scritta e verificata, a
+occuparsene con un "Esamina" in più; un secondo motore di polling per lo stesso stato rischiava di
+divergere da quello esistente. Verificato end-to-end contro il binario ricompilato: job creato da
+zero, scritto, avviato, 5/5 file copiati; stesso file rieseguito dalla scheda Esegui, secondo run
+"no files copied, source and destination already in sync" — il comportamento "solo nuovi/cambiati"
+confermato dal vivo. Dettaglio: riga F71 di `ROADMAP.md`, `PIANO_GUI.md` §17.
+
+**Lezione doppia da questo giro**: (1) "verificato manualmente contro il binario compilato" non
+basta se il caso provato non è quello che rompe — la verifica originaria di F64 ha quasi certamente
+usato un report a percorsi assoluti; (2) un fix che sembra ovvio (stesso pattern già usato altrove,
+o "basta un po' di margine") va riverificato dal vivo tanto quanto il difetto che corregge, mai dato
+per corretto per analogia — in entrambi i casi (D26 e il glitch del pannello) il primo tentativo era
+sbagliato e solo la riverifica contro il binario l'ha scoperto.
 
 ---
 
 ## 🎯 Obiettivo per la prossima sessione
 
-**Una decisione è aperta e spetta all'utente**: la metà in **scrittura** di F55, cioè poter modificare dalla console gli script `--pre-command`/`--post-command`. È dove morde l'avviso 2 di `ROADMAP.md` (script configurabili più servizio privilegiato uguale escalation locale). Un fatto verificato che ne cambia la scala: **il servizio di F37 è inerte** — registra il control handler, dichiara `Running` e non fa altro — quindi oggi non esiste un processo SYSTEM che esegua quegli script, e la via di escalation passa da un'attività pianificata di F36 installata sotto account privilegiato. Superficie più stretta e più definibile di come l'avviso la descrive. Oggi quei tre campi (`webhook_url`, `pre_command`, `post_command`) sono **ricopiati verbatim** dall'editor e restano fuori dal form, il che tiene la decisione davvero aperta.
+**Standing, attivo: "procedi con l'ordine di priorità e segui il piano".** Dopo la chiusura di
+F68-F71 (7 Set 2026) l'utente ha chiesto un'analisi di usabilità estensiva della scheda Modifica
+(undici osservazioni concrete da un uso reale) più un audit completo delle sette schede — scritta
+in `PIANO_GUI.md` §18 (18.1-18.17), righe **F72-F82** in `ROADMAP.md`. Confermato ambito e ordine di
+priorità, poi autorizzata l'implementazione in sequenza:
 
-In assenza di una richiesta, il modello resta quello delle sessioni precedenti: **verificare empiricamente prima di proporre un fix**, mai fix speculativi su ipotesi non confermate — e, per qualunque cosa tocchi la GUI, **aprire la finestra**: D22 mostra che l'intera batteria di controlli automatici può essere verde su un binario che non funziona.
+**F79 → F80 → F73 → F72 → F76 → F81 → F74/F75/F77 → F78 → F82** (§18.16 di `PIANO_GUI.md`).
 
-### Spunti concreti non esplorati (nessuno confermato — verificare prima di agire)
+- **F79 chiuso, stesso giorno**: generatore di esempio in Documenti (nuovo modulo `example_workspace.rs`,
+  non dentro `gui_api.rs` che è documentato read-only — stessa ragione di `crypto.rs`), più la
+  correzione dei due rimandi rotti a `examples/demo-locale.toml` (mai installato — `installer/
+  rustcopy.iss` non lo impacchetta, la lacuna più seria trovata in tutta l'analisi). Verificato
+  end-to-end contro il binario ricompilato. Dettaglio: riga F79 di `ROADMAP.md`.
+- **F80 chiuso, stesso giorno**: `encrypt_aes256` per job in `JobConfig`, raggiungibile da Modifica.
+  Il wiring in `run_jobs`/la validazione per-job ipotizzati come lavoro extra nel piano si sono
+  rivelati già coperti dal punto unico condiviso `Args::apply_job_config` e da `job_args.validate()`
+  (già chiamato per ogni job) — nessuna modifica a `main.rs` è servita, solo `config.rs`/`cli.rs`/
+  `job_editor.rs`. `Editor.svelte` accetta in scrittura solo `keyring:NOME`; un valore già impostato
+  a mano in `env:`/`file:`/forma letterale resta read-only e sopravvive intatto a modifiche non
+  correlate — verificato dal vivo in entrambi gli scenari contro il binario ricompilato. Dettaglio:
+  riga F80 di `ROADMAP.md`.
+- **F73 chiuso, stesso giorno**: pulsante "Verifica" su Sorgente/Destinazione in Modifica. Nuovo
+  `gui_api::inspect_path`, involucro sottile su `scan::inventory` come previsto — zero nuova logica
+  di scansione, solo un contatore `total_dirs` aggiunto allo stesso walk esistente. Deliberatamente
+  non filtrato: risponde "cosa c'è a questo percorso", non "cosa selezionerebbe il job", le due
+  domande divergono mentre il form è a metà. Il risultato di un controllo si scarta da solo se il
+  campo o il job cambiano dopo il click, invece di restare visibile accanto a un percorso che non
+  descrive più — non previsto dall'analisi originale, emerso durante l'implementazione. **Bug reale
+  trovato al primo click dal vivo** (non in review, non leggendo il codice): il percorso veniva
+  controllato contro la working directory del processo della console, non contro la cartella del
+  file di configurazione — stesso identico difetto già corretto una volta in
+  `report_path_for_summary`. Corretto aggiungendo un parametro `anchor` a `inspect_path`. **Secondo
+  difetto, trovato da CodeRabbit sulla stessa PR**: l'identità di un controllo confrontava solo nome
+  del job e percorso, non il file di configurazione caricato — due config diverse con un job
+  "job1"/sorgente "demo-data" in comune avrebbero potuto far apparire valido un controllo dell'una
+  nell'altra. Corretto aggiungendo `configPath` al confronto, verificato dal vivo con due config di
+  prova apposite. Dettaglio: riga F73 di `ROADMAP.md`.
+- **F72 chiuso, stesso giorno**: validazione del campo Nome in Modifica. Nuovo
+  `lib.rs::validate_job_name`, accanto a `namespaced_path` che interpola il nome in un filename —
+  rigetta i caratteri riservati Windows e i nomi di dispositivo riservati, stesso schema di F70/F80
+  (controllo proattivo in `apply_draft` + duplicato in JS per un messaggio immediato). Perimetro
+  tenuto identico a F70/F80: "Scrivi proposta" non scansiona l'intero batch, solo il campo corrente
+  ha l'affordance. Dettaglio: riga F72 di `ROADMAP.md`. **CodeRabbit ha trovato un difetto reale
+  sulla PR**: mancavano i caratteri di controllo Windows (U+0001-U+001F) e le forme legacy a cifra
+  apice dei nomi dispositivo (`COM¹`/`COM²`/`COM³`/`LPT¹`/`LPT²`/`LPT³`), che Windows tratta
+  identicamente alle forme numeriche — corretto in entrambe le implementazioni (Rust e JS),
+  verificato dal vivo con "COM¹".
+- **F76 chiuso, stesso giorno**: placeholder per il campo Report col default reale
+  (`./robocopy_ingest_report.json`). Fix puramente di presentazione come previsto — il campo non
+  scrive mai il placeholder nel draft, resta `null` finché l'operatore non digita qualcosa di suo.
+  Zero cambi al core, interamente frontend. Dettaglio: riga F76 di `ROADMAP.md`.
+- **F81 chiuso, 8 Set 2026**: colorazione esito e `EXIT_MEANING` duplicato in `History.svelte`.
+  Nuovo comando Tauri sincrono `exit_code_meaning` (nessun `off_thread`, unica funzione pura del
+  file), involucro su `runner::exit_code_meaning` — la stessa fonte già usata da `Run.svelte`.
+  `History.svelte` lo chiama una volta per codice distinto nella cronologia caricata, sostituendo
+  la mappa hardcoded; colorazione allineata all'amber di `Run.svelte` (non più rosso per ogni
+  codice diverso da zero). Chiude un debito già tracciato in `CLAUDE.md` da F65. Zero nuovi test
+  Rust (comando puro, `exit_code_meaning` già coperto in `runner.rs`). Dettaglio: riga F81 di
+  `ROADMAP.md`.
+- **F74/F75/F77 chiusi, 8 Set 2026** (tooltip Pattern/Escludi file/Thread/Tentativi/backup_type/
+  checkbox). Una correzione reale trovata verificando empiricamente contro `robocopy.exe` prima di
+  implementare: il suggerimento originale per Pattern (`*.jpg;*.png;*.gif`, estensioni multiple in
+  un campo) copia **zero file con exit code 0** — `draft.pattern` è una singola stringa inviata
+  come un unico argomento a robocopy, e né `;` né gli spazi dentro una stringa singola vengono
+  interpretati come più filespec. Corretto a suggerimenti a pattern singolo (`*`, `*.pdf`, `*.jpg`)
+  con una didascalia che dice esplicitamente il limite. Escludi file, Thread, Tentativi,
+  backup_type e le cinque checkbox implementati come da analisi. Zero nuovi test Rust (frontend
+  puro). Dettaglio: righe F74/F75/F77 di `ROADMAP.md`.
+- **PR #109 (F74/F75/F77) mersa, 8 Set 2026**, dopo che CodeRabbit ha trovato 6 difetti reali,
+  tutti verificati contro il codice e corretti prima del merge: trim mancante su Pattern, il
+  placeholder di Thread che leggeva `navigator.hardwareConcurrency` (mascherabile da Chromium per
+  protezione anti-fingerprinting, sostituito con un vero comando backend `gui_api::default_threads`
+  — stesso schema di F81), e due difetti più seri: Thread e Verifica integrità non dicevano di non
+  avere alcun effetto per un backup a generazioni (`engine::naive` ha `threads: 1` fisso,
+  `execute_generation_backup` non chiama mai `verify_integrity`) — corretti con didascalie
+  condizionali e, per Verifica integrità (Major), un avviso permanente visibile quando entrambi i
+  campi sono impostati insieme, non solo un tooltip. `main` ora ha anche `cli::default_threads` reso
+  `pub` e il nuovo comando Tauri `default_threads`.
+- **F78 chiuso, 8 Set 2026**: messaggio comprensibile per l'errore di split job singolo.
+  `Editor.svelte::splitJobErrorLabel` intercetta solo il messaggio letterale di
+  `EditorCannotSplitSingleJobConfig`, estrae il nome del job esistente ed mostra una spiegazione più
+  un esempio TOML concreto invece del messaggio grezzo in inglese — nessuna nuova capacità del core,
+  esattamente il perimetro proposto. Ogni altro errore di scrittura continua a mostrarsi come prima.
+  Dettaglio: riga F78 di `ROADMAP.md`.
+- **PR #108 (F81) mersa, 8 Set 2026**, dopo un incidente CI raro ma verificato a fondo: CodeRabbit
+  ha trovato un difetto reale (race fra `history`/`meaningByCode`: "Esporta CSV" poteva includere
+  il placeholder "…" invece del vero significato, corretto tenendo `history`/`advice` locali finché
+  ogni lookup non è risolto), poi GitHub Actions ha smesso di generare **qualunque** run
+  `pull_request` per questo repository — non solo per questa PR: confermato aprendo una PR
+  diagnostica su un branch mai usato prima, che non ha prodotto nemmeno un run, e confrontando i
+  check-suite via API (`gh api repos/.../commits/{sha}/check-suites`): i commit falliti non avevano
+  affatto una voce "GitHub Actions", solo le integrazioni di terze parti rimaste in coda vuota — non
+  un ritardo del nostro codice, un incidente della piattaforma. Mersa su autorizzazione esplicita
+  dell'utente, basandosi sulla verifica locale già completa (`cargo test`/clippy/build puliti su
+  entrambi i set di feature, verifica live in console eseguita due volte).
+- **F82 chiuso, 8 Set 2026**: avviso "Anteprima ripristino" senza config in sessione. `Report.svelte`
+  mostra un avviso ambra prima del click quando `session.configPath` è vuoto, e una riga
+  informativa col percorso effettivo quando non lo è — entrambe le metà proposte, non solo una.
+  Nessun cambio al core. Dettaglio: riga F82 di `ROADMAP.md`. **Con F82 chiuso, l'intera sequenza
+  F72-F82 confermata da `PIANO_GUI.md` §18.16 è completa.**
+- **F83 chiuso, 8 Set 2026, fuori sequenza**: subito dopo aver riportato la sequenza F72-F82
+  completa, l'utente ha aperto la console dal vivo e segnalato che la schermata vuota di Job
+  presume già un TOML esistente. Verificato prima di implementare: F79 ("Crea un esempio") scrive
+  dati finti, F71 (QuickSync) scrive un file vero ma con nome fisso e lo avvia subito — nessuno dei
+  due crea un job **nominato e riusabile** per cartelle reali senza avviarlo. Confermato con
+  l'utente (due `AskUserQuestion`, non un'estensione di QuickSync) un terzo percorso dedicato:
+  nuovo `NewJobWizard.svelte`, pulsante primario nella schermata vuota di Job, nessun cambio al
+  core (riusa `write_proposal`'s `existing: None` come QuickSync). Validazione nome (F72) estratta
+  in `jobName.js` condiviso, per non introdurre una terza copia della lista caratteri riservati.
+  Dettaglio: riga F83 di `ROADMAP.md`.
 
-1. **Il working set del prescan** — `ScanSummary` materializza l'intero inventario della sorgente, e resta un costo **consapevole**: ogni consumatore lo legge davvero, e `--no-prescan` è già la valvola per non pagarlo. D21 ha eliminato i *duplicati* (4 copie → 1), non il working set. Non trattarlo come un difetto aperto: se un giorno servisse ridurlo davvero, la strada è lo streaming verso i consumatori, un cambio architetturale da discutere con `AskUserQuestion`, non un fix.
-2. **`engine::naive::copy_files` non traccia progresso parziale su fallimento** (la ragione per cui D15 non ha potuto arricchire il report della pipeline a generazioni con conteggi accurati sui fallimenti parziali).
-3. **P3/P4** del Pilastro E (vedi sopra), se l'utente li vuole promuovere.
-4. Una nuova lettura dei log operativi reali in `_ops_reports/` (19 file, incluso un profilo da 1.34M file) per nuove evidenze — più affidabile di ipotesi da sola lettura del codice.
+Se questa sessione riprende a metà sequenza (compattazione, nuova sessione), continuare da dove
+`ROADMAP.md` segna l'ultima riga passata da 🟡 a ✅ — non ripartire da
+F79/F80/F73/F72/F76/F81/F74/F75/F77/F78/F82/F83 se sono già chiusi.
+
+**Lavoro precedente, non urgente ma non dimenticato** (aree con lavoro reale trovate prima di
+questo giro, non ancora affrontate):
+
+1. **Flusso di ripristino guidato** (`--restore-from`, Onda 3) — la lacuna funzionale più sentita della console. **Il primo mattone (l'anteprima) è F64, chiuso, D26 corretto il 6 Set 2026**: resta da costruire il resto del flusso — elenco report → anteprima (pronta e verificata) → conferma esplicita → avvio. Proporre con `AskUserQuestion` prima di implementare il resto.
+2. **Due decisioni bloccate, entrambe spettano all'utente**:
+   - Interruttore VSS in Modifica — serve prima `vss_snapshot: Option<bool>` su `JobConfig` lato core, non è lavoro di frontend.
+   - Scrittura di webhook/script pre-post in Modifica (F55, metà scrittura) — morde il vincolo permanente 2 (§2.3 di `PIANO_GUI.md`): script configurabili + servizio privilegiato = escalation locale. Non procedere senza una decisione esplicita.
+3. **D25** (`checkpoint::build_resume_args` scarta la maggior parte della configurazione originale) — aperto ma non bloccante. Il fix corretto è un tipo dedicato per il checkpoint, non allargare `ConfigurationReport` (condiviso con i report di run completate). Non affrontarlo con una patch rapida.
+4. **F63, metà retention** (`--keep-generations`/`GenerationIndex::generations_to_prune`) — lasciata deliberatamente fuori dalla PR #88 per tenerla rivedibile. Stesso disegno della metà mirror già fatta (scrivere l'elenco invece di contarlo), da riprendere quando serve o quando si costruisce il punto 1 sopra.
+5. **F47/F48/F58 (motore pilotabile)** — sospesi in roadmap, analisi di rischio completa in `PIANO_GUI.md` §15. Non riprendere senza un vero prototipo del Livello A.
+6. **Manutenzione release**: nessun workflow CI costruisce/pubblica automaticamente una Release — v7.0.0 è stata fatta interamente a mano (build locale, `ISCC.exe`, `gh release create`). Se le release diventano un'abitudine, vale la pena automatizzarle in un workflow dedicato; non fatto in questa sessione perché non richiesto.
+
+In assenza di una richiesta, il modello resta quello delle sessioni precedenti: **verificare empiricamente prima di proporre un fix**, mai fix speculativi su ipotesi non confermate — e, per qualunque cosa tocchi la GUI, **aprire la finestra** contro il binario release compilato, non fidarsi di `cargo build`/test/clippy da soli.
 
 ### Come procedere
 
@@ -57,27 +340,29 @@ In assenza di una richiesta, il modello resta quello delle sessioni precedenti: 
 3. Per le opportunità di performance: misura prima di ottimizzare — `scripts/benchmark-threads.ps1`/`scripts/analyze-runs.ps1` o i report in `_ops_reports/`.
 4. `AskUserQuestion` prima di qualunque deviazione architetturale o scelta di scope ambigua.
 5. Commit/push solo su richiesta esplicita dell'utente in quel turno — un "procedi" su un piano non autorizza automaticamente anche il commit, salvo lo abbia già fatto esplicitamente in quel turno.
-6. Chiudi ogni giro con un `grep` dei conteggi test/difetti su tutti i file `.md` toccati — è già successo più volte che restassero disallineati (vedi il controllo di coerenza fatto in questa sessione).
+6. Chiudi ogni giro con un `grep` dei conteggi test/difetti su tutti i file `.md` toccati — è già successo più volte che restassero disallineati (di nuovo in questa sessione: 422/437 erano rimasti fermi al 2 Set su 5 file diversi, e ROADMAP.md dichiarava ancora "nessun difetto aperto" con D25 già aperto da ore).
 
 ---
 
 ## Convenzioni stabilite nelle sessioni precedenti (da rispettare)
 
 - **Test**: per ogni fix, unit test + almeno un test black-box che esegua il **binario compilato reale** (`tests/cli_smoke.rs` per `robocopy_ingest`, `tests/notify_server_e2e.rs` per `notify-server`), mai solo la funzione interna in isolamento. Verifica manuale contro file veri solo dentro `tempfile::tempdir()` isolate, mai contro cartelle reali.
+- **GUI**: verifica visiva reale contro `target/release/rustcopy-gui.exe` (via Windows-MCP o equivalente), non solo `cargo build -p rustcopy-gui`/`clippy`/`npm run build` — nessuno di questi apre una finestra. `cargo build --release -p rustcopy-gui` **non** ricompila `robocopy_ingest.exe`/`notify-server.exe` (crate diversi nel workspace): se il fix tocca anche la CLI, ricompilarla separatamente.
 - **Eccezione dichiarata**: quando un test toccherebbe stato di sistema reale fuori dal sandbox tempdir (VSS/F30, servizi Windows F37/F41: richiedono elevazione reale), non automatizzarlo nella suite normale — unit test sulla logica pura isolabile, test `#[ignore]` per il round-trip reale eseguibile a mano da un prompt elevato. F36 (Task Scheduler) è l'eccezione all'eccezione: un'attività per utente corrente non richiede elevazione, quindi è coperta da un vero test black-box **non** `#[ignore]`.
 - **Deviazioni architetturali**: fermati e proponi con `AskUserQuestion` prima di implementare, non deciderle silenziosamente.
-- **Commit/push**: mai senza richiesta esplicita dell'utente in quel turno.
-- **Documentazione da aggiornare ad ogni fix chiuso, nello stesso giro**: `ANALYSIS.md`/`ROADMAP.md` (riga tabella), `CLAUDE.md` (nota tecnica **condensata secondo B5b** — solo prescrizione operativa + una riga di motivo + puntatore, mai narrazione completa), `AGENTS.md` (regole architetturali, conteggio test), `ARCHITECTURE.md` (tabella moduli, conteggio test), `README.md` (tabella flag CLI, conteggio test), `RUNBOOK.md` (esempio d'uso pratico se rilevante, conteggio test), e questo file.
-  - **Lezione confermata più volte, e di nuovo in questa sessione**: aggiornare i conteggi test/difetti in **tutti** i file alla fine di ogni giro, non solo in alcuni — `grep` dei vecchi conteggi su tutti i file `.md` prima di chiudere.
-  - **B5b (nuovo, 20 Agosto 2026)**: `CLAUDE.md` accetta **solo** la prescrizione operativa per feature nuove — la narrazione completa (alternative valutate, limiti di test, cronologia) va in `ROADMAP.md`/`ANALYSIS.md`. Non violare questa disciplina: è la ragione per cui `CLAUDE.md` era arrivato a 50K caratteri.
-- **Ricompilare dopo modifiche**: non automatico — `cargo build --release [--features notify-server]` e/o `ISCC.exe installer\rustcopy.iss` solo su richiesta esplicita.
+- **Commit/push**: mai senza richiesta esplicita dell'utente in quel turno. Mai direttamente su `main` — sempre un branch dedicato, PR, CI verde (o l'eccezione nota dell'outage npmjs.org su `gui-npm-audit`, verificato nei log del job prima di ignorarlo), merge.
+- **Documentazione da aggiornare ad ogni fix chiuso, nello stesso giro**: `ANALYSIS.md`/`ROADMAP.md` (riga tabella), `CLAUDE.md` (nota tecnica **condensata secondo B5b** — solo prescrizione operativa + una riga di motivo + puntatore, mai narrazione completa), `AGENTS.md` (regole architetturali, conteggio test), `ARCHITECTURE.md` (tabella moduli, conteggio test), `README.md` (tabella flag CLI, conteggio test), `RUNBOOK.md` (esempio d'uso pratico se rilevante, conteggio test), `PIANO_GUI.md` (se il lavoro tocca la console), e questo file.
+  - **Lezione confermata più volte, di nuovo in questa sessione**: aggiornare i conteggi test/difetti in **tutti** i file alla fine di ogni giro, non solo in alcuni — `grep` dei vecchi conteggi su tutti i file `.md` prima di chiudere.
+  - **B5b**: `CLAUDE.md` accetta **solo** la prescrizione operativa per feature nuove — la narrazione completa (alternative valutate, limiti di test, cronologia) va in `ROADMAP.md`/`ANALYSIS.md`. Non violare questa disciplina: è la ragione per cui `CLAUDE.md` era arrivato a 50K caratteri.
+- **Ricompilare dopo modifiche**: non automatico — `cargo build --release [--features notify-server] [-p rustcopy-gui]` e/o `ISCC.exe installer\rustcopy.iss` solo su richiesta esplicita o quando serve per una verifica visiva della GUI.
 - **Config TOML**: quasi tutti i flag CLI recenti sono anche in `JobConfig`/`IngestConfig`. Eccezioni consapevoli: `--decrypt`, `--restore-from`, `--vss-snapshot`, `--resume-from`, `--force-purge`, `--exclude-junctions`, `--fast-verify`, `--html-report-path`, `--install-schedule`, `--install-service` (flag di sicurezza o CLI-only).
-- **rtk**: attivo. `rtk gain` per verificare token risparmiati. Nessuna azione richiesta a inizio sessione.
+- **rtk**: attivo. `rtk gain` per verificare token risparmiati. Nessuna azione richiesta a inizio sessione. **Attenzione ai comandi con pipe lunga attraverso il wrapper `rtk`** (es. `rtk grep ... | head -N`): possono andare in timeout e restare appesi in background per ore senza produrre output se non ripuliti — controllare e terminare i task in background dimenticati a fine sessione.
 - **CodeRabbit**: questo repo ha <10 stelle, quindi non riceve review automatiche — va attivata manualmente per ogni PR (checkbox "🔍 Trigger review" nel commento di CodeRabbit, via `gh api` PATCH sul commento). Ogni finding va verificato contro il codice reale prima di applicarlo, mai applicato ciecamente.
+- **Monitor in background su `gh pr checks`**: la notifica di completamento non è sempre affidabile in questa sessione (successo più volte che la CI fosse verde da minuti prima che la notifica arrivasse) — se l'utente segnala che la CI sembra ferma, controllare subito con `gh pr checks <N>` invece di aspettare oltre.
 
 ## Cosa NON toccare senza motivo
 
-- `engine::robocopy::build_args` non deve mai passare `/Z` (restartable mode) — costo prestazionale deliberatamente evitato sui file piccoli.
+- `engine::robocopy::build_args` non deve mai passare `/Z` (restartable mode) — costo prestazionale deliberatamente evitato sui file piccoli. Da D23: **omettere `/MT` per intero** (non solo ridurlo) quando `--bandwidth-limit-mbps` è impostato — `/IPG`+`/MT` insieme è un errore fatale di robocopy, non un degrado.
 - `src/oem_codec.rs` non va sostituito con `encoding_rs::Encoding::for_label(b"ibm850")`.
 - Ogni operazione bloccante su filesystem/processo in `main.rs` deve restare dentro `spawn_blocking_with_span` (D13) — **mai** `tokio::task::spawn_blocking` diretto, e mai chiamate sincrone dentro le `async fn` di orchestrazione.
 - `main.rs::run_jobs` (F33) ricostruisce `Args` per ogni job da un clone dell'invocazione CLI originale, mai da `try_parse_from` né dall'`Args` già mergiato del job precedente — stessa disciplina in `restore::build_restore_args`, `checkpoint::build_resume_args`, `schedule::strip_schedule_flags`.
@@ -86,10 +371,13 @@ In assenza di una richiesta, il modello resta quello delle sessioni precedenti: 
 - `src/service.rs` (F37/F41): `robocopy_ingest` e `notify-server` hanno **due identità di servizio separate** — non farne una sola.
 - `scan::scan`/`scan::inventory` (D11) devono continuare a pruning via `WalkDir::filter_entry()`.
 - `robocopy_ingest::atomic_write` (D14) resta il solo modo corretto per una riscrittura totale (cache fast-verify, e `GenerationManifest::save` usato solo dal pruning `--keep-generations`) — ma il caso comune di registrare una generazione va per `GenerationManifest::append_generation` (D19, NDJSON append-only), non più per `push`+`save`.
-- `GenerationManifest::load_or_default` (D20) va usata **solo** dove serve davvero l'intera cronologia — oggi il solo secondo load di `prune_old_generations`, che riscrive il file. Chi vuole la generazione di riferimento usa `load_latest_generation`/`load_latest_full_generation`, chi vuole decidere cosa potare usa `GenerationIndex::load`. E la definizione di *ciclo* resta una sola (`cycle_ranges`): non reimplementarla per il percorso metadati-only.
+- `GenerationManifest::load_or_default` (D20) va usata **solo** dove serve davvero l'intera cronologia — oggi il solo secondo load di `prune_old_generations`, che riscrive il file.
+- Ogni nuovo spawn di uno strumento a linea di comando in un processo GUI-avviato (`schtasks.exe`, `robocopy_ingest.exe`, ecc.) deve portare `creation_flags(CREATE_NO_WINDOW)` — D24 l'ha trovato mancante su due spawn in `schedule.rs`, dimenticati perché precedono l'esistenza della GUI.
+- `checkpoint::build_resume_args` non eredita quasi nulla della configurazione originale oltre pattern/thread/tentativi/verifica (D25, aperto) — non presumere che una ripresa si comporti come la run interrotta su limite di banda, esclusioni, hash, mirror.
+- **Console (GUI)**: `runner.rs`'s `run_arguments`/`resume_arguments` restano l'unico modo per costruire gli argomenti passati alla CLI — forma fissa, mai un parametro che inoltri flag arbitrari (il vincolo F61 che tiene fuori `--force-purge`/`--mirror`/install-service/install-schedule). `gui_api.rs` resta un involucro sottile sul core: se un comando Tauri cresce un ramo di giudizio sulla semantica di backup, quel ramo va spostato nel core.
+- I file `.md` con frontmatter OKF tracciati da `scripts/okf-docs.sh` (18 totali: 13 in root + `docs/cli-reference.md` + `docs/installation.md` + 3 archiviati in `docs/archive/`, questi ultimi tutti `status: deprecated`) — un nuovo file `.md` permanente va aggiunto sia col frontmatter sia alla lista `TRACKED_DOCS` in `scripts/okf-docs.sh`, poi `scripts/okf-docs.sh index` per rigenerare gli indici.
 - `.github/workflows/ci.yml` gira su `windows-latest` **e** `ubuntu-latest` — non rimuovere il job Linux (ha trovato D16).
-- I file `.md` root + `docs/archive/` con frontmatter OKF (13 file totali dopo questa sessione: 11 root + `PIANO_NOTIFY_SERVER.md` + `AGENT_HARNESS_PLAN.md`) — un nuovo file `.md` permanente in root va aggiunto sia col frontmatter sia alla lista nel job `docs` di CI.
-- Dettaglio completo di ogni punto sopra: `CLAUDE.md` (condensato secondo B5b) rimanda a `ROADMAP.md`/`ANALYSIS.md`/`AGENTS.md` per la narrazione estesa — consultarli lì, non aspettarsi di trovarla in `CLAUDE.md`.
+- Dettaglio completo di ogni punto sopra: `CLAUDE.md` (condensato secondo B5b) rimanda a `ROADMAP.md`/`ANALYSIS.md`/`PIANO_GUI.md` per la narrazione estesa — consultarli lì, non aspettarsi di trovarla in `CLAUDE.md`.
 
 ## Skill disponibile per operare rustcopy
 

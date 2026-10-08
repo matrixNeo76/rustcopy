@@ -30,6 +30,11 @@ pub trait ProgressSink: Send + Sync {
     /// progress isn't added to the next attempt's, which would otherwise inflate the reported
     /// `bytes_copied` on the failure path (each retry re-copies overlapping files).
     fn reset(&self);
+    /// Record the name of the most recently completed file, for a live "what's copying now"
+    /// display (the desktop console's `Run.svelte`). Default no-op: only [`ThroughputProgress`]
+    /// — the one sink whose numbers ever reach the progress-file publisher — needs to remember
+    /// this; `NoopProgress` and `CountingProgress` have no reader for it.
+    fn set_current_file(&self, _name: &str) {}
 }
 
 /// Progress sink that discards everything. Used by tests and by `--dry-run`.
@@ -90,6 +95,10 @@ pub struct ThroughputProgress {
     files: AtomicU64,
     total_bytes: u64,
     started: Instant,
+    // A plain `Mutex<String>`, not an atomic: one write per completed file and one read per
+    // publisher tick (at most once a second) is nowhere near enough traffic to justify anything
+    // fancier, and a `String` cannot live behind an atomic anyway.
+    current_file: std::sync::Mutex<String>,
 }
 
 impl ThroughputProgress {
@@ -105,6 +114,7 @@ impl ThroughputProgress {
             files: AtomicU64::new(0),
             total_bytes,
             started: Instant::now(),
+            current_file: std::sync::Mutex::new(String::new()),
         })
     }
 
@@ -135,6 +145,19 @@ impl ThroughputProgress {
 
     pub fn files(&self) -> u64 {
         self.files.load(Ordering::Relaxed)
+    }
+
+    /// The most recently completed file's name, when one has landed yet.
+    ///
+    /// `None` rather than an empty string before the first file completes — same "absent means
+    /// not yet known" convention as [`crate::progress_file::ProgressSample`]'s optional totals.
+    pub fn current_file(&self) -> Option<String> {
+        let name = self.current_file.lock().unwrap_or_else(|e| e.into_inner());
+        if name.is_empty() {
+            None
+        } else {
+            Some(name.clone())
+        }
     }
 
     /// Average throughput in MB/s (10^6 bytes) since the bar was created.
@@ -185,7 +208,16 @@ impl ProgressSink for ThroughputProgress {
         self.reported_bytes.store(0, Ordering::Relaxed);
         self.observed_bytes.store(0, Ordering::Relaxed);
         self.files.store(0, Ordering::Relaxed);
+        self.current_file
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .clear();
         self.refresh();
+    }
+
+    fn set_current_file(&self, name: &str) {
+        let mut current = self.current_file.lock().unwrap_or_else(|e| e.into_inner());
+        name.clone_into(&mut current);
     }
 }
 

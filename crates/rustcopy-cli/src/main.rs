@@ -42,8 +42,9 @@ const POLL_INTERVAL: Duration = Duration::from_secs(30);
 // binary returns. They used to be private constants here *and* a hand-written map in the
 // console's history pane — two definitions of one contract, free to drift.
 use robocopy_ingest::runner::{
-    EXIT_INGESTION_PROBLEM, EXIT_INTEGRITY_FAILED, EXIT_MIRROR_ABORTED,
-    EXIT_RETENTION_ABORTED as EXIT_RETENTION_PURGE_ABORTED, EXIT_UNRECOVERABLE,
+    EXIT_INGESTION_PROBLEM, EXIT_INSUFFICIENT_DISK_SPACE, EXIT_INTEGRITY_FAILED,
+    EXIT_MIRROR_ABORTED, EXIT_RETENTION_ABORTED as EXIT_RETENTION_PURGE_ABORTED,
+    EXIT_UNRECOVERABLE,
 };
 
 /// F37: a plain (non-`#[tokio::main]`) entry point on purpose. `windows_service::service_dispatcher`
@@ -63,6 +64,9 @@ fn main() -> ExitCode {
         };
     }
 
+    // Nothing meaningful to do if the OS won't hand out a runtime (no threads, no epoll/IOCP) —
+    // there's no smaller-scope fallback to degrade to this early, before a single flag is parsed.
+    #[allow(clippy::expect_used)]
     let runtime = tokio::runtime::Runtime::new().expect("failed to build the tokio async runtime");
     runtime.block_on(async_main())
 }
@@ -78,6 +82,9 @@ async fn async_main() -> ExitCode {
                 Some(IngestError::MirrorPurgeAborted { .. }) => ExitCode::from(EXIT_MIRROR_ABORTED),
                 Some(IngestError::RetentionPurgeAborted { .. }) => {
                     ExitCode::from(EXIT_RETENTION_PURGE_ABORTED)
+                }
+                Some(IngestError::InsufficientDiskSpace { .. }) => {
+                    ExitCode::from(EXIT_INSUFFICIENT_DISK_SPACE)
                 }
                 _ => ExitCode::from(EXIT_UNRECOVERABLE),
             }
@@ -191,6 +198,34 @@ async fn run(mut args: Args) -> Result<u8> {
         return Ok(0);
     }
 
+    // F62: closes the gap --install-schedule/--uninstall-schedule left — neither could previously
+    // show what is already scheduled. Filters by the current binary's own path, so it finds every
+    // schedule this tool installed regardless of which config each one targets (unlike
+    // `schedule::referencing_config`, used elsewhere for the console's per-file badge).
+    if args.list_schedules {
+        let exe_path =
+            std::env::current_exe().context("cannot determine the current executable path")?;
+        let tasks = robocopy_ingest::schedule::list_installed(&exe_path)
+            .context("cannot query the Windows Task Scheduler")?;
+        if tasks.is_empty() {
+            println!("no scheduled task invokes {}", exe_path.display());
+        } else {
+            println!(
+                "{} scheduled task(s) invoke {}:\n",
+                tasks.len(),
+                exe_path.display()
+            );
+            for task in &tasks {
+                println!("{}", task.name);
+                println!("  next run : {}", task.next_run);
+                println!("  status   : {}", task.status);
+                println!("  command  : {}", task.command);
+                println!();
+            }
+        }
+        return Ok(0);
+    }
+
     if let Some(restore_report) = args.restore_from.clone() {
         args = robocopy_ingest::restore::build_restore_args(&args, &restore_report, None)?;
     } else if let Some(checkpoint_path) = args.resume_from.clone() {
@@ -248,6 +283,20 @@ async fn run(mut args: Args) -> Result<u8> {
         robocopy_ingest::schedule::install(&name, &spec, &task_run)
             .with_context(|| format!("cannot install the scheduled task {name:?}"))?;
         println!("installed scheduled task '{name}' ({spec_raw})\n  runs: {task_run}");
+        return Ok(0);
+    }
+
+    // F63: a read-only preview of what --mirror would purge, computed from a real prescan against
+    // the real source — but never proceeding to VSS, logging setup or the transfer itself. clap's
+    // `requires = "mirror"` on the flag already guarantees --mirror is set whenever this runs.
+    if let Some(preview_path) = args.purge_preview_path.clone() {
+        let inventory = inventory_source(&args, args.source()).await?;
+        let count = write_mirror_purge_preview(&args, &inventory, &preview_path).await?;
+        println!(
+            "{count} file(s) at {} would be purged by --mirror. Preview written to {}.",
+            args.dest().display(),
+            preview_path.display()
+        );
         return Ok(0);
     }
 
@@ -671,6 +720,12 @@ struct RunOutcome {
 
 async fn execute(args: &Args, child_pid: Arc<AtomicU32>) -> Result<RunOutcome> {
     let start_all = Instant::now();
+    // Live feedback, 9 Set 2026: the only timestamp a report used to carry (`IngestReport`'s
+    // `timestamp` field) is set once the run is essentially done, so a report had no way to say
+    // when it actually started -- only how long it took. Captured here, before anything else
+    // (including the pre-command and VSS snapshot below), same reasoning as `start_all` just
+    // above: this is the true beginning of the run, wall-clock rather than monotonic.
+    let started_at = chrono::Utc::now();
 
     // F39: runs before anything else, including the VSS snapshot — a pre-command's job is
     // typically "stop the database so its files are consistent", which needs to happen before a
@@ -705,6 +760,26 @@ async fn execute(args: &Args, child_pid: Arc<AtomicU32>) -> Result<RunOutcome> {
         );
     }
 
+    // F65: before either pipeline below starts writing anything — plain-sync and --backup-type
+    // can both fill a disk, so this runs ahead of the diversion rather than in just one branch.
+    if !args.skip_space_check {
+        if inventory.total_files_hint.is_some() {
+            // --no-prescan has no byte total to check a requirement against; erring toward
+            // letting the run proceed, same as `disk_space::ensure_enough_free_space`'s own
+            // treatment of a check it cannot make.
+            tracing::warn!(
+                "--no-prescan has no byte total to check against; skipping the free-space check \
+                 (pass --skip-space-check to silence this warning)"
+            );
+        } else {
+            robocopy_ingest::disk_space::ensure_enough_free_space(
+                args.dest(),
+                inventory.total_bytes,
+                args.space_safety_margin_percent,
+            )?;
+        }
+    }
+
     // F34: --backup-type diverts into a completely different pipeline (a naive, explicit-file-list
     // copy into a new generation subfolder, tracked in a manifest) rather than the plain-sync path
     // below — see `execute_generation_backup`'s doc comment for why the two can't share `transfer()`.
@@ -718,6 +793,7 @@ async fn execute(args: &Args, child_pid: Arc<AtomicU32>) -> Result<RunOutcome> {
             &inventory,
             inventory_seconds,
             start_all,
+            started_at,
         )
         .await;
     }
@@ -804,6 +880,7 @@ async fn execute(args: &Args, child_pid: Arc<AtomicU32>) -> Result<RunOutcome> {
         baseline_outcome.as_ref(),
         integrity_check.clone(),
         timing,
+        started_at,
     );
     report.encrypted = encrypted_count.unwrap_or(0) > 0;
     report.decrypted = decrypted_count.unwrap_or(0) > 0;
@@ -953,6 +1030,7 @@ async fn record_run_history(report: &IngestReport, exit_code: u8, args: &Args) {
 /// incompatible with generations, just not wired up yet — `--backup-type` is opt-in (`None` by
 /// default), so none of the existing single-destination flows lose anything by this existing
 /// alongside them rather than folding into `execute()`'s main body.
+#[allow(clippy::too_many_arguments)]
 async fn execute_generation_backup(
     args: &Args,
     backup_type: robocopy_ingest::generations::BackupType,
@@ -960,6 +1038,7 @@ async fn execute_generation_backup(
     inventory: &ScanSummary,
     inventory_seconds: f64,
     start_all: Instant,
+    started_at: chrono::DateTime<chrono::Utc>,
 ) -> Result<RunOutcome> {
     use robocopy_ingest::generations::{self, BackupType, GenerationManifest};
 
@@ -1148,6 +1227,7 @@ async fn execute_generation_backup(
         None,
         None,
         timing,
+        started_at,
     );
     report.copy_error = copy_error.as_ref().map(|error| error.to_string());
 
@@ -1397,10 +1477,64 @@ async fn check_mirror_safety(args: &Args, inventory: &ScanSummary) -> Result<()>
     if !args.mirror || args.force_purge || !args.dest().exists() {
         return Ok(());
     }
+    let Some(extraneous) = mirror_purge_candidates(args, inventory).await? else {
+        return Ok(());
+    };
+
+    if extraneous.is_empty() {
+        return Ok(());
+    }
+
+    let count = extraneous.len();
+    tracing::warn!(
+        count,
+        dest = %args.dest().display(),
+        "mirror mode would purge destination files not present in the source"
+    );
+
+    if std::io::stdin().is_terminal() && std::io::stdout().is_terminal() {
+        eprintln!(
+            "\n--mirror would delete {count} file(s) from {} that are not in the source \
+             (first few: {}).",
+            args.dest().display(),
+            extraneous
+                .iter()
+                .take(5)
+                .map(|p| p.display().to_string())
+                .collect::<Vec<_>>()
+                .join(", ")
+        );
+        eprint!("Proceed with the purge? [y/N] ");
+        use std::io::Write;
+        std::io::stderr().flush().ok();
+        let mut answer = String::new();
+        std::io::stdin().read_line(&mut answer).ok();
+        if answer.trim().eq_ignore_ascii_case("y") {
+            return Ok(());
+        }
+    }
+
+    Err(IngestError::MirrorPurgeAborted { count }.into())
+}
+
+/// The diff itself, pulled out of `check_mirror_safety` so F63's `--purge-preview-path` can reuse
+/// exactly the same computation instead of a second, potentially-diverging implementation.
+///
+/// `Ok(None)` means "not applicable" (no `--mirror`, or the destination doesn't exist yet — a
+/// first run has nothing to purge). Unlike `check_mirror_safety`, this does **not** look at
+/// `--force-purge`: that flag decides whether to *ask* before deleting, which has no bearing on
+/// what a read-only preview shows.
+async fn mirror_purge_candidates(
+    args: &Args,
+    inventory: &ScanSummary,
+) -> Result<Option<Vec<PathBuf>>> {
+    if !args.mirror || !args.dest().exists() {
+        return Ok(None);
+    }
     if inventory.total_files_hint.is_some() {
         // --no-prescan: we don't have the source's per-file list to diff against. Erring toward
-        // caution, still require --force-purge explicitly rather than silently allowing purges
-        // whose scope we can't compute.
+        // caution, same as `check_mirror_safety`: a preview cannot honestly show a scope it never
+        // computed.
         return Err(IngestError::MirrorPurgeAborted { count: usize::MAX }.into());
     }
 
@@ -1438,47 +1572,43 @@ async fn check_mirror_safety(args: &Args, inventory: &ScanSummary) -> Result<()>
     .await
     .context("the mirror safety scan task panicked")?
     .context("cannot scan the destination for the mirror safety check")?;
-    let extraneous: Vec<&Path> = dest_all
+    let extraneous: Vec<PathBuf> = dest_all
         .files
         .iter()
         .map(|f| f.relative_path.as_path())
         .filter(|p| !source_relative.contains(&normalize_for_compare(p)))
+        .map(Path::to_path_buf)
         .collect();
 
-    if extraneous.is_empty() {
-        return Ok(());
-    }
+    Ok(Some(extraneous))
+}
 
-    let count = extraneous.len();
-    tracing::warn!(
-        count,
-        dest = %args.dest().display(),
-        "mirror mode would purge destination files not present in the source"
-    );
-
-    if std::io::stdin().is_terminal() && std::io::stdout().is_terminal() {
-        eprintln!(
-            "\n--mirror would delete {count} file(s) from {} that are not in the source \
-             (first few: {}).",
-            args.dest().display(),
-            extraneous
-                .iter()
-                .take(5)
-                .map(|p| p.display().to_string())
-                .collect::<Vec<_>>()
-                .join(", ")
-        );
-        eprint!("Proceed with the purge? [y/N] ");
-        use std::io::Write;
-        std::io::stderr().flush().ok();
-        let mut answer = String::new();
-        std::io::stdin().read_line(&mut answer).ok();
-        if answer.trim().eq_ignore_ascii_case("y") {
-            return Ok(());
-        }
-    }
-
-    Err(IngestError::MirrorPurgeAborted { count }.into())
+/// F63: writes the **full**, untruncated list of files `--mirror` would purge to `preview_path`,
+/// as JSON, then returns — never asks, never deletes. `check_mirror_safety`'s own interactive
+/// prompt only ever shows the first 5 candidates (a terminal message, not a machine-readable
+/// contract); this is the structured counterpart the console or a script can read in full.
+async fn write_mirror_purge_preview(
+    args: &Args,
+    inventory: &ScanSummary,
+    preview_path: &Path,
+) -> Result<usize> {
+    let candidates = mirror_purge_candidates(args, inventory)
+        .await?
+        .unwrap_or_default();
+    let payload = serde_json::json!({
+        "dest": args.dest().display().to_string(),
+        "candidate_count": candidates.len(),
+        "candidates": candidates.iter().map(|p| p.display().to_string()).collect::<Vec<_>>(),
+    });
+    let json =
+        serde_json::to_vec_pretty(&payload).context("cannot serialize the mirror purge preview")?;
+    robocopy_ingest::atomic_write(preview_path, &json).with_context(|| {
+        format!(
+            "cannot write the purge preview to {}",
+            preview_path.display()
+        )
+    })?;
+    Ok(candidates.len())
 }
 
 fn normalize_for_compare(path: &Path) -> PathBuf {
@@ -1919,6 +2049,7 @@ fn spawn_progress_publisher(
                 throughput_mbps: progress.average_mbps(),
                 batch_index,
                 batch_total,
+                current_file: progress.current_file(),
             };
 
             // Non-fatal, deliberately (AGENTS.md rule 11): a backup that succeeded must not be

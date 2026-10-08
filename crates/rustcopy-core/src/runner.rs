@@ -38,6 +38,10 @@ pub const EXIT_INTEGRITY_FAILED: u8 = 4;
 /// A `--keep-generations` retention purge was aborted. Kept apart from [`EXIT_MIRROR_ABORTED`] so
 /// a scheduler can tell which purge it was (F35).
 pub const EXIT_RETENTION_ABORTED: u8 = 5;
+/// The preflight free-space check (F65) found less free space at the destination than the run
+/// needs. Distinct from [`EXIT_UNRECOVERABLE`] so a scheduler can tell "the disk is full" apart
+/// from "a flag was wrong" without parsing stderr.
+pub const EXIT_INSUFFICIENT_DISK_SPACE: u8 = 6;
 
 /// What an exit code means, in one place.
 ///
@@ -54,6 +58,7 @@ pub fn exit_code_meaning(code: u8) -> &'static str {
         EXIT_MIRROR_ABORTED => "cancellazione di --mirror annullata",
         EXIT_INTEGRITY_FAILED => "copiato, ma la verifica ha trovato differenze",
         EXIT_RETENTION_ABORTED => "cancellazione della retention annullata",
+        EXIT_INSUFFICIENT_DISK_SPACE => "spazio libero insufficiente in destinazione",
         _ => "sconosciuto",
     }
 }
@@ -169,6 +174,265 @@ pub fn run_arguments(config: &Path, cancel_file: &Path) -> Vec<String> {
     ]
 }
 
+/// The complete argument list for resuming from a checkpoint (F31, closes the resume half of
+/// Onda 3 in `PIANO_GUI.md`). Same fixed shape and same reasoning as [`run_arguments`] — the only
+/// difference is `--resume-from` in place of `--config`, because `main.rs` treats the two as
+/// mutually exclusive top-level modes (`--resume-from` never goes through `run_jobs`, so a
+/// resumed run is always single-job, whatever `[[jobs]]` the original interrupted config had).
+pub fn resume_arguments(checkpoint: &Path, cancel_file: &Path) -> Vec<String> {
+    vec![
+        "--resume-from".to_string(),
+        checkpoint.display().to_string(),
+        "--cancel-file".to_string(),
+        cancel_file.display().to_string(),
+        "--progress-file".to_string(),
+        progress_file_for(cancel_file).display().to_string(),
+    ]
+}
+
+/// The complete argument list for previewing a `--restore-from` without ever performing it (F64,
+/// the first building block of the guided restore flow — `PIANO_GUI.md` §5b/§8). `--dry-run`
+/// guarantees nothing is copied; `--report-path preview_report_path` guarantees the preview
+/// writes its own scratch report rather than the caller's real one, so a preview can never
+/// overwrite (or race with) a report from a genuine run. Same fixed shape and reasoning as
+/// [`run_arguments`]/[`resume_arguments`] — the only two values that vary are the paths, and no
+/// parameter exists through which another flag could arrive.
+pub fn restore_preview_arguments(report: &Path, preview_report_path: &Path) -> Vec<String> {
+    vec![
+        "--restore-from".to_string(),
+        report.display().to_string(),
+        "--dry-run".to_string(),
+        "--report-path".to_string(),
+        preview_report_path.display().to_string(),
+    ]
+}
+
+/// The desktop console's own executable file name.
+pub const GUI_BINARY: &str = if cfg!(windows) {
+    "rustcopy-gui.exe"
+} else {
+    "rustcopy-gui"
+};
+
+/// Finds the desktop console beside the given executable — same reasoning as [`cli_beside`]:
+/// the installer places every binary in one directory, and a supervisor should launch the
+/// console it shipped with, not one found on `PATH`. Used by `rustcopy-shell`'s drag-and-drop
+/// handler (`tidy-sniffing-river.md`) to hand a drop off to the console for visible progress,
+/// rather than spawning `robocopy_ingest.exe` directly and leaving the operator with no feedback
+/// at all (found live, 10 Set 2026: a silent fire-and-forget spawn answers "did anything happen?"
+/// with nothing an operator can see).
+pub fn gui_beside(supervisor_exe: &Path) -> Result<PathBuf, IngestError> {
+    let candidate = supervisor_exe
+        .parent()
+        .unwrap_or_else(|| Path::new("."))
+        .join(GUI_BINARY);
+
+    if candidate.is_file() {
+        Ok(candidate)
+    } else {
+        Err(IngestError::CliBinaryNotFound(candidate))
+    }
+}
+
+/// A drag-and-drop copy never opted into a thread count the way a hand-written config or a
+/// deliberate `--threads` flag does, so leaving it unset (the pre-existing default: this
+/// machine's logical CPU count, `cli::default_threads`) is the wrong default specifically for a
+/// UNC/network destination -- **measured, not assumed**, against this project's own real NAS
+/// (`_ops_reports/benchmark/cold`, 10 Set 2026, the M0 sweep this session ran): throughput stayed
+/// within 12% across `--threads` 4 through 48 (`ConcurrencyInsensitive`, well under the 15% noise
+/// threshold), so 48 threads bought nothing there -- only 6x the simultaneous SMB connections for
+/// zero benefit, real system-wide sluggishness for the operator, live-verified the same day
+/// (started a 19 GB drop, the whole machine became hard to use until the transfer was stopped).
+/// `8` is not itself measured as an "optimal" value (the sweep found no optimum to calibrate to,
+/// a flat curve has none) -- it is a conservative default chosen to keep a convenience feature
+/// from being able to saturate the operator's own machine, not a throughput claim.
+pub const CONSERVATIVE_NETWORK_THREADS: u16 = 8;
+
+/// `true` for a UNC path (`\\server\share\...`); a local drive letter is never throttled this way
+/// -- the measurement above is specific to SMB, not a general claim about local disks.
+fn is_network_destination(dest: &Path) -> bool {
+    dest.to_string_lossy().starts_with(r"\\")
+}
+
+fn conservative_threads_for(dest: &Path) -> Option<u16> {
+    is_network_destination(dest).then_some(CONSERVATIVE_NETWORK_THREADS)
+}
+
+/// Writes a throwaway configuration file for one drag-and-drop batch: one `(source, dest)` pair
+/// becomes a plain single-job config (`defaults` only, exactly the pre-F33 shape); more than one
+/// becomes an `[[jobs]]` batch, one entry per dropped folder, each named after its own source
+/// folder — reusing F33's existing multi-job machinery (and `Run.svelte`'s existing batch-queue
+/// display, F49) instead of inventing a second way to run several copies in sequence. Every field
+/// besides `source`/`dest`/`name`/`threads` is left at its `JobConfig::default()` -- a
+/// drag-and-drop copy carries no opinion on retries or verification, and the console resolves
+/// those the same way it always does for a config file with unset fields. `threads` is the one
+/// deliberate exception -- see [`CONSERVATIVE_NETWORK_THREADS`] for why.
+pub fn write_shell_drop_config(
+    items: &[(PathBuf, PathBuf)],
+    out_path: &Path,
+) -> Result<(), IngestError> {
+    let config = match items {
+        [] => return Err(IngestError::ShellDropConfigEmpty(out_path.to_path_buf())),
+        [(source, dest)] => crate::config::IngestConfig {
+            defaults: crate::config::JobConfig {
+                source: Some(source.clone()),
+                dest: Some(dest.clone()),
+                threads: conservative_threads_for(dest),
+                ..Default::default()
+            },
+            jobs: None,
+        },
+        many => crate::config::IngestConfig {
+            defaults: crate::config::JobConfig::default(),
+            jobs: Some(
+                many.iter()
+                    .map(|(source, dest)| crate::config::JobConfig {
+                        name: source.file_name().map(|n| n.to_string_lossy().into_owned()),
+                        source: Some(source.clone()),
+                        dest: Some(dest.clone()),
+                        threads: conservative_threads_for(dest),
+                        ..Default::default()
+                    })
+                    .collect(),
+            ),
+        },
+    };
+
+    let rendered = toml::to_string_pretty(&config).map_err(|error| {
+        IngestError::io(
+            out_path,
+            std::io::Error::new(std::io::ErrorKind::InvalidData, error),
+        )
+    })?;
+    if let Some(parent) = out_path.parent() {
+        std::fs::create_dir_all(parent).map_err(|error| IngestError::io(parent, error))?;
+    }
+    crate::atomic_write(out_path, rendered.as_bytes())
+        .map_err(|error| IngestError::io(out_path, error))
+}
+
+/// Splits a Windows-style path into comparable components: both separators, case-folded, no
+/// empty or `.` parts. Plain string logic on purpose (see `vss::remap_to_shadow`, D16):
+/// `Path::components` depends on the *host* platform, and the value compared here only makes sense
+/// under Windows rules -- so this must give the same answer on the Linux CI runner.
+fn path_parts(path: &str) -> Vec<String> {
+    path.split(['\\', '/'])
+        .filter(|part| !part.is_empty() && *part != ".")
+        .map(str::to_lowercase)
+        .collect()
+}
+
+/// `true` when `inner` is `outer` itself or lies anywhere beneath it. Lexical: it does not follow
+/// junctions or symlinks, which is the declared limit of [`plan_copy`].
+fn is_same_or_inside(inner: &str, outer: &str) -> bool {
+    let (inner, outer) = (path_parts(inner), path_parts(outer));
+    !outer.is_empty() && inner.len() >= outer.len() && inner[..outer.len()] == outer[..]
+}
+
+/// Plans the "Copia" tab's run (F95): each chosen folder is copied **into** `dest_root`, under its
+/// own name -- the same meaning a drop onto a folder has in Explorer (`rustcopy-shell`'s
+/// `per_item_destination`), so the two entry points cannot disagree about where the files land.
+///
+/// Refuses what would be wrong on any machine, with a message the operator can act on:
+/// - no sources, or an empty destination;
+/// - a source with no folder name (a drive root such as `E:\`);
+/// - two sources with the same folder name (they would merge into one destination);
+/// - a destination inside one of its own sources, or the source itself as its own destination:
+///   robocopy would keep copying the growing copy into itself.
+///
+/// Purely lexical (case-insensitive, both separators): it does not touch the disk and does not
+/// resolve junctions or symlinks, so a destination reached through a junction into a source is not
+/// caught here. It never produces a mirror, a purge or a verification setting -- `Copia` copies,
+/// and what it writes is [`write_shell_drop_config`]'s plain configuration.
+pub fn plan_copy(
+    sources: &[PathBuf],
+    dest_root: &Path,
+) -> Result<Vec<(PathBuf, PathBuf)>, IngestError> {
+    let invalid = |message: String| Err(IngestError::CopyPlanInvalid(message));
+
+    if sources.is_empty() {
+        return invalid("Scegli almeno una cartella da copiare.".to_string());
+    }
+    let dest_text = dest_root.to_string_lossy();
+    if path_parts(&dest_text).is_empty() {
+        return invalid("Scegli la cartella di destinazione.".to_string());
+    }
+
+    let mut planned: Vec<(PathBuf, PathBuf)> = Vec::with_capacity(sources.len());
+    let mut names: Vec<String> = Vec::with_capacity(sources.len());
+    for source in sources {
+        let source_text = source.to_string_lossy();
+        // Taken from the text, not `Path::file_name`, for the same host-independence reason as
+        // `path_parts`. A drive root (`E:\`) leaves only the drive designator, which is not a
+        // folder name.
+        let parts = path_parts(&source_text);
+        let name = source_text
+            .trim_end_matches(['\\', '/'])
+            .rsplit(['\\', '/'])
+            .next()
+            .unwrap_or("");
+        if parts.len() < 2 || name.is_empty() || name.ends_with(':') {
+            return invalid(format!(
+                "\"{source_text}\" è un'intera unità: scegli una cartella al suo interno."
+            ));
+        }
+        if is_same_or_inside(&dest_text, &source_text) {
+            return invalid(format!(
+                "La destinazione \"{dest_text}\" sta dentro \"{source_text}\" (o coincide con essa): la copia continuerebbe a copiare se stessa. Scegli una destinazione fuori da quella cartella."
+            ));
+        }
+        let key = name.to_lowercase();
+        if names.contains(&key) {
+            return invalid(format!(
+                "Due cartelle si chiamano \"{name}\": finirebbero nella stessa cartella di destinazione. Copiale con due operazioni separate."
+            ));
+        }
+        names.push(key);
+        planned.push((source.clone(), dest_root.join(name)));
+    }
+
+    // A source that already *is* a planned destination (copying A into its own parent's `A`).
+    for (source, dest) in &planned {
+        if is_same_or_inside(&source.to_string_lossy(), &dest.to_string_lossy()) {
+            return invalid(format!(
+                "\"{}\" è già la cartella di destinazione: scegli una destinazione diversa.",
+                source.display()
+            ));
+        }
+    }
+    Ok(planned)
+}
+
+/// Where [`write_shell_drop_config`] writes its file — same temp directory as stop/progress files
+/// and F64's restore-preview scratch report ([`cancel_file_dir`]), for the same reason:
+/// guaranteed writable, and namespaced so two drops in quick succession never collide.
+pub fn shell_drop_config_path() -> Result<PathBuf, IngestError> {
+    let dir = cancel_file_dir();
+    std::fs::create_dir_all(&dir).map_err(|error| IngestError::io(&dir, error))?;
+    let stamp = format!(
+        "{}-{}-{}",
+        chrono::Local::now().format("%Y%m%d-%H%M%S%.3f"),
+        std::process::id(),
+        CANCEL_FILE_SEQUENCE.fetch_add(1, Ordering::Relaxed)
+    );
+    Ok(dir.join(format!("shell-drop-{stamp}.toml")))
+}
+
+/// Where a restore preview (F64) writes its scratch report — same temp directory as stop/progress
+/// files ([`cancel_file_dir`]), for the same reason: guaranteed writable, and never the operator's
+/// own report path.
+pub fn restore_preview_report_path() -> Result<PathBuf, IngestError> {
+    let dir = cancel_file_dir();
+    std::fs::create_dir_all(&dir).map_err(|error| IngestError::io(&dir, error))?;
+    let stamp = format!(
+        "{}-{}-{}",
+        chrono::Local::now().format("%Y%m%d-%H%M%S%.3f"),
+        std::process::id(),
+        CANCEL_FILE_SEQUENCE.fetch_add(1, Ordering::Relaxed)
+    );
+    Ok(dir.join(format!("restore-preview-{stamp}.json")))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -195,6 +459,229 @@ mod tests {
             );
         }
         assert_eq!(args.len(), 6, "and nothing else may be added silently");
+    }
+
+    /// Same prohibition, same reasoning, for the resume path — `--resume-from` is a second entry
+    /// point into the CLI and needs its own test rather than trusting that `run_arguments`'s test
+    /// somehow covers it too.
+    #[test]
+    fn the_resume_argument_list_cannot_carry_a_destructive_flag() {
+        let args = resume_arguments(Path::new("run.checkpoint.json"), Path::new(".jobs.stop-1"));
+        let joined = args.join(" ");
+
+        for forbidden in [
+            "--force-purge",
+            "--mirror",
+            "--install-service",
+            "--uninstall-service",
+            "--install-schedule",
+            "--uninstall-schedule",
+            "--keep-generations",
+            "--config",
+        ] {
+            assert!(
+                !joined.contains(forbidden),
+                "{forbidden} must never reach a run started by a supervisor: {joined}"
+            );
+        }
+        assert!(joined.starts_with("--resume-from run.checkpoint.json"));
+        assert_eq!(args.len(), 6, "and nothing else may be added silently");
+    }
+
+    /// F64: same prohibition as the two argument builders above, for the preview path — a fixed
+    /// shape is what makes "the console can never authorise a purge" hold for a preview too.
+    #[test]
+    fn the_restore_preview_argument_list_cannot_carry_a_destructive_flag() {
+        let args =
+            restore_preview_arguments(Path::new("backup-report.json"), Path::new("preview.json"));
+        let joined = args.join(" ");
+
+        for forbidden in [
+            "--force-purge",
+            "--mirror",
+            "--install-service",
+            "--uninstall-service",
+            "--install-schedule",
+            "--uninstall-schedule",
+            "--keep-generations",
+            "--resume-from",
+            "--config",
+        ] {
+            assert!(
+                !joined.contains(forbidden),
+                "{forbidden} must never reach a restore preview: {joined}"
+            );
+        }
+        assert!(
+            joined.contains("--dry-run"),
+            "a preview must never actually restore: {joined}"
+        );
+        assert!(joined.starts_with("--restore-from backup-report.json"));
+        assert_eq!(args.len(), 5, "and nothing else may be added silently");
+    }
+
+    /// `rustcopy-shell` forwards paths the user dragged, not ones they typed into a validated
+    /// form — `JobConfig::default()` means `mirror`/`backup_type`/every other F61-relevant field
+    /// stays unset no matter what a future edit to the handler does, without this test having to
+    /// enumerate every forbidden field the way the argument-list tests above enumerate flags.
+    #[test]
+    fn a_single_dropped_item_writes_a_plain_single_job_config() {
+        let dir = tempfile::tempdir().unwrap();
+        let out = dir.path().join("drop.toml");
+        write_shell_drop_config(
+            &[(
+                PathBuf::from(r"C:\Users\demo\Desktop\Photos"),
+                PathBuf::from(r"D:\Backup\Photos"),
+            )],
+            &out,
+        )
+        .unwrap();
+
+        let loaded = crate::config::IngestConfig::load_from(&out).unwrap();
+        assert_eq!(
+            loaded.defaults.source,
+            Some(PathBuf::from(r"C:\Users\demo\Desktop\Photos"))
+        );
+        assert_eq!(
+            loaded.defaults.dest,
+            Some(PathBuf::from(r"D:\Backup\Photos"))
+        );
+        assert_eq!(
+            loaded.jobs, None,
+            "one item must not produce a [[jobs]] batch"
+        );
+        assert_eq!(
+            loaded.defaults.mirror, None,
+            "unset, like every other F61-relevant field"
+        );
+        assert_eq!(
+            loaded.defaults.threads, None,
+            "a local drive letter is never throttled -- only the measured SMB case is"
+        );
+    }
+
+    #[test]
+    fn is_network_destination_recognizes_a_unc_path_and_not_a_drive_letter() {
+        assert!(is_network_destination(Path::new(r"\\NAS\Share\Backup")));
+        assert!(!is_network_destination(Path::new(r"D:\Backup\Photos")));
+    }
+
+    /// The whole point of this default: found live, 10 Set 2026, dragging a 19 GB folder onto a
+    /// UNC destination with the unset-threads default (this machine's 48 logical CPUs) made the
+    /// operator's own system hard to use for the duration of the transfer -- the same NAS this
+    /// session's own M0 benchmark had already measured as `ConcurrencyInsensitive` (12% variation
+    /// across --threads 4-48), so those 48 simultaneous connections bought nothing.
+    #[test]
+    fn a_network_destination_gets_the_conservative_thread_default() {
+        let dir = tempfile::tempdir().unwrap();
+        let out = dir.path().join("drop.toml");
+        write_shell_drop_config(
+            &[(
+                PathBuf::from(r"C:\Users\demo\Desktop\LabSources"),
+                PathBuf::from(r"\\NAS\Share\Backup\LabSources"),
+            )],
+            &out,
+        )
+        .unwrap();
+
+        let loaded = crate::config::IngestConfig::load_from(&out).unwrap();
+        assert_eq!(loaded.defaults.threads, Some(CONSERVATIVE_NETWORK_THREADS));
+    }
+
+    #[test]
+    fn several_dropped_items_write_an_independent_job_per_item() {
+        let dir = tempfile::tempdir().unwrap();
+        let out = dir.path().join("drop.toml");
+        // `Path::new(..).join(..)` rather than a raw `r"C:\Photos"` literal: `\` is only a
+        // separator on Windows (D16, CLAUDE.md — Path/PathBuf behaviour is host-platform-
+        // dependent, not target-semantics-dependent), and `.name` below is derived from
+        // `.file_name()`, so a backslash literal here would silently assert the wrong thing on
+        // this crate's own Linux CI job instead of testing the real per-source-basename logic.
+        write_shell_drop_config(
+            &[
+                (
+                    Path::new("C:").join("Photos"),
+                    Path::new("D:").join("Backup").join("Photos"),
+                ),
+                (
+                    Path::new("C:").join("Docs"),
+                    Path::new("D:").join("Backup").join("Docs"),
+                ),
+            ],
+            &out,
+        )
+        .unwrap();
+
+        let loaded = crate::config::IngestConfig::load_from(&out).unwrap();
+        let jobs = loaded
+            .jobs
+            .expect("several items must produce a [[jobs]] batch");
+        assert_eq!(jobs.len(), 2);
+        assert_eq!(jobs[0].name.as_deref(), Some("Photos"));
+        assert_eq!(jobs[1].name.as_deref(), Some("Docs"));
+    }
+
+    /// Each job's thread default is decided from its *own* destination, not the batch as a
+    /// whole -- a single drop is unlikely to mix local and network targets, but nothing about
+    /// `write_shell_drop_config`'s contract rules it out, so this must not accidentally throttle
+    /// (or fail to throttle) one job based on a sibling's destination.
+    #[test]
+    fn each_job_in_a_batch_gets_its_own_threads_default_from_its_own_destination() {
+        let dir = tempfile::tempdir().unwrap();
+        let out = dir.path().join("drop.toml");
+        // Source paths built portably (see the comment in the test above) -- the UNC destination
+        // stays a raw string literal on purpose: `is_network_destination` only ever does a plain
+        // string-prefix check on it, never `.file_name()`, so it carries no platform-dependent
+        // `Path` parsing to worry about.
+        write_shell_drop_config(
+            &[
+                (
+                    Path::new("C:").join("Photos"),
+                    Path::new("D:").join("Backup").join("Photos"),
+                ),
+                (
+                    Path::new("C:").join("Docs"),
+                    PathBuf::from(r"\\NAS\Share\Docs"),
+                ),
+            ],
+            &out,
+        )
+        .unwrap();
+
+        let loaded = crate::config::IngestConfig::load_from(&out).unwrap();
+        let jobs = loaded.jobs.unwrap();
+        assert_eq!(jobs[0].threads, None, "local destination: unthrottled");
+        assert_eq!(
+            jobs[1].threads,
+            Some(CONSERVATIVE_NETWORK_THREADS),
+            "UNC destination: throttled"
+        );
+    }
+
+    #[test]
+    fn write_shell_drop_config_refuses_an_empty_selection() {
+        let dir = tempfile::tempdir().unwrap();
+        let out = dir.path().join("drop.toml");
+        assert!(write_shell_drop_config(&[], &out).is_err());
+    }
+
+    /// The preview must write its own report, never the path a real run would use — otherwise a
+    /// preview could silently clobber a genuine run's report sitting at a well-known default path.
+    #[test]
+    fn restore_preview_report_path_is_never_the_default_report_path() {
+        let path = restore_preview_report_path().expect("directory is created");
+        assert_ne!(path, PathBuf::from("./robocopy_ingest_report.json"));
+        assert_eq!(path.parent(), Some(cancel_file_dir().as_path()));
+    }
+
+    /// Two previews requested close together must not collide on the same scratch file, the same
+    /// reasoning `two_runs_started_in_the_same_instant_do_not_share_a_stop_file` already applies
+    /// to stop files.
+    #[test]
+    fn two_previews_requested_in_the_same_instant_do_not_share_a_report_path() {
+        let first = restore_preview_report_path().expect("created");
+        let second = restore_preview_report_path().expect("created");
+        assert_ne!(first, second);
     }
 
     /// One run, one identity: watching one run's progress while holding another's stop file would
@@ -290,5 +777,106 @@ mod tests {
         );
         assert!(exit_code_meaning(EXIT_INTEGRITY_FAILED).contains("copiato"));
         assert_eq!(exit_code_meaning(99), "sconosciuto");
+    }
+
+    /// F65: exit 6 must read as "not enough disk", not as the generic usage-error message a
+    /// scheduler would otherwise have to assume for any unrecognised non-zero code.
+    #[test]
+    fn insufficient_disk_space_has_its_own_meaning() {
+        assert_ne!(
+            exit_code_meaning(EXIT_INSUFFICIENT_DISK_SPACE),
+            exit_code_meaning(EXIT_UNRECOVERABLE)
+        );
+    }
+
+    // ----- F95: plan_copy ------------------------------------------------------------------
+
+    /// Windows-style text of a planned destination, whatever separator the host's `Path::join`
+    /// used -- the production value only ever reaches Windows, but these tests also run on Linux.
+    fn windows_text(path: &Path) -> String {
+        path.to_string_lossy().replace('/', "\\")
+    }
+
+    fn plan(sources: &[&str], dest: &str) -> Result<Vec<(String, String)>, String> {
+        let sources: Vec<PathBuf> = sources.iter().map(PathBuf::from).collect();
+        plan_copy(&sources, Path::new(dest))
+            .map(|items| {
+                items
+                    .into_iter()
+                    .map(|(s, d)| (windows_text(&s), windows_text(&d)))
+                    .collect()
+            })
+            .map_err(|error| error.to_string())
+    }
+
+    #[test]
+    fn plan_copy_puts_each_folder_under_its_own_name() {
+        let items = plan(&[r"D:\Dati\Foto", r"D:\Dati\Video"], r"\nas01\backup").unwrap();
+        assert_eq!(
+            items,
+            vec![
+                (r"D:\Dati\Foto".into(), r"\nas01\backup\Foto".into()),
+                (r"D:\Dati\Video".into(), r"\nas01\backup\Video".into()),
+            ]
+        );
+    }
+
+    #[test]
+    fn plan_copy_needs_a_source_and_a_destination() {
+        assert!(plan(&[], r"E:\copia")
+            .unwrap_err()
+            .contains("almeno una cartella"));
+        assert!(plan(&[r"D:\Foto"], "")
+            .unwrap_err()
+            .contains("destinazione"));
+        assert!(plan(&[r"D:\Foto"], r"\\")
+            .unwrap_err()
+            .contains("destinazione"));
+    }
+
+    #[test]
+    fn plan_copy_refuses_a_whole_drive() {
+        for drive in [r"E:\", "E:", r"e:/"] {
+            let error = plan(&[drive], r"D:\copia").unwrap_err();
+            assert!(error.contains("intera unità"), "{drive}: {error}");
+        }
+    }
+
+    #[test]
+    fn plan_copy_refuses_a_destination_inside_its_own_source() {
+        // Case and separator differences must not hide it.
+        for dest in [r"D:\Dati\Foto", r"d:/dati/foto/copie", r"D:\DATI\FOTO\a\b"] {
+            let error = plan(&[r"D:\Dati\Foto"], dest).unwrap_err();
+            assert!(error.contains("copiare se stessa"), "{dest}: {error}");
+        }
+    }
+
+    #[test]
+    fn plan_copy_refuses_copying_a_folder_onto_itself() {
+        // Destination is the folder's own parent: `D:\Dati\Foto` would land on `D:\Dati\Foto`.
+        let error = plan(&[r"D:\Dati\Foto"], r"D:\Dati").unwrap_err();
+        assert!(error.contains("già la cartella di destinazione"), "{error}");
+    }
+
+    #[test]
+    fn plan_copy_refuses_two_folders_with_the_same_name() {
+        let error = plan(&[r"D:\a\Foto", r"E:\b\foto"], r"F:\copia").unwrap_err();
+        assert!(error.contains("si chiamano"), "{error}");
+    }
+
+    #[test]
+    fn plan_copy_does_not_mistake_a_name_prefix_for_a_parent() {
+        // `Foto2` is a sibling of `Foto`, not inside it.
+        let items = plan(&[r"D:\Foto"], r"D:\Foto2").unwrap();
+        assert_eq!(items, vec![(r"D:\Foto".into(), r"D:\Foto2\Foto".into())]);
+    }
+
+    #[test]
+    fn plan_copy_accepts_a_trailing_separator_on_a_source() {
+        let items = plan(&[r"D:\Dati\Foto\"], r"E:\copia").unwrap();
+        assert_eq!(
+            items,
+            vec![(r"D:\Dati\Foto\".into(), r"E:\copia\Foto".into())]
+        );
     }
 }

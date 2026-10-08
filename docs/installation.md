@@ -22,10 +22,11 @@ Requisiti di sistema, installer Windows e deploy del **notify-server**. Per i pr
 copiano gli `.exe` e si lanciano da qualunque cartella. Due avvertenze concrete verificate sul
 binario compilato:
 
-- **Richiede il Visual C++ Redistributable x64** (Microsoft, gratuito). Il binario Rust
-  `windows-msvc` importa dinamicamente `VCRUNTIME140.dll`, che **non** è incluso in
-  un'installazione Windows pulita (a differenza della Universal CRT, presente di default su
-  Windows 10 1607+/11). Senza, l'eseguibile non parte.
+- **Non richiede il Visual C++ Redistributable** (dalla 7.7.0). Fino alla 7.6.1 i binari importavano
+  dinamicamente `VCRUNTIME140.dll`, assente in un'installazione Windows pulita: su una macchina
+  senza il Redistributable l'eseguibile non partiva e l'installer falliva (`ANALYSIS.md` D30). Ora il
+  runtime C è collegato in modo statico (`.cargo/config.toml`), verificato con `dumpbin` e da un job
+  di CI. Resta il requisito di sistema: **Windows 10 / Windows Server 2016 o successivo**.
 - **Si appoggia a `robocopy.exe` di sistema**, presente su ogni Windows da Vista in poi: non serve
   installarlo, ma il tool non lo include.
 
@@ -33,19 +34,28 @@ binario compilato:
 
 Per una distribuzione più comoda di un semplice copia-incolla, il repo include uno script Inno
 Setup (`installer/rustcopy.iss`) che genera un vero `setup.exe` con disinstaller, opzione di
-aggiunta al PATH di sistema e verifica automatica del Visual C++ Redistributable.
+aggiunta al PATH di sistema e un rapporto di installazione automatico (vedi sotto).
 
 Da F60 l'installer è **uno solo** e la console grafica è un **componente opzionale**:
 
 | Tipo di installazione | Cosa installa |
 |---|---|
-| **CLI e console grafica** | `robocopy_ingest.exe`, `notify-server.exe`, `rustcopy-gui.exe` |
+| **CLI e console grafica** | `robocopy_ingest.exe`, `notify-server.exe`, `rustcopy-gui.exe`, e — se si spunta anche l'estensione Shell — `rustcopy_shell.dll` |
 | **Solo CLI** | `robocopy_ingest.exe`, `notify-server.exe` |
-| **Scelta manuale** | La CLI è obbligatoria, la console si spunta |
+| **Scelta manuale** | La CLI è obbligatoria, la console e l'estensione Shell si spuntano |
 
 La console è opzionale di proposito: un server che esegue solo backup pianificati non ha alcun
 uso per una finestra desktop, e la CLI è il componente che deve continuare a funzionare non
 presidiato.
+
+`crates/rustcopy-shell` (F85, l'estensione Shell per il drag & drop di Explorer) è dall'11
+Settembre 2026 un componente dell'installer, `gui\shell` — annidato sotto la console e non
+selezionabile da solo: `InvokeCommand` cerca `rustcopy-gui.exe` accanto al proprio DLL, quindi
+l'estensione senza la console non avvierebbe mai una copia. La registrazione COM
+(`DllRegisterServer`/`DllUnregisterServer`) avviene in automatico a install/disinstalla —
+`regsvr32` manuale resta necessario solo per un `cargo build --release -p rustcopy-shell` fuori
+dall'installer (es. sviluppo locale), non per un'installazione normale — vedi la riga F85 di
+[ROADMAP.md](../ROADMAP.md).
 
 ```powershell
 # 1. Frontend della console (solo se la impacchetti)
@@ -65,10 +75,10 @@ del PATH di sistema, disinstallazione con ripristino del PATH — ciclo completo
 
 ```powershell
 # Installazione silenziosa (utile per deploy automatizzati)
-rustcopy-6.0.0-setup.exe /VERYSILENT /SUPPRESSMSGBOXES /NORESTART /TASKS="addtopath"
+rustcopy-7.8.0-setup.exe /VERYSILENT /SUPPRESSMSGBOXES /NORESTART /TASKS="addtopath"
 
 # Solo CLI, senza console grafica
-rustcopy-6.0.0-setup.exe /VERYSILENT /SUPPRESSMSGBOXES /NORESTART /TYPE=cli /TASKS="addtopath"
+rustcopy-7.8.0-setup.exe /VERYSILENT /SUPPRESSMSGBOXES /NORESTART /TYPE=cli /TASKS="addtopath"
 ```
 
 #### WebView2
@@ -77,14 +87,74 @@ La console rende l'interfaccia attraverso il runtime **WebView2** di sistema inv
 impacchettare un motore browser — è il motivo per cui pesa 8,9 MB invece di ~150. Quel runtime
 è presente su Windows 11 e arriva alla maggior parte delle installazioni Windows 10 aggiornate,
 ma può mancare su immagini LTSC o offline. L'installer lo rileva e **avvisa** — solo se hai
-scelto la console — senza bloccare il setup e senza impacchettare un secondo installer, come già
-fa per il Visual C++ Redistributable. Senza WebView2 la CLI funziona comunque: è solo la finestra
+scelto la console — senza bloccare il setup e senza impacchettare un secondo installer. Senza WebView2 la CLI funziona comunque: è solo la finestra
 della console che non si aprirebbe.
 
 Il bundler di Tauri resta **disattivato** (`bundle.active: false`): produrrebbe un secondo
 MSI/NSIS per la sola console, cioè esattamente la separazione che questo installer evita.
 
+#### Windows Server 2016/2019/2022
+
+Dal 21 Settembre 2026 (F90, `ROADMAP.md`) l'installer rileva l'ambiente Server e si comporta di
+conseguenza, sempre senza mai bloccare il setup:
+
+- **Server Core**: nessuna shell Explorer, quindi né la console (WebView2) né l'estensione Shell
+  potrebbero mai funzionare — l'installer le nasconde del tutto dalla selezione componenti invece
+  di offrirle inutilmente.
+- **Versione Windows/Server precedente a 10/2016**: il target Rust `windows-msvc` richiede almeno
+  quelle versioni — avviso, stesso trattamento già riservato a WebView2 (non blocca il setup).
+- **Estensione Shell su una SKU Server con Desktop Experience**: avviso aggiuntivo se selezionata,
+  perché su un Remote Desktop Session Host (comune su Server 2016/2019/2022) carica nella sessione
+  di ogni utente collegato, non di un singolo desktop personale.
+
+Precauzioni operative aggiuntive per un deploy in produzione (esclusioni antivirus/EDR, verifica
+dei VSS writer, mitigazioni per l'assenza di firma del codice) sono in
+[RUNBOOK.md §3](../RUNBOOK.md#-3-distribuzione-in-produzione-windows-server-20162019-2022).
+
 ---
+
+#### Se l'installazione fallisce o il programma non parte
+
+**Prima cosa: il rapporto di installazione.** Dalla 7.7.0 l'installer scrive da solo, a ogni
+esecuzione — riuscita, fallita o annullata, anche silenziosa — un rapporto in
+
+```
+C:\ProgramData\rustcopy\install-reports\install-<data-ora>.txt
+```
+
+con accanto una copia del log di Setup (`install-<data-ora>-setup.log`). Contiene sistema operativo e
+build, privilegi, opzioni di avvio, componenti scelti, stato di Visual C++/WebView2, riavvii in sospeso,
+il codice di `regsvr32` per l'estensione Shell e l'esito finale. Se qualcosa va storto, **manda quei due
+file**. Se l'estensione Shell non si registra l'installazione prosegue comunque (il rapporto dice perché);
+`/ReportDir=<cartella>` cambia dove vengono scritti.
+
+Se `Setup.exe` non parte affatto (bloccato da AppLocker, SmartScreen o un antivirus) non c'è nessun
+rapporto: in quel caso, e per i dettagli che un installer non può leggere (registro eventi, Defender,
+Code Integrity), c'è lo script di diagnostica. Su una macchina con problemi esegui, da PowerShell come
+Amministratore (funziona su Windows PowerShell 5.1, quindi anche su Server 2016):
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\scripts\collect-install-diagnostics.ps1 `
+  -InstallerPath C:\Temp\rustcopy-7.8.0-setup.exe
+```
+
+Lo script **non modifica nulla** (non registra, non installa, non cambia impostazioni): scrive sul
+Desktop una cartella `rustcopy-diagnostics` e il relativo `.zip` con sistema operativo, Visual C++
+Redistributable, WebView2, ciò che l'installer ha lasciato, la prova di caricamento di ogni binario
+(con il codice d'errore di Windows), i criteri di sicurezza attivi, il log di Inno Setup, gli errori
+recenti e i riavvii in sospeso. Controlla il contenuto prima di condividerlo: include il nome della
+macchina e dei percorsi.
+
+Per avere il log dell'installazione anche in modalità silenziosa:
+
+```powershell
+rustcopy-7.8.0-setup.exe /VERYSILENT /SUPPRESSMSGBOXES /NORESTART /LOG="$env:TEMP\rustcopy-setup.log"
+```
+
+Cause note (dettaglio in `ANALYSIS.md` D30): fino alla 7.6.1, Visual C++ Redistributable assente
+(corretto dal CRT statico); WebView2 assente (riguarda solo la console, non la CLI); binari non
+firmati bloccati da AppLocker, WDAC o da un antivirus/EDR; riavvio in sospeso; installer scaricato e
+bloccato da Windows (`Zone.Identifier`).
 
 ---
 

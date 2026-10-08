@@ -1,7 +1,7 @@
 ---
 type: Log
 title: Analisi di Robustezza e Ottimizzazione Prestazioni
-description: Audit trail dei difetti D1-D23 e delle opportunità di miglioramento O1-O10.
+description: Audit trail dei difetti D1-D27 e delle opportunità di miglioramento O1-O10.
 status: stable
 generated:
   by: process:claude-code
@@ -1385,6 +1385,472 @@ più `/MT`.
 
 ---
 
+### D24 — `schedule.rs` faceva lampeggiare una console nera davanti alla GUI a ogni `schtasks.exe` ✅ RISOLTO (4 Set 2026)
+
+**Stato: chiuso e verificato.**
+
+**Gravità: MEDIA** — nessun dato a rischio, ma un difetto di percezione diretto: ogni pressione di
+«Esamina» nella scheda Esegui della console faceva comparire e sparire una finestra di terminale
+nera davanti all'applicazione. Trovato durante un audit visivo della GUI richiesto dall'utente (non
+una feature collegata), riproducendo di persona ogni scheda con Windows-MCP.
+
+**Causa.** `schedule::run_schtasks` (install/uninstall, F36) e `schedule::referencing_config`
+(query, F49-Onda-1) costruivano entrambi `std::process::Command::new("schtasks.exe")` senza
+`CREATE_NO_WINDOW`. `schtasks.exe` è un binario a sottosistema console: lanciato dalla CLI (che ha
+già una console) il fenomeno passa inosservato, ma lanciato dalla GUI (un processo a finestre, senza
+alcuna console da prestargli) Windows gliene alloca una nuova — esattamente la stessa causa già
+corretta per lo spawn del processo figlio principale in `main.rs` (F54, vedi la riga corrispondente
+in `CLAUDE.md`), ma mai applicata a questi due punti perché entrambi risalgono a F36, quando la GUI
+non esisteva ancora.
+
+**Perché è passato.** `run_schtasks`/`referencing_config` sono testati (`schedule.rs`, i test
+`schedule_matching` inclusi) contro l'output catturato di `schtasks.exe`, mai eseguendo davvero il
+binario da un processo a finestre — un test che invoca il comando reale da un harness console non
+può osservare un fenomeno che dipende dal sottosistema del *processo chiamante*.
+
+**Rimedio.** Stessa `creation_flags(CREATE_NO_WINDOW)` già usata in `main.rs`, applicata a entrambi
+i punti di spawn in `schedule.rs`. Innocuo per il percorso CLI (che ha già una propria console, e
+l'output di `schtasks.exe` è comunque catturato via `.output()` in entrambi i casi, mai stampato a
+schermo) — non un comportamento nuovo condizionato alla GUI, la stessa chiamata per entrambi i
+chiamanti.
+
+**Verifica.** Riprodotto e confermato visivamente con Windows-MCP: prima del fix, «Esamina» nella
+scheda Esegui della console faceva lampeggiare una console nera ogni volta; dopo, nessuna finestra
+compare. `cargo build -p rustcopy-core` pulito; nessun test esistente toccato (nessuna asserzione
+verificava l'assenza del flag, quindi nulla si è rotto nell'aggiungerlo).
+
+---
+
+### D25 — `--resume-from` scarta silenziosamente quasi tutta la configurazione originale, non solo `--mirror` ✅ CORRETTO (7 Ott 2026)
+
+**Stato: corretto il 7 Ott 2026** — vedi "Esito" in fondo a questa voce. Il testo sotto è la
+diagnosi del 4 Set 2026, lasciata com'era: una sua parte (i "7 campi") era già superata prima della
+correzione, e l'Esito lo dice.
+
+
+**Gravità: MEDIA** — nessun rischio per l'integrità dei dati (l'effetto è quasi sempre "la ripresa
+gira più permissiva o più veloce dell'originale", mai più distruttiva), ma un comportamento che
+un operatore non ha modo di prevedere senza leggere il codice. Trovato **di striscio**, mentre si
+verificava la scheda "Riprese disponibili" della console (Onda 3, `PIANO_GUI.md`) con una run reale
+throttled a `bandwidth_limit_mbps = 3`: la ripresa è ripartita a 1988 MB/s, velocità piena.
+
+**Causa.** `checkpoint::Checkpoint` cattura la configurazione dell'invocazione interrotta in un
+`report::ConfigurationReport` — **7 campi soli** (`threads`, `retries`, `retry_wait_seconds`,
+`pattern`, `verify_integrity`, `compare_baseline`, `dry_run`) su 56 che `Args` possiede oggi.
+`checkpoint::build_resume_args` ne restituisce solo **5** dei 7 catturati (manca `compare_baseline`
+e `dry_run`, pur presenti nel checkpoint scritto su disco). Tutto il resto — `bandwidth_limit_mbps`,
+`exclude_files`/`exclude_dirs`, `min_age_days`/`max_age_days`, `hash_algo`, `fast_verify`,
+`ignore_transient_missing`, `preserve_acl`, `long_paths`, `exclude_junctions`, `webhook_url`,
+`pre_command`/`post_command`, `backup_type`/`keep_generations` — non è mai stato catturato, quindi
+una ripresa **non lo eredita in nessun caso**, che sia lanciata da CLI o dalla console.
+
+**Non è nuovo, e non è specifico della console.** `checkpoint.rs` (F31, 3 Agosto 2026) si comporta
+così da quando esiste; la scheda Esegui della console (Onda 3) lo eredita semplicemente invocando la
+stessa `--resume-from`, come da disegno (`PIANO_GUI.md` §8, voce 11: "avvio della stessa CLI con
+`--resume-from` risolto dal core... mai costruito lato frontend"). Nessun codice della GUI decide
+quali impostazioni sopravvivano: la decisione, o l'assenza di una, sta interamente in
+`checkpoint.rs`.
+
+**Perché non è P0/destructive.** L'asimmetria gioca quasi sempre a favore della sicurezza, non
+contro: un job che interrompeva con `--mirror` **non** lo riottiene alla ripresa (l'omissione più
+importante è anche la più innocua). Il rischio reale è operativo — una ripresa senza throttle può
+saturare un collegamento che l'originale proteggeva apposta, e una ripresa senza `exclude_files`/
+`exclude_dirs` può copiare file che l'originale escludeva di proposito — non è mai una perdita o
+corruzione di dati già copiati.
+
+**Perché è passato inosservato.** `flags_from_the_real_invocation_survive_resume`
+(`checkpoint.rs`) verifica solo che i flag digitati sulla *riga di comando della ripresa* (es.
+`--quiet`, `--log-path`) sopravvivano — la lezione F25b. Nessun test verifica il caso complementare:
+che le impostazioni della *configurazione originale interrotta*, oltre ai 5 campi già coperti,
+sopravvivano altrettanto. I due casi sembrano la stessa garanzia ma non lo sono.
+
+**Rimedio non ancora deciso.** Espandere `ConfigurationReport` toccherebbe anche il report di run
+completate (lo stesso tipo, condiviso), quindi la scelta più pulita è probabilmente un tipo dedicato
+per il checkpoint invece di riusare `ConfigurationReport` — decisione di design da prendere prima di
+scrivere il codice, non implementazione diretta. **Rimandato deliberatamente**: la console si limita
+oggi a esporre la stessa `--resume-from` che la CLI ha sempre avuto, quindi non introduce un rischio
+nuovo — allarga solo la platea di chi la usa senza leggere `checkpoint.rs`.
+
+**Verifica.** Riprodotto contro il binario reale: job con `bandwidth_limit_mbps = 3` interrotto a
+metà (22%, 30/130 file) via la console, ripreso dalla scheda Esegui — 130/130 file copiati,
+integrità verificata (0 mismatch), ma a 1988,89 MB/s invece che ~3 MB/s. Il comportamento
+*funzionale* della ripresa (copia il resto, verifica l'integrità) è corretto; solo la fedeltà alla
+configurazione originale non lo è.
+
+**Esito (7 Ott 2026).** Rileggendo il codice prima di correggere, la diagnosi aveva un errore: nel
+frattempo `ConfigurationReport` era già cresciuto a **18 campi** (esclusioni, età, banda, hash,
+`fast_verify`, giunzioni, VSS, `mirror`, `backup_type`, per le richieste di arricchimento dei report) e
+il checkpoint li scriveva già tutti su disco — era `build_resume_args` a ripristinarne ancora **5**.
+Quindi il rimedio non richiedeva un tipo dedicato per i campi già catturati, solo di rimetterli; il tipo
+dedicato serve soltanto per i pochi interruttori che `ConfigurationReport` non porta.
+
+- `checkpoint::apply_configuration` ripristina, con una sola regola — *una ripresa può rimettere ciò che
+  restringe o è neutro, mai essere più distruttiva di una run nuova*: banda, esclusioni (unite a quelle
+  digitate sulla riga della ripresa), età, `hash_algo`, `fast_verify`, giunzioni, VSS, `backup_type`, e
+  gli interruttori `ignore_transient_missing`/`no_prescan`/`long_paths`/`preserve_*` (nuovo
+  `ResumeExtras`, `#[serde(default)]`: un checkpoint vecchio si carica e riprende come prima).
+- Gli interruttori si accendono soltanto (`|=`). Conseguenza che la diagnosi non aveva visto: un
+  **`--dry-run` interrotto riprendeva come copia vera**, perché `dry_run` era catturato e non
+  ripristinato. Ora riprende come simulazione.
+- Se entrambe le parti fissano un limite vince il più severo (`bandwidth_limit_mbps` prende il minore).
+- **Volutamente non ripristinati**, ciascuno con un test: `mirror` (e quindi nessuna conferma di purge
+  chiesta a una run lanciata da console), `keep_generations`, `--pre-command`/`--post-command` (un
+  checkpoint è un file modificabile: ripristinare un comando shell da lì renderebbe `--resume-from` un
+  modo per eseguirne uno), `--webhook-url` e `--encrypt-aes256` (credenziali, e il checkpoint sta in
+  chiaro accanto al report), `--compare-baseline` (una misura del motore, non una proprietà dei dati).
+- **Verifica**: 5 test unitari nuovi in `checkpoint.rs` e un test con il binario e robocopy veri
+  (`resume_from_keeps_the_exclusions_of_the_interrupted_run`: `b.tmp` escluso dalla run interrotta resta
+  escluso dopo la ripresa). **Rifatta dal vivo il 7 Ott 2026** dalla console (binario da `main`): job con
+  `bandwidth_limit_mbps = 3` e `exclude_files = ["*.skip"]` verso una destinazione di rete, interrotto con
+  "Ferma", ripreso da "Riprese disponibili". Il checkpoint contiene banda, esclusioni e `extras`; il comando
+  di robocopy della ripresa contiene ancora `/XF *.skip /IPG:22` (prima di D25 mancavano entrambi), 30 file
+  arrivati, nessun file escluso copiato. **Limite della prova**: la **velocità** non si è potuta
+  osservare, perché `/IPG` di robocopy agisce solo su vere reti lente e il loopback SMB (`\\localhost\C$`)
+  non viene frenato (24 MB/s): la verifica è sul comando e sulla configurazione, non sul throughput.
+  Osservato anche: la run ripresa scrive log e report nei percorsi predefiniti (`robocopy_ingest.log`,
+  `./robocopy_ingest_report.json`), non in quelli del job: `log_path`/`report_path` non fanno parte di ciò
+  che la ripresa ripristina (già dichiarato come limite residuo).
+- **Limite residuo**: ciò che né `ConfigurationReport` né `ResumeExtras` portano (per esempio
+  `html_report_path`, oltre a quanto escluso di proposito sopra) segue la riga di comando della ripresa.
+  `--resume-from` resta "continua la stessa copia", non "ripeti ogni impostazione".
+
+---
+
+### D26 — l'anteprima di ripristino (F64) fallisce con "fatal error" su qualunque report con percorsi relativi ✅ CORRETTO (6 Set 2026)
+
+**Stato: corretto e verificato lo stesso giorno.**
+
+**Gravità: ALTA** — non un caso limite: `examples/demo-locale.toml`, l'unico esempio pensato per
+essere eseguito così com'è, registra `source`/`dest` come percorsi **relativi** proprio perché
+"funziona da qualunque cartella la console sia stata avviata" (commento del file stesso). Trovato
+nel primo tentativo reale di usare "Anteprima ripristino" appena aggiunta (F64, PR #91) durante un
+audit visivo della console richiesto dall'utente, non da un rapporto di un operatore.
+
+**Causa.** `preview_restore` (`crates/rustcopy-gui/src/main.rs:130-176`) costruisce ed esegue il
+processo CLI di anteprima ma **non chiama mai `command.current_dir(...)`** — a differenza degli
+altri due punti di spawn nello stesso file, `run_arguments`'s call site (righe 395-399) e
+`resume_arguments`'s call site (righe 491-495), che impostano esplicitamente la cwd del figlio sulla
+cartella del file (config o checkpoint) proprio perché **i percorsi in un TOML/report aperto dalla
+console valgono rispetto al file, non rispetto a dove il processo della console è stato avviato**
+(convenzione stabilita da F53, vedi `CLAUDE.md`). Un report con `source`/`dest` relativi, ripristinato
+con la cwd sbagliata (quella del processo `rustcopy-gui.exe`, non quella del report), fa cercare a
+robocopy una sorgente che lì non esiste: `0 file(s) matching *`, poi `exit code 16 (fatal error, no
+files copied)`. La GUI mostra fedelmente questo esito — non mente, esegue davvero un processo che
+fallisce per una ragione sbagliata.
+
+**Perché è passato inosservato.** La riga F64 di `ROADMAP.md` dichiarava una verifica manuale
+"contro il binario compilato" — quella verifica ha quasi certamente usato un report con percorsi già
+assoluti (o esiti diversi che non esercitano la risoluzione dei percorsi), scenario in cui l'assenza
+di `current_dir` non ha alcun effetto osservabile: robocopy risolve un percorso assoluto allo stesso
+modo indipendentemente dalla cwd del processo. Nessun test — né gli 8 unit test aggiunti da F64
+(`the_restore_preview_argument_list_cannot_carry_a_destructive_flag` e affini, tutti su
+`runner::restore_preview_arguments`, la sola costruzione della lista di argomenti) né una prova
+black-box end-to-end — esercita il comando reale contro un report a percorsi relativi.
+
+**Primo tentativo di rimedio, sbagliato.** L'ipotesi iniziale — leggere `report.parent()` e
+chiamare `command.current_dir(parent)`, lo stesso pattern usato da `run_arguments`/`resume_arguments`
+— **non ha funzionato**, riprodotto identico dopo la ricompilazione: il file del report finisce
+tipicamente **un livello sotto** la cartella da cui il `source`/`dest` del report sono relativi. Per
+`demo-locale.toml`, il default `--report-path` è `demo-out/report.json`, risolto dalla run originale
+contro la cartella del **config** (`examples/`) — il report vive quindi in `examples/demo-out/`, ma
+i suoi `source`/`dest` ("demo-data", "demo-out/copia") sono relativi a `examples/`, non a
+`examples/demo-out/`. `report.parent()` restituisce la cartella sbagliata, un livello troppo in
+profondità. Confermato: `report.rs::IngestReport::new` scrive `args.source()`/`args.dest()`
+verbatim, senza mai canonicalizzarli, e il report non registra da nessuna parte la cartella
+originale di lavoro o il percorso del config che lo ha prodotto — quell'informazione non è
+recuperabile dalla sola posizione su disco del report.
+
+**Rimedio corretto.** `preview_restore` accetta ora un secondo parametro, `config_path` — il config
+attualmente caricato altrove nella console (`session.configPath`, stato condiviso fra le schede),
+non il file del report. Se non vuoto, viene usata la cartella **del config** come cwd del processo
+figlio — la stessa convenzione di `run_arguments`, e la cartella corretta perché è da lì che la run
+originale ha risolto i propri percorsi relativi. `Report.svelte` lo passa insieme a `reportPath` ad
+ogni chiamata. Corretto solo nel caso più comune e documentato — l'operatore arriva al report tramite
+"Apri il report di questa run" (Esegui) con lo stesso config ancora caricato — non in generale: un
+report aperto senza che nessun config sia mai stato caricato in quella sessione della console lascia
+`config_path` vuoto, e il comportamento resta quello odierno (nessuna cwd impostata), onesto anziché
+indovinare una cartella senza base migliore di quella che ha già dimostrato di essere sbagliata.
+
+**Verifica.** Riprodotto il fallimento in modo deterministico fuori dalla GUI (stessa invocazione da
+due cwd diverse: dalla radice del repository, `0 file(s) matching *` → `exit code 16`; dalla cartella
+del config, 4 file trovati, `exit code 2`). Il primo tentativo di fix, ricompilato e riprovato dal
+vivo contro il binario reale, ha riprodotto **lo stesso identico fallimento** — la verifica ha colto
+l'errore di progettazione prima che venisse dichiarato corretto. Il rimedio finale, ricompilato e
+riprovato contro lo stesso identico scenario (stesso `demo-locale.toml`, stessa sequenza Esegui →
+"Apri il report di questa run" → "Anteprima ripristino"), produce ora un'anteprima reale: sorgente e
+destinazione invertite correttamente, "File coinvolti: 3 / 4", "Esito robocopy: extra files or
+directories detected" — non più un errore fatale.
+
+---
+
+### D27 — `files_copied`/`bytes_copied` sovrastimati su un host non in lingua inglese ✅ CORRETTO (6 Set 2026)
+
+**Stato: corretto e verificato lo stesso giorno.**
+
+**Gravità: MEDIA** — non corrompe alcun dato reale (il trasferimento stesso è corretto; solo la sua
+*contabilità* nel report è sbagliata), ma è sistematico: capita su **ogni** run su un host la cui
+localizzazione di `robocopy.exe` non è l'inglese. Trovato indagando un'anomalia osservata durante
+l'audit visivo della console (6 Set 2026): un report reale mostrava "File copiati: 6 / 4" — il
+copiato che supera il totale, un numero che si presenta a un operatore come chiaramente rotto.
+
+**Causa, isolata con certezza tramite log di debug reali (`RUST_LOG=debug`), non per ipotesi.**
+`engine::robocopy::parse_summary_row(line, "Files")`/`"Bytes"` cerca il prefisso inglese letterale
+("Files", "Bytes") nella riga di riepilogo di robocopy — sull'host italiano di questa sessione
+robocopy stampa `"     File:..."`/`"     Byte:..."` (singolare, non plurale), quindi il riepilogo
+autorevole non viene **mai** riconosciuto e il codice ricade sul conteggio "in streaming" riga per
+riga (`streamed_files`/`streamed_bytes`), pensato come *fallback* solo per un output troncato
+(processo terminato a metà), non come percorso normale. Quel fallback, a sua volta, si appoggiiava a
+`is_labelled_line` per escludere le righe di intestazione/riepilogo dal conteggio — funzione che
+richiedeva uno spazio **prima** dei due punti per riconoscere un'etichetta (`"Bytes :"`, inglese),
+per distinguerla da una lettera di unità (`"C:\..."`). La localizzazione italiana di **alcune**
+etichette omette quello spazio (`"Avviato:"`, `"Terminato:"` — Started/Ended, senza spazio; altre
+come `"Origine :"` invece ce l'hanno, un'incoerenza della sola localizzazione di robocopy, non del
+codice). `"Avviato: domenica 6 settembre 2026 14:43:19"` non veniva quindi riconosciuta come
+etichetta, e `parse_file_bytes` la leggeva come se fosse una riga di trasferimento file: il giorno
+del mese ("6"), seguito da campi non numerici (mese, anno), ha esattamente la forma
+`<stato>\t<byte>\t<nome>` che la funzione cerca. Ogni run contava così **due** "file" fantasma in
+più (uno per "Avviato", uno per "Terminato"), per un numero di byte pari al giorno del mese di
+ciascuna riga — 4 file reali (160 B) diventavano "6 file copiati" (172 B), esattamente il caso
+osservato.
+
+**Perché è passato inosservato.** L'intera suite di test di `parse_file_bytes`/`is_labelled_line`
+usa fixture in inglese, copiate dal formato che il progetto ha sempre assunto come l'unico reale.
+Nessun test aveva mai catturato output di robocopy da un host non inglese — il progetto stesso, pur
+scrivendo tutta la propria documentazione in italiano, non aveva mai verificato il proprio parser
+contro l'output italiano dello stesso strumento che orchestra.
+
+**Rimedio.** `is_labelled_line` non richiede più uno spazio prima dei due punti; verifica invece se
+ciò che segue i due punti inizia con un separatore di percorso (`\` o `/`) — una lettera di unità,
+a differenza di un'etichetta, è **sempre** seguita da un percorso in questo output
+(`"C:\Users\..."`), indipendentemente da come una data localizzazione spazia le proprie etichette.
+Robusto per costruzione rispetto alla lingua, perché non dipende più da una convenzione di
+spaziatura specifica dell'inglese.
+
+**Non risolto in questa stessa PR, deliberatamente**: `parse_summary_row` continua a cercare solo le
+etichette inglesi "Files"/"Bytes" — il riepilogo autorevole di robocopy resta quindi invisibile su un
+host italiano (e su ogni altra localizzazione), e il codice continua a fare affidamento sul
+conteggio in streaming per **ogni** run, non solo per quelle troncate. Il fix di `is_labelled_line`
+rende quel fallback corretto, il che risolve il sintomo osservato — ma generalizzare
+`parse_summary_row` a più localizzazioni richiederebbe conoscere le etichette di riepilogo di
+robocopy in ogni lingua supportata da Windows, un lavoro reale e più ampio, non una riga di questo
+fix.
+
+**Verifica.** Riprodotto e isolato con `RUST_LOG=debug`, leggendo `ingest.log` riga per riga: prima
+del fix, esattamente le righe "Avviato:"/"Terminato:" comparivano fra le righe "trasferite" con
+byte pari al giorno del mese. Aggiunti 2 unit test (`ignores_localized_headers_without_a_space_before_the_colon`,
+con le righe italiane reali catturate verbatim; `drive_letter_paths_are_never_mistaken_for_a_label`,
+a guardia che il nuovo controllo non scambi una vera riga di trasferimento per un'etichetta).
+Riverificato contro il binario reale su una destinazione pulita: `files_copied: 4` ora coincide con
+`total_files: 4`, `bytes_copied: 160` con `total_bytes: 160` — nessuna discrepanza.
+
+**Seguito — `parse_summary_row` esteso all'italiano (10 Set 2026, vedi ROADMAP.md F84).** Il gap
+lasciato deliberatamente aperto sopra ("il riepilogo autorevole resta invisibile su un host
+italiano") è diventato bloccante mentre si verificava dal vivo la nuova sezione "File e byte" di
+F84 (report arricchito) proprio su questo host di sviluppo it-IT: `outcome.summary` tornava sempre
+`None` per una run reale con robocopy, mostrando "dettaglio non disponibile" invece dei conteggi
+skipped/mismatch/extra. `parse_summary_row(line, labels: &[&str])` ora accetta una lista di
+etichette candidate — i due call site in `engine/robocopy.rs::copy()` passano `&["Bytes", "Byte"]`/
+`&["Files", "File"]`, inglese per primo. Verificato riavviando la stessa run dal vivo: la sezione
+mostra correttamente "6000 file già aggiornati" invece del messaggio di indisponibilità. Resta
+**deliberatamente non esteso** ad altre localizzazioni non italiane — servirebbe lo stesso lavoro
+di cattura di output reale già fatto qui e in questo stesso difetto, non traduzioni presunte.
+
+Nella stessa PR, revisione CodeRabbit trovò una seconda criticità in `parse_summary_row`: righe
+troncate a meno di sei colonne (es. processo ucciso a metà riga) venivano comunque accettate, con i
+contatori mancanti riempiti a zero da `unwrap_or(0)` — uno zero indistinguibile da un vero zero,
+mentre in realtà quel dato è sconosciuto. Corretto in due punti: `parse_summary_row` ora rifiuta
+qualunque riga che non abbia esattamente sei colonne (il riepilogo reale di robocopy ne ha sempre
+sei, verificato sia sull'esempio inglese di Microsoft Learn sia sulla riga italiana catturata sopra
+in questo stesso difetto); e la costruzione di `summary_detail` in `copy()` richiede **entrambe** le
+righe Files e Bytes (`summary.zip(file_summary)`, non più `summary.is_some() ||
+file_summary.is_some()`) — prima, un output troncato subito dopo la sola riga Files avrebbe potuto
+produrre conteggi file reali con conteggi byte silenziosamente azzerati. 3 nuovi unit test:
+`engine_reports_no_summary_detail_with_only_the_files_row`,
+`engine_reports_no_summary_detail_with_only_the_bytes_row`,
+`parse_summary_row_rejects_a_row_with_fewer_than_six_columns`.
+
+---
+
+### D28 — `normalize_path_arg` produce un prefisso di percorso lungo non valido per un percorso UNC 🟢 CHIUSO (21 Set 2026)
+
+**Stato: chiuso, fix verificato con un test unitario contro un vero percorso UNC lungo; non ancora
+riverificato dal vivo con `robocopy.exe` reale contro una condivisione di rete** (nessuna
+disponibile in questa sessione — stesso limite dichiarato per D29).
+
+**Gravità: MEDIA** — non corrompe alcun dato (robocopy riceverebbe un percorso che Windows non
+risolve, quindi fallirebbe in modo rumoroso, non silenzioso), ma rilevante perché le destinazioni
+di backup di questo progetto sono spesso condivisioni NAS (percorsi UNC), non solo lettere di
+unità locali.
+
+**Causa.** `engine::robocopy::normalize_path_arg` (`crates/rustcopy-core/src/engine/robocopy.rs`),
+quando `--long-paths` è attivo e il percorso supera 240 caratteri, costruisce il prefisso esteso
+con `format!(r"\\?\{trimmed}")` — incollando `\\?\` davanti al percorso originale **per intero**,
+qualunque esso sia. Per una lettera di unità locale (`C:\...`) questo produce il prefisso corretto
+(`\\?\C:\...`). Per un percorso UNC (`\\server\condivisione\...`), la stessa formula produce
+`\\?\\\server\condivisione\...` — cinque backslash iniziali, non un percorso che Windows risolve.
+La convenzione reale di Windows per un percorso UNC esteso è `\\?\UNC\server\condivisione\...`: i
+due backslash iniziali del percorso UNC vanno **sostituiti** con `\\?\UNC\`, non semplicemente
+preceduti da `\\?\`.
+
+**Come è stato trovato.** Non da un test o da un audit dedicato al codice — da CodeRabbit, in
+revisione di una PR che toccava **solo** un file `.claude/agents/*.md` (PR #122) che descriveva il
+comportamento di questa funzione. La descrizione era accurata rispetto al codice; è il codice
+stesso ad avere il gap. Corretto nel file agent (non più presentato come funzionante per un caso
+UNC, dichiarato come limite aperto) e segnalato come task separato — non risolto in quella PR
+perché fuori perimetro (PR di sola documentazione).
+
+**Risolto (21 Set 2026, F90).** `normalize_path_arg` ora rileva un percorso UNC con
+`trimmed.strip_prefix(r"\\")` (dopo il trim dei separatori finali) e produce `\\?\UNC\` seguito
+dal resto del percorso privato dei due backslash iniziali, invece del semplice
+`format!(r"\\?\{trimmed}")` usato per ogni caso — una lettera di unità locale resta sul ramo
+originale, immutata. Nuovo test `normalize_path_arg_produces_the_real_unc_long_path_prefix`,
+accanto a `normalize_path_arg_strips_various_separators`: un percorso UNC reale sopra 240
+caratteri produce `\\?\UNC\server\share\...`, un percorso locale sopra soglia produce ancora
+`\\?\C:\...`, e un percorso UNC sotto soglia resta invariato. Motivato di nuovo dalla richiesta
+dell'utente di rendere più sicuro l'uso in produzione (F90, `ROADMAP.md`): una destinazione di
+backup su NAS/server di rete è la topologia più comune, non un caso raro.
+
+### D29 — `read_dropped_paths` leggeva l'union `STGMEDIUM` senza controllare il discriminante `tymed`, crash reale di Explorer su una seconda macchina 🟢 CHIUSO (15 Set 2026)
+
+**Stato: chiuso, fix verificato con test unitari e compilazione; non ancora riverificato dal vivo
+su una seconda macchina reale (nessuna disponibile in questa sessione).**
+
+**Gravità: CRITICA** — non un difetto isolato all'estensione: ha reso `explorer.exe` inutilizzabile
+nella sua interezza (desktop, barra delle applicazioni, ogni finestra aperta) su un secondo PC
+Windows 11 su cui l'utente ha installato rustcopy, al punto da richiedere un riavvio completo della
+macchina per ripristinarlo. Il precedente più vicino in questo progetto è D22 (la console installata
+che caricava il server di sviluppo) — ma quello rompeva solo la console stessa, mai il resto del
+sistema operativo dell'utente.
+
+**Causa.** `handler::read_dropped_paths` (`crates/rustcopy-shell/src/handler.rs`) chiama
+`IDataObject::GetData` chiedendo `CF_HDROP` con `tymed: TYMED_HGLOBAL`, poi leggeva
+`medium.u.hGlobal` **senza mai controllare `medium.tymed`** — il campo che `STGMEDIUM` porta
+apposta per dire quale variante dell'union `u` (`hBitmap`/`hMetaFilePict`/`hEnhMetaFile`/`hGlobal`/
+...) è davvero quella che `GetData` ha popolato. Un `IDataObject` conforme alla specifica COM
+dovrebbe onorare l'unico `tymed` richiesto — ma "dovrebbe" non è "fa sempre": questo handler è
+registrato sotto `Directory`/`Drive` in `shellex\DragDropHandlers` (`registry.rs`), quindi gira
+**dentro lo stesso processo di `explorer.exe`** per ogni trascinamento col tasto destro o fra unità
+diverse su qualunque cartella o unità — non solo un trascinamento fra due cartelle gestite da
+rustcopy. Ogni sorgente di drag&drop installata sulla macchina (una cartella di sincronizzazione
+cloud, un'altra estensione shell, un hook di un antivirus) è un chiamante potenziale, e nessuna di
+queste è mai stata esercitata sulla macchina di sviluppo originale durante i test dal vivo di F85.
+Un medium non-HGLOBAL passato senza controllo faceva leggere a `medium.u.hGlobal` i byte
+effettivamente presenti nell'altra variante dell'union — comportamento indefinito — e quel valore
+veniva incapsulato in un `HDROP` e passato direttamente a `DragQueryFileW`, una vera chiamata
+Win32, come se fosse un handle valido. Un handle non valido lì crasha il processo chiamante — che
+qui è `explorer.exe` stesso, l'unico processo che ospita desktop, barra delle applicazioni e ogni
+finestra di Esplora risorse aperta.
+
+**Perché un riavvio del processo non bastava.** Il riavvio automatico di `explorer.exe` dopo un
+crash non garantisce di ripulire lo stato COM/cache di classe di quella sessione, e il primo
+trascinamento successivo rischiava di far ripetere lo stesso crash da capo — coerente con la
+segnalazione dell'utente, che ha dovuto riavviare l'intera macchina per risolvere, non solo
+richiudere Esplora risorse.
+
+**Come è stato trovato.** Segnalazione diretta dell'utente dopo un'installazione reale su una
+seconda macchina Windows 11 — *"si è sputtanato tutto e non mi funzionava nemmeno esplora
+risorse"* — non da un test, non da un audit del codice: nessuna copertura di test automatica esiste
+per la plumbing COM di questo crate (limite dichiarato fin da F85, condiviso con VSS/F30 e
+`--install-service`/F37), e la verifica dal vivo di F85 era stata fatta su una sola macchina, con
+un solo tipo di sorgente di trascinamento (Explorer stesso, cartelle locali) — mai su una macchina
+con uno stack software diverso, che è esattamente la condizione che espone un `IDataObject` non
+conforme.
+
+**Fix.** Due controlli prima di toccare l'union, esattamente ciò che ogni esempio Microsoft di
+estensione shell fa e che questa versione saltava: `medium.tymed` deve essere davvero
+`TYMED_HGLOBAL` prima di leggere `medium.u.hGlobal`, e l'handle risultante deve essere non-nullo
+prima di incapsularlo in `HDROP`.
+
+**Difetto minore trovato nello stesso giro, non in review**: il commento di modulo di `lib.rs`
+dichiarava `all_are_directories` già coperta da test unitari — falso, l'intero crate non aveva
+**nessun** modulo `#[cfg(test)]` in `handler.rs`. Aggiunti tre test anche per quella funzione,
+colmando un gap di copertura reale su una funzione che decide sia se mostrare la voce di menu sia
+se `InvokeCommand` procede.
+
+**Terzo difetto, nello stesso fix, trovato da CodeRabbit sulla PR e non da questa stessa
+rilettura**: la prima versione della correzione chiamava
+`medium_is_a_usable_hglobal(medium.tymed, unsafe { medium.u.hGlobal.0.is_null() })` — una singola
+espressione con due argomenti. Rust valuta gli argomenti di una chiamata **prima** della chiamata
+stessa, quindi il secondo argomento leggeva l'union `medium.u` **incondizionatamente**, esattamente
+il difetto che quella correzione doveva chiudere, solo spostato dentro una funzione dal nome
+rassicurante. La lezione, non ovvia: una funzione pura testabile che *riceve* un valore già letto
+dall'union non protegge da nulla se il chiamante lo legge comunque per costruire l'argomento — la
+guardia deve essere una propria istruzione (`if !tymed_is_hglobal(medium.tymed) { return; }`) che
+ritorna **prima** che il codice successivo tocchi `medium.u`, non un ingrediente fra altri di
+un'unica espressione. Corretto: `tymed_is_hglobal(tymed: u32) -> bool` riceve solo il discriminante,
+mai un valore derivato dall'union, e il controllo sull'handle nullo è una seconda istruzione
+separata, dopo che l'union è già stata letta in sicurezza.
+
+**Verificato**: `cargo test -p rustcopy-shell --lib` (11/11, +5 nette), `cargo clippy -p
+rustcopy-shell --all-targets -D warnings` e con il gate unwrap/expect scoped a `--lib`, `cargo fmt
+--check`, tutti puliti dopo la correzione. **Non ancora verificato dal vivo**: un ciclo reale di
+trascinamento su una seconda macchina
+con uno stack software diverso da quella di sviluppo — la stessa condizione che ha esposto il
+difetto, non riproducibile senza una macchina del genere disponibile.
+
+### D30 — Installazione fallita su Windows Server 2016 e 2022, riuscita su Server 2019 e Windows 11 🟡 APERTO (2 Ott 2026)
+
+**Stato: aperto. Correzione implementata in 7.7.0 (F92, Onda 1) e verificata con l'installer reale
+su Windows 11 (aggiornamento da 7.3.0, rapporto `COMPLETATA`); non ancora confermata sulle
+macchine che hanno fallito** (nessun Server disponibile in questa sessione; i sintomi esatti non
+sono ancora stati raccolti). Il meccanismo del fallimento, invece, è stato **riprodotto**: vedi sotto.
+
+**Gravità: ALTA** — l'installazione, cioè il primo contatto con il prodotto, non riesce su due
+delle quattro macchine provate, entrambe SKU Server di produzione.
+
+**Cosa è verificato, non ipotizzato.**
+- `dumpbin /dependents` sui quattro artefatti di release: **tutti** importano `VCRUNTIME140.dll`, e
+  la console anche `VCRUNTIME140_1.dll` (presente solo da Visual C++ 2019 in poi). Nessun
+  `crt-static` in `.cargo/` né nei `Cargo.toml`: il runtime è dinamico ovunque.
+- `installer/rustcopy.iss` registra l'estensione Shell con `Flags: regserver`: Inno Setup chiama
+  `DllRegisterServer` durante l'installazione, e questo richiede `LoadLibrary` sulla DLL — che
+  fallisce (errore 126) se `VCRUNTIME140.dll` manca. Per documentazione di Inno Setup un errore di
+  registrazione apre un dialogo Interrompi/Riprova/Ignora e, se interrotto, annulla l'intera
+  installazione: **un componente opzionale (l'estensione Shell) può far fallire tutto il resto**.
+- `InitializeSetup` controlla il Redistributable ma **solo avvisa e prosegue** ("Setup continuera
+  comunque"): l'installazione va avanti fino al punto che poi fallisce. Il controllo, inoltre, legge
+  `Runtimes\X64\Installed = 1`, vero anche per un 14.0 del 2015, che **non** ha `VCRUNTIME140_1.dll`.
+- Rust supporta Windows Server 2016 e successivi (pagina ufficiale di supporto della piattaforma
+  `x86_64-pc-windows-msvc`): la versione del sistema operativo **non** è di per sé la causa. Un primo
+  sospetto su `ProcessPrng` (`bcryptprimitives.dll`) è stato scartato per questa ragione — un
+  risultato di ricerca affermava che Server 2016 non lo ha, ed è contraddetto da quella pagina.
+
+**Meccanismo riprodotto (3 Ott 2026).** Un installer di test minimo, senza privilegi e senza
+toccare il sistema, con una DLL non registrabile marcata `regserver`, sotto `/VERYSILENT
+/SUPPRESSMSGBOXES`: il log di Inno Setup riporta `RegSvr32 failed with exit code 0x3` (3 =
+`LoadLibrary` non riuscita, che è ciò che accade a `rustcopy_shell.dll` senza `VCRUNTIME140.dll`),
+poi `Defaulting to Abort for suppressed message box (Abort/Retry/Ignore)`, `Rolling back changes`,
+codice d'uscita **5** e nessun file installato. Lo stesso test ha mostrato che `DeinitializeSetup`
+viene eseguita anche in caso di fallimento, che `ExpandConstant('{log}')` restituisce il percorso del
+log di Setup, e che un'eccezione nello script di Setup è registrata ma **non** interrompe
+l'installazione. Questo conferma il *meccanismo*; resta da confermare sulle macchine reali che sia
+proprio la mancanza del Redistributable a innescarlo.
+
+**Ipotesi, in ordine di probabilità, con la prova che le distingue** (la raccoglie in una sola
+esecuzione `scripts/collect-install-diagnostics.ps1`, di sola lettura):
+
+| # | Ipotesi | Spiega | Prova decisiva nel report |
+|---|---|---|---|
+| H1 | VC++ Redistributable assente | installazione fallita a `regserver`, CLI che non parte | `vcruntime140.dll` ASSENTE; caricamento di `rustcopy_shell.dll` con errore 126; `robocopy_ingest.exe --version` con codice `0xC0000135` |
+| H2 | Solo VC++ 2015 (senza `VCRUNTIME140_1`) | installazione riuscita ma la console non parte | `vcruntime140_1.dll` ASSENTE, versione `14.0.x` |
+| H3 | WebView2 assente | console che non si apre, CLI e installazione a posto | nessuna chiave `EdgeUpdate\Clients\{F3017226…}` |
+| H4 | Criterio di sicurezza (AppLocker, WDAC, Defender/EDR) su binari non firmati | file messi in quarantena o DLL non caricabile (errore 1260) | eventi Code Integrity che citano rustcopy, `Get-AppLockerPolicy`, stato Defender |
+| H5 | Riavvio in sospeso, permessi, file scaricato e bloccato (Zone.Identifier) | installazione interrotta a metà | flag di riavvio, `Zone.Identifier` dell'installer, `Setup Log` |
+
+**Cosa dice contro H1 e va detto**: se il report mostrerà il Redistributable **presente** sulle
+macchine che hanno fallito, H1 e H2 cadono e restano H3-H5. Che 2019 e Windows 11 funzionino e
+2016/2022 no è coerente con H1 solo se le prime due lo avevano già per altri programmi — da
+confermare, non da assumere.
+
+**Correzione provata in scratch (2 Ott 2026).** Compilando CLI, DLL della Shell e console con
+`RUSTFLAGS="-C target-feature=+crt-static"` in una cartella di build separata, `dumpbin` non mostra
+**nessuna** importazione di `VCRUNTIME*`/`MSVCP*`/`api-ms-win-crt-*` in nessuno dei tre (prima:
+tutte), al costo di +20 KB (CLI), +123 KB (console), +93 KB (DLL Shell). Il binario compilato parte
+(`robocopy_ingest 7.6.1`). Con il CRT statico il Redistributable smette di essere un requisito: H1 e
+H2 non possono più verificarsi, su nessuna versione di Windows. Piano in `ROADMAP.md`, riga F92.
+
+---
+
 ## 💡 3.2 Opportunità di miglioramento (non difetti)
 
 Proposte ordinate per rapporto valore/rischio, motivate da problemi osservati sul campo:
@@ -1408,8 +1874,8 @@ Proposte ordinate per rapporto valore/rischio, motivate da problemi osservati su
 
 | Priorità | Voci | Razionale |
 |---|---|---|
-| **P0** | ~~D1~~ ✅, ~~D3~~ ✅, ~~D4~~ ✅ | Tutte e tre risolte e verificate: D1 il 31 Luglio 2026 (F24), D3/D4 il 3 Agosto 2026 (F25a/F25b). Nessun difetto P0 aperto al momento. |
-| **P1** | D2, D5, D6, D7 | Correttezza e coerenza: flag muti, blocco del runtime, versionamento dello schema, semantica delle junction. |
+| **P0** | ~~D1~~ ✅, ~~D3~~ ✅, ~~D4~~ ✅, ~~D26~~ ✅ | Tutte e quattro risolte e verificate: D1 il 31 Luglio 2026 (F24), D3/D4 il 3 Agosto 2026 (F25a/F25b), D26 il 6 Set 2026 (stesso giorno della scoperta). Nessun difetto P0 aperto al momento. |
+| **P1** | D2, D5, D6, D7, D25, ~~D27~~ ✅ | Correttezza e coerenza: flag muti, blocco del runtime, versionamento dello schema, semantica delle junction, fedeltà della ripresa da checkpoint alla configurazione originale. D27 (conteggio file/byte sovrastimato su host non inglese) risolto il 6 Set 2026, stesso giorno della scoperta. |
 | **P2** | D8, D9, ~~D10~~ + O1-O10 | Debito tecnico, ergonomia operativa ed evoluzione funzionale. D10 non è più in questa lista: riclassificato il 23 Agosto 2026 come limite noto dello strumento, non come lavoro da pianificare. |
 
 **Lezione metodologica ricorrente**: D1 e D2 erano *invisibili ai test* perché i test verificavano

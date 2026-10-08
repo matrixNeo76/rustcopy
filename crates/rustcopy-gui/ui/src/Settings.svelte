@@ -3,9 +3,15 @@
   import PathBar from "./PathBar.svelte";
   import EmptyState from "./EmptyState.svelte";
   import { session } from "./session.svelte.js";
+  import { SlidersHorizontal, KeyRound } from "@lucide/svelte";
 
-  // Read-only, like every other pane in this version: it renders the TOML the CLI already reads
-  // and changes nothing. F55's write surface is a separate, still-undecided step.
+  // The job-settings table below is read-only: it renders the TOML the CLI already reads and
+  // changes nothing. F55's write surface (editing settings and scripts in place) is a separate,
+  // still-undecided step, and this pane does not attempt it.
+  //
+  // The credential section further down is the one deliberate exception in this file: it writes,
+  // but only to the Windows Credential Manager (F56, `crypto::write_credential`/
+  // `delete_credential`) — never to any TOML, and not the scripts/settings F55 leaves undecided.
   let jobs = $state([]);
   let error = $state(null);
   let loading = $state(false);
@@ -14,6 +20,11 @@
   // the pane readable; the toggle is there because "what is this job actually set to" is a
   // legitimate question too.
   let showDefaults = $state(false);
+  // F86 (CodeRabbit): this pane now loads both from a manual "Apri" click and from a Job row's
+  // "Impostazioni" action, so two calls can overlap for the first time in a way that matters --
+  // same generation-counter guard already used by Run.svelte's poll loop for the identical
+  // out-of-order hazard.
+  let loadGeneration = 0;
 
   // The origin comes from the library as an enum. Rendering it is the frontend's job; deciding it
   // is not — `merged_over` resolves the value and only the library knows which layer supplied it.
@@ -29,18 +40,33 @@
   };
 
   async function load() {
+    const mine = ++loadGeneration;
     error = null;
     loading = true;
     try {
-      jobs = await invoke("read_settings", { configPath: session.configPath });
+      const result = await invoke("read_settings", { configPath: session.configPath });
+      if (mine !== loadGeneration) return;
+      jobs = result;
       loaded = true;
     } catch (e) {
+      if (mine !== loadGeneration) return;
       error = String(e);
       jobs = [];
     } finally {
-      loading = false;
+      if (mine === loadGeneration) loading = false;
     }
   }
+
+  // F86: "Impostazioni" from a Job row sets configPath and this flag together, then switches
+  // here — same one-shot pattern as Report.svelte's pendingReportLoad. A live binding on
+  // configPath itself would reload on every keystroke of someone typing a path by hand in this
+  // very pane, since it stays mounted (and its state kept) even while hidden (App.svelte).
+  $effect(() => {
+    if (session.pendingSettingsLoad) {
+      session.pendingSettingsLoad = false;
+      load();
+    }
+  });
 
   function visible(entries) {
     // A caution is never hidden, whatever its origin: a job that mirrors because nobody set
@@ -49,14 +75,93 @@
       ? entries
       : entries.filter((entry) => entry.origin !== "Default" || entry.caution);
   }
+
+  // Independent of the config path above: a credential is not scoped to any one job or file.
+  let credName = $state("");
+  let credSecret = $state("");
+  let credBusy = $state(false);
+  let credMessage = $state(null);
+  let credError = $state(null);
+
+  async function saveCredential() {
+    credError = null;
+    credMessage = null;
+    credBusy = true;
+    try {
+      await invoke("set_credential", { name: credName, secret: credSecret });
+      credMessage = `Credenziale "${credName}" salvata. Usala come keyring:${credName}.`;
+      // Cleared, not just hidden: nothing left in the page's own state once the secret has done
+      // its one job of reaching the credential manager.
+      credSecret = "";
+    } catch (e) {
+      credError = String(e);
+    } finally {
+      credBusy = false;
+    }
+  }
+
+  async function removeCredential() {
+    credError = null;
+    credMessage = null;
+    credBusy = true;
+    try {
+      await invoke("delete_credential", { name: credName });
+      credMessage = `Credenziale "${credName}" rimossa.`;
+    } catch (e) {
+      credError = String(e);
+    } finally {
+      credBusy = false;
+    }
+  }
+  // F93: plain-language names for the TOML keys `read_settings` returns. Display only -- what a
+  // setting means, where its value comes from and which ones carry a consequence (`caution`) all
+  // stay in the core. Same wording as the Editor's labels, so one name never means two things.
+  const LABEL = {
+    source: "Sorgente",
+    dest: "Destinazione",
+    pattern: "Filtro file",
+    exclude_files: "File esclusi",
+    exclude_dirs: "Cartelle escluse",
+    min_age_days: "Età minima dei file (giorni)",
+    max_age_days: "Età massima dei file (giorni)",
+    exclude_junctions: "Escludi giunzioni",
+    mirror: "Mirror (cancella in destinazione ciò che manca in sorgente)",
+    dry_run: "Simulazione",
+    threads: "Copie in parallelo",
+    retries: "Tentativi per file bloccato",
+    retry_wait_seconds: "Attesa fra i tentativi (secondi)",
+    bandwidth_limit_mbps: "Limite di banda (MB/s)",
+    no_prescan: "Salta il conteggio iniziale",
+    long_paths: "Percorsi lunghi",
+    preserve_timestamps: "Conserva le date",
+    preserve_acl: "Conserva ACL (permessi)",
+    verify_integrity: "Verifica integrità",
+    fast_verify: "Verifica rapida",
+    hash_algo: "Algoritmo di verifica",
+    ignore_transient_missing: "Ignora file temporanei mancanti",
+    compare_baseline: "Confronto con la copia semplice",
+    backup_type: "Tipo di backup",
+    keep_generations: "Cicli di backup da conservare",
+    report_path: "File del report",
+    log_path: "File di log",
+    html_report_path: "Report HTML",
+    webhook_url: "Notifica webhook",
+    pre_command: "Comando prima del backup",
+    post_command: "Comando dopo il backup",
+  };
+  const BOOLEAN_KEYS = new Set([
+    "exclude_junctions", "mirror", "dry_run", "no_prescan", "long_paths", "preserve_timestamps",
+    "preserve_acl", "verify_integrity", "fast_verify", "ignore_transient_missing", "compare_baseline",
+  ]);
+  const YES_NO = { true: "sì", false: "no" };
 </script>
 
 <section class="p-4">
   <PathBar
     bind:value={session.configPath}
     kind="config"
-    label="Percorso del file di configurazione TOML"
-    placeholder="Scegli un file di configurazione TOML"
+    label="File con i job di backup"
+    placeholder="Scegli il file con i tuoi job di backup (.toml)"
     action="Apri impostazioni"
     busy={loading}
     onrun={load}
@@ -79,7 +184,7 @@
     </label>
 
     {#each jobs as job (job.name)}
-      <article class="mt-4">
+      <article class="card mt-4">
         <h2 class="font-mono text-sm font-semibold">{job.name}</h2>
 
         {#each job.groups as group}
@@ -91,12 +196,25 @@
             <table class="mt-1 w-full text-left text-xs">
               <tbody>
                 {#each entries as entry}
-                  <tr class="border-b border-slate-200 align-top dark:border-slate-800">
-                    <td class="w-56 py-1 pr-3 font-mono text-slate-600 dark:text-slate-400">
-                      {entry.key}
+                  <tr class="border-b border-slate-200 align-top last:border-0 dark:border-slate-800">
+                    <td class="w-64 py-1 pr-3">
+                      <!-- F93: the plain-language name first, the TOML key small beside it for
+                           whoever edits the file by hand. A key with no entry in LABEL falls back
+                           to itself, so a field added in the core never renders blank. -->
+                      <span class="text-sm">{LABEL[entry.key] ?? entry.key}</span>
+                      {#if LABEL[entry.key]}
+                        <span class="ml-1 font-mono text-xs text-slate-500">{entry.key}</span>
+                      {/if}
                     </td>
                     <td class="py-1 pr-3">
-                      <span class="font-mono">{entry.value}</span>
+                      <!-- Origin badge inline with the value it describes, not in its own column
+                           at the far right — on a wide window that put it ~1300px from the value
+                           it labels, forcing a full-width eye movement per row for no reason
+                           (Livello 1, punto 3, PIANO_GUI.md §10). -->
+                      <span class="font-mono text-sm">{BOOLEAN_KEYS.has(entry.key) ? (YES_NO[entry.value] ?? entry.value) : entry.value}</span>
+                      <span class="ml-1.5 rounded px-1 text-[10px] font-semibold {ORIGIN_CLASS[entry.origin]}">
+                        {ORIGIN_LABEL[entry.origin]}
+                      </span>
                       {#if entry.redacted}
                         <!-- The value shown is not the stored one. Saying so is the difference
                              between a redaction and a wrong reading of the file. -->
@@ -107,11 +225,6 @@
                           {entry.caution}
                         </p>
                       {/if}
-                    </td>
-                    <td class="w-24 py-1 text-right">
-                      <span class="rounded px-1 text-[10px] font-semibold {ORIGIN_CLASS[entry.origin]}">
-                        {ORIGIN_LABEL[entry.origin]}
-                      </span>
                     </td>
                   </tr>
                 {/each}
@@ -131,11 +244,67 @@
     />
   {:else if !error}
     <EmptyState
+      icon={SlidersHorizontal}
       title="Scegli un file di configurazione per vederne le impostazioni"
       lines={[
-        "Questa scheda mostra le due cose che il TOML non dice: da quale strato viene il valore che vince per ciascun job, e quali impostazioni portano una conseguenza — cancellano, saltano controlli, eliminano generazioni.",
+        "Questa scheda mostra le due cose che il file dei job non dice: da quale strato viene il valore che vince per ciascun job, e quali impostazioni portano una conseguenza — cancellano, saltano controlli, eliminano generazioni.",
         "L'URL di un webhook viene troncato a schema e host di proposito: vale come credenziale e questa finestra finisce negli screenshot.",
       ]}
     />
   {/if}
+
+  <section class="card mt-6">
+    <h2 class="flex items-center gap-1.5 text-xs font-semibold uppercase tracking-wide text-slate-500">
+      <KeyRound size={13} strokeWidth={2.25} aria-hidden="true" />
+      Gestione credenziali
+    </h2>
+    <p class="mt-1 text-xs text-slate-600 dark:text-slate-400">
+      Salva o rimuove un segreto in Gestione credenziali di Windows — mai nel file dei job, mai
+      come argomento: il segreto passa solo per questo modulo. Usalo poi come
+      <code>keyring:NOME</code> ovunque un campo accetti una chiave o una password, per esempio
+      <code>--encrypt-aes256 keyring:NOME</code>.
+    </p>
+    <div class="mt-2 flex flex-wrap items-end gap-2">
+      <label class="text-xs">
+        Nome
+        <input
+          class="block rounded border border-slate-300 px-2 py-1 text-sm dark:border-slate-700 dark:bg-slate-900"
+          bind:value={credName}
+          placeholder="es. backup-nas"
+          autocomplete="off"
+        />
+      </label>
+      <label class="text-xs">
+        Segreto
+        <input
+          type="password"
+          class="block rounded border border-slate-300 px-2 py-1 text-sm dark:border-slate-700 dark:bg-slate-900"
+          bind:value={credSecret}
+          autocomplete="off"
+        />
+      </label>
+      <button
+        class="rounded bg-blue-600 px-3 py-1 text-sm text-white disabled:opacity-50"
+        onclick={saveCredential}
+        disabled={credBusy || credName.length === 0 || credSecret.length === 0}
+      >Salva</button>
+      <button
+        class="rounded border border-slate-300 px-3 py-1 text-sm disabled:opacity-40 dark:border-slate-700"
+        onclick={removeCredential}
+        disabled={credBusy || credName.length === 0}
+      >Elimina</button>
+    </div>
+    {#if credMessage}
+      <p class="mt-2 rounded border border-emerald-300 bg-emerald-50 px-2 py-1 text-xs text-emerald-900
+                dark:border-emerald-800 dark:bg-emerald-950 dark:text-emerald-200">
+        {credMessage}
+      </p>
+    {/if}
+    {#if credError}
+      <p class="mt-2 rounded border border-red-300 bg-red-50 px-2 py-1 text-xs text-red-800
+                dark:border-red-800 dark:bg-red-950 dark:text-red-200" role="alert">
+        {credError}
+      </p>
+    {/if}
+  </section>
 </section>

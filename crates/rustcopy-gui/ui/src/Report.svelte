@@ -4,6 +4,11 @@
   import EmptyState from "./EmptyState.svelte";
   import { session } from "./session.svelte.js";
   import { toCsv, downloadCsv } from "./csv.js";
+  import Badge from "./Badge.svelte";
+  import StatCard from "./StatCard.svelte";
+  import { bytes, duration } from "./format.js";
+  import { reportOutcome } from "./outcome.js";
+  import { FileText, CircleCheck, CircleX, RotateCcw, TriangleAlert } from "@lucide/svelte";
 
   // `read_report`/`read_report_page` existed in the core and on the IPC surface from F53 and no
   // pane ever called them: a complete report viewer with nothing attached to it. This is the pane.
@@ -20,48 +25,105 @@
 
   const PAGE = 100;
 
+  // F64: the first building block of the guided restore flow (PIANO_GUI.md §5b/§8) — a read-only
+  // simulation of what --restore-from would do, reusing the same ReportView shape a real report
+  // uses (the preview subprocess writes a real report, just from a --dry-run and to its own
+  // scratch path — see `runner::restore_preview_arguments`). Kept apart from `report` above so
+  // loading a different report can never be mistaken for a preview of it, or vice versa.
+  let restorePreview = $state(null);
+  let restorePreviewError = $state(null);
+  let restorePreviewLoading = $state(false);
+
+  async function previewRestore() {
+    restorePreviewError = null;
+    restorePreviewLoading = true;
+    restorePreview = null;
+    try {
+      restorePreview = await invoke("preview_restore", {
+        reportPath: session.reportPath,
+        // D26: the report's own relative source/dest resolve against the *configuration's*
+        // directory, not the report file's own — this is the console's best-effort link between
+        // the two, true whenever "Apri il report di questa run" (Esegui) brought the operator
+        // here. Empty when it doesn't hold (a report opened without any config ever loaded).
+        configPath: session.configPath,
+      });
+    } catch (e) {
+      restorePreviewError = String(e);
+    } finally {
+      restorePreviewLoading = false;
+    }
+  }
+
+  // `report.integrity_status` is `format!("{:?}", IntegrityStatus)` from the core — a small,
+  // stable, closed enum (`integrity.rs`: exactly Passed/Failed), so translating the label here is
+  // a display choice, not a judgement the frontend is making about backup semantics. Unlike
+  // `exit_code_meaning` below: that one is robocopy's own bitmask description assembled from up to
+  // five composable English phrases ("files copied; extra files or directories detected; …",
+  // `exit_code.rs::RobocopyStatus::describe`), not a fixed small vocabulary — a lookup table keyed
+  // on the wrong shape of string here was caught before shipping (Livello 1, punto 4,
+  // PIANO_GUI.md §10) and deliberately left in English rather than mistranslated.
+  const INTEGRITY_LABEL = { Passed: "superata", Failed: "fallita" };
+
+  // F87(a): keyed on the wire value `ConfigurationReport::hash_algo` actually serializes to —
+  // `HashAlgorithm`'s own `#[serde(rename = "sha256"/"blake3"/"xxh3")]` (integrity.rs), all
+  // lowercase, never the Rust variant name. The lookup below silently never matched with
+  // PascalCase keys (`Sha256`/`Xxh3`), always falling through to the raw wire string; Blake3 was
+  // missing from the table entirely regardless of casing. Verified live against a real report.
+  const HASH_ALGO_LABEL = {
+    sha256: "SHA-256",
+    blake3: "BLAKE3",
+    xxh3: "xxHash3 (non crittografico)",
+  };
+
+  // F87(c): same generation-counter guard F86 added to History/Settings/Editor/Jobs.svelte after
+  // CodeRabbit found the identical hazard there — this pane has the same shape (load() reachable
+  // both from a manual PathBar click and from the one-shot `pendingReportLoad` signal below) and
+  // was simply not in that PR's diff, so it never received the fix. Preexisting since
+  // `pendingReportLoad` itself (F82), not introduced by F86.
+  let loadGeneration = 0;
+
   async function load(from = 0) {
+    const mine = ++loadGeneration;
     error = null;
     loading = true;
     try {
-      report = await invoke("read_report_page", {
+      const loadedReport = await invoke("read_report_page", {
         path: session.reportPath,
         offset: from,
         limit: PAGE,
       });
+      if (mine !== loadGeneration) return;
+      report = loadedReport;
       offset = from;
       // A filter left over from a previous report, or from a page the operator just left, would
       // silently hide entries in the one just loaded.
       query = "";
+      // Same reasoning: a preview computed against the previous report must not linger and read
+      // as if it described this one.
+      restorePreview = null;
+      restorePreviewError = null;
     } catch (e) {
+      if (mine !== loadGeneration) return;
       error = String(e);
       report = null;
     } finally {
-      loading = false;
+      if (mine === loadGeneration) loading = false;
     }
   }
 
-  function bytes(value) {
-    if (value < 1024) return `${value} B`;
-    const units = ["KB", "MB", "GB", "TB"];
-    let n = value / 1024;
-    let i = 0;
-    while (n >= 1024 && i < units.length - 1) {
-      n /= 1024;
-      i += 1;
+  // "Apri il report di questa run" (Esegui, Livello 1 punto 5, PIANO_GUI.md §10) sets
+  // `session.reportPath` and this flag together, then switches here. A one-shot signal consumed
+  // immediately rather than a live binding on `reportPath` itself — this pane stays mounted even
+  // while hidden (App.svelte), so watching the path directly would reload on every keystroke of
+  // someone typing a path by hand in this very pane, not just on an actual cross-pane jump.
+  $effect(() => {
+    if (session.pendingReportLoad) {
+      session.pendingReportLoad = false;
+      load(0);
     }
-    return `${n.toFixed(n < 10 ? 1 : 0)} ${units[i]}`;
-  }
+  });
 
-  function duration(seconds) {
-    if (seconds < 10) return `${seconds.toFixed(2)}s`;
-    const total = Math.round(seconds);
-    const h = Math.floor(total / 3600);
-    const m = Math.floor((total % 3600) / 60);
-    return h > 0
-      ? `${h}h ${String(m).padStart(2, "0")}m`
-      : `${m}m ${String(total % 60).padStart(2, "0")}s`;
-  }
+  const outcome = $derived(report ? reportOutcome(report) : null);
 
   // The three per-file lists, rendered by one block rather than three near-identical ones.
   const LISTS = [
@@ -97,14 +159,65 @@
     }
     downloadCsv(`rustcopy-report-problemi-${Date.now()}.csv`, toCsv(["Categoria", "Percorso"], rows));
   }
+
+  // Live feedback, 9 Set 2026: a real report was found "scarno" — this pane showed a flat grid of
+  // 10 fields while `ReportView` (as of this same fix) carries the real start time, the per-phase
+  // timing breakdown, robocopy's own skipped/mismatch/failed/extra detail, verify-detail counts,
+  // host info, and the wider job configuration. Reorganised below into labelled sections instead
+  // of more rows in the same grid; see CLAUDE.md for where each field was found discarded.
+
+  // "Configurazione usata" shows only settings that differ from their default — the ones below
+  // always describe a real decision made for this run (never omitted), the rest only if active.
+  const CONFIG_ROWS = $derived(
+    report
+      ? [
+          report.configuration.mirror && ["Mirror", "sì — cancella in destinazione ciò che non è più in sorgente"],
+          report.configuration.backup_type && ["Tipo di backup", report.configuration.backup_type],
+          report.configuration.exclude_dirs.length > 0 && [
+            "Cartelle escluse",
+            report.configuration.exclude_dirs.join(", "),
+          ],
+          report.configuration.exclude_files.length > 0 && [
+            "File esclusi",
+            report.configuration.exclude_files.join(", "),
+          ],
+          report.configuration.min_age_days != null && [
+            "Età minima",
+            `${report.configuration.min_age_days} giorni`,
+          ],
+          report.configuration.max_age_days != null && [
+            "Età massima",
+            `${report.configuration.max_age_days} giorni`,
+          ],
+          report.configuration.bandwidth_limit_mbps != null && [
+            "Limite banda",
+            `${report.configuration.bandwidth_limit_mbps} Mbps`,
+          ],
+          report.configuration.exclude_junctions && ["Giunzioni", "escluse"],
+          report.configuration.vss_snapshot && ["Istantanea", "lettura da una fotografia del disco (VSS)"],
+          // Shown whenever verify_integrity was configured for this run, independently of
+          // integrity_status: a run whose verify phase never completed (e.g. an earlier error)
+          // still had this setting active, and hiding it here would silently drop a real,
+          // deliberately-chosen setting from "Configurazione usata" (CodeRabbit finding).
+          report.configuration.verify_integrity && [
+            "Algoritmo verifica",
+            HASH_ALGO_LABEL[report.configuration.hash_algo] ?? report.configuration.hash_algo,
+          ],
+          report.configuration.fast_verify && [
+            "Verifica rapida",
+            "salta i file invariati per dimensione e data (cache locale)",
+          ],
+        ].filter(Boolean)
+      : [],
+  );
 </script>
 
 <section class="p-4">
   <PathBar
     bind:value={session.reportPath}
     kind="report"
-    label="Percorso del report JSON"
-    placeholder="Scegli il report JSON di una run"
+    label="File con il risultato di un backup"
+    placeholder="Scegli il file con il risultato di un backup (.json)"
     action="Apri report"
     busy={loading}
     onrun={() => load(0)}
@@ -121,50 +234,307 @@
   {/if}
 
   {#if report}
-    <div class="mt-4 grid grid-cols-2 gap-x-6 gap-y-1 text-xs md:grid-cols-4">
+    {#if report.dry_run}
+      <!-- Found necessary live, 9 Set 2026: a --dry-run report's byte/throughput numbers describe
+           what robocopy would have transferred, computed the exact same way a real run's are —
+           without this, a dry run against a large tree read as an impossible transfer ("84 GB in
+           30 seconds"), because nothing on screen said the run never actually copied anything. -->
+      <p
+        class="mt-3 flex items-center gap-1.5 rounded border border-amber-300 bg-amber-50 px-2 py-1
+               text-xs text-amber-900 dark:border-amber-800 dark:bg-amber-950 dark:text-amber-200"
+        role="alert"
+      >
+        <strong>Simulazione</strong> — nessun file è stato realmente copiato. I numeri sotto
+        (byte, file, throughput) descrivono cosa <em>sarebbe</em> successo con
+        <code>--dry-run</code> disattivato, non un trasferimento avvenuto.
+      </p>
+    {/if}
+
+    {#if outcome && !report.dry_run}
+      <!-- F93: the answer to "did it work?" in one sentence, before any table. Wording comes from
+           `outcome.js`; whether the run succeeded still comes only from the core's own fields. -->
+      <div
+        class="card mt-3 flex items-start gap-3 {outcome.variant === 'ok'
+          ? 'border-emerald-300 bg-emerald-50 dark:border-emerald-800 dark:bg-emerald-950'
+          : outcome.variant === 'attention'
+            ? 'border-amber-300 bg-amber-50 dark:border-amber-800 dark:bg-amber-950'
+            : ''}"
+        role="status"
+      >
+        {#if outcome.variant === "ok"}
+          <CircleCheck size={22} strokeWidth={2} class="mt-0.5 shrink-0 text-emerald-600 dark:text-emerald-400" aria-hidden="true" />
+        {:else if outcome.failed}
+          <CircleX size={22} strokeWidth={2} class="mt-0.5 shrink-0 text-amber-600 dark:text-amber-400" aria-hidden="true" />
+        {:else if outcome.variant === "attention"}
+          <TriangleAlert size={22} strokeWidth={2} class="mt-0.5 shrink-0 text-amber-600 dark:text-amber-400" aria-hidden="true" />
+        {/if}
+        <div>
+          <p class="text-base font-semibold">{outcome.title}</p>
+          {#each outcome.reasons as reason}
+            <p class="mt-0.5 text-sm text-slate-700 dark:text-slate-300">{reason}</p>
+          {/each}
+        </div>
+      </div>
+    {/if}
+
+    <!-- F94: the four numbers an operator reads first, set large. The phase breakdown stays with
+         the duration (only the phases that actually ran: a run without --verify-integrity has no
+         verification_seconds, and a "0s" next to it would claim a phase happened). -->
+    <div class="mt-3 grid grid-cols-2 gap-3 md:grid-cols-4">
+      <StatCard
+        label="File copiati"
+        value="{report.files_copied} / {report.total_files}"
+        hint={report.copy_detail ? `${report.copy_detail.files_skipped} già aggiornati` : null}
+      />
+      <StatCard label="Dimensione" value={bytes(report.bytes_copied)} hint="su {bytes(report.total_bytes)}" />
+      <StatCard
+        label="Durata"
+        value={duration(report.elapsed_seconds)}
+        hint="inventario {duration(report.inventory_seconds)} · trasferimento {duration(report.transfer_seconds)}{report.verification_seconds != null ? ` · verifica ${duration(report.verification_seconds)}` : ''}{report.baseline_seconds != null ? ` · baseline ${duration(report.baseline_seconds)}` : ''}"
+      />
+      <StatCard label="Velocità media" value="{report.throughput_mbps.toFixed(1)} MB/s" />
+    </div>
+
+    <!-- Riepilogo -->
+    <h2 class="mt-4 text-xs font-semibold uppercase tracking-wide text-slate-500">Riepilogo</h2>
+    <div class="card mt-1 grid grid-cols-2 gap-x-6 gap-y-3 text-sm md:grid-cols-4">
       <div>
-        <p class="text-slate-500">Quando</p>
-        <p class="font-mono">{new Date(report.timestamp).toLocaleString("it-IT")}</p>
+        <p class="text-slate-500">Iniziata</p>
+        <p class="font-mono text-sm">
+          {report.started_at ? new Date(report.started_at).toLocaleString("it-IT") : "non disponibile"}
+        </p>
       </div>
       <div>
-        <p class="text-slate-500">Esito</p>
-        <p class="font-mono">{report.exit_code_meaning ?? "—"}</p>
-      </div>
-      <div>
-        <p class="text-slate-500">Durata</p>
-        <p class="font-mono">{duration(report.elapsed_seconds)}</p>
-      </div>
-      <div>
-        <p class="text-slate-500">Throughput</p>
-        <p class="font-mono">{report.throughput_mbps.toFixed(1)} MB/s</p>
+        <p class="text-slate-500">Terminata</p>
+        <p class="font-mono text-sm">{new Date(report.finished_at).toLocaleString("it-IT")}</p>
       </div>
       <div class="col-span-2">
         <p class="text-slate-500">Sorgente</p>
-        <p class="truncate font-mono" title={report.source}>{report.source}</p>
+        <p class="truncate font-mono text-sm" title={report.source}>{report.source}</p>
       </div>
       <div class="col-span-2">
         <p class="text-slate-500">Destinazione</p>
-        <p class="truncate font-mono" title={report.dest}>{report.dest}</p>
+        <p class="truncate font-mono text-sm" title={report.dest}>{report.dest}</p>
       </div>
-      <div>
-        <p class="text-slate-500">File copiati</p>
-        <p class="font-mono">{report.files_copied} / {report.total_files}</p>
-      </div>
-      <div>
-        <p class="text-slate-500">Byte copiati</p>
-        <p class="font-mono">{bytes(report.bytes_copied)} / {bytes(report.total_bytes)}</p>
-      </div>
-      <div>
-        <p class="text-slate-500">Cifrato</p>
-        <p class="font-mono">{report.encrypted ? "sì" : "no"}</p>
-      </div>
-      <div>
-        <p class="text-slate-500">Verifica</p>
-        <!-- Absent is not the same as passed: a run without --verify-integrity compared nothing,
-             and rendering that as a blank cell would read like a clean result. -->
-        <p class="font-mono">{report.integrity_status ?? "non eseguita"}</p>
+      <div class="col-span-2 md:col-span-4">
+        <p class="text-slate-500">Macchina</p>
+        <p class="font-mono text-sm">
+          {report.host_hostname} ({report.host_os}, {report.host_cpus} CPU logiche) — rustcopy {report.tool_version}
+        </p>
       </div>
     </div>
+
+    <!-- Esito: the raw robocopy code and its (English, composable) meaning, kept for whoever
+         looks it up. The badge reads `exit_code_is_success`, never `exit_code === 0`: robocopy's
+         own code 1 alone means "one or more files copied successfully", the most common outcome
+         of an ordinary run (found live, 9 Set 2026). -->
+    <details class="mt-4">
+      <summary class="cursor-pointer text-xs font-semibold uppercase tracking-wide text-slate-500">
+        Dettagli tecnici dell'esito
+      </summary>
+      <div class="card mt-1 flex items-center gap-2 text-sm">
+        {#if report.exit_code_is_success === true}
+          <Badge variant="ok" icon={CircleCheck}>successo</Badge>
+        {:else if report.exit_code_is_success === false}
+          <Badge variant="attention" icon={CircleX}>non riuscito</Badge>
+        {/if}
+        <span class="font-mono text-sm">
+          codice {report.exit_code ?? "—"} — {report.exit_code_meaning ?? "nessun codice di uscita"}
+        </span>
+      </div>
+    </details>
+
+    <!-- File e byte -->
+    <h2 class="mt-4 text-xs font-semibold uppercase tracking-wide text-slate-500">File e byte</h2>
+    <div class="card mt-1 overflow-x-auto">
+      <table class="w-full text-sm">
+        <thead>
+          <tr class="text-left text-slate-500">
+            <th class="pb-1 pr-3 font-normal"></th>
+            <th class="pb-1 pr-3 font-normal">File</th>
+            <th class="pb-1 font-normal">Byte</th>
+          </tr>
+        </thead>
+        <tbody class="font-mono">
+          <tr>
+            <td class="pr-3 text-slate-500">Copiati</td>
+            <td class="pr-3">{report.files_copied} / {report.total_files}</td>
+            <td>{bytes(report.bytes_copied)} / {bytes(report.total_bytes)}</td>
+          </tr>
+          {#if report.copy_detail}
+            <!-- Robocopy's own answer to "perché gli altri no": già aggiornati (skipped), in
+                 conflitto su data/dimensione (mismatch), errore reale (failed), o presenti solo
+                 in destinazione (extra) — dati che robocopy calcola sempre e che prima venivano
+                 scartati subito dopo il parsing. -->
+            <tr>
+              <td class="pr-3 text-slate-500">Già aggiornati</td>
+              <td class="pr-3">{report.copy_detail.files_skipped}</td>
+              <td>{bytes(report.copy_detail.bytes_skipped)}</td>
+            </tr>
+            <tr>
+              <td class="pr-3 text-slate-500">In conflitto</td>
+              <td class="pr-3">{report.copy_detail.files_mismatch}</td>
+              <td>{bytes(report.copy_detail.bytes_mismatch)}</td>
+            </tr>
+            <tr>
+              <td class="pr-3 text-slate-500">Falliti</td>
+              <td class="pr-3">{report.copy_detail.files_failed}</td>
+              <td>{bytes(report.copy_detail.bytes_failed)}</td>
+            </tr>
+            <tr>
+              <td class="pr-3 text-slate-500">Extra in destinazione</td>
+              <td class="pr-3">{report.copy_detail.files_extra}</td>
+              <td>{bytes(report.copy_detail.bytes_extra)}</td>
+            </tr>
+          {/if}
+        </tbody>
+      </table>
+      {#if !report.copy_detail}
+        <p class="mt-2 text-xs text-slate-500">
+          Dettaglio non disponibile per questa run (motore senza riepilogo, ad es. backup a
+          generazioni, oppure output di robocopy interrotto o non riconosciuto).
+        </p>
+      {/if}
+    </div>
+
+    <!-- Verifica -->
+    <h2 class="mt-4 text-xs font-semibold uppercase tracking-wide text-slate-500">Verifica</h2>
+    <div class="card mt-1 grid grid-cols-2 gap-x-6 gap-y-3 text-sm md:grid-cols-4">
+      <div>
+        <p class="text-slate-500">Esito</p>
+        <!-- Absent is not the same as passed: a run without --verify-integrity compared nothing,
+             and rendering that as a blank cell would read like a clean result. -->
+        <p class="flex items-center gap-1 font-mono text-sm">
+          {#if report.integrity_status === "Passed"}
+            <CircleCheck size={14} strokeWidth={2} class="shrink-0 text-emerald-600 dark:text-emerald-400" aria-hidden="true" />
+          {:else if report.integrity_status === "Failed"}
+            <CircleX size={14} strokeWidth={2} class="shrink-0 text-amber-600 dark:text-amber-400" aria-hidden="true" />
+          {/if}
+          {INTEGRITY_LABEL[report.integrity_status] ?? report.integrity_status ?? "non eseguita"}
+        </p>
+      </div>
+      {#if report.integrity_status}
+        <div>
+          <p class="text-slate-500">File verificati</p>
+          <p class="font-mono text-sm">{report.files_checked} ({bytes(report.bytes_hashed)})</p>
+        </div>
+        <div>
+          <p class="text-slate-500">Saltati (invariati)</p>
+          <p class="font-mono text-sm">{report.skipped_unchanged}</p>
+        </div>
+        <div>
+          <p class="text-slate-500">Algoritmo</p>
+          <p class="font-mono text-sm">
+            {HASH_ALGO_LABEL[report.configuration.hash_algo] ?? report.configuration.hash_algo}
+          </p>
+        </div>
+      {/if}
+      <div>
+        <p class="text-slate-500">Cifrato</p>
+        <p class="font-mono text-sm">{report.encrypted ? "sì" : "no"}</p>
+      </div>
+      {#if report.decrypted}
+        <div>
+          <p class="text-slate-500">Decifrato</p>
+          <p class="font-mono text-sm">sì</p>
+        </div>
+      {/if}
+    </div>
+
+    <!-- Configurazione usata -->
+    {#if CONFIG_ROWS.length > 0}
+      <h2 class="mt-4 text-xs font-semibold uppercase tracking-wide text-slate-500">
+        Configurazione usata
+      </h2>
+      <div class="card mt-1 grid grid-cols-2 gap-x-6 gap-y-3 text-sm md:grid-cols-4">
+        <!-- Solo le impostazioni non-default per questa run: thread/pattern/tentativi restano
+             sempre gli stessi in ogni run e affollerebbero questa sezione senza dire nulla di
+             specifico su cosa è successo qui. -->
+        {#each CONFIG_ROWS as [label, value]}
+          <div>
+            <p class="text-slate-500">{label}</p>
+            <p class="font-mono text-sm">{value}</p>
+          </div>
+        {/each}
+      </div>
+    {/if}
+
+    <div class="mt-3 flex items-center gap-2">
+      <button
+        class="flex items-center gap-1.5 rounded border border-slate-300 px-2 py-1 text-xs
+               disabled:opacity-40 dark:border-slate-700"
+        onclick={previewRestore}
+        disabled={restorePreviewLoading}
+        title="Simula un --restore-from da questo report: nessun file viene copiato o eliminato"
+      >
+        <RotateCcw size={13} strokeWidth={2.25} aria-hidden="true" />
+        {restorePreviewLoading ? "Anteprima in corso…" : "Anteprima ripristino"}
+      </button>
+    </div>
+
+    <!-- F82: `previewRestore()` above passes `session.configPath` as the cwd that makes a
+         report's relative source/dest readable (D26). That link only exists when the operator
+         reached Report via "Apri il report di questa run" (Esegui) or otherwise touched
+         Job/Esegui/Modifica first in this session -- opening Report directly leaves it empty, and
+         the preview then fails on the same "fatal error, no files copied" D26 already found, this
+         time for the silent absence of the prerequisite rather than a bug. Shown before the click,
+         not discovered after it; the two branches mirror what D26 itself already does with a
+         non-empty path, just made visible up front. -->
+    {#if session.configPath.trim() === ""}
+      <p class="mt-2 rounded border border-amber-300 bg-amber-50 px-2 py-1 text-xs text-amber-900
+                dark:border-amber-800 dark:bg-amber-950 dark:text-amber-200">
+        Nessun file di configurazione aperto in questa sessione: l'anteprima potrebbe fallire se il
+        report usa percorsi relativi. Apri prima il file di configurazione di questa run (scheda
+        Job, Esegui o Modifica), poi torna qui.
+      </p>
+    {:else}
+      <p class="mt-2 text-xs text-slate-500">
+        Percorsi relativi risolti rispetto a <code class="font-mono">{session.configPath}</code>.
+      </p>
+    {/if}
+
+    {#if restorePreviewError}
+      <p class="mt-2 rounded border border-red-300 bg-red-50 px-2 py-1 text-xs text-red-800
+                dark:border-red-800 dark:bg-red-950 dark:text-red-200" role="alert">
+        {restorePreviewError}
+      </p>
+    {/if}
+
+    {#if restorePreview}
+      <!-- Same ReportView shape as `report` above, deliberately not the same markup: a preview
+           has no file-level error lists worth paginating (a --dry-run makes nothing to verify),
+           and rendering it identically to a real report risked the two being confused at a
+           glance — the heading and the closing note below exist to keep that from happening. -->
+      <div class="card mt-2 grid grid-cols-2 gap-x-6 gap-y-3 text-sm md:grid-cols-4">
+        <p class="col-span-2 text-xs font-semibold uppercase tracking-wide text-slate-500 md:col-span-4">
+          Anteprima ripristino — simulazione, nessun file toccato
+        </p>
+        <div class="col-span-2">
+          <p class="text-slate-500">Ripristinerebbe da</p>
+          <p class="truncate font-mono text-sm" title={restorePreview.source}>{restorePreview.source}</p>
+        </div>
+        <div class="col-span-2">
+          <p class="text-slate-500">Verso</p>
+          <p class="truncate font-mono text-sm" title={restorePreview.dest}>{restorePreview.dest}</p>
+        </div>
+        <div>
+          <p class="text-slate-500">File coinvolti</p>
+          <p class="font-mono text-sm">{restorePreview.files_copied} / {restorePreview.total_files}</p>
+        </div>
+        <div>
+          <p class="text-slate-500">Byte coinvolti</p>
+          <p class="font-mono text-sm">{bytes(restorePreview.bytes_copied)} / {bytes(restorePreview.total_bytes)}</p>
+        </div>
+        <div class="col-span-2">
+          <p class="text-slate-500">Esito robocopy</p>
+          <p class="font-mono text-sm">{restorePreview.exit_code_meaning ?? "—"}</p>
+        </div>
+      </div>
+      <p class="mt-1 text-xs text-slate-500">
+        Simulazione (<code>--dry-run</code>): nessun byte è stato copiato o eliminato. Per ripristinare
+        davvero, esegui <code>--restore-from</code> dalla CLI.
+      </p>
+    {/if}
 
     {#if report.copy_error}
       <p class="mt-3 rounded border border-red-300 bg-red-50 px-2 py-1 text-xs text-red-800
@@ -232,7 +602,7 @@
           {#if filtered.length > 0}
             <ul class="mt-1 max-h-64 overflow-y-auto rounded border border-slate-200 dark:border-slate-800">
               {#each filtered as path}
-                <li class="truncate px-2 py-0.5 font-mono text-[11px]" title={path}>{path}</li>
+                <li class="truncate px-2 py-0.5 font-mono text-xs" title={path}>{path}</li>
               {/each}
             </ul>
           {/if}
@@ -259,9 +629,10 @@
     {/if}
   {:else if !error}
     <EmptyState
+      icon={FileText}
       title="Scegli un report per vederne il dettaglio"
       lines={[
-        "Ogni run conclusa scrive un report JSON (per impostazione predefinita ingest-report.json). Questa scheda ne mostra esito, volumi, durata e i file che la verifica ha segnalato.",
+        "Ogni run conclusa scrive un file con il risultato (per impostazione predefinita ingest-report.json). Questa scheda ne mostra esito, volumi, durata e i file che la verifica ha segnalato.",
         "Gli elenchi per-file arrivano a blocchi di 100: un report può contenerne 10.000 per ciascuna delle tre liste, e mandarli tutti in un solo messaggio è la versione IPC dell'errore che D18 ha fatto con i log.",
       ]}
     />

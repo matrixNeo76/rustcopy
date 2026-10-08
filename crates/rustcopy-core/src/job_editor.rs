@@ -32,6 +32,9 @@
 //! So the fields this editor does not own are not dropped — they are copied through verbatim:
 //! `pre_command`, `post_command` and `webhook_url` among them. Those belong to F55's write half,
 //! which is still an open decision, and carrying them untouched is what keeps it genuinely open.
+//! `skip_space_check`/`space_safety_margin_percent` (F65) are carried the same way for a simpler
+//! reason: the form has no control for them yet, not a security decision — add one if that
+//! changes, rather than leaving them silently verbatim forever.
 //!
 //! # Never in place
 //!
@@ -99,6 +102,13 @@ pub struct JobDraft {
     pub mirror: bool,
     /// Constrained: cannot be introduced, cannot be lowered (rule 2).
     pub keep_generations: Option<usize>,
+    /// F80. Not constrained by any of the four rules above -- encrypting or not encrypting a job
+    /// deletes nothing, so raising or lowering this carries none of `mirror`/`keep_generations`'
+    /// risk. The console's own form (`Editor.svelte`) only ever writes `keyring:NAME` here, never
+    /// a literal key -- but that restriction lives in the frontend, not here: a value already set
+    /// in another of `crypto::resolve_key`'s forms (`env:`/`file:`/literal, written by hand) is
+    /// carried through unchanged like any field this draft does not touch.
+    pub encrypt_aes256: Option<String>,
 }
 
 fn optional_string(value: &Option<PathBuf>) -> Option<String> {
@@ -140,6 +150,7 @@ pub fn draft_from(job: &JobConfig, name: &str) -> JobDraft {
         html_report_path: optional_string(&job.html_report_path),
         mirror: job.mirror.unwrap_or(false),
         keep_generations: job.keep_generations,
+        encrypt_aes256: job.encrypt_aes256.clone(),
     }
 }
 
@@ -189,6 +200,10 @@ pub fn apply_draft(
     draft: &JobDraft,
 ) -> Result<JobConfig, IngestError> {
     let base = own.cloned().unwrap_or_default();
+    // The CLI would reject an unusable name at the job's first scheduled run anyway (`namespaced_path`
+    // interpolates it literally into a filename) -- catching it here, like `InvalidThreads` below,
+    // means the editor cannot write a proposal that only fails hours later.
+    crate::validate_job_name(&draft.name)?;
     // The rules below are about what the job *effectively* does, so they read the merged view: a
     // job inheriting `mirror = true` is a mirroring job even though its own entry says nothing.
     let effective = base.merged_over(inherited);
@@ -220,6 +235,24 @@ pub fn apply_draft(
         return Err(IngestError::EditorCannotDisablePrescanOnMirror(
             draft.name.clone(),
         ));
+    }
+
+    // F70: same "resulting, not stored" reasoning as the `no_prescan` check above -- a job whose
+    // draft turns mirror off in this same edit is no longer mirroring, so pairing it with a
+    // `backup_type` here is not the conflict `Args::validate()` rejects. The CLI would reject the
+    // combination at startup anyway (`IngestError::BackupTypeAndMirrorConflict`, checked per job in
+    // `run_jobs`) -- catching it here, like `InvalidThreads` below, means the editor cannot write a
+    // file that only fails hours later, on a scheduled run.
+    if draft.mirror && draft.backup_type.is_some() {
+        return Err(IngestError::BackupTypeAndMirrorConflict);
+    }
+
+    // F80: same reasoning as the mirror check above -- the CLI would reject this combination at
+    // startup anyway (`IngestError::BackupTypeAndEncryptionConflict`, `Args::validate()`), so
+    // catching it here means the editor cannot write a job that only fails hours later, at the
+    // next scheduled run.
+    if draft.backup_type.is_some() && draft.encrypt_aes256.is_some() {
+        return Err(IngestError::BackupTypeAndEncryptionConflict);
     }
 
     // The CLI rejects this range at startup (`IngestError::InvalidThreads`). Catching it here
@@ -375,12 +408,25 @@ pub fn apply_draft(
             inherited.preserve_acl,
             draft.preserve_acl,
         ),
+        // F80: unlike webhook_url/pre_command/post_command below, this one *is* owned by the
+        // editor -- JobDraft carries it, so a value the operator did not touch resolves to the
+        // same value it already had (pin()'s ordinary "no real change" case), and a value already
+        // set in a non-`keyring:` form by hand round-trips through unchanged for the same reason.
+        encrypt_aes256: pin(
+            base.encrypt_aes256.as_ref(),
+            inherited.encrypt_aes256.as_ref(),
+            draft.encrypt_aes256.clone(),
+        ),
         // Not owned by this editor, therefore carried through rather than dropped. See the module
         // header: dropping them would be a silent semantic change, which is the failure mode this
         // whole module is shaped around.
         webhook_url: base.webhook_url.clone(),
         pre_command: base.pre_command.clone(),
         post_command: base.post_command.clone(),
+        // F65: same reasoning as the three fields above — not yet exposed in the editor form, so
+        // carried through verbatim rather than dropped.
+        skip_space_check: base.skip_space_check,
+        space_safety_margin_percent: base.space_safety_margin_percent,
     })
 }
 
@@ -426,20 +472,41 @@ pub fn build_proposal(
         }
     }
 
-    let mut jobs = stored_jobs;
     let defaults = config.defaults.clone();
+    // Built in `drafts`' order, not `stored_jobs`' — the console's job-reorder controls
+    // (Editor.svelte, PIANO_GUI.md §14.5 point 1) send `drafts` already arranged the way the
+    // operator wants `[[jobs]]` to read, and the whole point is moot if the proposal silently
+    // writes every *existing* job back at its original position regardless. A `Vec<bool>` instead
+    // of removing matched entries from `stored_jobs` as they're consumed: `stored_jobs` is indexed
+    // by `label_of(job, index)`, which for an unnamed job depends on its original position, so
+    // removing entries mid-loop would shift later indices and change what "unnamed job N" refers
+    // to for a still-unprocessed draft.
+    let mut consumed = vec![false; stored_jobs.len()];
+    let mut jobs = Vec::with_capacity(drafts.len().max(stored_jobs.len()));
     for draft in drafts {
         // Matched on the label `list_jobs` shows, so the name the operator saw is the name that
         // finds the job — including the positional fallback for an unnamed entry.
-        match jobs
+        match stored_jobs
             .iter()
             .enumerate()
             .position(|(index, job)| label_of(job, index) == draft.name)
         {
-            Some(index) => jobs[index] = apply_draft(Some(&jobs[index]), &defaults, draft)?,
-            // A name matching nothing stored is a new job, appended. Jobs already there and not
-            // named by any draft stay exactly as they were: omission never deletes.
+            Some(index) => {
+                jobs.push(apply_draft(Some(&stored_jobs[index]), &defaults, draft)?);
+                consumed[index] = true;
+            }
+            // A name matching nothing stored is a new job, placed where the draft is in this
+            // list — normally the end, since that's where the editor's own "+ Nuovo job" appends
+            // it, but not assumed here: a new job the operator then moved earlier belongs there.
             None => jobs.push(apply_draft(None, &defaults, draft)?),
+        }
+    }
+    // Any stored job no draft named stays exactly as it was, appended after everything the
+    // operator actually touched — omission never deletes, and an untouched job was never given a
+    // position to honor in the first place.
+    for (index, job) in stored_jobs.into_iter().enumerate() {
+        if !consumed[index] {
+            jobs.push(job);
         }
     }
 
@@ -604,6 +671,44 @@ mod tests {
         assert_eq!(result.retries, Some(9));
     }
 
+    /// F80: `encrypt_aes256` is an ordinary editable field (unlike `mirror`/`keep_generations`,
+    /// nothing about encrypting deletes anything), so an explicit change simply takes effect --
+    /// and a value already set by hand in a non-`keyring:` form (the console's own form only ever
+    /// writes that one) survives an unrelated edit exactly like `mirror` does above, because the
+    /// editor never touches a field the draft did not change.
+    #[test]
+    fn encrypt_aes256_is_editable_and_survives_an_unrelated_edit_when_untouched() {
+        let config = config_from("source = \"D:/src\"\ndest = \"E:/dst\"\n");
+        let mut draft = draft_for(&config, "job1");
+        assert_eq!(draft.encrypt_aes256, None);
+
+        draft.encrypt_aes256 = Some("keyring:backup-nas".to_string());
+        let result = apply_draft(Some(&config.defaults), &JobConfig::default(), &draft)
+            .expect("setting a key is an ordinary edit");
+        assert_eq!(
+            result.encrypt_aes256,
+            Some("keyring:backup-nas".to_string())
+        );
+
+        // A value set by hand in a form the editor never writes itself (env:) must round-trip
+        // through an unrelated edit untouched -- the editor does not know or care what form it
+        // is in, only whether the draft's own value differs from what the job already resolves to.
+        let config = config_from(
+            "source = \"D:/src\"\ndest = \"E:/dst\"\nencrypt_aes256 = \"env:BACKUP_KEY\"\n",
+        );
+        let mut draft = draft_for(&config, "job1");
+        assert_eq!(draft.encrypt_aes256, Some("env:BACKUP_KEY".to_string()));
+
+        draft.retries = Some(9);
+        let result = apply_draft(Some(&config.defaults), &JobConfig::default(), &draft)
+            .expect("an unrelated edit");
+        assert_eq!(
+            result.encrypt_aes256,
+            Some("env:BACKUP_KEY".to_string()),
+            "a hand-written non-keyring value must not be disturbed by an unrelated edit"
+        );
+    }
+
     /// Turning a deletion off needs no gate.
     #[test]
     fn the_editor_may_turn_mirroring_off() {
@@ -614,6 +719,67 @@ mod tests {
         let result = apply_draft(Some(&config.defaults), &JobConfig::default(), &draft)
             .expect("narrowing is allowed");
         assert_eq!(result.mirror, Some(false));
+    }
+
+    /// F70: `--mirror`'s destination layout (a 1:1 mirrored tree) and `--backup-type`'s (a manifest
+    /// plus per-generation subfolders) cannot coexist -- `Args::validate()` rejects the combination
+    /// at startup, and the editor must not write a proposal that only fails hours later.
+    #[test]
+    fn mirror_and_backup_type_cannot_combine() {
+        let config = config_from("source = \"D:/src\"\ndest = \"E:/dst\"\nmirror = true\n");
+        let mut draft = draft_for(&config, "job1");
+        draft.backup_type = Some(BackupType::Full);
+
+        let error = apply_draft(Some(&config.defaults), &JobConfig::default(), &draft)
+            .expect_err("must be refused");
+        assert!(
+            matches!(error, IngestError::BackupTypeAndMirrorConflict),
+            "got {error:?}"
+        );
+
+        // Checked against the *resulting* mirror value, same reasoning as the `no_prescan` check
+        // above: a job turning mirror off in this same edit is no longer mirroring.
+        draft.mirror = false;
+        let result = apply_draft(Some(&config.defaults), &JobConfig::default(), &draft)
+            .expect("no longer mirroring, so no conflict");
+        assert_eq!(result.backup_type, Some(BackupType::Full));
+        assert_eq!(result.mirror, Some(false));
+    }
+
+    /// F80: the generation pipeline doesn't call `encrypt_destination` yet -- writing a proposal
+    /// with both fields set would let an operator believe a generation backup is encrypted when
+    /// it never is. `Args::validate()` rejects the combination at startup; the editor must not
+    /// write a proposal that only fails hours later, at the next scheduled run.
+    #[test]
+    fn backup_type_and_encrypt_aes256_cannot_combine() {
+        let config = config_from("source = \"D:/src\"\ndest = \"E:/dst\"\n");
+        let mut draft = draft_for(&config, "job1");
+        draft.backup_type = Some(BackupType::Full);
+        draft.encrypt_aes256 = Some("keyring:backup-nas".to_string());
+
+        let error = apply_draft(Some(&config.defaults), &JobConfig::default(), &draft)
+            .expect_err("must be refused");
+        assert!(
+            matches!(error, IngestError::BackupTypeAndEncryptionConflict),
+            "got {error:?}"
+        );
+    }
+
+    /// F72: `namespaced_path` interpolates the name literally into a filename -- the CLI would
+    /// reject an unusable one at the job's first scheduled run anyway, and the editor must not
+    /// write a proposal that only fails hours later.
+    #[test]
+    fn a_name_that_cannot_be_a_filename_is_rejected() {
+        let config = config_from("source = \"D:/src\"\ndest = \"E:/dst\"\n");
+        let mut draft = draft_for(&config, "job1");
+        draft.name = "back/up".to_string();
+
+        let error = apply_draft(Some(&config.defaults), &JobConfig::default(), &draft)
+            .expect_err("must be refused");
+        assert!(
+            matches!(error, IngestError::InvalidJobName { .. }),
+            "got {error:?}"
+        );
     }
 
     /// Retention deletes whole generation cycles. Introducing it is widening; so is lowering it,
@@ -724,7 +890,41 @@ mod tests {
         );
     }
 
-    /// A name matching no stored job is a new job, not a silent no-op.
+    /// The console's job-reorder controls (Editor.svelte, PIANO_GUI.md §14.5 point 1) work by
+    /// swapping entries in the `drafts` array the frontend holds and sending the whole array back
+    /// — the fix relies on `build_proposal` actually honoring that order for jobs it already knew
+    /// about, not just for genuinely new ones. Caught by writing a real proposal and reading the
+    /// file back, not by reasoning about the frontend alone: an earlier version of this function
+    /// silently discarded the reorder for every *existing* job, always writing them back at their
+    /// original stored position regardless of what order `drafts` arrived in.
+    #[test]
+    fn reordering_existing_jobs_changes_the_order_they_are_written_in() {
+        let config = config_from(
+            "source = \"D:/src\"\n\n[[jobs]]\nname = \"progetti\"\ndest = \"E:/p\"\n\n\
+             [[jobs]]\nname = \"archivio\"\ndest = \"E:/a\"\n",
+        );
+        let progetti = draft_for(&config, "progetti");
+        let archivio = draft_for(&config, "archivio");
+
+        // Same two drafts as `read_drafts` would return, but reversed — exactly what the editor's
+        // move-up/move-down buttons produce.
+        let proposal = build_proposal(Some(&config), &[archivio, progetti]).expect("builds");
+        let jobs = proposal.jobs.expect("jobs");
+
+        assert_eq!(jobs.len(), 2);
+        assert_eq!(
+            jobs[0].name.as_deref(),
+            Some("archivio"),
+            "the reordered job is written first"
+        );
+        assert_eq!(jobs[1].name.as_deref(), Some("progetti"));
+    }
+
+    /// A name matching no stored job is a new job, not a silent no-op. Its position in the
+    /// output follows its position in `drafts` (here, the only draft given, so index 0) — not
+    /// "always appended after every stored job" as an earlier version of `build_proposal` did;
+    /// the untouched stored job ("uno") lands after it precisely because nothing in `drafts`
+    /// claimed a position for it.
     #[test]
     fn an_unknown_name_appends_a_job() {
         let config =
@@ -736,9 +936,14 @@ mod tests {
         let proposal = build_proposal(Some(&config), &[draft]).expect("builds");
         let jobs = proposal.jobs.clone().expect("jobs");
         assert_eq!(jobs.len(), 2);
-        assert_eq!(jobs[1].name.as_deref(), Some("due"));
+        assert_eq!(jobs[0].name.as_deref(), Some("due"));
+        assert_eq!(
+            jobs[1].name.as_deref(),
+            Some("uno"),
+            "the untouched job is still there, after the one the draft named"
+        );
         assert!(
-            !jobs[1]
+            !jobs[0]
                 .merged_over(&proposal.defaults)
                 .mirror
                 .unwrap_or(false),

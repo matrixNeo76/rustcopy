@@ -166,13 +166,20 @@ pub async fn serve_until_shutdown_or(
 }
 
 async fn shutdown_signal() {
+    // Only fails if the OS refuses to hand out a signal handler at all — nothing this server
+    // could degrade to gracefully; the alternative is running with no way to shut down cleanly.
+    #[allow(clippy::expect_used)]
     let ctrl_c = async {
         tokio::signal::ctrl_c()
             .await
             .expect("failed to install Ctrl+C handler");
     };
 
+    // Same reasoning as ctrl_c above — nothing to degrade to if the OS won't hand out a signal
+    // handler. Unix-only (this binary's real target is Windows), so this only actually compiles
+    // in CI's ubuntu-latest job — caught there, not locally, same class of gap D16 already found.
     #[cfg(unix)]
+    #[allow(clippy::expect_used)]
     let terminate = async {
         tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate())
             .expect("failed to install SIGTERM handler")

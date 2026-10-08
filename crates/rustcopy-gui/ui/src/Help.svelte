@@ -8,6 +8,10 @@
       items: [
         [
           "Non hai ancora niente da aprire",
+          "Nella scheda Job, «Crea un esempio in Documenti» genera pochi file finti più un file di configurazione già pronto in Documenti\\rustcopy-demo, e lo apre subito — funziona anche se hai installato rustcopy invece di clonare il repository, l'unico caso in cui questa console arriva su una macchina.",
+        ],
+        [
+          "Hai invece clonato il repository",
           "Nel repository c'è examples/demo-locale.toml: copia cinque file finti in una cartella accanto e scrive lì report e log, quindi non può toccare dati veri. Lanciala dalla CLI (`robocopy_ingest.exe --config examples/demo-locale.toml`), poi apri il report che ha prodotto nella scheda Report. Gli altri esempi di quella cartella sono modelli da adattare: la scheda Job li segnala come tali.",
         ],
         [
@@ -23,10 +27,11 @@
     {
       title: "Cosa significano le schede",
       items: [
-        ["Report", "Il dettaglio di una singola run: esito, volumi, durata, e i file che la verifica ha segnalato, a blocchi di cento."],
         ["Job", "I job che il file descrive, con sorgente, destinazione e tipo. Un job che cancella in destinazione è segnalato in modo distinto."],
-        ["Impostazioni", "Ogni impostazione risolta, raggruppata, con da quale strato viene il valore che vince e quali scelte portano una conseguenza."],
-        ["Modifica", "L'unico punto che scrive. Produce una proposta in un file nuovo: la configurazione in uso non viene mai toccata."],
+        ["Impostazioni", "Ogni impostazione risolta, raggruppata, con da quale strato viene il valore che vince e quali scelte portano una conseguenza. Le credenziali si salvano ed eliminano da qui."],
+        ["Modifica", "L'unico punto che scrive una configurazione. Produce una proposta in un file nuovo: quella in uso non viene mai toccata."],
+        ["Esegui", "Avvia la stessa CLI che eseguirebbe un'attività pianificata, come processo separato, e propone di riprendere una run interrotta se trova un checkpoint. Non può accendere il mirror, forzare un purge, installare servizi o pianificazioni."],
+        ["Report", "Il dettaglio di una singola run: esito, volumi, durata, e i file che la verifica ha segnalato, a blocchi di cento. Da qui si può anche simulare un ripristino (\"Anteprima ripristino\"): mostra cosa --restore-from copierebbe, senza toccare nulla."],
         ["Storico", "Le run passate con il significato del loro esito, più l'analisi deterministica che la CLI stampa con --advise."],
       ],
     },
@@ -39,15 +44,23 @@
         ],
         [
           "generazione, ciclo",
-          "Con --backup-type il backup diventa una storia: un Full più gli Incremental o Differential che lo seguono formano un ciclo. La retention elimina cicli interi e non singole generazioni, per non lasciare un incrementale senza il full da cui dipende.",
+          "Con un tipo di backup impostato il backup diventa una storia: un Full più gli Incremental o Differential che lo seguono formano un ciclo. La retention elimina cicli interi e non singole generazioni, per non lasciare un incrementale senza il full da cui dipende.",
         ],
         [
           "verifica rapida (fast-verify)",
           "Salta i file la cui sorgente è immutata dall'ultima verifica riuscita. Si fida dell'identità della sorgente invece di rileggere i byte in destinazione: una corruzione nata in destinazione può sfuggire.",
         ],
         [
+          "VSS (copia shadow)",
+          "Volume Shadow Copy: Windows scatta una fotografia del disco per un istante e il backup legge da quella invece che dai file vivi, così anche un file aperto o in modifica si può leggere. La copia è coerente come lo sarebbe dopo un'interruzione di corrente, non necessariamente per l'applicazione che usa quei file (per un database serve che l'applicazione stessa partecipi allo snapshot). Richiede i privilegi di Amministratore. Nel risultato di un backup compare come \"Istantanea\".",
+        ],
+        [
           "ereditato",
           "In un file con più job, un valore non scritto nel job viene dai valori di primo livello. La scheda Impostazioni dice per ogni voce se l'ha chiesta il job, se l'ha ereditata, o se nessuno l'ha impostata.",
+        ],
+        [
+          "preferiti",
+          "Un elenco di percorsi (config o report) con un'etichetta a scelta, sopra \"Recenti\" in ogni scheda — a differenza di Recenti, che si riempie e svuota da solo, un preferito resta finché non lo rimuovi. Vive solo su questo computer, mai nel file dei job.",
         ],
       ],
     },
@@ -60,6 +73,7 @@
         ["3", "La cancellazione di --mirror è stata annullata."],
         ["4", "I dati sono stati copiati, ma la verifica ha trovato una differenza. Non è una copia fallita, ed è la distinzione per cui questo codice esiste."],
         ["5", "La cancellazione della retention è stata annullata."],
+        ["6", "Lo spazio libero in destinazione non basta: il trasferimento non è nemmeno iniziato."],
       ],
     },
   ];
@@ -67,8 +81,11 @@
 
 <section class="p-4">
   <p class="max-w-3xl text-sm text-slate-600 dark:text-slate-400">
-    Questa console <strong>legge</strong> ciò che rustcopy ha già scritto e prepara proposte di
-    configurazione. Non esegue backup, non copia e non cancella nulla.
+    Questa console <strong>legge</strong> ciò che rustcopy ha già scritto, prepara proposte di
+    configurazione (Modifica) e — dalla scheda Esegui — avvia un backup vero, lanciando la stessa
+    CLI che eseguirebbe un'attività pianificata. Non può però accendere il mirror, forzare una
+    cancellazione, né installare servizi o pianificazioni: quelle restano operazioni che solo un
+    file di configurazione scritto a mano o la CLI possono autorizzare.
   </p>
 
   {#each SECTIONS as section}

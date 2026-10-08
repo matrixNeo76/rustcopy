@@ -267,6 +267,11 @@ pub fn scan(
 pub struct InventorySummary {
     pub total_files: u64,
     pub total_bytes: u64,
+    /// F73: directories that survived `exclude_dirs` pruning, not counting `root` itself. Not
+    /// consumed by the progress-bar callers this type originally existed for -- added for
+    /// `gui_api::inspect_path`, at the marginal cost of one counter in the walk this function
+    /// already does.
+    pub total_dirs: u64,
 }
 
 impl InventorySummary {
@@ -306,6 +311,7 @@ pub fn inventory(
     let now = now_unix_secs();
     let mut total_files = 0u64;
     let mut total_bytes = 0u64;
+    let mut total_dirs = 0u64;
 
     let walker = WalkDir::new(root)
         .follow_links(follow_links)
@@ -324,6 +330,14 @@ pub fn inventory(
                 continue;
             }
         };
+        if entry.file_type().is_dir() {
+            // `root` itself (depth 0) isn't a subfolder of the inspected path; anything past
+            // `filter_entry` above has already survived `exclude_dirs` pruning.
+            if entry.depth() > 0 {
+                total_dirs += 1;
+            }
+            continue;
+        }
         if !entry.file_type().is_file() {
             continue;
         }
@@ -359,6 +373,7 @@ pub fn inventory(
     Ok(InventorySummary {
         total_files,
         total_bytes,
+        total_dirs,
     })
 }
 
@@ -660,6 +675,32 @@ mod tests {
 
         assert_eq!(light.total_files, 1);
         assert_eq!(light.total_bytes, 10);
+    }
+
+    /// F73: `total_dirs` counts subfolders that survived `exclude_dirs` pruning, not `root`
+    /// itself and not a pruned subtree's contents.
+    #[test]
+    fn inventory_counts_surviving_directories_not_root_or_pruned_ones() {
+        let dir = fixture_tree(&[
+            ("a.csv", 10),
+            ("docs/b.csv", 20),
+            ("docs/nested/c.csv", 30),
+            ("AppData/d.csv", 9999),
+        ]);
+
+        let light = inventory(
+            dir.path(),
+            "*.csv",
+            false,
+            &["AppData".to_string()],
+            &[],
+            None,
+            None,
+        )
+        .expect("inventory");
+
+        // `docs` and `docs/nested` survive; `AppData` is pruned; `root` itself isn't counted.
+        assert_eq!(light.total_dirs, 2);
     }
 
     /// D17: `--min-age-days N` excludes files modified **less** than N days ago, matching real

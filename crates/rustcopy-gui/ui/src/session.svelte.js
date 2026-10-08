@@ -11,6 +11,30 @@ export const session = $state({
   configPath: "",
   reportPath: "",
   jobName: "",
+  // Owned here rather than as App.svelte's own local state so a pane can navigate to another one
+  // — "Apri il report di questa run" in Esegui needs to switch to Report with reportPath already
+  // set, and App.svelte is the only place that otherwise ever reads or writes which tab is active
+  // (Livello 1, punto 5, PIANO_GUI.md §10).
+  activeTab: "jobs",
+  // One-shot: set together with reportPath by "Apri il report di questa run", consumed by
+  // Report.svelte's own effect the moment it fires. Never left `true` — a signal that could stay
+  // set would re-trigger a load the next time something unrelated touched reportPath.
+  pendingReportLoad: false,
+  // F86: same one-shot pattern as pendingReportLoad, for Job's "Impostazioni"/"Storico" row
+  // actions. Needed because Settings.svelte/History.svelte only ever load on a manual PathBar
+  // click — unlike Report.svelte, nothing here already watches configPath/reportPath for a
+  // cross-pane jump, verified by reading both files before adding this.
+  pendingSettingsLoad: false,
+  pendingHistoryLoad: false,
+  // F86: Job's "Modifica" row action. Deliberately its own field, not a reuse of jobName above:
+  // jobName is a persistent, operator-typed filter that History.svelte reads live, and writing a
+  // one-shot navigation signal into it would make the same field mean two different things
+  // depending on which pane touched it last.
+  pendingEditorJob: null,
+  // F93: QuickSync starts the run itself, then lands on Esegui. One-shot like pendingReportLoad:
+  // Run.svelte consumes it, loads the job list and attaches to the run already in progress, so the
+  // operator does not have to click "Esamina" to see the copy they just started.
+  pendingRunAttach: false,
 });
 
 const RECENT_LIMIT = 8;
@@ -53,4 +77,70 @@ export function remember(kind, path) {
   const kept = (lists[key] ?? []).filter((entry) => entry !== path);
   lists[key] = [path, ...kept].slice(0, RECENT_LIMIT);
   write(KEYS[key], lists[key]);
+}
+
+// F66: named favorites, a superset of "Recenti" and not its replacement — an unlabeled MRU of 8
+// is uncomfortable once an operator manages more than two or three recurring destinations, which
+// is exactly the case scripts/profiles.json exists to work around at the PowerShell layer
+// (PIANO_GUI.md §12.1). This stays a label on a path already accepted by Job/Impostazioni/Report —
+// never a second configuration format: no fields beyond `label`/`path` are stored here, and
+// nothing here is read by the core or by `[[jobs]]` TOML.
+const FAVORITE_LIMIT = 20;
+const FAVORITE_KEYS = {
+  config: "rustcopy.favorites.config",
+  report: "rustcopy.favorites.report",
+};
+
+function readFavorites(key) {
+  try {
+    const raw = localStorage.getItem(key);
+    const parsed = raw ? JSON.parse(raw) : [];
+    return Array.isArray(parsed)
+      ? parsed.filter(
+          (entry) =>
+            entry && typeof entry.path === "string" && typeof entry.label === "string",
+        )
+      : [];
+  } catch {
+    return [];
+  }
+}
+
+function writeFavorites(key, values) {
+  try {
+    localStorage.setItem(key, JSON.stringify(values.slice(0, FAVORITE_LIMIT)));
+  } catch {
+    // Same tolerance as `write()` above: a lost favorite is a convenience gone, not work lost.
+  }
+}
+
+const favoriteLists = $state({
+  config: readFavorites(FAVORITE_KEYS.config),
+  report: readFavorites(FAVORITE_KEYS.report),
+});
+
+export function favorites(kind) {
+  return favoriteLists[kind] ?? [];
+}
+
+export function isFavorite(kind, path) {
+  const key = kind in FAVORITE_KEYS ? kind : "config";
+  return (favoriteLists[key] ?? []).some((entry) => entry.path === path);
+}
+
+// Adding an already-favorited path updates its label in place rather than duplicating the entry —
+// re-labeling should never leave the old label behind as a second row for the same path.
+export function addFavorite(kind, path, label) {
+  if (!path) return;
+  const key = kind in FAVORITE_KEYS ? kind : "config";
+  const trimmed = label.trim() || path;
+  const kept = (favoriteLists[key] ?? []).filter((entry) => entry.path !== path);
+  favoriteLists[key] = [{ label: trimmed, path }, ...kept].slice(0, FAVORITE_LIMIT);
+  writeFavorites(FAVORITE_KEYS[key], favoriteLists[key]);
+}
+
+export function removeFavorite(kind, path) {
+  const key = kind in FAVORITE_KEYS ? kind : "config";
+  favoriteLists[key] = (favoriteLists[key] ?? []).filter((entry) => entry.path !== path);
+  writeFavorites(FAVORITE_KEYS[key], favoriteLists[key]);
 }

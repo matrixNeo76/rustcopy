@@ -14,7 +14,7 @@ use std::time::Instant;
 use crate::errors::IngestError;
 use crate::progress::ProgressSink;
 
-use super::{CopyEngine, CopyOutcome, CopyRequest};
+use super::{CopyEngine, CopyOutcome, CopyRequest, CopySummaryDetail};
 
 pub const ENGINE_NAME: &str = "robocopy";
 
@@ -143,7 +143,15 @@ pub fn build_args(request: &CopyRequest) -> Vec<String> {
 pub fn normalize_path_arg(path: &str, long_paths: bool) -> String {
     let trimmed = path.trim_end_matches(['\\', '/']);
     if long_paths && cfg!(windows) && !trimmed.starts_with(r"\\?\") && trimmed.len() > 240 {
-        format!(r"\\?\{trimmed}")
+        // D28: a UNC path's real long-path convention replaces its leading `\\` with
+        // `\\?\UNC\`, not `\\?\` glued on top of it — the naive prefix produces
+        // `\\?\\\server\share\...` (five leading backslashes), which Windows does not
+        // resolve. A local drive letter (`C:\...`) has no such special case.
+        if let Some(unc_tail) = trimmed.strip_prefix(r"\\") {
+            format!(r"\\?\UNC\{unc_tail}")
+        } else {
+            format!(r"\\?\{trimmed}")
+        }
     } else {
         trimmed.to_string()
     }
@@ -218,6 +226,40 @@ pub fn parse_file_bytes(line: &str) -> Option<u64> {
     None
 }
 
+/// The file name from a copied-file robocopy line, for the live "what's copying now" display.
+///
+/// Only meaningful to call once [`parse_file_bytes`] has already recognized `line` as a
+/// transferred file — this does not re-derive that decision, it reuses it, so the two can never
+/// disagree about which lines qualify (see D27 in `ANALYSIS.md` for the history of exactly that
+/// class of bug, from two functions independently guessing at the same line shape). With
+/// `/BYTES /NP` the name is always the last tab-separated field.
+fn parse_file_name(line: &str) -> Option<String> {
+    let trimmed = line.trim();
+
+    // Tab-separated (the common case, `/BYTES /NP`'s own output shape): the name never got split
+    // in the first place, so the last tab-separated field is it, spaces and all. Same threshold
+    // `split_fields` itself uses to choose this branch, not just "contains a tab".
+    let tabbed: Vec<&str> = trimmed
+        .split('\t')
+        .map(str::trim)
+        .filter(|f| !f.is_empty())
+        .collect();
+    if tabbed.len() >= 2 {
+        return tabbed.last().map(|f| f.to_string());
+    }
+
+    // Space-padded fallback (`split_fields`'s other branch, real observed robocopy output — see
+    // `parses_space_padded_lines_and_other_statuses` below): `split_whitespace()` cuts a
+    // multi-word name like "folder name.csv" into separate fields, so `.last()` alone would keep
+    // only "name.csv" (CodeRabbit finding on this PR, verified against `parse_file_bytes` already
+    // accepting exactly such a line). Reconstruct the name from every field after the byte count
+    // instead of just the trailing token.
+    let fields: Vec<&str> = trimmed.split_whitespace().collect();
+    let bytes_index = fields.iter().position(|f| parse_byte_count(f).is_some())?;
+    let name = fields[bytes_index + 1..].join(" ");
+    (!name.is_empty()).then_some(name)
+}
+
 /// Byte counts from robocopy's `Bytes :` summary row (requires `/BYTES`).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub struct SummaryRow {
@@ -231,18 +273,31 @@ pub struct SummaryRow {
 
 /// Parse a robocopy summary row such as `Bytes :  1024  1024  0  0  0  0`.
 ///
-/// `label` is `"Bytes"` or `"Files"`. Returns `None` for any other line.
-pub fn parse_summary_row(line: &str, label: &str) -> Option<SummaryRow> {
+/// `labels` are tried in order against the start of the (trimmed) line, e.g. `&["Bytes",
+/// "Byte"]` — English first, Italian fallback second (`Byte:`, no plural, no space before the
+/// colon, captured verbatim in `ignores_localized_headers_without_a_space_before_the_colon`
+/// above). English is tried first deliberately: on an English-locale host `"Byte"` alone would
+/// also prefix-match a `"Bytes :"` line, but the remainder after stripping it (`"s :  ..."`)
+/// fails the following `strip_prefix(':')`, so order only matters for which branch does the
+/// (harmless) extra work, not for correctness. Returns `None` if no candidate label matches.
+pub fn parse_summary_row(line: &str, labels: &[&str]) -> Option<SummaryRow> {
     let trimmed = line.trim();
-    let rest = trimmed
-        .strip_prefix(label)?
+    let rest = labels
+        .iter()
+        .find_map(|label| trimmed.strip_prefix(label))?
         .trim_start()
         .strip_prefix(':')?;
     let numbers: Vec<u64> = rest
         .split_whitespace()
         .map(parse_byte_count)
         .collect::<Option<Vec<u64>>>()?;
-    if numbers.len() < 2 {
+    // Real robocopy always emits all six columns (Total, Copied, Skipped, Mismatch, FAILED,
+    // Extras) on a genuine summary row -- both Microsoft's own English example and this
+    // project's captured Italian one (see the tests below) have exactly six. Anything shorter is
+    // truncated output (e.g. robocopy killed mid-line), not a legitimately narrower row: accepting
+    // it here would silently zero-fill the missing trailing counters as if they were really zero,
+    // rather than unknown (CodeRabbit finding on the PR that added this).
+    if numbers.len() != 6 {
         return None;
     }
     Some(SummaryRow {
@@ -256,11 +311,25 @@ pub fn parse_summary_row(line: &str, label: &str) -> Option<SummaryRow> {
 }
 
 fn is_labelled_line(trimmed: &str) -> bool {
-    // Summary/header rows look like `Bytes :`, `Options :`, `Started :`. Windows paths such as
-    // `C:\data\x.csv` must not match, hence the requirement of whitespace before the colon.
-    trimmed
-        .split_once(':')
-        .is_some_and(|(head, _)| !head.is_empty() && head.ends_with(char::is_whitespace))
+    // Summary/header rows look like `Bytes :`, `Options :`, `Started :` in English — but robocopy
+    // localizes these labels, and not always with a space before the colon (Italian: `Avviato:`,
+    // `Terminato:`, `Directory:`, all with none). Requiring whitespace before the colon, as this
+    // function once did, correctly rejects a drive letter (`C:\...`) but also rejects those
+    // unspaced localized labels — on an Italian-locale host, `Avviato:`/`Terminato:` then reached
+    // `parse_file_bytes` as ordinary data, and a `<label>: <weekday> <day> <month> <year> ...`
+    // timestamp line has a number (the day of the month) followed by non-numeric fields, exactly
+    // the shape `parse_file_bytes` treats as `<status>\t<bytes>\t<name>` (D27, found 6 Set 2026:
+    // every run counted two extra "files" of a few spurious bytes each, silently, on any locale
+    // whose header lines drop that space).
+    //
+    // A drive-letter colon, unlike a label's, is always immediately followed by a path separator
+    // in robocopy's output (`C:\...` or `C:/...`) — checking for that instead of the character
+    // *before* the colon is robust across locales, because it doesn't depend on how any given
+    // locale happens to space its labels.
+    match trimmed.split_once(':') {
+        Some((head, rest)) => !head.is_empty() && !rest.starts_with(['\\', '/']),
+        None => false,
+    }
 }
 
 fn split_fields(trimmed: &str) -> Vec<&str> {
@@ -347,11 +416,11 @@ impl<R: CommandRunner> CopyEngine for RobocopyEngine<R> {
         let started = Instant::now();
         let exit_code = {
             let mut on_line = |line: &str| {
-                if let Some(row) = parse_summary_row(line, "Bytes") {
+                if let Some(row) = parse_summary_row(line, &["Bytes", "Byte"]) {
                     summary = Some(row);
                     return;
                 }
-                if let Some(row) = parse_summary_row(line, "Files") {
+                if let Some(row) = parse_summary_row(line, &["Files", "File"]) {
                     file_summary = Some(row);
                     return;
                 }
@@ -360,6 +429,9 @@ impl<R: CommandRunner> CopyEngine for RobocopyEngine<R> {
                     streamed_files += 1;
                     sink.add_bytes(bytes);
                     sink.add_file();
+                    if let Some(name) = parse_file_name(line) {
+                        sink.set_current_file(&name);
+                    }
                     tracing::debug!(bytes, line = line.trim(), "robocopy transferred file");
                 }
             };
@@ -385,6 +457,29 @@ impl<R: CommandRunner> CopyEngine for RobocopyEngine<R> {
             }
         }
 
+        // Both rows were already parsed for `.copied` above; this is the rest of the same data
+        // robocopy already computed, previously discarded -- skipped (already up to date),
+        // mismatch (conflicting size/date), failed (real per-file errors) and extra (present only
+        // in the destination). Requires BOTH rows, not either: robocopy always prints Files then
+        // Bytes back to back, so output truncated between them (e.g. killed mid-run right after
+        // the Files row) would otherwise let one real row through while the other's missing
+        // fields got silently zero-filled by `.unwrap_or(0)` below -- indistinguishable from a
+        // genuine zero (CodeRabbit finding on the PR that added this). `None` here matches
+        // `bytes_copied`/`files_copied`'s own fallback to the streamed counters just above.
+        let summary_detail =
+            summary
+                .zip(file_summary)
+                .map(|(summary, file_summary)| CopySummaryDetail {
+                    files_skipped: file_summary.skipped,
+                    files_mismatch: file_summary.mismatch,
+                    files_failed: file_summary.failed,
+                    files_extra: file_summary.extras,
+                    bytes_skipped: summary.skipped,
+                    bytes_mismatch: summary.mismatch,
+                    bytes_failed: summary.failed,
+                    bytes_extra: summary.extras,
+                });
+
         Ok(CopyOutcome {
             engine: ENGINE_NAME,
             bytes_copied,
@@ -393,6 +488,7 @@ impl<R: CommandRunner> CopyEngine for RobocopyEngine<R> {
             exit_code: Some(exit_code),
             retry_attempts_used: 0,
             dry_run: request.dry_run,
+            summary: summary_detail,
         })
     }
 }
@@ -593,6 +689,32 @@ mod tests {
     }
 
     #[test]
+    fn parse_file_name_reads_the_trailing_field() {
+        let line = "\t    New File  \t\t     52428800\tsales_2026_01.csv";
+        assert_eq!(parse_file_name(line), Some("sales_2026_01.csv".to_string()));
+        assert_eq!(
+            parse_file_name("      Newer          1024   a.csv"),
+            Some("a.csv".to_string())
+        );
+    }
+
+    /// A multi-word name must survive the space-padded fallback whole — `.last()` alone kept only
+    /// the trailing token (CodeRabbit finding on this PR, verified: `parse_file_bytes` already
+    /// accepts this exact line shape, so `parse_file_name` has to handle it too). The tab-separated
+    /// case is unaffected either way, since a tab never splits inside the name.
+    #[test]
+    fn parse_file_name_keeps_a_multi_word_name_from_the_space_padded_fallback() {
+        assert_eq!(
+            parse_file_name("      Newer          1024   folder name.csv"),
+            Some("folder name.csv".to_string())
+        );
+        assert_eq!(
+            parse_file_name("\t    New File  \t\t     52428800\tfolder name.csv"),
+            Some("folder name.csv".to_string())
+        );
+    }
+
+    #[test]
     fn parses_space_padded_lines_and_other_statuses() {
         assert_eq!(
             parse_file_bytes("      Newer          1024   a.csv"),
@@ -640,6 +762,40 @@ mod tests {
     }
 
     #[test]
+    fn ignores_localized_headers_without_a_space_before_the_colon() {
+        // D27: real robocopy output on an Italian-locale host, captured verbatim — several
+        // header/footer labels omit the space before the colon that the English original always
+        // has. `Avviato:`/`Terminato:` (Started/Ended) were the two that actually corrupted
+        // `files_copied`/`bytes_copied` in practice: the day-of-month number in the timestamp,
+        // followed by non-numeric month/year fields, has exactly the shape of a copied-file line.
+        for line in [
+            "Avviato: domenica 6 settembre 2026 14:43:19",
+            "Terminato: domenica 6 settembre 2026 14:43:19",
+            "Directory:         3         3         0         0         0         0",
+            "     File:         5         4         1         0         0         0",
+            "     Byte:       209       160        49         0         0         0",
+            "   Durata:   0:00:00   0:00:00                       0:00:00   0:00:00",
+            " Velocità:              22.857 Byte/sec.",
+            "         File: *.*",
+            "     File exc: *.tmp",
+            "      Opzioni: *.* /BYTES /S /E /DCOPY:DA /COPY:DAT /NP /R:1000000 /W:30",
+        ] {
+            assert_eq!(parse_file_bytes(line), None, "should ignore: {line:?}");
+        }
+    }
+
+    #[test]
+    fn drive_letter_paths_are_never_mistaken_for_a_label() {
+        // The fix for D27 replaced "is there whitespace before the colon" with "is the colon
+        // immediately followed by a path separator" — this must still let a real transferred-file
+        // line through when its first colon is the drive letter of the destination path.
+        assert_eq!(
+            parse_file_bytes("\t    New File  \t\t     19\tC:\\Users\\demo-data\\leggimi.txt"),
+            Some(19)
+        );
+    }
+
+    #[test]
     fn ignores_directory_and_extra_file_lines() {
         assert_eq!(
             parse_file_bytes("          New Dir          4    D:\\landing\\day1\\"),
@@ -661,14 +817,17 @@ mod tests {
 
     #[test]
     fn parses_bytes_and_files_summary_rows() {
-        let bytes = parse_summary_row("   Bytes :  104857600 104857600  0  0  0  0", "Bytes")
-            .expect("bytes row");
+        let bytes = parse_summary_row(
+            "   Bytes :  104857600 104857600  0  0  0  0",
+            &["Bytes", "Byte"],
+        )
+        .expect("bytes row");
         assert_eq!(bytes.total, 104_857_600);
         assert_eq!(bytes.copied, 104_857_600);
 
         let files = parse_summary_row(
             "   Files :        12        10         1         0         1         0",
-            "Files",
+            &["Files", "File"],
         )
         .expect("files row");
         assert_eq!(files.total, 12);
@@ -677,13 +836,51 @@ mod tests {
         assert_eq!(files.failed, 1);
 
         assert_eq!(
-            parse_summary_row("   Dirs :  1  0  1  0  0  0", "Bytes"),
+            parse_summary_row("   Dirs :  1  0  1  0  0  0", &["Bytes", "Byte"]),
             None
         );
         assert_eq!(
-            parse_summary_row("   Files : *.csv", "Files"),
+            parse_summary_row("   Files : *.csv", &["Files", "File"]),
             None,
             "options echo is not a row"
+        );
+    }
+
+    /// D27's fix made `is_labelled_line` locale-agnostic, but `parse_summary_row` itself still
+    /// only recognized the English labels, so the authoritative summary row stayed invisible on
+    /// any non-English host -- found live, 10 Set 2026, verifying this same session's richer-report
+    /// feature on this project's own it-IT development machine: `outcome.summary` came back `None`
+    /// for a real robocopy-backed run, making the new "File e byte" report section always show
+    /// "dettaglio non disponibile" here. Uses the exact Italian label shapes already captured in
+    /// `ignores_localized_headers_without_a_space_before_the_colon` above (`File:`, `Byte:`, no
+    /// plural, no space before the colon).
+    #[test]
+    fn parses_italian_localized_summary_rows() {
+        let bytes = parse_summary_row(
+            "     Byte:       209       160        49         0         0         0",
+            &["Bytes", "Byte"],
+        )
+        .expect("italian byte row");
+        assert_eq!(bytes.total, 209);
+        assert_eq!(bytes.copied, 160);
+        assert_eq!(bytes.skipped, 49);
+
+        let files = parse_summary_row(
+            "     File:         5         4         1         0         0         0",
+            &["Files", "File"],
+        )
+        .expect("italian file row");
+        assert_eq!(files.total, 5);
+        assert_eq!(files.copied, 4);
+        assert_eq!(files.skipped, 1);
+
+        assert_eq!(
+            parse_summary_row(
+                "Directory:         3         3         0         0         0         0",
+                &["Files", "File"]
+            ),
+            None,
+            "Directory row must not be mistaken for File"
         );
     }
 
@@ -714,6 +911,83 @@ mod tests {
         assert_eq!(sink.bytes(), 3_145_728);
     }
 
+    /// Robocopy's own summary rows already say *why* files/bytes beyond `copied` weren't moved --
+    /// this crate used to parse `skipped`/`mismatch`/`failed`/`extras` and then throw all four
+    /// away. Found live, 9 Set 2026, from a user report showing only "files copied" with no
+    /// explanation of the rest.
+    #[test]
+    fn engine_reports_the_rest_of_the_summary_row_not_just_copied() {
+        let output = vec![
+            "               Total    Copied   Skipped  Mismatch    FAILED    Extras".to_string(),
+            "   Files :        10         6         2         1         1         3".to_string(),
+            "   Bytes :   1000000    600000    200000    100000    100000    300000".to_string(),
+        ];
+        let runner = ScriptedRunner::new(vec![(output, 1)]);
+        let engine = RobocopyEngine::with_runner(runner);
+        let sink = CountingProgress::default();
+
+        let outcome = engine.copy(&request(), &sink).expect("copy runs");
+        let summary = outcome.summary.expect("a summary row was present");
+
+        assert_eq!(summary.files_skipped, 2);
+        assert_eq!(summary.files_mismatch, 1);
+        assert_eq!(summary.files_failed, 1);
+        assert_eq!(summary.files_extra, 3);
+        assert_eq!(summary.bytes_skipped, 200_000);
+        assert_eq!(summary.bytes_mismatch, 100_000);
+        assert_eq!(summary.bytes_failed, 100_000);
+        assert_eq!(summary.bytes_extra, 300_000);
+    }
+
+    /// CodeRabbit finding on the PR that added `summary`: only the Files row survived (e.g.
+    /// output truncated right after it, before the Bytes row could appear) must not produce a
+    /// `summary_detail` with real file counts and silently zero-filled byte counts -- those bytes
+    /// are unknown, not genuinely zero. Requires both rows now (`summary.zip(file_summary)`).
+    #[test]
+    fn engine_reports_no_summary_detail_with_only_the_files_row() {
+        let output = vec![
+            "   Files :        10         6         2         1         1         3".to_string(),
+        ];
+        let engine = RobocopyEngine::with_runner(ScriptedRunner::new(vec![(output, 1)]));
+        let outcome = engine
+            .copy(&request(), &CountingProgress::default())
+            .expect("copy runs");
+
+        assert_eq!(
+            outcome.summary, None,
+            "only the Files row appeared -- the Bytes counters would be unknown, not zero"
+        );
+    }
+
+    /// Mirror of the above with only the Bytes row present.
+    #[test]
+    fn engine_reports_no_summary_detail_with_only_the_bytes_row() {
+        let output = vec![
+            "   Bytes :   1000000    600000    200000    100000    100000    300000".to_string(),
+        ];
+        let engine = RobocopyEngine::with_runner(ScriptedRunner::new(vec![(output, 1)]));
+        let outcome = engine
+            .copy(&request(), &CountingProgress::default())
+            .expect("copy runs");
+
+        assert_eq!(
+            outcome.summary, None,
+            "only the Bytes row appeared -- the Files counters would be unknown, not zero"
+        );
+    }
+
+    /// A summary row cut short mid-line (fewer than all six columns) is truncated output, not a
+    /// legitimately narrower row -- real robocopy always prints all six. Must be rejected by
+    /// `parse_summary_row` itself, not accepted with the missing trailing counters zero-filled.
+    #[test]
+    fn parse_summary_row_rejects_a_row_with_fewer_than_six_columns() {
+        assert_eq!(
+            parse_summary_row("   Bytes :   1000000    600000", &["Bytes", "Byte"]),
+            None,
+            "only Total/Copied present -- Skipped/Mismatch/FAILED/Extras are unknown, not zero"
+        );
+    }
+
     #[test]
     fn engine_falls_back_to_streamed_bytes_without_summary() {
         let output = vec!["\t    New File  \t\t     4096\tonly.csv".to_string()];
@@ -726,6 +1000,10 @@ mod tests {
         assert_eq!(outcome.files_copied, 1);
         assert_eq!(outcome.exit_code, Some(8));
         assert!(!outcome.is_success(), "exit code 8 is a failure");
+        assert_eq!(
+            outcome.summary, None,
+            "no summary row appeared, so there is nothing to report"
+        );
     }
 
     #[test]
@@ -801,6 +1079,39 @@ mod tests {
             normalize_path_arg("C:\\\\", false),
             "C:",
             "multiple seps stripped"
+        );
+    }
+
+    // D28's branch is itself `cfg!(windows)`-gated (the long-path prefix is a Windows-only
+    // concept), so on any other host `normalize_path_arg` returns the input unchanged and this
+    // assertion would fail there -- same class of platform-conditional gap as D16.
+    #[cfg(windows)]
+    #[test]
+    fn normalize_path_arg_produces_the_real_unc_long_path_prefix() {
+        // D28: `\\server\share\...` must become `\\?\UNC\server\share\...`, not `\\?\`
+        // glued on top of the original two leading backslashes.
+        let long_tail = "a".repeat(230);
+        let unc = format!(r"\\server\share\{long_tail}");
+        assert!(
+            unc.len() > 240,
+            "fixture must exceed the long-path threshold"
+        );
+        assert_eq!(
+            normalize_path_arg(&unc, true),
+            format!(r"\\?\UNC\server\share\{long_tail}")
+        );
+
+        // A local drive letter is unaffected by the UNC-specific branch.
+        let long_local = format!(r"C:\{}", "b".repeat(240));
+        assert_eq!(
+            normalize_path_arg(&long_local, true),
+            format!(r"\\?\{long_local}")
+        );
+
+        // Short UNC paths stay under the threshold and are left alone.
+        assert_eq!(
+            normalize_path_arg(r"\\server\share\short", true),
+            r"\\server\share\short"
         );
     }
 

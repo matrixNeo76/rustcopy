@@ -585,6 +585,63 @@ fn resume_from_reconstructs_and_runs_the_interrupted_invocation() {
     assert_eq!(report["integrity_check"]["status"], "PASSED");
 }
 
+/// D25 black-box test: what the interrupted run was told to leave out is still left out after
+/// `--resume-from`. Before the fix a resumed run copied everything its original had excluded -- the
+/// same silent loss that let a 3 MB/s throttle resume at full speed. Run against the compiled
+/// binary and the real robocopy, with a checkpoint in the shape `Checkpoint::new` writes today.
+#[cfg(windows)]
+#[test]
+fn resume_from_keeps_the_exclusions_of_the_interrupted_run() {
+    let source = fixture_tree(&[("a.csv", 10), ("b.tmp", 20)]);
+    let workdir = tempfile::tempdir().expect("workdir");
+    let dest = workdir.path().join("out");
+    let checkpoint_path = workdir.path().join("run.checkpoint.json");
+
+    let checkpoint_json = format!(
+        r#"{{
+            "schema_version": 1,
+            "timestamp": "2026-10-07T09:14:22Z",
+            "source": {source:?},
+            "dest": {dest:?},
+            "configuration": {{
+                "threads": 2,
+                "retries": 1,
+                "retry_wait_seconds": 1,
+                "pattern": "*",
+                "verify_integrity": false,
+                "compare_baseline": false,
+                "dry_run": false,
+                "exclude_files": ["*.tmp"]
+            }},
+            "extras": {{}},
+            "reason": "interrupted by Ctrl+C"
+        }}"#,
+        source = source.path().to_str().expect("utf8"),
+        dest = dest.to_str().expect("utf8"),
+    );
+    std::fs::write(&checkpoint_path, checkpoint_json).expect("write checkpoint");
+
+    let report_path = workdir.path().join("report.json");
+    let output = run(&[
+        "--resume-from",
+        checkpoint_path.to_str().expect("utf8"),
+        "--log-path",
+        workdir.path().join("resume.log").to_str().expect("utf8"),
+        "--report-path",
+        report_path.to_str().expect("utf8"),
+    ]);
+    assert!(output.status.success(), "stderr: {}", stderr_of(&output));
+
+    assert!(dest.join("a.csv").is_file());
+    assert!(
+        !dest.join("b.tmp").exists(),
+        "b.tmp was excluded by the interrupted run and must stay excluded"
+    );
+    let report: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(&report_path).expect("read")).expect("json");
+    assert_eq!(report["configuration"]["exclude_files"][0], "*.tmp");
+}
+
 /// F31 black-box test: `--restore-from` and `--resume-from` together must be rejected at parse
 /// time (they mean opposite things: reversed direction vs. same direction).
 #[cfg(windows)]
@@ -793,6 +850,61 @@ fn install_and_uninstall_schedule_round_trip_via_real_schtasks() {
     );
 }
 
+/// F62 black-box test: `--list-schedules` doesn't require --source/--dest — confirms the clap
+/// `required_unless_present_any` exemption and `validate()`'s early return, same pattern as
+/// `--install-service`'s equivalent test above.
+#[test]
+fn list_schedules_does_not_require_source_or_dest() {
+    let output = run(&["--list-schedules"]);
+    assert!(
+        !stderr_of(&output).contains("--source and --dest must be set"),
+        "stderr: {}",
+        stderr_of(&output)
+    );
+}
+
+/// F62 black-box test: `--list-schedules` finds a real Task Scheduler entry this binary installed
+/// — a genuine round trip against `schtasks.exe`, not a mock. Installs its own throwaway schedule
+/// (no elevation needed, same as `install_and_uninstall_schedule_round_trip_via_real_schtasks`
+/// above) so the test is self-contained and never depends on whatever else happens to be
+/// scheduled on the machine running it.
+#[cfg(windows)]
+#[test]
+fn list_schedules_finds_a_real_task_this_binary_installed() {
+    let source = fixture_tree(&[("a.csv", 8)]);
+    let dest = tempfile::tempdir().expect("dest");
+    let task_name = format!("rustcopy-cli-smoke-list-{}", std::process::id());
+    let _guard = ScheduledTaskGuard(task_name.clone());
+
+    let install_output = run(&[
+        "--source",
+        source.path().to_str().expect("utf8"),
+        "--dest",
+        dest.path().to_str().expect("utf8"),
+        "--install-schedule",
+        "daily@03:00",
+        "--schedule-name",
+        &task_name,
+    ]);
+    assert!(
+        install_output.status.success(),
+        "stderr: {}",
+        stderr_of(&install_output)
+    );
+
+    let list_output = run(&["--list-schedules"]);
+    assert!(
+        list_output.status.success(),
+        "stderr: {}",
+        stderr_of(&list_output)
+    );
+    assert!(
+        stdout_of(&list_output).contains(&task_name),
+        "stdout: {}",
+        stdout_of(&list_output)
+    );
+}
+
 #[cfg(not(windows))]
 #[test]
 fn on_linux_the_run_scans_logs_and_then_explains_that_robocopy_needs_windows() {
@@ -968,6 +1080,200 @@ fn mirror_with_force_purge_proceeds() {
         output.status.code(),
         Some(3),
         "--force-purge must bypass the mirror safety abort; stderr: {}",
+        stderr_of(&output)
+    );
+}
+
+/// F63 black-box test: `--purge-preview-path` writes the full candidate list and never deletes
+/// anything, exiting cleanly instead of asking for confirmation or aborting — the whole point of
+/// a preview being distinct from `check_mirror_safety`'s interactive path exercised above.
+#[test]
+fn purge_preview_path_writes_the_full_list_and_deletes_nothing() {
+    let source = fixture_tree(&[("a.csv", 10)]);
+    let workdir = tempfile::tempdir().expect("workdir");
+    let dest = workdir.path().join("out");
+    std::fs::create_dir_all(&dest).expect("create dest");
+    let extraneous = dest.join("do-not-delete-me.csv");
+    std::fs::write(&extraneous, b"precious data").expect("seed dest");
+    let preview_path = workdir.path().join("preview.json");
+
+    let output = run(&[
+        "--source",
+        source.path().to_str().expect("utf8"),
+        "--dest",
+        dest.to_str().expect("utf8"),
+        "--log-path",
+        workdir.path().join("ingest.log").to_str().expect("utf8"),
+        "--report-path",
+        workdir.path().join("report.json").to_str().expect("utf8"),
+        "--mirror",
+        "--purge-preview-path",
+        preview_path.to_str().expect("utf8"),
+    ]);
+
+    assert!(output.status.success(), "stderr: {}", stderr_of(&output));
+    assert!(
+        extraneous.exists(),
+        "a preview must never delete the file it reports"
+    );
+    let preview: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(&preview_path).expect("read preview"))
+            .expect("preview is valid json");
+    assert_eq!(preview["candidate_count"], 1);
+    let candidates = preview["candidates"].as_array().expect("array");
+    assert!(
+        candidates
+            .iter()
+            .any(|c| c.as_str().unwrap_or("").contains("do-not-delete-me.csv")),
+        "preview: {preview}"
+    );
+}
+
+/// F63 black-box test: with nothing extraneous at the destination, the preview still writes a
+/// valid (empty) report rather than silently doing nothing — the same "absence is a fact, not a
+/// blank" principle this codebase applies elsewhere (e.g. `integrity_status`).
+#[test]
+fn purge_preview_path_reports_zero_candidates_when_nothing_would_be_purged() {
+    let source = fixture_tree(&[("a.csv", 10)]);
+    let workdir = tempfile::tempdir().expect("workdir");
+    let dest = workdir.path().join("out");
+    std::fs::create_dir_all(&dest).expect("create dest");
+    let preview_path = workdir.path().join("preview.json");
+
+    let output = run(&[
+        "--source",
+        source.path().to_str().expect("utf8"),
+        "--dest",
+        dest.to_str().expect("utf8"),
+        "--log-path",
+        workdir.path().join("ingest.log").to_str().expect("utf8"),
+        "--report-path",
+        workdir.path().join("report.json").to_str().expect("utf8"),
+        "--mirror",
+        "--purge-preview-path",
+        preview_path.to_str().expect("utf8"),
+    ]);
+
+    assert!(output.status.success(), "stderr: {}", stderr_of(&output));
+    let preview: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(&preview_path).expect("read preview"))
+            .expect("preview is valid json");
+    assert_eq!(preview["candidate_count"], 0);
+    assert_eq!(preview["candidates"].as_array().expect("array").len(), 0);
+}
+
+/// F63 black-box test: clap's `requires = "mirror"` rejects `--purge-preview-path` without
+/// `--mirror` before any of this ever runs — there is nothing to preview otherwise.
+#[test]
+fn purge_preview_path_without_mirror_is_rejected_by_clap() {
+    let output = run(&["--purge-preview-path", "preview.json"]);
+    assert!(!output.status.success());
+}
+
+/// F65 black-box test: an absurdly large `--space-safety-margin-percent` on a real (small)
+/// transfer must abort with the dedicated exit code 6 rather than running out of disk partway
+/// through — 1 MB times a margin near `u32::MAX` requires tens of terabytes, which no CI runner
+/// or dev machine actually has free, making this deterministic without mocking the free-space
+/// query itself.
+///
+/// `#[cfg(windows)]`: `disk_space::free_bytes` has no non-Windows implementation and returns
+/// `Unsupported` there by design, which `ensure_enough_free_space` treats as "cannot determine,
+/// let the run proceed" — exactly the same non-fatal treatment `schedule::referencing_config`
+/// gives a query it cannot make. On Linux this test's run would pass the space check silently
+/// regardless of the margin and fail later for an unrelated reason (`robocopy.exe` not present,
+/// exit 2), asserting `Some(6)` against the wrong exit code — found by `ubuntu-latest` CI on this
+/// PR, the same class of gap D16 first caught in this project.
+#[cfg(windows)]
+#[test]
+fn an_enormous_safety_margin_aborts_with_the_dedicated_exit_code() {
+    let source = fixture_tree(&[("a.csv", 1_000_000)]);
+    let workdir = tempfile::tempdir().expect("workdir");
+    let dest = workdir.path().join("out");
+
+    let output = run(&[
+        "--source",
+        source.path().to_str().expect("utf8"),
+        "--dest",
+        dest.to_str().expect("utf8"),
+        "--log-path",
+        workdir.path().join("ingest.log").to_str().expect("utf8"),
+        "--report-path",
+        workdir.path().join("report.json").to_str().expect("utf8"),
+        "--space-safety-margin-percent",
+        "4000000000",
+    ]);
+
+    assert_eq!(
+        output.status.code(),
+        Some(6),
+        "stderr: {}",
+        stderr_of(&output)
+    );
+    assert!(
+        !dest.exists()
+            || std::fs::read_dir(&dest)
+                .map(|mut d| d.next().is_none())
+                .unwrap_or(true),
+        "the check must abort before any copying, not partway through"
+    );
+}
+
+/// F65 black-box test: `--skip-space-check` bypasses the check above entirely, even with the same
+/// enormous margin that would otherwise abort the run.
+#[test]
+fn skip_space_check_bypasses_an_enormous_margin() {
+    let source = fixture_tree(&[("a.csv", 10)]);
+    let workdir = tempfile::tempdir().expect("workdir");
+    let dest = workdir.path().join("out");
+
+    let output = run(&[
+        "--source",
+        source.path().to_str().expect("utf8"),
+        "--dest",
+        dest.to_str().expect("utf8"),
+        "--log-path",
+        workdir.path().join("ingest.log").to_str().expect("utf8"),
+        "--report-path",
+        workdir.path().join("report.json").to_str().expect("utf8"),
+        "--space-safety-margin-percent",
+        "4000000000",
+        "--skip-space-check",
+    ]);
+
+    assert_ne!(
+        output.status.code(),
+        Some(6),
+        "--skip-space-check must bypass the free-space check entirely; stderr: {}",
+        stderr_of(&output)
+    );
+}
+
+/// F65 black-box test: `--no-prescan` has no byte total to check a requirement against — the
+/// combination must warn and proceed, not fail, even with a margin that would otherwise abort.
+#[test]
+fn no_prescan_skips_the_space_check_with_a_warning_instead_of_failing() {
+    let source = fixture_tree(&[("a.csv", 10)]);
+    let workdir = tempfile::tempdir().expect("workdir");
+    let dest = workdir.path().join("out");
+
+    let output = run(&[
+        "--source",
+        source.path().to_str().expect("utf8"),
+        "--dest",
+        dest.to_str().expect("utf8"),
+        "--log-path",
+        workdir.path().join("ingest.log").to_str().expect("utf8"),
+        "--report-path",
+        workdir.path().join("report.json").to_str().expect("utf8"),
+        "--no-prescan",
+        "--space-safety-margin-percent",
+        "4000000000",
+    ]);
+
+    assert_ne!(
+        output.status.code(),
+        Some(6),
+        "--no-prescan must not fail the space check it cannot make; stderr: {}",
         stderr_of(&output)
     );
 }

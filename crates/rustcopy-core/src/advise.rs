@@ -198,10 +198,13 @@ fn schedule_advice(transfers: &[&RunRecord]) -> Vec<Advice> {
     }
 
     let mut durations: Vec<f64> = transfers.iter().map(|r| r.elapsed_seconds).collect();
-    durations.sort_by(|a, b| a.partial_cmp(b).unwrap());
+    durations.sort_by(cmp_sample);
 
     let p50 = percentile(&durations, 0.50);
     let p95 = percentile(&durations, 0.95);
+    // `transfers.len() >= MIN_RUNS_FOR_TIMING` is checked at the top of this function, so
+    // `durations` (one entry per transfer) is never empty here.
+    #[allow(clippy::expect_used)]
     let worst = *durations.last().expect("non-empty, checked above");
 
     // The safe repeat interval is the worst observed run plus headroom: a schedule that fires
@@ -279,12 +282,12 @@ fn retention_advice(transfers: &[&RunRecord]) -> Vec<Advice> {
     }
 
     let mut sorted = rates.clone();
-    sorted.sort_by(|a, b| a.partial_cmp(b).unwrap());
+    sorted.sort_by(cmp_sample);
     let median_rate = percentile(&sorted, 0.50);
 
     let median_total_bytes = {
         let mut bytes: Vec<f64> = generational.iter().map(|r| r.total_bytes as f64).collect();
-        bytes.sort_by(|a, b| a.partial_cmp(b).unwrap());
+        bytes.sort_by(cmp_sample);
         percentile(&bytes, 0.50)
     };
 
@@ -360,13 +363,16 @@ fn threads_advice(transfers: &[&RunRecord]) -> Vec<Advice> {
     }
 
     if by_threads.len() < 2 {
+        // `by_threads` is grouped from `moved`, already checked non-empty
+        // (`moved.len() < MIN_RUNS_FOR_TIMING` returns above) — at least one group exists.
+        #[allow(clippy::expect_used)]
         let (threads, samples) = by_threads
             .iter()
             .next()
             .expect("non-empty, transfers checked above");
         let cpus = moved[0].logical_cpus;
         let mut sorted = samples.clone();
-        sorted.sort_by(|a, b| a.partial_cmp(b).unwrap());
+        sorted.sort_by(cmp_sample);
         return vec![Advice::new(
             Topic::Threads,
             Severity::Info,
@@ -384,12 +390,12 @@ fn threads_advice(transfers: &[&RunRecord]) -> Vec<Advice> {
     let mut ranked: Vec<(u16, f64, usize)> = by_threads
         .into_iter()
         .map(|(threads, mut samples)| {
-            samples.sort_by(|a, b| a.partial_cmp(b).unwrap());
+            samples.sort_by(cmp_sample);
             let count = samples.len();
             (threads, percentile(&samples, 0.50), count)
         })
         .collect();
-    ranked.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap());
+    ranked.sort_by(|a, b| cmp_sample(&b.1, &a.1));
 
     let (best_threads, best_median, best_count) = ranked[0];
     let evidence: Vec<String> = ranked
@@ -420,6 +426,8 @@ fn anomaly_advice(transfers: &[&RunRecord]) -> Vec<Advice> {
         return Vec::new();
     }
 
+    // `transfers.len() < MIN_RUNS_FOR_ANOMALY` returns above, so `transfers` is never empty here.
+    #[allow(clippy::expect_used)]
     let (latest, past) = transfers.split_last().expect("checked non-empty");
     let mut out = Vec::new();
 
@@ -454,7 +462,7 @@ fn anomaly_advice(transfers: &[&RunRecord]) -> Vec<Advice> {
         // Second gate: the difference must also be large in relative terms. See
         // MIN_RELATIVE_DEVIATION for the run that made this necessary.
         let mut ordered = sample.clone();
-        ordered.sort_by(|a, b| a.partial_cmp(b).unwrap());
+        ordered.sort_by(cmp_sample);
         let median = percentile(&ordered, 0.50);
         let relative = if median.abs() > f64::EPSILON {
             (value - median).abs() / median.abs()
@@ -467,7 +475,7 @@ fn anomaly_advice(transfers: &[&RunRecord]) -> Vec<Advice> {
         let direction = if score > 0.0 { "sopra" } else { "sotto" };
         let concerning = (score > 0.0) == higher_is_worse;
         let mut sorted = sample.clone();
-        sorted.sort_by(|a, b| a.partial_cmp(b).unwrap());
+        sorted.sort_by(cmp_sample);
 
         out.push(Advice::new(
             Topic::Anomaly,
@@ -539,6 +547,17 @@ fn integrity_advice(transfers: &[&RunRecord]) -> Vec<Advice> {
     )]
 }
 
+/// Total ordering for the `f64` samples this module sorts before computing a percentile —
+/// durations, throughput rates, byte counts. None of those can be NaN (they come from elapsed
+/// time, a computed rate, or a byte count, never from a division that could produce one), so this
+/// panics only if that assumption stops holding, and says so by name instead of a bare `unwrap()`
+/// at each of the ten call sites this used to be.
+#[allow(clippy::expect_used)]
+fn cmp_sample(a: &f64, b: &f64) -> std::cmp::Ordering {
+    a.partial_cmp(b)
+        .expect("advise.rs sample is NaN — see cmp_sample's doc comment")
+}
+
 /// Linear-interpolated percentile over an already-sorted slice.
 fn percentile(sorted: &[f64], p: f64) -> f64 {
     if sorted.is_empty() {
@@ -570,11 +589,11 @@ fn modified_z_score(value: f64, sample: &[f64]) -> Option<f64> {
         return None;
     }
     let mut sorted = sample.to_vec();
-    sorted.sort_by(|a, b| a.partial_cmp(b).unwrap());
+    sorted.sort_by(cmp_sample);
     let median = percentile(&sorted, 0.50);
 
     let mut deviations: Vec<f64> = sample.iter().map(|v| (v - median).abs()).collect();
-    deviations.sort_by(|a, b| a.partial_cmp(b).unwrap());
+    deviations.sort_by(cmp_sample);
     let mad = percentile(&deviations, 0.50);
 
     if mad <= f64::EPSILON {

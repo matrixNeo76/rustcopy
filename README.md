@@ -6,6 +6,9 @@ status: stable
 generated:
   by: process:claude-code
   at: 2026-08-06T00:00:00Z
+verified:
+  by: process:claude-code
+  at: 2026-09-14T00:00:00Z
 ---
 
 <p align="center">
@@ -17,7 +20,7 @@ generated:
 [![CI](https://github.com/matrixNeo76/rustcopy/actions/workflows/ci.yml/badge.svg)](https://github.com/matrixNeo76/rustcopy/actions/workflows/ci.yml)
 [![Audit di sicurezza](https://github.com/matrixNeo76/rustcopy/actions/workflows/security-audit.yml/badge.svg)](https://github.com/matrixNeo76/rustcopy/actions/workflows/security-audit.yml)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
-[![Crate version](https://img.shields.io/badge/version-6.0.0-informational.svg)](Cargo.toml)
+[![Crate version](https://img.shields.io/badge/version-7.8.0-informational.svg)](Cargo.toml)
 
 **Backup e ingestion di grandi volumi di dati su Windows, con verifica di integrità.** `rustcopy`
 avvolge `robocopy.exe` in un binario Rust che ne risolve i limiti pratici sui dataset enormi —
@@ -49,9 +52,16 @@ Log file   : E:\backup\ingest.log
 > (`--html-report-path`).
 >
 > Dalla milestone **7.0.0** esiste anche una **console desktop** (Tauri, componente opzionale
-> dell'installer): mostra job, impostazioni risolte e storico, e prepara proposte di configurazione
-> in file nuovi. **Non esegue backup, non copia e non cancella nulla**, e non tocca mai la
-> configurazione in uso — vedi [ROADMAP.md](ROADMAP.md) e `PIANO_GUI_TAURI.md`.
+> dell'installer): mostra job, impostazioni risolte e storico, avvia backup avviando la stessa CLI
+> come processo separato, e prepara proposte di configurazione in file nuovi. Non installa servizi
+> né pianificazioni, non forza un mirror non presidiato, e non tocca mai la configurazione in uso —
+> vedi [ROADMAP.md](ROADMAP.md) e [`PIANO_GUI.md`](PIANO_GUI.md).
+>
+> Dal 10 Settembre 2026 esiste anche `crates/rustcopy-shell` (F85): un'estensione Shell che
+> propone "Copia con RustCopy" sul menu di conferma del drag & drop di Explorer (solo cartelle,
+> solo tasto destro o fra unità diverse) e avvia la console con la copia già in corso. Dall'11
+> Settembre 2026 è anche un componente dell'installer (`gui\shell`, richiede la console), vedi la
+> riga F85 di [ROADMAP.md](ROADMAP.md).
 
 ---
 
@@ -79,10 +89,10 @@ Log file   : E:\backup\ingest.log
 cargo build --release -p rustcopy-cli --features notify-server
 ```
 
-Due requisiti verificati sul binario compilato:
+Requisiti verificati sul binario compilato:
 
-- **Visual C++ Redistributable x64** (Microsoft, gratuito) — il binario `windows-msvc` importa
-  `VCRUNTIME140.dll`, che non è presente in un'installazione Windows pulita. Senza, non parte.
+- **Windows 10 / Windows Server 2016 o successivo.** Dalla 7.7.0 il runtime C è collegato in modo
+  statico: il Visual C++ Redistributable **non** serve più.
 - **`robocopy.exe` di sistema**, presente su ogni Windows da Vista in poi: non serve installarlo,
   ma il tool non lo include.
 
@@ -147,8 +157,8 @@ I flag essenziali per l'uso quotidiano:
 ## 🧪 Sviluppo
 
 ```bash
-cargo test --workspace --exclude rustcopy-gui                                   # 422 test
-cargo test --workspace --exclude rustcopy-gui --features rustcopy-cli/notify-server  # 437 test
+cargo test --locked --workspace --exclude rustcopy-gui --exclude rustcopy-shell --all-targets                                   # 521 test
+cargo test --locked --workspace --exclude rustcopy-gui --exclude rustcopy-shell --all-targets --features rustcopy-cli/notify-server  # 536 test
 ```
 
 CI su Windows e Linux, `clippy -D warnings` e `cargo fmt --check` su entrambe le configurazioni di

@@ -6,7 +6,7 @@
 //! arguments, calls one function, and maps the error to a string the frontend can display. No
 //! command decides anything — not whether a purge is safe, not what an exit code means, not
 //! whether a mismatch is transient. That judgement lives in the library and is tested there
-//! (`PIANO_GUI_TAURI.md` §4.1).
+//! (`docs/archive/PIANO_GUI_TAURI.md` §4.1).
 //!
 //! If a command in this file ever grows a branch on backup semantics, the branch belongs in
 //! `rustcopy-core` instead.
@@ -28,6 +28,9 @@
 //! [`stop_job`] writes the file the run watches rather than killing the process, because the CLI's
 //! stop path writes the checkpoint `--resume-from` reads and terminating it would skip exactly
 //! that.
+//!
+//! [`prepare_copy`] (F95) also writes, but only a throwaway configuration in the temp directory --
+//! the same file Explorer's drag-and-drop writes -- never anything the operator owns.
 //!
 //! Every command reads, with **one** exception: [`write_proposal`] (F54) writes a proposed
 //! configuration to a new file. It cannot overwrite, cannot enable mirroring or retention, and
@@ -61,10 +64,13 @@ compile_error!(
     "a release build without the `custom-protocol` feature loads devUrl instead of the embedded frontend; build with default features"
 );
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use robocopy_ingest::advise::Advice;
-use robocopy_ingest::gui_api::{self, HistoryView, JobSettings, JobSummary, ReportView};
+use robocopy_ingest::example_workspace;
+use robocopy_ingest::gui_api::{
+    self, HistoryView, JobSettings, JobSummary, PathInspection, ReportView,
+};
 use robocopy_ingest::job_editor::{self, JobDraft};
 
 /// Runs a blocking library call off the IPC thread.
@@ -82,6 +88,36 @@ where
         .await
         .map_err(|error| format!("the task panicked: {error}"))?
         .map_err(|error| error.to_string())
+}
+
+/// F73: checks a Sorgente/Destinazione path on demand -- existence plus, for an existing
+/// directory, file/folder counts and total size. A manual button press, never triggered on every
+/// keystroke: see [`gui_api::inspect_path`] for why (a real profile in this project takes minutes
+/// to walk in full).
+///
+/// `config_path` anchors a relative `path` against the configuration's own directory, same as
+/// [`list_jobs`]/[`start_job`] -- found necessary the first time this was clicked live: `path` is
+/// checked in this process, which has no reason to share the config's directory as its own
+/// working directory.
+#[tauri::command]
+async fn inspect_path(path: String, config_path: String) -> Result<PathInspection, String> {
+    off_thread(move || {
+        let anchor = PathBuf::from(&config_path);
+        let anchor = anchor.parent().unwrap_or(Path::new("."));
+        gui_api::inspect_path(&PathBuf::from(path), anchor)
+    })
+    .await
+}
+
+/// F74/F75: the real value an empty Thread field resolves to on this machine
+/// (`gui_api::default_threads`, wrapping `cli::default_threads`) -- found necessary by CodeRabbit
+/// after the field's placeholder first shipped reading `navigator.hardwareConcurrency` directly,
+/// which the WebView's own Chromium engine can clamp for fingerprinting protection and so is not
+/// guaranteed to match. No blocking I/O, so no `off_thread`: a pure lookup, like F81's
+/// `exit_code_meaning`.
+#[tauri::command]
+fn default_threads() -> u16 {
+    gui_api::default_threads()
 }
 
 /// Lists the jobs a TOML config declares.
@@ -117,6 +153,93 @@ async fn read_report_page(path: String, offset: usize, limit: usize) -> Result<R
     off_thread(move || gui_api::read_report_page(&PathBuf::from(path), offset, limit)).await
 }
 
+/// Previews what `--restore-from report_path` would do, without ever performing it (F64, the
+/// first building block of the guided restore flow — `PIANO_GUI.md` §5b/§8).
+///
+/// `config_path` is the configuration currently loaded elsewhere in the console (shared session
+/// state, empty if none) — **not** where this report lives on disk. See the D26 note below for
+/// why the distinction matters.
+///
+/// Not an exception to this file's own rule any more than [`start_job`] is: the argument list
+/// comes from `runner::restore_preview_arguments`, a fixed shape tested there to never carry a
+/// destructive flag, with `--dry-run` guaranteeing nothing is copied and its own scratch
+/// `--report-path` guaranteeing it can never overwrite a real run's report. This command spawns
+/// that exact invocation, waits for it, reads the resulting report, and deletes the scratch file
+/// — it decides nothing about what a restore means, only that it ran and what it said.
+#[tauri::command]
+async fn preview_restore(report_path: String, config_path: String) -> Result<ReportView, String> {
+    off_thread(move || {
+        let exe = std::env::current_exe().map_err(|source| {
+            robocopy_ingest::errors::IngestError::SpawnFailed {
+                program: "<current executable>".to_string(),
+                source,
+            }
+        })?;
+        let cli = robocopy_ingest::runner::cli_beside(&exe)?;
+        let report = std::path::absolute(PathBuf::from(&report_path)).map_err(|source| {
+            robocopy_ingest::errors::IngestError::io(std::path::Path::new(&report_path), source)
+        })?;
+        let preview_report_path = robocopy_ingest::runner::restore_preview_report_path()?;
+        let args =
+            robocopy_ingest::runner::restore_preview_arguments(&report, &preview_report_path);
+
+        let mut command = std::process::Command::new(&cli);
+        command.args(&args).stdin(std::process::Stdio::null());
+        // D26 (found 6 Set 2026, first fix attempt wrong, corrected same day): a report's
+        // source/dest are stored exactly as the original run's `Args` held them
+        // (`report.rs::IngestReport::new`, verbatim from `args.source()`/`args.dest()`, never
+        // canonicalized) — commonly relative, resolved by the ORIGINAL run against the
+        // *configuration's* directory, the same convention `run_arguments`'s call site below
+        // uses. The report's own on-disk location is a different directory whenever
+        // `--report-path` nests it under the destination (the default for `demo-locale.toml`:
+        // `demo-out/report.json` lives one level *inside* the config's directory) — using
+        // `report.parent()` looks plausible but resolves one level too deep, which still failed
+        // this exact case on the first attempt. `config_path` is the console's own best-effort
+        // link between "the report on screen" and "the configuration that produced it" (true
+        // whenever the operator got here via "Apri il report di questa run", the documented
+        // path); left empty otherwise, in which case this matches today's behaviour rather than
+        // guess at a directory with no better basis than `report.parent()` already proved to be.
+        if !config_path.is_empty() {
+            if let Ok(config) = std::path::absolute(PathBuf::from(&config_path)) {
+                if let Some(parent) = config.parent().filter(|p| !p.as_os_str().is_empty()) {
+                    command.current_dir(parent);
+                }
+            }
+        }
+        // Same reasoning as `start_job`: a console-subsystem binary launched from a windowed
+        // process otherwise gets a fresh console Windows flashes on screen.
+        #[cfg(windows)]
+        {
+            use std::os::windows::process::CommandExt;
+            const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+            command.creation_flags(CREATE_NO_WINDOW);
+        }
+        let output = command.output().map_err(|source| {
+            robocopy_ingest::errors::IngestError::SpawnFailed {
+                program: cli.display().to_string(),
+                source,
+            }
+        })?;
+
+        let result = gui_api::read_report(&preview_report_path);
+        // Best-effort: this is scratch, not a report meant to persist, but a failed cleanup must
+        // never mask whether the preview itself succeeded.
+        let _ = std::fs::remove_file(&preview_report_path);
+
+        result.map_err(|error| {
+            if output.status.success() {
+                error
+            } else {
+                robocopy_ingest::errors::IngestError::RestorePreviewFailed {
+                    code: output.status.code(),
+                    stderr: String::from_utf8_lossy(&output.stderr).trim().to_string(),
+                }
+            }
+        })
+    })
+    .await
+}
+
 /// Reads the run history stored beside `report_path`.
 ///
 /// `limit` is clamped by the library, like the error pages: the boundary rule belongs where it is
@@ -142,12 +265,69 @@ async fn read_advice(report_path: String, job_name: Option<String>) -> Result<Ve
     off_thread(move || gui_api::read_advice(&PathBuf::from(report_path), job_name.as_deref())).await
 }
 
+/// What an exit code means -- `runner::exit_code_meaning` is the one place this crate is allowed
+/// to decide that (module header above). `Run.svelte` already reads this from live `RunStatus`;
+/// F81 gives `History.svelte` the same source instead of a second, hand-maintained copy of the
+/// exit-code table. No blocking I/O, so no `off_thread`: this is a pure lookup, unlike every other
+/// command in this file.
+#[tauri::command]
+fn exit_code_meaning(code: u8) -> String {
+    robocopy_ingest::runner::exit_code_meaning(code).to_string()
+}
+
 /// Task names (Windows Task Scheduler) whose command line already references this configuration
 /// file — read-only, informational. Answers "would starting this by hand duplicate a schedule
 /// that already exists", never installs or removes anything.
 #[tauri::command]
 async fn schedules_referencing(config_path: String) -> Result<Vec<String>, String> {
     off_thread(move || gui_api::schedules_referencing(&PathBuf::from(config_path))).await
+}
+
+/// Checkpoints found beside `config_path` (Onda 3, F31's GUI half). Directory, not file: a
+/// checkpoint is named from a *report* path, which can be namespaced per job or carry a
+/// `{timestamp}` placeholder — scanning what is actually on disk sidesteps recomputing that
+/// resolution here (`gui_api::list_checkpoints`'s own doc comment has the full reasoning). Takes
+/// the config's directory as the scan root because the console already runs a job's own process
+/// with that directory as its working directory, so a job's relative `--report-path` (and the
+/// checkpoint beside it) lands there.
+#[tauri::command]
+async fn list_checkpoints(config_path: String) -> Result<Vec<gui_api::CheckpointSummary>, String> {
+    off_thread(move || {
+        let config = PathBuf::from(config_path);
+        let dir = config.parent().unwrap_or(std::path::Path::new("."));
+        gui_api::list_checkpoints(dir)
+    })
+    .await
+}
+
+/// Stores a secret in the Windows Credential Manager (Onda 2, F56's GUI half). `secret` travels
+/// only through Tauri's IPC channel — the frontend never builds a command line with it.
+#[tauri::command]
+async fn set_credential(name: String, secret: String) -> Result<(), String> {
+    off_thread(move || gui_api::set_credential(&name, &secret)).await
+}
+
+/// Removes a secret from the Windows Credential Manager.
+#[tauri::command]
+async fn delete_credential(name: String) -> Result<(), String> {
+    off_thread(move || gui_api::delete_credential(&name)).await
+}
+
+/// Generates a working example (F79) under `Documenti\rustcopy-demo` and returns the TOML's path.
+///
+/// The one part of this command that is not a thin wrapper: resolving the real "Documents" folder
+/// is inherently a desktop-environment concern, not a backup one, so it stays here rather than
+/// pulling a `dirs` dependency into `rustcopy-core` for a CLI that never needs to know what
+/// "Documents" means. Everything that actually writes lives in
+/// `robocopy_ingest::example_workspace`, tested there with a tempdir standing in for this path.
+#[tauri::command]
+async fn create_example_workspace() -> Result<String, String> {
+    let documents = dirs::document_dir()
+        .ok_or_else(|| "impossibile trovare la cartella Documenti".to_string())?;
+    let target = documents.join("rustcopy-demo");
+    off_thread(move || example_workspace::create_example_workspace(&target))
+        .await
+        .map(|path| path.display().to_string())
 }
 
 /// Reads every job of a config file as an editable draft (F54).
@@ -206,11 +386,14 @@ struct RunStatus {
     /// the file: absent means "not running", which is a signal that needs no reasoning about
     /// staleness.
     progress: Option<robocopy_ingest::progress_file::ProgressSample>,
-    /// The tail of what the run printed, shown when it fails.
+    /// The tail of what the run has printed so far — live while it runs, and its final lines once
+    /// it ends.
     ///
-    /// A tail rather than the whole file: a run that failed after copying for an hour can have
-    /// produced a lot of output, and the operator needs the end of it — where the error is — not
-    /// a transcript that has to cross the IPC boundary whole.
+    /// A tail rather than the whole file: a run that copies for an hour can have produced a lot of
+    /// output, and the operator needs the last of it — where robocopy's own per-file lines or an
+    /// error are — not a transcript that has to cross the IPC boundary whole. While running this is
+    /// the only place those per-file lines reach the window at all; `Run.svelte` renders it inside a
+    /// disclosure the operator opens by choice, not forced open mid-run.
     output_tail: Option<String>,
     /// What that phase is, in words. Decided in the core: which phase a run is in is a fact about
     /// the backup, and naming it is not a rendering choice.
@@ -234,6 +417,28 @@ struct ActiveRun {
 }
 
 type RunState = std::sync::Mutex<ActiveRun>;
+
+/// F95: turns the "Copia" tab's choice (folders + a destination) into a throwaway configuration
+/// file and returns its path; the tab then starts it with [`start_job`], exactly like any other
+/// configuration.
+///
+/// A thin wrapper, like every command here: the planning and its refusals (a folder copied into
+/// itself, a whole drive, two folders with the same name) are `runner::plan_copy`, and the file is
+/// `runner::write_shell_drop_config` -- the one Explorer's drag-and-drop uses -- so a copy started
+/// here and one dropped in Explorer are the same job. The file goes to the temp directory next to
+/// the stop and progress files. Nothing here can request mirror, purge or verification: those
+/// fields are not parameters, and `write_shell_drop_config` leaves them at their defaults.
+#[tauri::command]
+async fn prepare_copy(sources: Vec<String>, dest: String) -> Result<String, String> {
+    off_thread(move || {
+        let sources: Vec<PathBuf> = sources.into_iter().map(PathBuf::from).collect();
+        let items = robocopy_ingest::runner::plan_copy(&sources, Path::new(&dest))?;
+        let config_path = robocopy_ingest::runner::shell_drop_config_path()?;
+        robocopy_ingest::runner::write_shell_drop_config(&items, &config_path)?;
+        Ok(config_path.to_string_lossy().into_owned())
+    })
+    .await
+}
 
 /// Starts one configuration file as a child process.
 ///
@@ -344,6 +549,94 @@ async fn start_job(
     })
 }
 
+/// Resumes one interrupted run from a checkpoint (Onda 3, F31's GUI half — `PIANO_GUI.md`).
+///
+/// Mirrors [`start_job`] almost exactly — same lock discipline, same captured output, same
+/// `CREATE_NO_WINDOW`, same "one run per window" rule — except the argument list comes from
+/// `runner::resume_arguments` (`--resume-from`, never `--config`) and `active.config_path` becomes
+/// the checkpoint's own path rather than a configuration file's. Nothing downstream needs to know
+/// the difference: `stop_job`/`run_status` already treat "the one active run" generically, and a
+/// resumed run is always single-job (`main.rs`'s `--resume-from` branch never reaches `run_jobs`),
+/// so the batch-queue view in `Run.svelte` simply never applies here.
+#[tauri::command]
+async fn resume_job(
+    checkpoint_path: String,
+    state: tauri::State<'_, RunState>,
+) -> Result<RunStatus, String> {
+    let mut active = state.lock().map_err(|_| "run state poisoned".to_string())?;
+
+    if let Some(child) = active.child.as_mut() {
+        match child.try_wait() {
+            Ok(Some(status)) => active.last_exit = status.code(),
+            Ok(None) => return Err("un backup è già in corso in questa finestra".to_string()),
+            Err(error) => return Err(format!("cannot check the running job: {error}")),
+        }
+    }
+
+    let exe = std::env::current_exe().map_err(|error| error.to_string())?;
+    let cli = robocopy_ingest::runner::cli_beside(&exe).map_err(|error| error.to_string())?;
+
+    // Same reasoning as `start_job`: absolute before the child changes its own working directory,
+    // so a relative checkpoint path is not resolved against itself.
+    let checkpoint = std::path::absolute(PathBuf::from(&checkpoint_path))
+        .map_err(|error| format!("cannot resolve {checkpoint_path}: {error}"))?;
+    let cancel = robocopy_ingest::runner::cancel_file_for_now(&checkpoint)
+        .map_err(|error| error.to_string())?;
+    let _ = std::fs::remove_file(&cancel);
+
+    let args = robocopy_ingest::runner::resume_arguments(&checkpoint, &cancel);
+
+    let output_path = robocopy_ingest::runner::output_file_for(&cancel);
+    let capture = std::fs::File::create(&output_path)
+        .map_err(|error| format!("cannot capture the run's output: {error}"))?;
+    let capture_err = capture
+        .try_clone()
+        .map_err(|error| format!("cannot capture the run's output: {error}"))?;
+
+    let mut command = std::process::Command::new(&cli);
+    command
+        .args(&args)
+        .stdin(std::process::Stdio::null())
+        .stdout(std::process::Stdio::from(capture))
+        .stderr(std::process::Stdio::from(capture_err));
+
+    // Same convention as `start_job`: relative paths inside the resumed job's own configuration
+    // (carried in the checkpoint, not on this command line) resolve against the checkpoint's
+    // directory, which is where the interrupted run's report/log/checkpoint files already live.
+    if let Some(parent) = checkpoint.parent().filter(|p| !p.as_os_str().is_empty()) {
+        command.current_dir(parent);
+    }
+
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt;
+        const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+        command.creation_flags(CREATE_NO_WINDOW);
+    }
+
+    let child = command
+        .spawn()
+        .map_err(|error| format!("cannot start {}: {error}", cli.display()))?;
+
+    active.child = Some(child);
+    active.config_path = checkpoint_path;
+    active.cancel_file = Some(cancel);
+    active.stopping = false;
+    active.last_exit = None;
+    active.last_output = None;
+
+    Ok(RunStatus {
+        running: true,
+        config_path: active.config_path.clone(),
+        exit_code: None,
+        meaning: None,
+        stopping: false,
+        progress: None,
+        phase_label: None,
+        output_tail: None,
+    })
+}
+
 /// Asks the run to stop, by creating the file it watches.
 ///
 /// Not by killing it. The CLI's stop path writes a checkpoint that `--resume-from` can read, and
@@ -403,19 +696,35 @@ async fn run_status(state: tauri::State<'_, RunState>) -> Result<RunStatus, Stri
                 }
             }
             Ok(None) => {
-                let progress = read_progress(active.cancel_file.as_deref());
+                let cancel_file = active.cancel_file.clone();
+                let config_path = active.config_path.clone();
+                let stopping = active.stopping;
+                // Snapshot the little state this branch needs, then drop the lock before any file
+                // I/O below: `read_progress`/`read_output_tail` must never run while this mutex is
+                // held, or `stop_job` (which needs the same lock) stalls behind whatever a slow
+                // disk is doing — a network destination is this app's normal use case, not a corner
+                // case (CodeRabbit finding on this PR: `read_output_tail` went from running once, at
+                // the end of a run, to running on every ~1s poll tick while one is in progress).
+                drop(active);
+
+                let progress = read_progress(cancel_file.as_deref());
                 return Ok(RunStatus {
                     running: true,
-                    config_path: active.config_path.clone(),
+                    config_path,
                     exit_code: None,
                     meaning: None,
-                    stopping: active.stopping,
+                    stopping,
                     // `phase_label()` (not `phase.describe()` alone) so a job running inside a
                     // batch says which one it is — composed in the core, not here, same as every
                     // other judgement about what a sample means (this file's own doc comment).
                     phase_label: progress.as_ref().map(|sample| sample.phase_label()),
                     progress,
-                    output_tail: None,
+                    // Live, not just on failure (see the struct doc comment): the child's stdout is
+                    // already captured on disk as it writes, so reading its tail here costs one seek
+                    // over 16 KB per poll — nothing a run mid-flight cannot afford — and it is the
+                    // only place robocopy's own per-file lines (no `/NFL`, see engine::robocopy) ever
+                    // reach the window before the run ends.
+                    output_tail: read_output_tail(cancel_file.as_deref()),
                 });
             }
             Err(error) => return Err(format!("cannot check the running job: {error}")),
@@ -493,32 +802,123 @@ fn read_progress(
     robocopy_ingest::progress_file::ProgressSample::read_from(&path)
 }
 
+/// The `--auto-config <path>` value this process was launched with, captured once in `main`
+/// before `.run()` -- `std::env::args()` reflects the real invocation only at process start, so
+/// capturing it once here (rather than re-reading argv on every call) keeps that fact explicit.
+/// `Mutex`, not `OnceLock<Option<String>>` alone: [`initial_auto_config`] consumes it with
+/// `.take()`, so a second call (a stray double `onMount` in dev/hot-reload, or a future second
+/// window) returns `None` rather than starting the same job twice -- same one-shot-consumption
+/// shape as `active.cancel_file.take()` in `run_status` above.
+static INITIAL_AUTO_CONFIG: std::sync::Mutex<Option<String>> = std::sync::Mutex::new(None);
+
+/// Pulls `--auto-config <path>` out of an argument list, if present. Pure and independent of
+/// `std::env::args()` so it is testable without actually launching a process with different
+/// arguments -- the one thing every other command in this file already reuses `off_thread`/
+/// `gui_api` to keep testable without a real WebView, applied here to argv parsing instead.
+fn parse_auto_config_arg(args: impl Iterator<Item = String>) -> Option<String> {
+    let args: Vec<String> = args.collect();
+    args.iter()
+        .position(|arg| arg == "--auto-config")
+        .and_then(|index| args.get(index + 1))
+        .cloned()
+}
+
+/// The config path this window was launched to run immediately, if any -- set by
+/// `rustcopy-shell`'s drag-and-drop handler (`tidy-sniffing-river.md`, Milestone 3) via
+/// `--auto-config`, so a drop lands the operator on a running job with visible progress instead
+/// of a silent background process. `None` for every ordinary launch (Start Menu, a shortcut,
+/// `cargo run`) and for every call after the first. `Run.svelte`'s own `onMount` reads this once,
+/// then calls `inspect()` (populates `jobs`, without which this pane renders nothing but the
+/// empty state) followed by `start()` -- found live, 10 Set 2026: starting the run alone, without
+/// also populating `jobs`, left the window showing "Scegli un file di configurazione" the whole
+/// time regardless of a real copy already running underneath it.
+#[tauri::command]
+fn initial_auto_config() -> Option<String> {
+    // No other code path touches this lock while holding it across a panic, so poisoning is not
+    // expected in practice -- but this command's whole purpose is a convenience handoff, not
+    // something worth crashing the console over. `.ok()` treats a poisoned lock the same as "no
+    // auto-config", the same fallback an ordinary launch already gets.
+    INITIAL_AUTO_CONFIG
+        .lock()
+        .ok()
+        .and_then(|mut guard| guard.take())
+}
+
+// Tauri's own idiomatic entry point: `run` only returns `Err` for a launch failure (no
+// WebView2, corrupt bundle) that leaves nothing else to do but report it and exit.
+#[allow(clippy::expect_used)]
 fn main() {
+    // Captured before the Tauri runtime starts, once, for the reason `INITIAL_AUTO_CONFIG`'s own
+    // doc comment gives.
+    *INITIAL_AUTO_CONFIG.lock().expect("lock poisoned") = parse_auto_config_arg(std::env::args());
+
     tauri::Builder::default()
         .manage(RunState::default())
         // Native pickers. The plugin reads nothing and writes nothing on its own: it returns the
         // path a person selected, which is strictly less error-prone than the text box it
         // replaces.
         .plugin(tauri_plugin_dialog::init())
-        // Completion toast (Onda 1, PIANO_GUI_ESPANSIONE.md): the frontend calls it directly from
+        // Completion toast (Onda 1, PIANO_GUI.md): the frontend calls it directly from
         // Run.svelte on the running->finished transition it already detects while polling
         // `run_status`, so no new command is needed here.
         .plugin(tauri_plugin_notification::init())
         .invoke_handler(tauri::generate_handler![
+            initial_auto_config,
+            inspect_path,
+            default_threads,
             list_jobs,
             read_settings,
             read_report,
             read_report_page,
             read_history,
             read_advice,
+            exit_code_meaning,
             schedules_referencing,
+            set_credential,
+            delete_credential,
+            create_example_workspace,
             read_job_drafts,
             suggest_proposal_path,
             write_proposal,
+            prepare_copy,
             start_job,
             stop_job,
-            run_status
+            run_status,
+            list_checkpoints,
+            resume_job,
+            preview_restore
         ])
         .run(tauri::generate_context!())
         .expect("error while running the rustcopy console");
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn parse_auto_config_arg_finds_the_value_after_the_flag() {
+        let args = ["rustcopy-gui.exe", "--auto-config", "C:\\temp\\drop.toml"]
+            .into_iter()
+            .map(String::from);
+        assert_eq!(
+            parse_auto_config_arg(args),
+            Some("C:\\temp\\drop.toml".to_string())
+        );
+    }
+
+    #[test]
+    fn parse_auto_config_arg_is_none_for_an_ordinary_launch() {
+        let args = ["rustcopy-gui.exe"].into_iter().map(String::from);
+        assert_eq!(parse_auto_config_arg(args), None);
+    }
+
+    /// A flag with nothing after it must not panic or read past the end of argv.
+    #[test]
+    fn parse_auto_config_arg_is_none_when_the_flag_is_the_last_argument() {
+        let args = ["rustcopy-gui.exe", "--auto-config"]
+            .into_iter()
+            .map(String::from);
+        assert_eq!(parse_auto_config_arg(args), None);
+    }
 }

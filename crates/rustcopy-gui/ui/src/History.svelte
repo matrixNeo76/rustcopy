@@ -4,6 +4,9 @@
   import EmptyState from "./EmptyState.svelte";
   import { session } from "./session.svelte.js";
   import { toCsv, downloadCsv } from "./csv.js";
+  import Badge from "./Badge.svelte";
+  import { cliOutcomeVariant } from "./outcome.js";
+  import { Clock, CircleCheck, CircleX } from "@lucide/svelte";
 
   // Read-only, like the rest of this version: this pane opens files the CLI already wrote and
   // renders them. It never asks the engine to do anything.
@@ -18,6 +21,17 @@
   // fixed `limit: 100` above, not a further server-side page), so filtering it here drops nothing
   // the operator hasn't already been told about via the "le più recenti" label.
   let outcomeFilter = $state("all");
+  // F81: what an exit code means, fetched from the core (`runner::exit_code_meaning`) rather than
+  // a second, hand-maintained copy of the table -- keyed by code, filled in as `load()` discovers
+  // which codes actually appear in this history. Missing entries render as "…" briefly while the
+  // lookups for a freshly loaded history are still in flight.
+  let meaningByCode = $state({});
+  // F86 (CodeRabbit): this pane now loads both from a manual "Apri" click and from a Job row's
+  // "Storico" action, so two calls can overlap for the first time in a way that matters -- a
+  // slower reply for an earlier path/job landing after a faster one for a later choice would
+  // silently show the wrong history. Same generation-counter guard already used by Run.svelte's
+  // poll loop for the identical out-of-order hazard.
+  let loadGeneration = 0;
 
   const SEVERITY_ORDER = { ATTENZIONE: 0, PROPOSTA: 1, INFO: 2 };
 
@@ -31,6 +45,7 @@
   };
 
   async function load() {
+    const mine = ++loadGeneration;
     error = null;
     loading = true;
     // A filter left over from a different report/job would silently hide runs in the new one.
@@ -40,16 +55,45 @@
       // reading of it. Keeping them apart means a parse problem in one does not blank the other.
       // Empty means "the un-suffixed index", which is what a single-job run writes.
       const job = session.jobName.trim() === "" ? null : session.jobName.trim();
-      history = await invoke("read_history", { reportPath: session.reportPath, jobName: job, limit: 100 });
-      advice = await invoke("read_advice", { reportPath: session.reportPath, jobName: job });
+      // F81 fix (CodeRabbit, found on this PR): `history` used to be assigned straight from this
+      // call, before `meaningByCode` was filled in below -- between those two assignments the
+      // table (and an unguarded "Esporta CSV" click) could render/export "…" instead of the real
+      // meaning. Kept local until every lookup below has resolved, then assigned together.
+      const loadedHistory = await invoke("read_history", {
+        reportPath: session.reportPath,
+        jobName: job,
+        limit: 100,
+      });
+      const loadedAdvice = await invoke("read_advice", { reportPath: session.reportPath, jobName: job });
+      const codes = [...new Set((loadedHistory?.runs ?? []).map((run) => run.exit_code))];
+      const entries = await Promise.all(
+        codes.map(async (code) => [code, await invoke("exit_code_meaning", { code })]),
+      );
+      // A superseded request (a newer load() already started) never overwrites what that newer
+      // one already committed or is about to.
+      if (mine !== loadGeneration) return;
+      meaningByCode = Object.fromEntries(entries);
+      history = loadedHistory;
+      advice = loadedAdvice;
     } catch (e) {
+      if (mine !== loadGeneration) return;
       error = String(e);
       history = null;
       advice = [];
     } finally {
-      loading = false;
+      if (mine === loadGeneration) loading = false;
     }
   }
+
+  // F86: "Storico" from a Job row sets reportPath/jobName and this flag together, then switches
+  // here — same one-shot pattern as Report.svelte's pendingReportLoad, for the same reason
+  // (this pane stays mounted while hidden, so a live binding would over-trigger on manual typing).
+  $effect(() => {
+    if (session.pendingHistoryLoad) {
+      session.pendingHistoryLoad = false;
+      load();
+    }
+  });
 
   function duration(seconds) {
     if (seconds < 10) return `${seconds.toFixed(2)}s`;
@@ -59,16 +103,14 @@
     return h > 0 ? `${h}h ${String(m).padStart(2, "0")}m` : `${m}m ${String(total % 60).padStart(2, "0")}s`;
   }
 
-  // Exit codes are a contract with schedulers (AGENTS.md rule 12), so the console shows what each
-  // one means rather than colouring "non-zero" red. A 4 is not a failed copy.
-  const EXIT_MEANING = {
-    0: "riuscito",
-    1: "trasferimento fallito",
-    2: "errore d'uso",
-    3: "purge mirror annullata",
-    4: "copiato, verifica fallita",
-    5: "purge retention annullata",
-  };
+  // F81: exit codes are a contract with schedulers (AGENTS.md rule 12), so the console shows what
+  // each one means rather than colouring every non-zero code the same. What a code means is read
+  // from the core (`meaningByCode`, above), not a second copy of that table kept here -- the
+  // hand-maintained version this file used to carry drifted out of sync with a real exit code
+  // once (F65's `6`), which is exactly the failure mode a single source of truth prevents.
+  function meaningFor(code) {
+    return meaningByCode[code] ?? "…";
+  }
 
   const filteredRuns = $derived(
     history
@@ -86,7 +128,7 @@
     const rows = [...filteredRuns].reverse().map((run) => [
       new Date(run.timestamp).toISOString(),
       run.exit_code,
-      EXIT_MEANING[run.exit_code] ?? "sconosciuto",
+      meaningFor(run.exit_code),
       run.files_copied,
       run.total_files,
       run.elapsed_seconds.toFixed(2),
@@ -100,8 +142,8 @@
   <PathBar
     bind:value={session.reportPath}
     kind="report"
-    label="Percorso del report JSON"
-    placeholder="Scegli un report JSON (lo storico sta lì accanto)"
+    label="File con il risultato di un backup"
+    placeholder="Scegli il risultato di un backup (.json): lo storico sta lì accanto"
     action="Apri storico"
     busy={loading}
     onrun={load}
@@ -197,41 +239,51 @@
     {:else if filteredRuns.length === 0}
       <p class="mt-1 text-sm text-slate-500">Nessuna run corrisponde al filtro scelto.</p>
     {:else}
-      <table class="mt-1 w-full text-left text-xs">
-        <thead class="border-b border-slate-300 dark:border-slate-700">
-          <tr>
-            <th class="py-1 pr-3 font-medium">Quando</th>
-            <th class="py-1 pr-3 font-medium">Esito</th>
-            <th class="py-1 pr-3 font-medium">File</th>
-            <th class="py-1 pr-3 font-medium">Durata</th>
-            <th class="py-1 pr-3 font-medium">Throughput</th>
-          </tr>
-        </thead>
-        <tbody>
-          {#each [...filteredRuns].reverse() as run}
-            <tr class="border-b border-slate-200 dark:border-slate-800">
-              <td class="py-1 pr-3 font-mono">{new Date(run.timestamp).toLocaleString("it-IT")}</td>
-              <td class="py-1 pr-3">
-                <span
-                  class="rounded px-1 text-[10px] font-semibold
-                         {run.exit_code === 0
-                           ? 'bg-emerald-100 text-emerald-900 dark:bg-emerald-950 dark:text-emerald-200'
-                           : 'bg-red-100 text-red-900 dark:bg-red-950 dark:text-red-200'}"
-                >{run.exit_code} — {EXIT_MEANING[run.exit_code] ?? "sconosciuto"}</span>
-                {#if run.dry_run}
-                  <span class="ml-1 text-[10px] text-slate-500">dry-run</span>
-                {/if}
-              </td>
-              <td class="py-1 pr-3">{run.files_copied} / {run.total_files}</td>
-              <td class="py-1 pr-3">{duration(run.elapsed_seconds)}</td>
-              <td class="py-1 pr-3">{run.throughput_mbps.toFixed(1)} MB/s</td>
+      <div class="card overflow-x-auto p-0">
+        <table class="w-full table-fixed text-left text-xs">
+          <!-- Explicit widths (Livello 1, punto 2, PIANO_GUI.md §10): the default table layout put
+               nearly half the row into "Quando" while "Durata"/"Throughput" stayed cramped, with
+               no relation to what either actually needs. -->
+          <colgroup>
+            <col class="w-[20%]" />
+            <col class="w-[38%]" />
+            <col class="w-[14%]" />
+            <col class="w-[14%]" />
+            <col class="w-[14%]" />
+          </colgroup>
+          <thead class="border-b border-slate-300 dark:border-slate-700">
+            <tr>
+              <th class="py-1.5 pr-3 pl-3 font-medium">Quando</th>
+              <th class="py-1.5 pr-3 font-medium">Esito</th>
+              <th class="py-1.5 pr-3 font-medium">File</th>
+              <th class="py-1.5 pr-3 font-medium">Durata</th>
+              <th class="py-1.5 pr-3 font-medium">Throughput</th>
             </tr>
-          {/each}
-        </tbody>
-      </table>
+          </thead>
+          <tbody>
+            {#each [...filteredRuns].reverse() as run}
+              <tr class="border-b border-slate-200 last:border-0 dark:border-slate-800">
+                <td class="py-1 pr-3 pl-3 font-mono">{new Date(run.timestamp).toLocaleString("it-IT")}</td>
+                <td class="py-1 pr-3">
+                  <Badge variant={cliOutcomeVariant(run.exit_code)} icon={run.exit_code === 0 ? CircleCheck : CircleX}>
+                    {run.exit_code === 0 ? "Riuscito" : meaningFor(run.exit_code)}
+                  </Badge>
+                  {#if run.dry_run}
+                    <span class="ml-1 text-xs text-slate-500">simulazione</span>
+                  {/if}
+                </td>
+                <td class="py-1 pr-3">{run.files_copied} / {run.total_files}</td>
+                <td class="py-1 pr-3">{duration(run.elapsed_seconds)}</td>
+                <td class="py-1 pr-3">{run.throughput_mbps.toFixed(1)} MB/s</td>
+              </tr>
+            {/each}
+          </tbody>
+        </table>
+      </div>
     {/if}
   {:else if !error}
     <EmptyState
+      icon={Clock}
       title="Scegli un report per vedere lo storico delle run"
       lines={[
         "L'indice delle run vive accanto al report, non nella destinazione del backup: scriverci dentro cambierebbe la data della destinazione e la run successiva ricopierebbe file immutati.",

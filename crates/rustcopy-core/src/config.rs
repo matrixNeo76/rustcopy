@@ -65,6 +65,9 @@ pub struct JobConfig {
     pub max_age_days: Option<u32>,
     pub bandwidth_limit_mbps: Option<u32>,
     pub no_prescan: Option<bool>,
+    /// F65: preflight free-space check.
+    pub skip_space_check: Option<bool>,
+    pub space_safety_margin_percent: Option<u32>,
     pub long_paths: Option<bool>,
     pub preserve_timestamps: Option<bool>,
     pub preserve_acl: Option<bool>,
@@ -74,6 +77,16 @@ pub struct JobConfig {
     /// F39: shell command run after the job finishes; a failure is logged/recorded but does not
     /// fail the job.
     pub post_command: Option<String>,
+    /// F80: was CLI-only until now — `--decrypt` stays that way deliberately (it is meant to
+    /// accompany `--restore-from`, a single deliberate operation, not a routine batch setting),
+    /// but `--encrypt-aes256` genuinely benefits from being per-job: one `[[jobs]]` file can now
+    /// encrypt one job's backup without encrypting another's. Resolved by
+    /// `crypto::resolve_key` at run time, same four forms as the CLI flag
+    /// (`keyring:NAME`/`env:NAME`/`file:PATH`/literal) — the console's own editor restricts
+    /// itself to writing `keyring:NAME` (Editor.svelte), but that is a GUI-side choice, not a
+    /// constraint enforced here, so a value written by hand in any of the other forms still
+    /// round-trips through the editor untouched (see `job_editor::apply_draft`).
+    pub encrypt_aes256: Option<String>,
 }
 
 impl JobConfig {
@@ -130,6 +143,10 @@ impl JobConfig {
             max_age_days: self.max_age_days.or(base.max_age_days),
             bandwidth_limit_mbps: self.bandwidth_limit_mbps.or(base.bandwidth_limit_mbps),
             no_prescan: self.no_prescan.or(base.no_prescan),
+            skip_space_check: self.skip_space_check.or(base.skip_space_check),
+            space_safety_margin_percent: self
+                .space_safety_margin_percent
+                .or(base.space_safety_margin_percent),
             long_paths: self.long_paths.or(base.long_paths),
             preserve_timestamps: self.preserve_timestamps.or(base.preserve_timestamps),
             preserve_acl: self.preserve_acl.or(base.preserve_acl),
@@ -145,6 +162,10 @@ impl JobConfig {
                 .post_command
                 .clone()
                 .or_else(|| base.post_command.clone()),
+            encrypt_aes256: self
+                .encrypt_aes256
+                .clone()
+                .or_else(|| base.encrypt_aes256.clone()),
         }
     }
 }

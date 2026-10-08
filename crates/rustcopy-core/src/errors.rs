@@ -30,6 +30,19 @@ pub enum IngestError {
     #[error("--keep-generations requires --backup-type: there is nothing to rotate without a generation history")]
     KeepGenerationsWithoutBackupType,
 
+    /// F80: `execute_generation_backup` never calls `encrypt_destination` (declared scope gap,
+    /// see `CLAUDE.md`'s F34 note) -- accepting both silently would let an operator believe a
+    /// generation backup is encrypted when it never is.
+    #[error("--backup-type and --encrypt-aes256 cannot both be given: the generation backup pipeline does not encrypt its output yet")]
+    BackupTypeAndEncryptionConflict,
+
+    /// F72: `namespaced_path` interpolates a job name literally into a filename
+    /// (`format!("{stem}.{name}.{ext}")`) -- a name containing a Windows reserved filename
+    /// character or one of the reserved device names would otherwise surface as a cryptic I/O
+    /// error hours later, at the job's first scheduled run, not when the proposal is written.
+    #[error("job name {name:?} is not usable as a filename: {reason}")]
+    InvalidJobName { name: String, reason: String },
+
     /// F54. The editor may narrow risk, never widen it: a job that purges the destination cannot
     /// be born in a user interface. See `job_editor`'s module header for why the field is still
     /// writable in the other direction.
@@ -63,6 +76,19 @@ pub enum IngestError {
     #[error("cannot find the rustcopy CLI at {0}. A supervisor runs the engine it was installed with, never one found on PATH")]
     CliBinaryNotFound(PathBuf),
 
+    /// `runner::write_shell_drop_config` was asked to describe zero dropped items -- the shell
+    /// extension's own classification (`handler::all_are_directories`) already refuses an empty
+    /// selection before this is ever reached, so this is a defensive backstop, not a case that
+    /// should occur in practice.
+    #[error("cannot write a drag-and-drop config for {0} with no source/dest pairs")]
+    ShellDropConfigEmpty(PathBuf),
+
+    /// The "Copia" tab asked for a copy that cannot be planned safely (F95): a folder copied into
+    /// itself, a drive root with no folder name, two sources that would land in the same place.
+    /// The message is shown to the operator as-is, so it says what to change.
+    #[error("{0}")]
+    CopyPlanInvalid(String),
+
     /// `--cancel-file` names a file that must not exist yet: one left behind by an earlier run
     /// would stop this one the moment it looked, which reads like a crash rather than a stop.
     #[error("the --cancel-file {0} already exists: it would stop this run immediately. Remove it, or name a path that does not exist yet")]
@@ -71,6 +97,11 @@ pub enum IngestError {
     /// F54. The editor always writes a new file and leaves the substitution to the operator.
     #[error("refusing to overwrite {0}: the editor writes a proposal and leaves it to you to put it in place")]
     EditorWouldOverwrite(PathBuf),
+
+    /// F79. Same "never silently overwrite" discipline as `EditorWouldOverwrite`: a second click
+    /// must not discard an edited copy of the example the first click produced.
+    #[error("{0} already exists: remove it or choose a different location, an example is never written over one that exists")]
+    ExampleWorkspaceAlreadyExists(PathBuf),
 
     #[error("source directory does not exist: {0}")]
     SourceMissing(PathBuf),
@@ -146,6 +177,21 @@ pub enum IngestError {
     )]
     RetentionPurgeAborted { count: usize },
 
+    /// F64: the `--restore-from --dry-run` preview subprocess did not exit cleanly, so the report
+    /// `read_report` was about to look for either doesn't exist or doesn't reflect the preview —
+    /// surfaces the CLI's own stderr rather than a bare "file not found" from that read.
+    #[error("the restore preview process exited with {code:?}: {stderr}")]
+    RestorePreviewFailed { code: Option<i32>, stderr: String },
+
+    /// F65: the destination volume does not have enough free space for what the prescan found,
+    /// plus the configured safety margin. `needed` already includes that margin — it is not the
+    /// raw byte total, so the message states the number the destination actually has to clear.
+    #[error(
+        "not enough free space at the destination: needs {needed} byte(s), has {available}; \
+         free up space, lower --space-safety-margin-percent, or pass --skip-space-check"
+    )]
+    InsufficientDiskSpace { needed: u64, available: u64 },
+
     #[error("encryption error: {0}")]
     Crypto(String),
 
@@ -216,6 +262,8 @@ impl IngestError {
             | IngestError::InvalidThreads(_)
             | IngestError::SourceOrDestMissingFromConfig
             | IngestError::BackupTypeAndMirrorConflict
+            | IngestError::BackupTypeAndEncryptionConflict
+            | IngestError::InvalidJobName { .. }
             | IngestError::KeepGenerationsWithoutBackupType
             | IngestError::SourceMissing(_)
             | IngestError::SourceNotADirectory(_)
@@ -226,6 +274,8 @@ impl IngestError {
             | IngestError::InvalidPattern { .. }
             | IngestError::MirrorPurgeAborted { .. }
             | IngestError::RetentionPurgeAborted { .. }
+            | IngestError::InsufficientDiskSpace { .. }
+            | IngestError::RestorePreviewFailed { .. }
             | IngestError::Crypto(_)
             | IngestError::EncryptAndDecryptConflict
             | IngestError::Vss(_)
@@ -241,8 +291,11 @@ impl IngestError {
             | IngestError::EditorCannotDisablePrescanOnMirror(_)
             | IngestError::EditorCannotSplitSingleJobConfig(_)
             | IngestError::EditorWouldOverwrite(_)
+            | IngestError::ExampleWorkspaceAlreadyExists(_)
             | IngestError::CancelFileAlreadyExists(_)
-            | IngestError::CliBinaryNotFound(_) => false,
+            | IngestError::CliBinaryNotFound(_)
+            | IngestError::ShellDropConfigEmpty(_)
+            | IngestError::CopyPlanInvalid(_) => false,
         }
     }
 }

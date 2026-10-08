@@ -1,8 +1,8 @@
-//! Read-only, serializable views for a user interface (Passo 3 of `PIANO_GUI_TAURI.md`, F53).
+//! Read-only, serializable views for a user interface (Passo 3 of `docs/archive/PIANO_GUI_TAURI.md`, F53).
 //!
 //! This module exists so the Tauri commands of `crates/rustcopy-gui` can be **thin wrappers**: a
 //! `#[tauri::command]` should call one function here and hand back what it returns, nothing more.
-//! That is `PIANO_GUI_TAURI.md` §4.1 made mechanical rather than aspirational — if the judgement
+//! That is `docs/archive/PIANO_GUI_TAURI.md` §4.1 made mechanical rather than aspirational — if the judgement
 //! lives in Rust and is tested here, the frontend has nothing left to decide.
 //!
 //! It is deliberately **stack-agnostic**: nothing here knows about Tauri, and it compiles and is
@@ -37,8 +37,10 @@ use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
 
+use crate::checkpoint::Checkpoint;
 use crate::config::{IngestConfig, JobConfig};
 use crate::errors::IngestError;
+use crate::exit_code::RobocopyStatus;
 use crate::history::{RunHistory, RunRecord, DEFAULT_HISTORY_WINDOW};
 use crate::integrity::HashAlgorithm;
 use crate::report::IngestReport;
@@ -93,6 +95,76 @@ pub struct JobSummary {
     /// Deciding that is a judgement about the configuration, so it is made here rather than by a
     /// frontend guessing at angle brackets.
     pub unconfigured: bool,
+    /// The report this job would write, resolved and — for a job that came from `[[jobs]]` and
+    /// never set its own `report_path` — namespaced exactly as `run_jobs` namespaces it (F33/D12),
+    /// via the same `namespaced_path` `main.rs` calls. `None` when the path still carries `{timestamp}`
+    /// (P1): that placeholder is resolved fresh at the *start* of each run, so nothing computed
+    /// ahead of time (or after the fact, from this list) can predict what a specific past run
+    /// actually wrote. Used by the console's Esegui tab to link a just-finished run to its own
+    /// report (Livello 1, punto 5, `PIANO_GUI.md` §10) — deliberately not attempted for a
+    /// `{timestamp}` config rather than guessed at and wrong.
+    pub report_path: Option<String>,
+    /// The job-name key `read_history`/`read_advice` expect for *this* job's own run index —
+    /// `None` for the implicit single-job case (no `[[jobs]]` at all, where the index carries no
+    /// suffix), `Some(name)` for each `[[jobs]]` entry. Mirrors `report_path`'s own
+    /// `namespace_with` exactly (D12): a `[[jobs]]` entry can legally be named "job1" too, which
+    /// would be indistinguishable from the fallback `name` above if this field did not exist —
+    /// a frontend passing `name` straight to `read_history` for the implicit case would look for
+    /// a namespaced index that was never written (F86).
+    pub history_job_name: Option<String>,
+    /// True when the job would encrypt its output (`--encrypt-aes256`, F80). Never carries the
+    /// key itself — same redaction boundary as `read_settings`'s `webhook_url` truncation.
+    pub encrypt_enabled: bool,
+    /// `--keep-generations`, when set. Only meaningful alongside `backup_type`, same as the CLI.
+    pub keep_generations: Option<usize>,
+    /// Combined length of `exclude_files` + `exclude_dirs` — a single at-a-glance count, not a
+    /// judgement about which files are excluded. `Settings.svelte`/`read_settings` remain the
+    /// only place that lists them.
+    pub exclude_count: usize,
+    /// `--threads`, when the job (or its inherited defaults) set one explicitly. A UI comparing
+    /// this against `default_threads()` decides "non-default" for itself — resolving that here
+    /// would duplicate a judgement `Settings.svelte` already makes via `SettingOrigin`.
+    pub threads: Option<u16>,
+}
+
+/// Same default `--report-path` clap gives `Args` (`cli.rs`), applied here because `JobSummary`
+/// is built from `JobConfig`/`IngestConfig`, which — unlike `Args` — has no default of its own:
+/// `report_path` stays `None` in the TOML until something resolves it, exactly the gap clap's own
+/// `default_value` fills for a real invocation.
+const DEFAULT_REPORT_PATH: &str = "./robocopy_ingest_report.json";
+
+/// The report path a `JobSummary` should show, resolved and — when `namespace_with` is given —
+/// namespaced via [`crate::namespaced_path`] exactly as `run_jobs` namespaces it. `None` when the
+/// result still carries [`crate::REPORT_PATH_TIMESTAMP_PLACEHOLDER`]: that placeholder is resolved
+/// fresh at the start of each run, so nothing computed here can predict what a specific past run
+/// actually wrote.
+fn report_path_for_summary(
+    resolved: Option<&Path>,
+    namespace_with: Option<&str>,
+    anchor: &Path,
+) -> Option<String> {
+    let mut path = resolved
+        .map(Path::to_path_buf)
+        .unwrap_or_else(|| PathBuf::from(DEFAULT_REPORT_PATH));
+    if let Some(name) = namespace_with {
+        path = crate::namespaced_path(&path, name);
+    }
+    if path
+        .to_string_lossy()
+        .contains(crate::REPORT_PATH_TIMESTAMP_PLACEHOLDER)
+    {
+        return None;
+    }
+    // A relative path in the TOML means relative to the config file, not to whatever directory
+    // the console process happens to have as its own working directory (Desktop, for a Start Menu
+    // shortcut) — the same convention `start_job` already applies by setting `current_dir` before
+    // spawning. Without this, "Apri il report di questa run" resolved a relative report_path
+    // against the console's own cwd instead of the config's, and failed with a plain "path not
+    // found" — found by clicking the button against a real run, not by reading the code.
+    if path.is_relative() {
+        path = anchor.join(path);
+    }
+    Some(path.display().to_string())
 }
 
 /// Whether a path is still a template placeholder rather than a real path.
@@ -137,9 +209,25 @@ impl ErrorPage {
 }
 
 /// Everything a UI needs to render one run, with the per-file lists paged.
+///
+/// Grown significantly live, 9 Set 2026, from a real report an operator found "scarno": most of
+/// the fields below already existed on [`IngestReport`] and its sub-reports (robocopy's own
+/// skipped/mismatch/failed/extra summary counts, the per-phase timing breakdown, the run's actual
+/// start time, most of the job's own configuration) but never crossed into this view -- see the
+/// per-field doc comments below and `CLAUDE.md` for what was found where. This stays a thin
+/// wrapper regardless of its size: every new field is a direct read from `report`, no new
+/// business logic.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct ReportView {
-    pub timestamp: String,
+    /// `None` for a report written before this field existed (`IngestReport::started_at`'s own
+    /// `#[serde(default)]` falls back to the Unix epoch on read, which is never a real answer).
+    pub started_at: Option<String>,
+    /// Renamed from the underlying `IngestReport.timestamp` for this view only: that field is, in
+    /// practice, when the run *finished* (set once transfer/verification are already done), which
+    /// read as an ambiguous single "Quando" in `Report.svelte` with no visible end time at all.
+    /// `IngestReport.timestamp` itself is untouched, so nothing that reads the JSON report
+    /// directly (e.g. `restore::build_restore_args`) is affected.
+    pub finished_at: String,
     pub source: String,
     pub dest: String,
     pub total_files: usize,
@@ -148,17 +236,63 @@ pub struct ReportView {
     pub bytes_copied: u64,
     pub elapsed_seconds: f64,
     pub throughput_mbps: f64,
+    /// Per-phase breakdown of `elapsed_seconds` above -- already computed by `PhaseTiming`
+    /// (`report.rs`), previously collapsed into the one total here.
+    pub inventory_seconds: f64,
+    pub transfer_seconds: f64,
+    pub verification_seconds: Option<f64>,
+    pub baseline_seconds: Option<f64>,
+    pub exit_code: Option<i32>,
+    /// Whether `exit_code` counts as success in robocopy's own bitwise scheme (`RobocopyStatus::
+    /// is_success`, `exit_code.rs`) -- **not** `exit_code == 0`. Found live, 9 Set 2026, on the
+    /// first real report checked against this redesign: robocopy's own exit code `1` means "one
+    /// or more files were copied successfully", the single most common outcome of an ordinary
+    /// run, and a badge keyed on "is it literally zero" showed a red ✕ for it. `Report.svelte`
+    /// must key its badge on this field, never re-derive one from the raw number.
+    pub exit_code_is_success: Option<bool>,
+    /// Whether this run was `--dry-run` (`robocopy /L`) -- found necessary live, 9 Set 2026: a
+    /// dry run's own `bytes_copied`/`throughput_mbps` describe what robocopy *would* have
+    /// transferred, computed the exact same way as a real transfer's, so a report with this
+    /// unset read as "84 GB in 30 seconds" with nothing in the JSON to explain why that number
+    /// is not impossible. `Report.svelte` renders a banner whenever this is `true`, ahead of the
+    /// stats it would otherwise contradict.
+    pub dry_run: bool,
     pub exit_code_meaning: Option<String>,
+    /// Skipped/mismatch/failed/extra detail from robocopy's own summary rows -- the direct answer
+    /// to "why weren't the other files copied" (already up to date, conflicting size/date, a real
+    /// per-file error, or present only in the destination). `None` for an engine with no native
+    /// summary row (`--backup-type`'s naive engine).
+    pub copy_detail: Option<crate::engine::CopySummaryDetail>,
     pub integrity_status: Option<String>,
     /// Count only. The paths themselves come from [`Self::mismatches`] and the other pages.
     pub integrity_error_count: usize,
+    /// How many files `--verify-integrity` actually re-read and hashed, and how many bytes that
+    /// was -- absent (not zero) when verification did not run at all.
+    pub files_checked: Option<usize>,
+    pub bytes_hashed: Option<u64>,
+    /// How many of `files_checked` above `--fast-verify` skipped re-hashing because their source
+    /// identity matched the cache from the last run that verified them clean. `0`, not absent,
+    /// when verification ran without `--fast-verify`.
+    pub skipped_unchanged: Option<usize>,
     pub mismatches: ErrorPage,
     pub missing_in_dest: ErrorPage,
     pub unreadable: ErrorPage,
     pub encrypted: bool,
+    /// Never shown alongside `encrypted` above before this: a restore that decrypted its output
+    /// had no way to say so in the view, only in the raw JSON.
+    pub decrypted: bool,
     pub webhook_error: Option<String>,
     pub post_command_error: Option<String>,
     pub copy_error: Option<String>,
+    /// The job settings actually in effect for this run -- `Report.svelte` renders only the
+    /// fields that differ from their default, so this being a full struct (not a curated subset)
+    /// costs nothing on screen and keeps this view a direct passthrough rather than a second place
+    /// deciding what counts as "relevant".
+    pub configuration: crate::report::ConfigurationReport,
+    pub host_hostname: String,
+    pub host_os: String,
+    pub host_cpus: usize,
+    pub tool_version: String,
 }
 
 impl ReportView {
@@ -178,7 +312,12 @@ impl ReportView {
             .unwrap_or_default();
 
         Self {
-            timestamp: report.timestamp.to_rfc3339(),
+            // `started_at`'s `#[serde(default)]` falls back to the Unix epoch for a report
+            // written before this field existed -- a real run is never actually that old, so
+            // that sentinel value means "unknown", not "1970".
+            started_at: (report.started_at.timestamp() != 0)
+                .then(|| report.started_at.to_rfc3339()),
+            finished_at: report.timestamp.to_rfc3339(),
             source: report.source.clone(),
             dest: report.dest.clone(),
             total_files: report.total_files,
@@ -187,9 +326,23 @@ impl ReportView {
             bytes_copied: report.robocopy_transfer.bytes_copied,
             elapsed_seconds: report.phase_timing.total_seconds,
             throughput_mbps: report.robocopy_transfer.throughput_mbps,
+            inventory_seconds: report.phase_timing.inventory_seconds,
+            transfer_seconds: report.phase_timing.transfer_seconds,
+            verification_seconds: report.phase_timing.verification_seconds,
+            baseline_seconds: report.phase_timing.baseline_seconds,
+            exit_code: report.robocopy_transfer.exit_code,
+            exit_code_is_success: report
+                .robocopy_transfer
+                .exit_code
+                .map(|code| RobocopyStatus::new(code).is_success()),
+            dry_run: report.configuration.dry_run,
             exit_code_meaning: report.robocopy_transfer.exit_code_meaning.clone(),
+            copy_detail: report.robocopy_transfer.summary,
             integrity_status: integrity.map(|c| format!("{:?}", c.status)),
             integrity_error_count: integrity.map(|c| c.total_errors).unwrap_or(0),
+            files_checked: integrity.map(|c| c.files_checked),
+            bytes_hashed: integrity.map(|c| c.bytes_hashed),
+            skipped_unchanged: integrity.map(|c| c.skipped_unchanged),
             mismatches: ErrorPage::of(&mismatch_paths, offset, limit, truncated),
             missing_in_dest: ErrorPage::of(
                 integrity.map(|c| &c.missing_in_dest).unwrap_or(&empty),
@@ -204,9 +357,15 @@ impl ReportView {
                 truncated,
             ),
             encrypted: report.encrypted,
+            decrypted: report.decrypted,
             webhook_error: report.webhook_error.clone(),
             post_command_error: report.post_command_error.clone(),
             copy_error: report.copy_error.clone(),
+            configuration: report.configuration.clone(),
+            host_hostname: report.host_metadata.hostname.clone(),
+            host_os: report.host_metadata.os_name.clone(),
+            host_cpus: report.host_metadata.logical_cpus,
+            tool_version: report.tool_version.clone(),
         }
     }
 }
@@ -262,10 +421,205 @@ pub fn read_advice(
 
 /// Scheduled tasks (Windows Task Scheduler) whose command line references `config_path` —
 /// read-only, for the console's "does a schedule already point at this file" badge
-/// (PIANO_GUI_ESPANSIONE.md, Onda 1). Answers a question, never acts on one: there is no
+/// (PIANO_GUI.md, Onda 1). Answers a question, never acts on one: there is no
 /// install/uninstall path through this function or anything that calls it.
 pub fn schedules_referencing(config_path: &Path) -> Result<Vec<String>, IngestError> {
     crate::schedule::referencing_config(config_path)
+}
+
+/// Every scheduled task that invokes this binary, regardless of which config it targets — F62,
+/// the GUI half of `--list-schedules`. Read-only, same as `schedules_referencing` above: never
+/// installs, updates or removes a schedule.
+pub fn list_all_schedules() -> Result<Vec<crate::schedule::ScheduledTask>, IngestError> {
+    let exe_path = std::env::current_exe().map_err(|source| IngestError::SpawnFailed {
+        program: "<current executable>".to_string(),
+        source,
+    })?;
+    crate::schedule::list_installed(&exe_path)
+}
+
+/// A checkpoint (`checkpoint::Checkpoint`) found on disk, with the path it was read from — needed
+/// to resume it later, since [`Checkpoint`] itself carries no notion of where it lives.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CheckpointSummary {
+    /// Absolute path to the `*.checkpoint.json` file — what `start_resume`/`resume_arguments`
+    /// need, since resuming means passing this exact path to `--resume-from`.
+    pub path: String,
+    pub timestamp: chrono::DateTime<chrono::Utc>,
+    pub source: String,
+    pub dest: String,
+    /// Why the checkpoint was written, e.g. `"interrupted by Ctrl+C"` — shown verbatim, not
+    /// interpreted: the reason string is written once, at the point of interruption, and nothing
+    /// here has more information about it than that.
+    pub reason: String,
+}
+
+/// Checkpoints found directly inside `dir` — for Onda 3's "elenco dei checkpoint trovati accanto
+/// ai report" (`PIANO_GUI.md`). Deliberately a directory scan rather than computing one expected
+/// path per job: a job's effective `--report-path` can be namespaced per job (F33/D12) or carry a
+/// `{timestamp}` placeholder resolved fresh on every run (P1), so there is no single path to
+/// compute from a config alone without duplicating that resolution logic here — and every
+/// duplicated judgement is a second place for it to drift from `main.rs`'s real behaviour.
+/// Scanning for what is actually on disk sidesteps the whole problem: a checkpoint's own
+/// `source`/`dest`/`timestamp` say what it is, read directly from the file, not inferred from a
+/// job's current configuration (which may have changed since the checkpoint was written).
+///
+/// Sorted newest first. A checkpoint that fails to parse (partial write, unrelated `.checkpoint.json`
+/// left by something else) is silently skipped rather than failing the whole listing — the same
+/// tolerance `IngestCache::load_from` and `RunHistory`'s skipped-line handling already apply to
+/// other best-effort, non-critical reads; one unreadable file must not hide every other real one.
+pub fn list_checkpoints(dir: &Path) -> Result<Vec<CheckpointSummary>, IngestError> {
+    let mut found = Vec::new();
+    let entries = match std::fs::read_dir(dir) {
+        Ok(entries) => entries,
+        // A directory that does not exist yet (a config that has never produced a checkpoint) is
+        // "no checkpoints", not an error — the caller does not need to check first.
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(found),
+        Err(error) => return Err(IngestError::io(dir, error)),
+    };
+
+    for entry in entries.flatten() {
+        let path = entry.path();
+        if path.extension().and_then(|ext| ext.to_str()) != Some("json") {
+            continue;
+        }
+        if !path
+            .file_name()
+            .and_then(|name| name.to_str())
+            .is_some_and(|name| name.ends_with(".checkpoint.json"))
+        {
+            continue;
+        }
+        let Ok(content) = std::fs::read_to_string(&path) else {
+            continue;
+        };
+        let Ok(checkpoint) = serde_json::from_str::<Checkpoint>(&content) else {
+            continue;
+        };
+        found.push(CheckpointSummary {
+            path: path.display().to_string(),
+            timestamp: checkpoint.timestamp,
+            source: checkpoint.source,
+            dest: checkpoint.dest,
+            reason: checkpoint.reason,
+        });
+    }
+
+    found.sort_by_key(|entry| std::cmp::Reverse(entry.timestamp));
+    Ok(found)
+}
+
+/// Stores `secret` under `name` in the Windows Credential Manager (F56's `keyring:NAME` form) —
+/// the console's Onda 2 equivalent of `--set-credential`. `secret` arrives here only through
+/// Tauri's IPC channel, the same safety property `--set-credential`'s stdin-only intake has on the
+/// CLI: it is never a process argument, so it never appears in a process list.
+///
+/// `crypto::write_credential`/`delete_credential` are `#[cfg(windows)]` with no non-Windows stub
+/// (unlike `read_credential`, which has one) — `main.rs` handles that split inline at its own two
+/// call sites rather than in `crypto.rs` itself, and this mirrors that same pattern rather than
+/// adding a third copy of the stub to the shared module.
+pub fn set_credential(name: &str, secret: &str) -> Result<(), IngestError> {
+    #[cfg(windows)]
+    {
+        crate::crypto::write_credential(name, secret)
+    }
+    #[cfg(not(windows))]
+    {
+        let _ = (name, secret);
+        Err(IngestError::Crypto(
+            "credential storage needs the Windows Credential Manager, which this platform does not have"
+                .to_string(),
+        ))
+    }
+}
+
+/// Removes `name` from the Windows Credential Manager — the console's Onda 2 equivalent of
+/// `--delete-credential`.
+pub fn delete_credential(name: &str) -> Result<(), IngestError> {
+    #[cfg(windows)]
+    {
+        crate::crypto::delete_credential(name)
+    }
+    #[cfg(not(windows))]
+    {
+        let _ = name;
+        Err(IngestError::Crypto(
+            "credential storage needs the Windows Credential Manager, which this platform does not have"
+                .to_string(),
+        ))
+    }
+}
+
+/// What the F73 "check" button in Modifica shows for a Sorgente/Destinazione field: whether the
+/// path exists, and, for an existing directory, how much is under it.
+#[derive(Debug, Clone, Serialize)]
+pub struct PathInspection {
+    pub exists: bool,
+    pub is_dir: bool,
+    pub total_files: u64,
+    pub total_dirs: u64,
+    pub total_bytes: u64,
+}
+
+/// Inspects `path`: existence, and — for an existing directory — file/folder counts and total
+/// size via the same lightweight walk `--no-prescan` uses (`scan::inventory`), deliberately no
+/// new scanning logic. This project has a measured 1.34M-file profile where a full walk takes
+/// minutes, not seconds (`_ops_reports/full-profile-test.json`) — the caller is expected to run
+/// this only on an explicit button press, never on every keystroke, and to show an honest
+/// waiting state rather than implying an instant result.
+///
+/// A missing path or an existing non-directory reports `exists`/`is_dir` plainly with zero
+/// counts, rather than erroring: for Destinazione especially, "does not exist yet" is the normal
+/// case for a first backup (F68), not a failure.
+///
+/// Unfiltered on purpose (`*` pattern, no excludes, no age bounds): this answers "what is
+/// actually at this path", not "what would this specific job's current draft select" — the two
+/// diverge while a job is still being edited, and the check should not appear to fail just
+/// because the pattern field is empty or mid-edit.
+///
+/// `anchor` resolves a relative `path` the same way [`list_jobs`]/`start_job` already do: a
+/// relative Sorgente/Destinazione in the TOML means relative to the config file, not to whatever
+/// directory the console process happens to have as its own working directory (Desktop, for a
+/// Start Menu shortcut). Without this, the very first live check of this feature failed with "il
+/// percorso non esiste" against a real, existing `demo-data` — found by clicking the button, not
+/// by reading the code, the same way `report_path_for_summary`'s identical anchor bug was found.
+pub fn inspect_path(path: &Path, anchor: &Path) -> Result<PathInspection, IngestError> {
+    let resolved = if path.is_relative() {
+        anchor.join(path)
+    } else {
+        path.to_path_buf()
+    };
+    let exists = resolved.exists();
+    let is_dir = exists && resolved.is_dir();
+    if !is_dir {
+        return Ok(PathInspection {
+            exists,
+            is_dir,
+            total_files: 0,
+            total_dirs: 0,
+            total_bytes: 0,
+        });
+    }
+    let summary = crate::scan::inventory(&resolved, "*", true, &[], &[], None, None)?;
+    Ok(PathInspection {
+        exists,
+        is_dir,
+        total_files: summary.total_files,
+        total_dirs: summary.total_dirs,
+        total_bytes: summary.total_bytes,
+    })
+}
+
+/// The real value `--threads` uses on this machine when left unset (`cli::default_threads`,
+/// already clamped to `1..=128`). Found necessary by CodeRabbit on the PR that added the Thread
+/// field's placeholder in `Editor.svelte`: the original design read `navigator.hardwareConcurrency`
+/// directly in JS to avoid a new command, but that value comes from the WebView's own Chromium
+/// engine, which can clamp or mask it for fingerprinting protection -- so it is not guaranteed to
+/// equal what this function (and therefore an empty Thread field) actually resolves to. This is
+/// the single source of truth both sides now read, the same pattern F81 established for
+/// `runner::exit_code_meaning`.
+pub fn default_threads() -> u16 {
+    crate::cli::default_threads()
 }
 
 /// Lists the jobs a config file declares, resolved the same way `run_jobs` resolves them.
@@ -274,9 +628,15 @@ pub fn schedules_referencing(config_path: &Path) -> Result<Vec<String>, IngestEr
 pub fn list_jobs(config_path: &Path) -> Result<Vec<JobSummary>, IngestError> {
     let config = IngestConfig::load_from(config_path)?;
     let jobs = config.jobs.clone().unwrap_or_default();
+    // Same anchor `start_job` gives the child process via `current_dir`: a relative report_path
+    // in the TOML means relative to the config file, not to the console's own working directory.
+    let anchor = config_path.parent().unwrap_or(Path::new("."));
 
     if jobs.is_empty() {
         let d = &config.defaults;
+        // No `[[jobs]]` at all means `run_jobs` (and its namespacing) never runs — the single
+        // implicit job writes exactly the resolved path, unmodified.
+        let report_path = report_path_for_summary(d.report_path.as_deref(), None, anchor);
         return Ok(vec![JobSummary {
             name: d.name.clone().unwrap_or_else(|| "job1".to_string()),
             source: d.source.as_ref().map(|p| p.display().to_string()),
@@ -287,6 +647,14 @@ pub fn list_jobs(config_path: &Path) -> Result<Vec<JobSummary>, IngestError> {
             fast_verify: d.fast_verify.unwrap_or(false),
             unconfigured: is_placeholder(d.source.as_ref().map(|p| p.to_string_lossy()).as_deref())
                 || is_placeholder(d.dest.as_ref().map(|p| p.to_string_lossy()).as_deref()),
+            report_path,
+            // No `[[jobs]]` at all means the run index carries no job suffix (F86).
+            history_job_name: None,
+            encrypt_enabled: d.encrypt_aes256.is_some(),
+            keep_generations: d.keep_generations,
+            exclude_count: d.exclude_files.as_ref().map_or(0, Vec::len)
+                + d.exclude_dirs.as_ref().map_or(0, Vec::len),
+            threads: d.threads,
         }]);
     }
 
@@ -295,14 +663,26 @@ pub fn list_jobs(config_path: &Path) -> Result<Vec<JobSummary>, IngestError> {
         .enumerate()
         .map(|(idx, job)| {
             let resolved = job.merged_over(&config.defaults);
+            let name = resolved
+                .name
+                .clone()
+                .unwrap_or_else(|| format!("job{}", idx + 1));
+            // Namespace only when *this job itself* never set report_path — mirrors main.rs's own
+            // `job.report_path.is_none()` check exactly (D12): `resolved` already folded in the
+            // top-level default even when the job didn't ask for it, which would otherwise defeat
+            // the check every time.
+            let namespace_with = job.report_path.is_none().then_some(name.as_str());
+            let report_path =
+                report_path_for_summary(resolved.report_path.as_deref(), namespace_with, anchor);
+            // Computed before the literal below, not inline as `Some(name.clone())` next to the
+            // `name,` shorthand field: struct-literal fields evaluate in source order, and `name,`
+            // is a move — a later field cloning `name` after that point would not compile.
+            let history_job_name = Some(name.clone());
             JobSummary {
                 // Mirrors `run_jobs`: the job's own name, else the positional fallback. Reading it
                 // from `resolved` would be wrong now that `name` no longer inherits, and would have
                 // been wrong before too — every unnamed job would have shown the same label.
-                name: resolved
-                    .name
-                    .clone()
-                    .unwrap_or_else(|| format!("job{}", idx + 1)),
+                name,
                 source: resolved.source.as_ref().map(|p| p.display().to_string()),
                 dest: resolved.dest.as_ref().map(|p| p.display().to_string()),
                 backup_type: resolved
@@ -324,6 +704,13 @@ pub fn list_jobs(config_path: &Path) -> Result<Vec<JobSummary>, IngestError> {
                         .map(|p| p.to_string_lossy())
                         .as_deref(),
                 ),
+                report_path,
+                history_job_name,
+                encrypt_enabled: resolved.encrypt_aes256.is_some(),
+                keep_generations: resolved.keep_generations,
+                exclude_count: resolved.exclude_files.as_ref().map_or(0, Vec::len)
+                    + resolved.exclude_dirs.as_ref().map_or(0, Vec::len),
+                threads: resolved.threads,
             }
         })
         .collect())
@@ -389,7 +776,7 @@ pub struct SettingEntry {
     /// True when `value` is **not** the stored value, only enough of it to be recognised.
     pub redacted: bool,
     /// Why this setting deserves a second look, when it does. A judgement about backup semantics,
-    /// so it is made here and not in the frontend (`PIANO_GUI_TAURI.md` §4.1).
+    /// so it is made here and not in the frontend (`docs/archive/PIANO_GUI_TAURI.md` §4.1).
     pub caution: Option<String>,
 }
 
@@ -956,6 +1343,77 @@ mod tests {
         assert!(view.missing_in_dest.truncated_at_source);
     }
 
+    /// Found live, 9 Set 2026: a `--dry-run` report's `bytes_copied`/`throughput_mbps` describe
+    /// what robocopy *would* transfer, computed identically to a real run's -- with no signal on
+    /// `ReportView` to explain that, a dry run of a real backup job read as "84 GB in 30 seconds",
+    /// indistinguishable from an impossible real transfer. This is the one field that lets
+    /// `Report.svelte` tell the two apart.
+    #[test]
+    fn a_dry_run_report_carries_that_through_to_the_view() {
+        let mut report = report_with_errors(0);
+        report.configuration.dry_run = true;
+        let view = ReportView::from_report(&report, 0, DEFAULT_ERROR_PAGE);
+        assert!(view.dry_run);
+    }
+
+    /// `SAMPLE_REPORT` predates `started_at`, so `#[serde(default)]` fills it with the Unix
+    /// epoch -- a real run is never actually that old, so `from_report` must read that sentinel
+    /// as "unknown", not render a report as having started in 1970.
+    #[test]
+    fn a_report_older_than_started_at_reports_it_as_absent() {
+        let view = ReportView::from_report(&report_with_errors(0), 0, DEFAULT_ERROR_PAGE);
+        assert_eq!(view.started_at, None);
+    }
+
+    /// Everything found missing live, 9 Set 2026, now reaching the view: real start time, the
+    /// numeric exit code, the per-phase timing breakdown, robocopy's own skipped/mismatch/failed/
+    /// extra detail, the verify-detail counts, and the wider job configuration.
+    #[test]
+    fn the_view_carries_the_fields_found_missing_in_the_real_report_complaint() {
+        let mut report = report_with_errors(0);
+        report.started_at = chrono::DateTime::parse_from_rfc3339("2026-09-09T10:00:00Z")
+            .expect("valid rfc3339")
+            .with_timezone(&chrono::Utc);
+        report.robocopy_transfer.summary = Some(crate::engine::CopySummaryDetail {
+            files_skipped: 4,
+            files_mismatch: 1,
+            files_failed: 0,
+            files_extra: 2,
+            bytes_skipped: 400,
+            bytes_mismatch: 100,
+            bytes_failed: 0,
+            bytes_extra: 200,
+        });
+        report.configuration.mirror = true;
+        report.configuration.exclude_dirs = vec!["node_modules".to_string()];
+
+        let view = ReportView::from_report(&report, 0, DEFAULT_ERROR_PAGE);
+
+        assert_eq!(
+            view.started_at.as_deref(),
+            Some("2026-09-09T10:00:00+00:00")
+        );
+        assert_eq!(view.exit_code, Some(1));
+        // Robocopy's own exit code 1 is a *success* (one or more files copied) -- the specific
+        // regression this test exists to pin, found live checking this exact fixture through the
+        // redesigned Report.svelte badge before this field was added.
+        assert_eq!(view.exit_code_is_success, Some(true));
+        assert_eq!(view.inventory_seconds, 0.0049447);
+        assert_eq!(view.transfer_seconds, 0.0607128);
+        assert_eq!(view.verification_seconds, Some(0.0072939));
+        let detail = view.copy_detail.expect("summary detail attached above");
+        assert_eq!(detail.files_skipped, 4);
+        assert_eq!(detail.bytes_extra, 200);
+        assert_eq!(view.files_checked, Some(1));
+        assert_eq!(view.bytes_hashed, Some(2));
+        assert_eq!(view.skipped_unchanged, Some(0));
+        assert!(view.configuration.mirror);
+        assert_eq!(view.configuration.exclude_dirs, vec!["node_modules"]);
+        assert_eq!(view.host_hostname, "HOST");
+        assert_eq!(view.host_cpus, 8);
+        assert_eq!(view.tool_version, "6.0.0");
+    }
+
     /// A report with no integrity check at all (verification not requested) must render, not panic.
     #[test]
     fn a_report_without_an_integrity_check_still_produces_a_view() {
@@ -1501,5 +1959,349 @@ webhook_url = \"https://u:p@notify.internal\"
         let json = serde_json::to_string(&all).expect("JobSettings must serialize");
         let back: Vec<JobSettings> = serde_json::from_str(&json).expect("and round-trip");
         assert_eq!(back, all);
+    }
+
+    fn write_checkpoint(dir: &std::path::Path, name: &str, when: chrono::DateTime<chrono::Utc>) {
+        use clap::Parser;
+        let mut args = crate::cli::Args::try_parse_from([
+            "robocopy_ingest",
+            "--source",
+            "D:/src",
+            "--dest",
+            "E:/dst",
+        ])
+        .expect("parse");
+        // Only reachable via `--restore-from`/`--resume-from` in the real CLI, but the accessors
+        // this test needs are private to `cli.rs` beyond the struct fields themselves — setting
+        // them directly is fine inside this crate.
+        args.source = Some(std::path::PathBuf::from("D:/src"));
+        args.dest = Some(std::path::PathBuf::from("E:/dst"));
+        let mut checkpoint = Checkpoint::new(&args, "interrupted by Ctrl+C");
+        checkpoint.timestamp = when;
+        checkpoint
+            .write_to(&dir.join(name))
+            .expect("write checkpoint fixture");
+    }
+
+    /// A directory with no checkpoints (and one that does not exist at all) is "nothing found",
+    /// not an error — the caller should not have to check existence first.
+    #[test]
+    fn list_checkpoints_on_a_missing_directory_is_empty_not_an_error() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let missing = dir.path().join("does-not-exist");
+
+        let found = list_checkpoints(&missing).expect("missing dir is not an error");
+        assert!(found.is_empty());
+    }
+
+    /// Newest first — an operator resuming interrupted work almost always wants the most recent
+    /// interruption, not whichever the filesystem happened to enumerate first.
+    #[test]
+    fn list_checkpoints_sorts_newest_first() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let older = chrono::DateTime::parse_from_rfc3339("2026-09-01T00:00:00Z")
+            .expect("valid")
+            .with_timezone(&chrono::Utc);
+        let newer = chrono::DateTime::parse_from_rfc3339("2026-09-03T00:00:00Z")
+            .expect("valid")
+            .with_timezone(&chrono::Utc);
+        write_checkpoint(dir.path(), "a.checkpoint.json", older);
+        write_checkpoint(dir.path(), "b.checkpoint.json", newer);
+
+        let found = list_checkpoints(dir.path()).expect("reads");
+        assert_eq!(found.len(), 2);
+        assert_eq!(found[0].timestamp, newer);
+        assert_eq!(found[1].timestamp, older);
+    }
+
+    /// A file that is not a checkpoint at all (a report, a random `.json`, a `.checkpoint.json`
+    /// left over from a build that no longer parses) must not hide the real ones next to it — one
+    /// unreadable file is not a reason to report zero resumable runs.
+    #[test]
+    fn list_checkpoints_skips_unrelated_and_unparseable_json_silently() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        write_checkpoint(dir.path(), "good.checkpoint.json", chrono::Utc::now());
+        std::fs::write(
+            dir.path().join("report.json"),
+            b"{\"not\":\"a checkpoint\"}",
+        )
+        .expect("write");
+        std::fs::write(
+            dir.path().join("broken.checkpoint.json"),
+            b"not json at all",
+        )
+        .expect("write");
+
+        let found = list_checkpoints(dir.path()).expect("reads despite the two bad files");
+        assert_eq!(found.len(), 1);
+        assert_eq!(found[0].source, "D:/src");
+    }
+
+    #[test]
+    fn checkpoint_summary_serializes_to_json() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        write_checkpoint(dir.path(), "a.checkpoint.json", chrono::Utc::now());
+
+        let found = list_checkpoints(dir.path()).expect("reads");
+        let json = serde_json::to_string(&found).expect("CheckpointSummary must serialize");
+        let back: Vec<CheckpointSummary> = serde_json::from_str(&json).expect("round-trip");
+        assert_eq!(back.len(), 1);
+        assert_eq!(back[0].dest, "E:/dst");
+    }
+
+    /// A path that has never existed reports plainly, not as an error -- the ordinary case for a
+    /// first-time Destinazione (F68).
+    #[test]
+    fn inspect_path_reports_a_missing_path_without_erroring() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let missing = dir.path().join("not-yet-created");
+
+        let result =
+            inspect_path(&missing, Path::new(".")).expect("must not error on a missing path");
+        assert!(!result.exists);
+        assert!(!result.is_dir);
+        assert_eq!(result.total_files, 0);
+        assert_eq!(result.total_dirs, 0);
+        assert_eq!(result.total_bytes, 0);
+    }
+
+    /// An existing plain file (not a directory) is a real, distinct answer -- not folded into
+    /// either "missing" or "directory with zero contents".
+    #[test]
+    fn inspect_path_reports_an_existing_file_as_not_a_directory() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let file = dir.path().join("a.txt");
+        std::fs::write(&file, b"hello").expect("write");
+
+        let result =
+            inspect_path(&file, Path::new(".")).expect("must not error on an existing file");
+        assert!(result.exists);
+        assert!(!result.is_dir);
+        assert_eq!(result.total_files, 0);
+    }
+
+    /// An existing directory is walked unfiltered: every file counts, regardless of extension,
+    /// and nested subfolders are counted too.
+    #[test]
+    fn inspect_path_counts_files_dirs_and_bytes_in_an_existing_directory() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        std::fs::create_dir_all(dir.path().join("nested")).expect("mkdir");
+        std::fs::write(dir.path().join("a.txt"), b"12345").expect("write");
+        std::fs::write(dir.path().join("nested/b.dat"), b"1234567890").expect("write");
+
+        let result = inspect_path(dir.path(), Path::new(".")).expect("reads");
+        assert!(result.exists);
+        assert!(result.is_dir);
+        assert_eq!(result.total_files, 2);
+        assert_eq!(result.total_dirs, 1);
+        assert_eq!(result.total_bytes, 15);
+    }
+
+    /// D26-style bug, found live the first time this feature was clicked (not by reading the
+    /// code): a relative Sorgente/Destinazione must resolve against the config file's directory,
+    /// not the console process's own working directory. Regression test for exactly that.
+    #[test]
+    fn inspect_path_resolves_a_relative_path_against_the_anchor() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        std::fs::write(dir.path().join("a.txt"), b"12345").expect("write");
+
+        let result = inspect_path(Path::new("."), dir.path()).expect("reads");
+        assert!(result.exists);
+        assert!(result.is_dir);
+        assert_eq!(result.total_files, 1);
+
+        let result = inspect_path(Path::new("not-here"), dir.path()).expect("reads");
+        assert!(!result.exists);
+    }
+
+    fn write_config(body: &str) -> (tempfile::TempDir, std::path::PathBuf) {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let path = dir.path().join("jobs.toml");
+        std::fs::write(&path, body).expect("write");
+        (dir, path)
+    }
+
+    fn job<'a>(summaries: &'a [JobSummary], name: &str) -> &'a JobSummary {
+        summaries
+            .iter()
+            .find(|j| j.name == name)
+            .unwrap_or_else(|| panic!("no job named {name} in {summaries:?}"))
+    }
+
+    /// `PathBuf::display()` renders `\` on Windows and `/` on Unix for the exact same logical
+    /// path — normalised here so these tests assert on the namespacing/defaulting logic itself,
+    /// not on which CI runner happened to build it.
+    fn report_path_of(summaries: &[JobSummary], name: &str) -> Option<String> {
+        job(summaries, name)
+            .report_path
+            .as_ref()
+            .map(|p| p.replace('\\', "/"))
+    }
+
+    /// No `[[jobs]]` at all means `run_jobs` — and its namespacing — never runs: the single
+    /// implicit job's report_path is exactly clap's own `--report-path` default, untouched.
+    #[test]
+    fn report_path_for_a_single_implicit_job_is_the_plain_default() {
+        let (dir, path) = write_config("source = \"D:/src\"\ndest = \"E:/dst\"\n");
+        let jobs = list_jobs(&path).expect("reads");
+        assert_eq!(jobs.len(), 1);
+        // Anchored at the config's own directory — same convention `start_job` gives the child
+        // process via `current_dir` — not left relative (which resolved against the console's own
+        // cwd, not the config's, and 404'd when "Apri il report di questa run" tried it for real).
+        let expected = dir.path().join("./robocopy_ingest_report.json");
+        assert_eq!(
+            jobs[0].report_path.as_ref().map(|p| p.replace('\\', "/")),
+            Some(expected.display().to_string().replace('\\', "/"))
+        );
+    }
+
+    /// F33/D12: a `[[jobs]]` entry that never set its own report_path gets one namespaced with
+    /// its own name — mirrors `main.rs::run_jobs`'s `job.report_path.is_none()` check exactly, so
+    /// two jobs sharing an inherited default do not appear to share one report.
+    #[test]
+    fn report_path_is_namespaced_per_job_when_the_job_did_not_set_its_own() {
+        let (dir, path) = write_config(
+            r#"
+[[jobs]]
+name = "documenti"
+source = "D:/docs"
+dest = "E:/docs"
+
+[[jobs]]
+name = "archivio"
+source = "D:/arch"
+dest = "E:/arch"
+"#,
+        );
+        let jobs = list_jobs(&path).expect("reads");
+        let expect_at = |file: &str| {
+            Some(
+                dir.path()
+                    .join(file)
+                    .display()
+                    .to_string()
+                    .replace('\\', "/"),
+            )
+        };
+        assert_eq!(
+            report_path_of(&jobs, "documenti"),
+            expect_at("./robocopy_ingest_report.documenti.json")
+        );
+        assert_eq!(
+            report_path_of(&jobs, "archivio"),
+            expect_at("./robocopy_ingest_report.archivio.json")
+        );
+    }
+
+    /// A job that sets its own `report_path` is never namespaced — matches `main.rs` exactly:
+    /// the check is on the job's *own* field, not the merged/resolved value.
+    #[test]
+    fn report_path_is_not_namespaced_when_the_job_set_its_own() {
+        let (dir, path) = write_config(
+            r#"
+[[jobs]]
+name = "documenti"
+source = "D:/docs"
+dest = "E:/docs"
+report_path = "reports/documenti.json"
+"#,
+        );
+        let jobs = list_jobs(&path).expect("reads");
+        let expected = dir.path().join("reports/documenti.json");
+        assert_eq!(
+            report_path_of(&jobs, "documenti"),
+            Some(expected.display().to_string().replace('\\', "/"))
+        );
+    }
+
+    /// P1: `{timestamp}` is resolved fresh at the start of each real run. Nothing computed ahead
+    /// of time (or, here, read back from the config after the fact) can predict what a specific
+    /// past run actually wrote — so this must say "unknown", not guess.
+    #[test]
+    fn report_path_is_none_when_it_still_carries_the_timestamp_placeholder() {
+        let (_dir, path) = write_config(
+            "source = \"D:/src\"\ndest = \"E:/dst\"\nreport_path = \"report-{timestamp}.json\"\n",
+        );
+        let jobs = list_jobs(&path).expect("reads");
+        assert_eq!(jobs[0].report_path, None);
+    }
+
+    /// F86: the implicit single-job case (no `[[jobs]]`) must key `read_history`/`read_advice`
+    /// with `None` — its run index carries no job suffix. A frontend passing this job's own
+    /// `name` (always `"job1"` when unset) would look for a namespaced index that was never
+    /// written, silently showing "no runs" for a job that has them.
+    #[test]
+    fn history_job_name_is_none_for_the_implicit_single_job() {
+        let (_dir, path) = write_config("source = \"D:/src\"\ndest = \"E:/dst\"\n");
+        let jobs = list_jobs(&path).expect("reads");
+        assert_eq!(jobs[0].history_job_name, None);
+    }
+
+    /// F86: every `[[jobs]]` entry gets its own name as the history key — including one that
+    /// never set an explicit `name` and fell back to `job{idx+1}`, mirroring `namespace_with`'s
+    /// use of the same fallback for `report_path` (D12).
+    #[test]
+    fn history_job_name_matches_the_jobs_own_name_for_named_jobs() {
+        let (_dir, path) = write_config(
+            r#"
+[[jobs]]
+name = "documenti"
+source = "D:/docs"
+dest = "E:/docs"
+
+[[jobs]]
+source = "D:/other"
+dest = "E:/other"
+"#,
+        );
+        let jobs = list_jobs(&path).expect("reads");
+        assert_eq!(
+            job(&jobs, "documenti").history_job_name,
+            Some("documenti".to_string())
+        );
+        assert_eq!(
+            job(&jobs, "job2").history_job_name,
+            Some("job2".to_string())
+        );
+    }
+
+    /// F86 (Onda 2): the at-a-glance fields must come from the *resolved* (`merged_over`) job,
+    /// same as every other field in this function — a job inheriting these from `[defaults]`
+    /// without setting them itself must still show them, not fall back to "unset".
+    #[test]
+    fn wave_2_fields_reflect_merged_over_resolution() {
+        let (_dir, path) = write_config(
+            r#"
+encrypt_aes256 = "keyring:backup"
+keep_generations = 5
+exclude_files = ["*.tmp"]
+exclude_dirs = [".git", "node_modules"]
+threads = 4
+backup_type = "full"
+
+[[jobs]]
+name = "documenti"
+source = "D:/docs"
+dest = "E:/docs"
+"#,
+        );
+        let jobs = list_jobs(&path).expect("reads");
+        let summary = job(&jobs, "documenti");
+        assert!(summary.encrypt_enabled);
+        assert_eq!(summary.keep_generations, Some(5));
+        assert_eq!(summary.exclude_count, 3);
+        assert_eq!(summary.threads, Some(4));
+    }
+
+    /// F86 (Onda 2): a job with none of these settings, inherited or own, must report the
+    /// honest "unset"/zero state rather than some sentinel that looks like a value.
+    #[test]
+    fn wave_2_fields_are_unset_when_nothing_configures_them() {
+        let (_dir, path) = write_config("source = \"D:/src\"\ndest = \"E:/dst\"\n");
+        let jobs = list_jobs(&path).expect("reads");
+        assert!(!jobs[0].encrypt_enabled);
+        assert_eq!(jobs[0].keep_generations, None);
+        assert_eq!(jobs[0].exclude_count, 0);
+        assert_eq!(jobs[0].threads, None);
     }
 }
