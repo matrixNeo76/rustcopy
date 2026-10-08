@@ -1500,8 +1500,16 @@ dedicato serve soltanto per i pochi interruttori che `ConfigurationReport` non p
   chiaro accanto al report), `--compare-baseline` (una misura del motore, non una proprietà dei dati).
 - **Verifica**: 5 test unitari nuovi in `checkpoint.rs` e un test con il binario e robocopy veri
   (`resume_from_keeps_the_exclusions_of_the_interrupted_run`: `b.tmp` escluso dalla run interrotta resta
-  escluso dopo la ripresa). **Non rifatta**: la riproduzione manuale con una run reale a 3 MB/s dalla
-  console — il comportamento è coperto dai test, non rimisurato.
+  escluso dopo la ripresa). **Rifatta dal vivo il 7 Ott 2026** dalla console (binario da `main`): job con
+  `bandwidth_limit_mbps = 3` e `exclude_files = ["*.skip"]` verso una destinazione di rete, interrotto con
+  "Ferma", ripreso da "Riprese disponibili". Il checkpoint contiene banda, esclusioni e `extras`; il comando
+  di robocopy della ripresa contiene ancora `/XF *.skip /IPG:22` (prima di D25 mancavano entrambi), 30 file
+  arrivati, nessun file escluso copiato. **Limite della prova**: la **velocità** non si è potuta
+  osservare, perché `/IPG` di robocopy agisce solo su vere reti lente e il loopback SMB (`\\localhost\C$`)
+  non viene frenato (24 MB/s): la verifica è sul comando e sulla configurazione, non sul throughput.
+  Osservato anche: la run ripresa scrive log e report nei percorsi predefiniti (`robocopy_ingest.log`,
+  `./robocopy_ingest_report.json`), non in quelli del job: `log_path`/`report_path` non fanno parte di ciò
+  che la ripresa ripristina (già dichiarato come limite residuo).
 - **Limite residuo**: ciò che né `ConfigurationReport` né `ResumeExtras` portano (per esempio
   `html_report_path`, oltre a quanto escluso di proposito sopra) segue la riga di comando della ripresa.
   `--resume-from` resta "continua la stessa copia", non "ripeti ogni impostazione".
