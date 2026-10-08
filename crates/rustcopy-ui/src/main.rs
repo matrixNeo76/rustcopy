@@ -37,7 +37,7 @@ use crate::state::{running_fraction, Generation, RunSlot, Running};
 mod generated {
     slint::include_modules!();
 }
-use generated::{AppTray, AppWindow, SessionRow, TaskRow};
+use generated::{AppTray, AppWindow, PropRow, SessionRow, TaskRow};
 
 /// Names the mutex and the pipe of the single window (E12).
 const INSTANCE_TAG: &str = "rustcopy-ui";
@@ -140,6 +140,49 @@ fn refresh_tasks(ui: &AppWindow, ctx: &Rc<Ctx>) {
         })
         .collect();
     ui.set_tasks(ModelRc::new(VecModel::from(rows)));
+}
+
+/// The properties grid for one configuration: every job's settings, grouped, with where each value
+/// comes from. All of it is the core's (`gui_api::read_settings`); this only lays it out in rows.
+fn property_rows(config: &Path) -> Result<Vec<PropRow>, String> {
+    use robocopy_ingest::gui_api::SettingOrigin;
+    let jobs = gui_api::read_settings(config).map_err(|e| e.to_string())?;
+    let many = jobs.len() > 1;
+    let mut rows = Vec::new();
+    for job in jobs {
+        if many {
+            rows.push(PropRow {
+                kind: 0,
+                key: job.name.as_str().into(),
+                value: "".into(),
+                origin: 0,
+                caution: "".into(),
+            });
+        }
+        for group in job.groups {
+            rows.push(PropRow {
+                kind: 1,
+                key: group.title.as_str().into(),
+                value: "".into(),
+                origin: 0,
+                caution: "".into(),
+            });
+            for entry in group.entries {
+                rows.push(PropRow {
+                    kind: 2,
+                    key: entry.key.as_str().into(),
+                    value: entry.value.as_str().into(),
+                    origin: match entry.origin {
+                        SettingOrigin::Job => 0,
+                        SettingOrigin::Inherited => 1,
+                        SettingOrigin::Default => 2,
+                    },
+                    caution: entry.caution.unwrap_or_default().into(),
+                });
+            }
+        }
+    }
+    Ok(rows)
 }
 
 /// Runs a saved task (or any configuration file) in place, as a lavoro of the list.
@@ -498,6 +541,32 @@ fn main() -> Result<(), slint::PlatformError> {
                     }
                 });
             });
+        });
+    }
+
+    {
+        let weak = ui.as_weak();
+        ui.on_show_task_props(move |path| {
+            let Some(ui) = weak.upgrade() else { return };
+            let config = PathBuf::from(path.as_str());
+            ui.set_props_title(
+                config
+                    .file_stem()
+                    .map(|n| n.to_string_lossy().into_owned())
+                    .unwrap_or_default()
+                    .into(),
+            );
+            match property_rows(&config) {
+                Ok(rows) => {
+                    ui.set_error("".into());
+                    ui.set_props(ModelRc::new(VecModel::from(rows)));
+                }
+                Err(message) => {
+                    ui.set_props(ModelRc::new(VecModel::from(Vec::<PropRow>::new())));
+                    ui.set_error(message.into());
+                }
+            }
+            ui.set_page(3);
         });
     }
 
