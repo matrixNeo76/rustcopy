@@ -22,6 +22,7 @@ use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 
 use crate::errors::IngestError;
+use crate::integrity::HashAlgorithm;
 use crate::{gui_api, runner};
 
 const LOG_FILE: &str = "sessions.jsonl";
@@ -53,6 +54,9 @@ enum Line {
         at: DateTime<Utc>,
         sources: Vec<String>,
         dest: String,
+        /// The verification chosen for this copy, if any (an older line has none).
+        #[serde(default)]
+        verify: Option<HashAlgorithm>,
     },
     Finished {
         id: String,
@@ -78,6 +82,8 @@ pub struct SessionSummary {
     pub started_at: DateTime<Utc>,
     pub sources: Vec<String>,
     pub dest: String,
+    /// The verification this copy was started with, if any.
+    pub verify: Option<HashAlgorithm>,
     pub state: SessionState,
     pub exit_code: Option<i32>,
     pub files_copied: u64,
@@ -158,11 +164,24 @@ impl SessionLog {
         dest: &Path,
         items: &[(PathBuf, PathBuf)],
     ) -> Result<Session, IngestError> {
+        self.begin_with(sources, dest, items, None)
+    }
+
+    /// [`SessionLog::begin`] with a verification: the copied files are read back and compared with
+    /// `verify`. The only option a console copy can add, and typed so that nothing else can ride along.
+    pub fn begin_with(
+        &self,
+        sources: &[PathBuf],
+        dest: &Path,
+        items: &[(PathBuf, PathBuf)],
+        verify: Option<HashAlgorithm>,
+    ) -> Result<Session, IngestError> {
         let id = self.new_id();
         let dir = self.base.join(SESSIONS_DIR).join(&id);
         std::fs::create_dir_all(&dir).map_err(|e| IngestError::io(&dir, e))?;
         let config = dir.join("config.toml");
-        runner::write_shell_drop_config(items, &config)?;
+        let text = runner::shell_drop_config_text(items, None, verify)?;
+        crate::atomic_write(&config, text.as_bytes()).map_err(|e| IngestError::io(&config, e))?;
         self.append(&Line::Started {
             id: id.clone(),
             at: Utc::now(),
@@ -171,6 +190,7 @@ impl SessionLog {
                 .map(|p| p.to_string_lossy().into_owned())
                 .collect(),
             dest: dest.to_string_lossy().into_owned(),
+            verify,
         })?;
         Ok(Session { id, dir, config })
     }
@@ -196,6 +216,9 @@ impl SessionLog {
             ));
         }
         let sources: Vec<PathBuf> = pairs.iter().map(|(source, _)| source.clone()).collect();
+        let verify = jobs.first().and_then(|job| {
+            (job.verify_integrity == Some(true)).then(|| job.hash_algo.unwrap_or_default())
+        });
         // A drop puts each folder *under* the destination the person chose: that parent is the
         // destination to show and to repeat with.
         let dest = lexical_parent(&pairs[0].1);
@@ -213,6 +236,7 @@ impl SessionLog {
                 .map(|p| p.to_string_lossy().into_owned())
                 .collect(),
             dest: dest.to_string_lossy().into_owned(),
+            verify,
         })?;
         Ok(Session {
             id,
@@ -293,6 +317,7 @@ impl SessionLog {
                     at,
                     sources,
                     dest,
+                    verify,
                 } => {
                     order.push(id.clone());
                     by_id.insert(
@@ -302,6 +327,7 @@ impl SessionLog {
                             started_at: at,
                             sources,
                             dest,
+                            verify,
                             state: SessionState::Interrupted,
                             exit_code: None,
                             files_copied: 0,
@@ -364,7 +390,7 @@ impl SessionLog {
             .ok_or_else(|| IngestError::CopyPlanInvalid(format!("Lavoro {id} non trovato.")))?;
         let sources: Vec<PathBuf> = session.sources.iter().map(PathBuf::from).collect();
         let items = runner::plan_copy(&sources, Path::new(&session.dest))?;
-        let text = runner::shell_drop_config_text(&items, Some(name))?;
+        let text = runner::shell_drop_config_text(&items, Some(name), session.verify)?;
 
         std::fs::create_dir_all(dir).map_err(|e| IngestError::io(dir, e))?;
         let target = dir.join(format!("{name}.toml"));
@@ -637,6 +663,78 @@ mod tests {
         std::fs::write(&empty, "threads = 4\n").expect("write");
         let log = SessionLog::at(base.path());
         assert!(log.begin_from_config(&empty).is_err());
+    }
+
+    #[test]
+    fn a_verification_is_written_remembered_and_repeated_into_a_saved_task() {
+        let base = tempfile::tempdir().expect("tempdir");
+        let tasks = tempfile::tempdir().expect("tempdir");
+        let log = SessionLog::at(base.path());
+        let session = log
+            .begin_with(
+                &[PathBuf::from(r"C:\Dati\Foto")],
+                Path::new(r"D:\out"),
+                &[pair(r"C:\Dati\Foto", r"D:\out\Foto")],
+                Some(HashAlgorithm::Xxh3),
+            )
+            .expect("begin");
+
+        let config = std::fs::read_to_string(&session.config).expect("config");
+        assert!(config.contains("verify_integrity = true"), "{config}");
+        assert!(config.contains("xxh3"), "{config}");
+        assert_eq!(log.list(10, None)[0].verify, Some(HashAlgorithm::Xxh3));
+
+        let saved = log
+            .save_as_task(&session.id, tasks.path(), "foto")
+            .expect("save");
+        let text = std::fs::read_to_string(saved).expect("read");
+        assert!(
+            text.contains("xxh3"),
+            "a saved task keeps the verification it was run with: {text}"
+        );
+        for forbidden in ["mirror", "force_purge", "force-purge", "encrypt"] {
+            assert!(
+                !text.contains(forbidden),
+                "verification must not bring {forbidden} with it"
+            );
+        }
+    }
+
+    #[test]
+    fn no_verification_leaves_the_configuration_exactly_as_a_drop_writes_it() {
+        let base = tempfile::tempdir().expect("tempdir");
+        let log = SessionLog::at(base.path());
+        let items = [pair(r"C:\a", r"D:\out\a")];
+        let session = log
+            .begin(&[PathBuf::from(r"C:\a")], Path::new(r"D:\out"), &items)
+            .expect("begin");
+        let written = std::fs::read_to_string(&session.config).expect("config");
+        assert_eq!(
+            written,
+            runner::shell_drop_config_text(&items, None, None).expect("text")
+        );
+        assert!(!written.contains("verify"));
+        assert_eq!(log.list(10, None)[0].verify, None);
+    }
+
+    #[test]
+    fn a_drop_configuration_with_verification_is_recognised() {
+        let base = tempfile::tempdir().expect("tempdir");
+        let drops = tempfile::tempdir().expect("tempdir");
+        let log = SessionLog::at(base.path());
+        let drop = drops.path().join("shell-drop-2.toml");
+        let text = runner::shell_drop_config_text(
+            &[pair(r"C:\a", r"D:\out\a")],
+            None,
+            Some(HashAlgorithm::Blake3),
+        )
+        .expect("text");
+        std::fs::write(&drop, text).expect("write");
+        let session = log.begin_from_config(&drop).expect("begin");
+        assert_eq!(
+            log.list(10, Some(&session.id))[0].verify,
+            Some(HashAlgorithm::Blake3)
+        );
     }
 
     #[test]

@@ -20,6 +20,7 @@ use std::rc::Rc;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
+use robocopy_ingest::integrity::HashAlgorithm;
 use robocopy_ingest::sessions::{Session, SessionLog, SessionState, SessionSummary};
 use robocopy_ingest::{gui_api, runner};
 use slint::winit_030::{winit::event::WindowEvent, EventResult, WinitWindowAccessor};
@@ -53,6 +54,8 @@ struct Ctx {
     sessions: RefCell<Vec<SessionSummary>>,
     /// Discards a slow report read when the user has opened another lavoro meanwhile (E01).
     details: Generation,
+    /// Recent throughput samples for the speed chart (MB/s), newest last.
+    speeds: RefCell<Vec<f64>>,
 }
 
 fn set_sources(ui: &AppWindow, sources: &[String]) {
@@ -141,6 +144,7 @@ fn fill_detail(ui: &AppWindow, ctx: &Rc<Ctx>, id: &str) {
             .into(),
     );
     ui.set_d_detail("".into());
+    ui.set_d_verify(session.verify.map_or("", algorithm_name).into());
 
     if session.state == SessionState::NeedsLook {
         if let Some(report) = session.reports.first().cloned() {
@@ -176,10 +180,26 @@ fn run_session(ui: &AppWindow, ctx: &Rc<Ctx>, session: &Session) {
     match started {
         Ok(()) => {
             *ctx.running_id.borrow_mut() = Some(session.id.clone());
+            let running_title = ctx
+                .log
+                .list(1, Some(&session.id))
+                .first()
+                .map(|s| {
+                    format!(
+                        "{} → {}",
+                        format::folder_names(&s.sources),
+                        format::folder_name(&s.dest)
+                    )
+                })
+                .unwrap_or_default();
+            ui.set_running_title(running_title.into());
             ui.set_error("".into());
             ui.set_fraction(-1.0);
             ui.set_files_done_text("".into());
             ui.set_current_file("".into());
+            ui.set_eta_text("".into());
+            ui.set_chart_commands("".into());
+            ctx.speeds.borrow_mut().clear();
             ui.set_running(true);
             ui.set_page(0);
         }
@@ -194,16 +214,42 @@ fn run_session(ui: &AppWindow, ctx: &Rc<Ctx>, session: &Session) {
 
 /// A copy chosen in the window or repeated from the list. Planning and every refusal are the core's
 /// (`runner::plan_copy`, C01, C02).
-fn start_copy(ui: &AppWindow, ctx: &Rc<Ctx>, sources: &[PathBuf], dest: &str) {
+fn start_copy(
+    ui: &AppWindow,
+    ctx: &Rc<Ctx>,
+    sources: &[PathBuf],
+    dest: &str,
+    verify: Option<HashAlgorithm>,
+) {
     if ctx.slot.with(|run| run.is_running()) == Some(true) {
         ui.set_error(ui.get_busy_text());
         return;
     }
-    let planned = runner::plan_copy(sources, Path::new(dest.trim()))
-        .and_then(|items| ctx.log.begin(sources, Path::new(dest.trim()), &items));
+    let planned = runner::plan_copy(sources, Path::new(dest.trim())).and_then(|items| {
+        ctx.log
+            .begin_with(sources, Path::new(dest.trim()), &items, verify)
+    });
     match planned {
         Ok(session) => run_session(ui, ctx, &session),
         Err(error) => ui.set_error(error.to_string().into()),
+    }
+}
+
+/// The algorithm behind the combo box index (the order of `Strings.algo-*`).
+fn algorithm_for(index: i32) -> HashAlgorithm {
+    match index {
+        1 => HashAlgorithm::Sha256,
+        2 => HashAlgorithm::Blake3,
+        _ => HashAlgorithm::Xxh3,
+    }
+}
+
+/// The name shown for a verification (a technical name, not a sentence).
+fn algorithm_name(algorithm: HashAlgorithm) -> &'static str {
+    match algorithm {
+        HashAlgorithm::Xxh3 => "xxHash3",
+        HashAlgorithm::Sha256 => "SHA-256",
+        HashAlgorithm::Blake3 => "BLAKE3",
     }
 }
 
@@ -258,6 +304,7 @@ fn main() -> Result<(), slint::PlatformError> {
         running_id: RefCell::new(None),
         sessions: RefCell::new(Vec::new()),
         details: Generation::default(),
+        speeds: RefCell::new(Vec::new()),
     });
     refresh(&ui, &ctx);
 
@@ -293,7 +340,7 @@ fn main() -> Result<(), slint::PlatformError> {
                 .cloned();
             if let Some(session) = found {
                 let chosen: Vec<PathBuf> = session.sources.iter().map(PathBuf::from).collect();
-                start_copy(&ui, &ctx, &chosen, &session.dest);
+                start_copy(&ui, &ctx, &chosen, &session.dest, session.verify);
             }
         });
     }
@@ -421,7 +468,8 @@ fn main() -> Result<(), slint::PlatformError> {
                 .map(PathBuf::from)
                 .collect();
             let dest = ui.get_dest().to_string();
-            start_copy(&ui, &ctx, &chosen, &dest);
+            let verify = ui.get_verify().then(|| algorithm_for(ui.get_verify_algo()));
+            start_copy(&ui, &ctx, &chosen, &dest, verify);
         });
     }
     {
@@ -487,6 +535,17 @@ fn main() -> Result<(), slint::PlatformError> {
                         .into(),
                 );
                 ui.set_speed_text(format::human_speed(sample.throughput_mbps).into());
+                ui.set_eta_text(
+                    sample
+                        .eta_seconds()
+                        .map_or(String::new(), format::human_duration)
+                        .into(),
+                );
+                let mut speeds = ctx.speeds.borrow_mut();
+                speeds.push(sample.throughput_mbps);
+                let excess = speeds.len().saturating_sub(format::CHART_SAMPLES);
+                speeds.drain(..excess);
+                ui.set_chart_commands(format::chart_path(&speeds, 240.0, 56.0).into());
                 ui.set_current_file(sample.current_file.unwrap_or_default().into());
             }
             if let Some(done) = ctx.slot.with(|run| run.finished()).flatten() {

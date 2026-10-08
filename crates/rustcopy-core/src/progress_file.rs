@@ -96,6 +96,33 @@ impl ProgressSample {
         }
     }
 
+    /// Estimated seconds left in the transfer, when that can honestly be said.
+    ///
+    /// `None` outside the transfer phase, with an unknown or exhausted total, in the first two
+    /// seconds (a rate measured over less is noise), when nothing has moved, or when the answer is
+    /// absurd (more than a week). Worked out here rather than in a frontend for the same reason as
+    /// [`ProgressSample::fraction`]: an estimate invented from a missing number looks like
+    /// knowledge. It uses the average rate since the transfer began, which moves slowly and so does
+    /// not make the figure jump around the way an instantaneous rate would.
+    pub fn eta_seconds(&self) -> Option<f64> {
+        const MIN_ELAPSED_SECONDS: f64 = 2.0;
+        const MAX_ETA_SECONDS: f64 = 7.0 * 24.0 * 3600.0;
+        if self.phase != Phase::Transfer {
+            return None;
+        }
+        let total = self.bytes_total.filter(|&t| t > 0)?;
+        if self.bytes_done >= total
+            || self.bytes_done == 0
+            || !self.elapsed_seconds.is_finite()
+            || self.elapsed_seconds < MIN_ELAPSED_SECONDS
+        {
+            return None;
+        }
+        let rate = self.bytes_done as f64 / self.elapsed_seconds;
+        let remaining = (total - self.bytes_done) as f64 / rate;
+        (remaining.is_finite() && remaining <= MAX_ETA_SECONDS).then_some(remaining)
+    }
+
     /// The phase description, prefixed with this run's position in a batch when there is more
     /// than one job to be in a position within. A single-job run carries `batch_total: Some(1)`
     /// (or `None`, before any job ever ran) rather than skipping the field, so the `> 1` guard is
@@ -171,6 +198,72 @@ mod tests {
     #[test]
     fn progress_past_the_total_is_capped_rather_than_shown_above_one() {
         assert_eq!(sample(2000, Some(1000)).fraction(), Some(1.0));
+    }
+
+    fn timed(phase: Phase, done: u64, total: Option<u64>, elapsed: f64) -> ProgressSample {
+        ProgressSample {
+            phase,
+            elapsed_seconds: elapsed,
+            ..sample(done, total)
+        }
+    }
+
+    #[test]
+    fn the_estimate_uses_the_average_rate_since_the_transfer_began() {
+        // 100 of 400 bytes in 10 s is 10 B/s, so 300 left is 30 s.
+        let eta = timed(Phase::Transfer, 100, Some(400), 10.0).eta_seconds();
+        assert_eq!(eta, Some(30.0));
+    }
+
+    #[test]
+    fn no_estimate_is_offered_when_it_would_be_a_guess() {
+        assert_eq!(
+            timed(Phase::Inventory, 100, Some(400), 10.0).eta_seconds(),
+            None,
+            "not transferring"
+        );
+        assert_eq!(
+            timed(Phase::Verification, 100, Some(400), 10.0).eta_seconds(),
+            None,
+            "not transferring"
+        );
+        assert_eq!(
+            timed(Phase::Transfer, 100, None, 10.0).eta_seconds(),
+            None,
+            "total unknown"
+        );
+        assert_eq!(
+            timed(Phase::Transfer, 100, Some(0), 10.0).eta_seconds(),
+            None,
+            "total zero"
+        );
+        assert_eq!(
+            timed(Phase::Transfer, 400, Some(400), 10.0).eta_seconds(),
+            None,
+            "nothing left"
+        );
+        assert_eq!(
+            timed(Phase::Transfer, 0, Some(400), 10.0).eta_seconds(),
+            None,
+            "nothing moved"
+        );
+        assert_eq!(
+            timed(Phase::Transfer, 100, Some(400), 1.0).eta_seconds(),
+            None,
+            "too early"
+        );
+        assert_eq!(
+            timed(Phase::Transfer, 100, Some(400), f64::NAN).eta_seconds(),
+            None,
+            "bad time"
+        );
+    }
+
+    #[test]
+    fn an_absurd_estimate_is_not_shown() {
+        // 1 byte in 100 s against a petabyte left.
+        let eta = timed(Phase::Transfer, 1, Some(1_000_000_000_000_000), 100.0).eta_seconds();
+        assert_eq!(eta, None);
     }
 
     /// The ordinary case — no batch, or `run_jobs` never having set the fields yet — must read

@@ -271,7 +271,7 @@ pub fn write_shell_drop_config(
     items: &[(PathBuf, PathBuf)],
     out_path: &Path,
 ) -> Result<(), IngestError> {
-    let rendered = shell_drop_config_text(items, None)?;
+    let rendered = shell_drop_config_text(items, None, None)?;
     if let Some(parent) = out_path.parent() {
         std::fs::create_dir_all(parent).map_err(|error| IngestError::io(parent, error))?;
     }
@@ -283,34 +283,53 @@ pub fn write_shell_drop_config(
 ///
 /// `job_name` is for a single-folder configuration only (a batch names each job after its own
 /// folder): the console's "save as task" passes the name the operator chose, so the saved file is
-/// the same plain configuration a drop produces plus an identity. It never adds a setting of any
-/// other kind -- there is no parameter through which mirror, purge or verification could arrive.
+/// the same plain configuration a drop produces plus an identity.
+///
+/// `verify` is the one setting a person may add from the console: read the copied files back and
+/// compare them with the chosen algorithm. It is **typed**, a hash algorithm or nothing, so there is
+/// no parameter through which mirror, purge or any other setting could arrive; a test asserts that
+/// the text carries none of them whatever is passed. Verification reads, it never deletes.
 pub fn shell_drop_config_text(
     items: &[(PathBuf, PathBuf)],
     job_name: Option<&str>,
+    verify: Option<crate::integrity::HashAlgorithm>,
 ) -> Result<String, IngestError> {
+    let verify_fields = |job: &mut crate::config::JobConfig| {
+        if let Some(algorithm) = verify {
+            job.verify_integrity = Some(true);
+            job.hash_algo = Some(algorithm);
+        }
+    };
     let config = match items {
         [] => return Err(IngestError::ShellDropConfigEmpty(PathBuf::new())),
-        [(source, dest)] => crate::config::IngestConfig {
-            defaults: crate::config::JobConfig {
+        [(source, dest)] => {
+            let mut defaults = crate::config::JobConfig {
                 name: job_name.map(str::to_string),
                 source: Some(source.clone()),
                 dest: Some(dest.clone()),
                 threads: conservative_threads_for(dest),
                 ..Default::default()
-            },
-            jobs: None,
-        },
+            };
+            verify_fields(&mut defaults);
+            crate::config::IngestConfig {
+                defaults,
+                jobs: None,
+            }
+        }
         many => crate::config::IngestConfig {
             defaults: crate::config::JobConfig::default(),
             jobs: Some(
                 many.iter()
-                    .map(|(source, dest)| crate::config::JobConfig {
-                        name: source.file_name().map(|n| n.to_string_lossy().into_owned()),
-                        source: Some(source.clone()),
-                        dest: Some(dest.clone()),
-                        threads: conservative_threads_for(dest),
-                        ..Default::default()
+                    .map(|(source, dest)| {
+                        let mut job = crate::config::JobConfig {
+                            name: source.file_name().map(|n| n.to_string_lossy().into_owned()),
+                            source: Some(source.clone()),
+                            dest: Some(dest.clone()),
+                            threads: conservative_threads_for(dest),
+                            ..Default::default()
+                        };
+                        verify_fields(&mut job);
+                        job
                     })
                     .collect(),
             ),

@@ -3,10 +3,10 @@
 //
 // One entity, the "lavoro" (SPEC §5.0): the sidebar lists every copy started from here with how it
 // went; "Nuova copia" is the quick way in, a row opens the detail of one copy.
-import { Button, LineEdit, ProgressIndicator, ListView, Palette } from "std-widgets.slint";
+import { Button, LineEdit, ProgressIndicator, ListView, Palette, CheckBox, ComboBox } from "std-widgets.slint";
 import { Theme } from "theme.slint";
 import { Strings } from "strings.slint";
-import { Badge, BadgeKind, StatCard, Banner, SectionLabel } from "components.slint";
+import { Badge, BadgeKind, StatCard, Banner, SectionLabel, SpeedChart } from "components.slint";
 import { SessionRow, SessionItem, SessionUi } from "sessions.slint";
 
 export { SessionRow }
@@ -71,6 +71,12 @@ export component AppWindow inherits Window {
     in property <string> files-total-text;
     in property <string> speed-text;
     in property <string> current-file;
+    in property <string> running-title;
+    in property <string> eta-text;
+    in property <string> chart-commands;
+    // Session option: read the copied files back and compare them. Algorithm index: 0 xxHash3, 1 SHA-256, 2 BLAKE3.
+    in-out property <bool> verify: false;
+    in-out property <int> verify-algo: 0;
 
     // Detail of the selected lavoro
     in property <int> d-state;
@@ -82,6 +88,7 @@ export component AppWindow inherits Window {
     in property <string> d-speed;
     in property <string> d-detail;
     in property <string> d-saved;
+    in property <string> d-verify;
     in property <bool> d-has-numbers;
 
     // Save as task
@@ -129,6 +136,7 @@ export component AppWindow inherits Window {
                 }
                 Rectangle {
                     vertical-stretch: 1;
+                    clip: true;
                     ListView {
                         for row[i] in root.sessions: SessionItem {
                             entry: row;
@@ -140,9 +148,11 @@ export component AppWindow inherits Window {
                     }
                     if root.sessions.length == 0: Text {
                         text: Strings.jobs-empty;
+                        x: 6px;
+                        y: 8px;
+                        width: parent.width - 12px;
                         wrap: word-wrap;
-                        horizontal-alignment: center;
-                        vertical-alignment: center;
+                        horizontal-alignment: left;
                         font-size: Theme.small;
                         color: Theme.text-faint;
                     }
@@ -232,6 +242,30 @@ export component AppWindow inherits Window {
                     }
                 }
             }
+            VerticalLayout {
+                spacing: Theme.gap-small;
+                HorizontalLayout {
+                    spacing: 10px;
+                    alignment: start;
+                    CheckBox {
+                        text: Strings.verify-label;
+                        checked <=> root.verify;
+                        enabled: !root.running;
+                    }
+                    if root.verify: ComboBox {
+                        model: [Strings.algo-xxh3, Strings.algo-sha256, Strings.algo-blake3];
+                        current-index <=> root.verify-algo;
+                        enabled: !root.running;
+                        accessible-label: Strings.verify-label;
+                    }
+                }
+                if root.verify: Text {
+                    text: root.verify-algo == 0 ? Strings.algo-xxh3-hint : Strings.algo-strong-hint;
+                    wrap: word-wrap;
+                    font-size: Theme.small;
+                    color: Theme.text-muted;
+                }
+            }
             if root.error != "": Banner {
                 text: root.error;
                 label-prefix: Strings.warning-prefix;
@@ -257,6 +291,13 @@ export component AppWindow inherits Window {
             }
             if root.running: VerticalLayout {
                 spacing: Theme.gap-small;
+                Text {
+                    text: @tr("In corso: {}", root.running-title);
+                    overflow: elide;
+                    font-size: Theme.heading;
+                    font-weight: 700;
+                    color: Theme.text;
+                }
                 ProgressIndicator {
                     progress: root.fraction < 0 ? 0 : root.fraction;
                     indeterminate: root.fraction < 0;
@@ -271,6 +312,15 @@ export component AppWindow inherits Window {
                     overflow: elide;
                     font-size: Theme.small;
                     color: Theme.text-muted;
+                }
+                if root.eta-text != "": Text {
+                    text: @tr("Tempo residuo: {}", root.eta-text);
+                    font-size: Theme.body;
+                    color: Theme.text;
+                }
+                SpeedChart {
+                    commands: root.chart-commands;
+                    label: Strings.chart-label;
                 }
             }
         }
@@ -306,6 +356,11 @@ export component AppWindow inherits Window {
             }
             Text {
                 text: root.d-when;
+                font-size: Theme.small;
+                color: Theme.text-muted;
+            }
+            if root.d-verify != "": Text {
+                text: @tr("Verifica: {}", root.d-verify);
                 font-size: Theme.small;
                 color: Theme.text-muted;
             }
