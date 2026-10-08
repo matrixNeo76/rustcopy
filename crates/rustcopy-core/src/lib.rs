@@ -47,6 +47,7 @@ pub mod runner;
 pub mod scan;
 pub mod schedule;
 pub mod service;
+pub mod sessions;
 pub mod testkit;
 pub mod vss;
 

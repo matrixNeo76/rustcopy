@@ -271,10 +271,29 @@ pub fn write_shell_drop_config(
     items: &[(PathBuf, PathBuf)],
     out_path: &Path,
 ) -> Result<(), IngestError> {
+    let rendered = shell_drop_config_text(items, None)?;
+    if let Some(parent) = out_path.parent() {
+        std::fs::create_dir_all(parent).map_err(|error| IngestError::io(parent, error))?;
+    }
+    crate::atomic_write(out_path, rendered.as_bytes())
+        .map_err(|error| IngestError::io(out_path, error))
+}
+
+/// The TOML text [`write_shell_drop_config`] writes, without touching the disk.
+///
+/// `job_name` is for a single-folder configuration only (a batch names each job after its own
+/// folder): the console's "save as task" passes the name the operator chose, so the saved file is
+/// the same plain configuration a drop produces plus an identity. It never adds a setting of any
+/// other kind -- there is no parameter through which mirror, purge or verification could arrive.
+pub fn shell_drop_config_text(
+    items: &[(PathBuf, PathBuf)],
+    job_name: Option<&str>,
+) -> Result<String, IngestError> {
     let config = match items {
-        [] => return Err(IngestError::ShellDropConfigEmpty(out_path.to_path_buf())),
+        [] => return Err(IngestError::ShellDropConfigEmpty(PathBuf::new())),
         [(source, dest)] => crate::config::IngestConfig {
             defaults: crate::config::JobConfig {
+                name: job_name.map(str::to_string),
                 source: Some(source.clone()),
                 dest: Some(dest.clone()),
                 threads: conservative_threads_for(dest),
@@ -298,17 +317,12 @@ pub fn write_shell_drop_config(
         },
     };
 
-    let rendered = toml::to_string_pretty(&config).map_err(|error| {
+    toml::to_string_pretty(&config).map_err(|error| {
         IngestError::io(
-            out_path,
+            PathBuf::new(),
             std::io::Error::new(std::io::ErrorKind::InvalidData, error),
         )
-    })?;
-    if let Some(parent) = out_path.parent() {
-        std::fs::create_dir_all(parent).map_err(|error| IngestError::io(parent, error))?;
-    }
-    crate::atomic_write(out_path, rendered.as_bytes())
-        .map_err(|error| IngestError::io(out_path, error))
+    })
 }
 
 /// Splits a Windows-style path into comparable components: both separators, case-folded, no
