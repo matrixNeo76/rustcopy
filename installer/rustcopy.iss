@@ -99,8 +99,14 @@ Source: "..\README.md"; DestDir: "{app}"; Components: cli; Flags: ignoreversion 
 Source: "..\RUNBOOK.md"; DestDir: "{app}"; Components: cli; Flags: ignoreversion
 Source: "..\CLAUDE.md"; DestDir: "{app}"; DestName: "NOTES.md"; Components: cli; Flags: ignoreversion
 
+; The AppUserModelID is what lets Windows show the console's end-of-copy notification: a toast from a
+; desktop program is accepted only for an identity that has a Start menu shortcut carrying it (the same
+; string as toast::APP_USER_MODEL_ID in crates/rustcopy-ui) and, below, a registered display name.
+[Registry]
+Root: HKLM; Subkey: "SOFTWARE\Classes\AppUserModelId\rustcopy.console"; ValueType: string; ValueName: "DisplayName"; ValueData: "rustcopy"; Flags: uninsdeletekey; Components: gui
+
 [Icons]
-Name: "{group}\rustcopy - console"; Filename: "{app}\{#MyGuiExeName}"; Components: gui
+Name: "{group}\rustcopy - console"; Filename: "{app}\{#MyGuiExeName}"; Components: gui; AppUserModelID: "rustcopy.console"
 Name: "{group}\Disinstalla rustcopy"; Filename: "{uninstallexe}"
 
 [Code]

@@ -19,6 +19,7 @@ mod run;
 mod runs;
 mod single_instance;
 mod state;
+mod toast;
 
 use std::cell::{Cell, RefCell};
 use std::path::{Path, PathBuf};
@@ -751,11 +752,26 @@ fn algorithm_name(algorithm: HashAlgorithm) -> &'static str {
 /// only for a clean run: after a problem the person should read the outcome first.
 fn announce_finish(ui: &AppWindow, ctx: &Rc<Ctx>, id: &str, state: Option<SessionState>) {
     use slint::winit_030::winit::window::UserAttentionType;
+    let mut looked_away = false;
     ui.window().with_winit_window(|window| {
         if !window.has_focus() {
+            looked_away = true;
             window.request_user_attention(Some(UserAttentionType::Informational));
         }
     });
+    // The system notification only when the person is elsewhere: with the window in front the lavoro
+    // already shows its outcome. Windows drops it when the program has no registered identity.
+    if looked_away {
+        if let Some(text) = ctx
+            .sessions
+            .borrow()
+            .iter()
+            .find(|s| s.id == id)
+            .and_then(|s| toast_text(s, state))
+        {
+            toast::show("rustcopy", &text);
+        }
+    }
     if ctx.open_when_done.replace(false) && state == Some(SessionState::Clean) {
         let dest = ctx
             .sessions
@@ -766,6 +782,26 @@ fn announce_finish(ui: &AppWindow, ctx: &Rc<Ctx>, id: &str, state: Option<Sessio
         if let Some(dest) = dest {
             open_folder(&dest);
         }
+    }
+}
+
+/// The line of the end-of-copy notification: what was copied and how it went, or nothing when there is
+/// nothing to say (a run still going, or one stopped by the person).
+fn toast_text(session: &SessionSummary, state: Option<SessionState>) -> Option<String> {
+    let place = format!(
+        "{} → {}",
+        format::folder_names(&session.sources),
+        format::folder_name(&session.dest)
+    );
+    match state? {
+        SessionState::Clean => Some(format!(
+            "{place}: copia riuscita, {} file ({}).",
+            session.files_copied,
+            format::human_bytes(session.bytes_copied)
+        )),
+        SessionState::DryRun => Some(format!("{place}: simulazione terminata.")),
+        SessionState::NeedsLook => Some(format!("{place}: da controllare.")),
+        SessionState::Running | SessionState::Interrupted => None,
     }
 }
 
@@ -803,6 +839,8 @@ fn proposed_task_name(session: &SessionSummary) -> String {
 
 fn main() -> Result<(), slint::PlatformError> {
     let args: Vec<String> = std::env::args().skip(1).collect();
+    // The identity the end-of-copy notification belongs to (the installer registers the same one).
+    toast::set_process_identity();
 
     // E12: one window. A second launch hands its request to the first and leaves.
     #[cfg(windows)]
