@@ -637,6 +637,44 @@ pub fn changed_since<'a>(
         .collect()
 }
 
+/// What a finished generation run means: the exit code, and whether the generation may be written
+/// into the manifest.
+///
+/// A generation is only recorded when its copy **and** (if it was asked for) its verification came
+/// out clean. This is not bookkeeping tidiness: the manifest lists every file as it was at that
+/// run, and the next incremental diffs against that listing, so recording a generation whose copy
+/// did not verify would tell the next run "these files are safely backed up" for bytes that are
+/// not, and they would never be copied again.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct GenerationVerdict {
+    pub exit_code: u8,
+    pub record: bool,
+}
+
+/// The verdict for a generation run. `integrity` is `None` when no verification ran (not asked
+/// for, or a dry run).
+pub fn verdict(
+    copy_failed: bool,
+    integrity: Option<&crate::integrity::IntegrityCheck>,
+) -> GenerationVerdict {
+    if copy_failed {
+        return GenerationVerdict {
+            exit_code: crate::runner::EXIT_INGESTION_PROBLEM,
+            record: false,
+        };
+    }
+    if integrity.is_some_and(|check| !check.passed()) {
+        return GenerationVerdict {
+            exit_code: crate::runner::EXIT_INTEGRITY_FAILED,
+            record: false,
+        };
+    }
+    GenerationVerdict {
+        exit_code: crate::runner::EXIT_SUCCESS,
+        record: true,
+    }
+}
+
 pub fn to_generation_files(files: &[ScannedFile]) -> Vec<GenerationFile> {
     files
         .iter()
@@ -658,6 +696,59 @@ mod tests {
             size_bytes: size,
             modified_timestamp: mtime,
         }
+    }
+
+    fn integrity(passed: bool) -> crate::integrity::IntegrityCheck {
+        crate::integrity::IntegrityCheck {
+            files_checked: 1,
+            bytes_hashed: 1,
+            mismatches: Vec::new(),
+            missing_in_dest: if passed {
+                Vec::new()
+            } else {
+                vec!["a.txt".to_string()]
+            },
+            unreadable: Vec::new(),
+            status: if passed {
+                crate::integrity::IntegrityStatus::Passed
+            } else {
+                crate::integrity::IntegrityStatus::Failed
+            },
+            truncated: false,
+            total_errors: usize::from(!passed),
+            skipped_unchanged: 0,
+        }
+    }
+
+    #[test]
+    fn a_clean_copy_without_verification_is_recorded() {
+        assert_eq!(
+            verdict(false, None),
+            GenerationVerdict {
+                exit_code: 0,
+                record: true
+            }
+        );
+    }
+
+    #[test]
+    fn a_clean_copy_that_verified_is_recorded() {
+        assert!(verdict(false, Some(&integrity(true))).record);
+        assert_eq!(verdict(false, Some(&integrity(true))).exit_code, 0);
+    }
+
+    #[test]
+    fn a_copy_that_did_not_verify_is_never_recorded_and_has_its_own_exit_code() {
+        let verdict = verdict(false, Some(&integrity(false)));
+        assert!(!verdict.record, "the next incremental would trust it");
+        assert_eq!(verdict.exit_code, crate::runner::EXIT_INTEGRITY_FAILED);
+    }
+
+    #[test]
+    fn a_failed_copy_is_never_recorded_whatever_the_verification_says() {
+        let verdict = verdict(true, Some(&integrity(true)));
+        assert!(!verdict.record);
+        assert_eq!(verdict.exit_code, crate::runner::EXIT_INGESTION_PROBLEM);
     }
 
     fn generation_file(path: &str, size: u64, mtime: u64) -> GenerationFile {

@@ -21,6 +21,10 @@ For full technical detail behind any entry, see `ANALYSIS.md` (defect list, `D<N
 
 ## [Unreleased]
 
+### Fixed
+
+- **`--backup-type` now honours `--verify-integrity`.** It used to be silently ignored for generation backups. The copy is verified file by file against the source (only the files that generation copied), the report carries the integrity check, a failure exits with code 4, and a generation that did not verify is **not** recorded in the manifest, so the next incremental copies those files again instead of trusting them. The console warnings that said otherwise are gone.
+
 ### Added
 
 - **Slint console, editor**: a "Verifica" button beside the source and destination folders says what is at that path (exists, how many files, how big) and only while the box still holds the checked text; every editor field now carries a sentence saying what it is for, also as its accessible description.

@@ -838,7 +838,7 @@ dest = "..."`}</pre>
       <label
         class="flex items-center gap-1"
         title={draft.backup_type
-          ? "Dopo il trasferimento, confronta i checksum di sorgente e destinazione. Non ha effetto con Tipo di backup impostato: la pipeline a generazioni non esegue ancora questa verifica."
+          ? "Dopo il trasferimento, confronta i checksum di sorgente e destinazione. Con Tipo di backup impostato si verificano i file copiati da questa generazione; una generazione che non supera la verifica non viene registrata."
           : "Dopo il trasferimento, confronta i checksum di sorgente e destinazione."}
       >
         <input type="checkbox" bind:checked={draft.verify_integrity} /> Verifica integrità
@@ -868,21 +868,6 @@ dest = "..."`}</pre>
         <input type="checkbox" bind:checked={draft.preserve_acl} /> Conserva ACL
       </label>
     </div>
-    {#if draft.backup_type && draft.verify_integrity}
-      <!-- F77 fix (CodeRabbit, Major): execute_generation_backup never calls verify_integrity --
-           an operator ticking this alongside a Tipo di backup could believe the generation backup
-           was checksum-verified when it silently was not. The tooltip above states the limit;
-           this is the same warning made impossible to miss, since a hover-only tooltip is not
-           strong enough for a data-integrity claim that is not actually true. -->
-      <p
-        class="mt-1 rounded border border-amber-300 bg-amber-50 px-2 py-1 text-[11px]
-               text-amber-900 dark:border-amber-800 dark:bg-amber-950 dark:text-amber-200"
-        role="status"
-      >
-        Verifica integrità è impostata insieme a Tipo di backup, ma non ha effetto: la pipeline a
-        generazioni non esegue ancora questa verifica. I dati vengono copiati, non verificati.
-      </p>
-    {/if}
 
     </details>
 

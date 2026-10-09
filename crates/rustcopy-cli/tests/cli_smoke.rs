@@ -2376,6 +2376,85 @@ fn incremental_backup_copies_only_changed_files_since_the_last_generation() {
     );
 }
 
+/// `--verify-integrity` runs inside the generation pipeline: the report carries an integrity check
+/// that covers exactly the files *that generation* copied (not the whole source), and the run is
+/// still recorded. Before this was wired up the flag was silently ignored for `--backup-type`.
+#[cfg(windows)]
+#[test]
+fn generation_backup_verifies_what_it_copied() {
+    let source = fixture_tree(&[("a.csv", 8), ("b.csv", 8)]);
+    let workdir = tempfile::tempdir().expect("workdir");
+    let dest = workdir.path().join("dest");
+
+    let full = run_generation_backup(
+        source.path(),
+        &dest,
+        workdir.path(),
+        "full",
+        "report1.json",
+        &["--verify-integrity"],
+    );
+    assert!(full.status.success(), "stderr: {}", stderr_of(&full));
+    let report1: serde_json::Value = serde_json::from_str(
+        &std::fs::read_to_string(workdir.path().join("report1.json")).expect("read"),
+    )
+    .expect("json");
+    assert_eq!(report1["integrity_check"]["status"], "PASSED");
+    assert_eq!(report1["integrity_check"]["files_checked"], 2);
+
+    std::thread::sleep(std::time::Duration::from_millis(1100));
+    std::fs::write(source.path().join("a.csv"), b"changed content!").expect("modify a.csv");
+
+    let incremental = run_generation_backup(
+        source.path(),
+        &dest,
+        workdir.path(),
+        "incremental",
+        "report2.json",
+        &["--verify-integrity"],
+    );
+    assert!(
+        incremental.status.success(),
+        "stderr: {}",
+        stderr_of(&incremental)
+    );
+    let report2: serde_json::Value = serde_json::from_str(
+        &std::fs::read_to_string(workdir.path().join("report2.json")).expect("read"),
+    )
+    .expect("json");
+    assert_eq!(report2["integrity_check"]["status"], "PASSED");
+    assert_eq!(
+        report2["integrity_check"]["files_checked"], 1,
+        "only the one file this generation copied is verified: {report2}"
+    );
+
+    let manifest = read_manifest_generations(&dest.join(".rustcopy_generations.json"));
+    assert_eq!(manifest.as_array().expect("array").len(), 2);
+}
+
+/// A dry run copies nothing, so it must verify nothing and record nothing.
+#[cfg(windows)]
+#[test]
+fn generation_dry_run_with_verify_records_no_generation() {
+    let source = fixture_tree(&[("a.csv", 8)]);
+    let workdir = tempfile::tempdir().expect("workdir");
+    let dest = workdir.path().join("dest");
+
+    let output = run_generation_backup(
+        source.path(),
+        &dest,
+        workdir.path(),
+        "full",
+        "report.json",
+        &["--verify-integrity", "--dry-run"],
+    );
+    assert!(output.status.success(), "stderr: {}", stderr_of(&output));
+    assert!(
+        !dest.join(".rustcopy_generations.json").exists(),
+        "a dry run must not write a manifest"
+    );
+}
+
 /// F34 black-box test: `--backup-type incremental` with no prior generation at the destination
 /// must fail clearly instead of silently doing a full copy or crashing.
 #[cfg(windows)]
