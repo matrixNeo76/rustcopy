@@ -32,8 +32,32 @@ spunta solo dopo che è in `main`, con la CI verde e, se è un comportamento, pr
   - [x] 4c editor a schede (Base, Copia, Filtri, Conservazione, Sicurezza, Avanzate; scrive solo proposte accanto al file; può restringere il rischio, mai allargarlo; il nome non si cambia). Provato dal vivo: abbassare i cicli da 7 a 3 è rifiutato dal core, alzarli a 9 salva, e il job con mirror e `pre_command` resta intatto
   - [x] 4d storico delle esecuzioni e osservazioni del motore (`--advise`) per un'attività: pulsante «Storico». Provato dal vivo con 8 esecuzioni vere e tre osservazioni con le prove
   - [x] 4e report completo di una copia (fasi, file, verifica, elenchi di problemi, avvisi, computer e versione): «Mostra i dettagli tecnici» nel dettaglio di un lavoro. Provato dal vivo su una copia verificata; i casi con problemi sono coperti da test sul modulo (`report_rows`), non provati dal vivo
-- [ ] Fase 5 — parità con la console Tauri, installer, **toast di sistema (con AppUserModelID creato dall'installer)**, rimozione di Tauri (**con tua conferma esplicita**)
+- [~] Fase 5 — parità con la console Tauri, installer, **toast di sistema (con AppUserModelID creato dall'installer)**, rimozione di Tauri (**con tua conferma esplicita**)
+  - [x] 5a verifica di parità: confronto scheda per scheda con la console Tauri (tabella sotto)
+  - [ ] 5b lacune di parità, nell'ordine della tabella
+  - [ ] 5c installer: il componente «console» installa `rustcopy-ui.exe` (stesso nome della console attuale, `rustcopy-gui.exe`, per non rompere Shell e `runner::gui_beside`), senza WebView2; installer smoke aggiornato
+  - [ ] 5d toast di sistema (con l'AppUserModelID creato dall'installer)
+  - [ ] 5e rimozione di Tauri e della toolchain JS: **solo dopo la tua conferma esplicita**, in una PR separata e annullabile
 - [ ] Fase 6 — funzioni che toccano il core (vedi sotto)
+
+### Parità con la console Tauri (verifica del 9 Ott 2026)
+
+Confronto con le otto schede della console attuale (`App.svelte`) e i suoi 24 comandi. **Fatto** = c'è e provato nella console Slint; **manca** = va costruito prima della rimozione di Tauri.
+
+| Scheda Tauri | Cosa fa | Stato in Slint | Lacuna da colmare |
+|---|---|---|---|
+| Copia | Cartelle → destinazione, controllo, verifica | **Fatto** (più: verifica, apri cartella, grafico, tempo residuo, drop da Explorer) | «Controlla prima» (conteggio file e dimensione prima di copiare, `inspect_path`) |
+| Job | Elenco dei job di un file di configurazione con badge (ultimo esito, pianificato, cifrato, ...) | **Parziale**: pagina Attività per le attività *salvate dalla console* e «Esegui un file di configurazione» | Aprire **un file di configurazione qualsiasi** e vederne i job con esito dell'ultima esecuzione e badge «pianificato» (F62) |
+| Impostazioni | Griglia delle impostazioni con origine | **Fatto** (pulsante Proprietà) | Gestione **credenziali** (`set_credential`/`delete_credential`): l'unica scrittura di quella scheda |
+| Modifica | Editor a sezioni, proposta accanto al file | **Fatto** (schede) | Selettori di cartella per origine/destinazione; avvisi in-linea mirror+tipo di copia |
+| Esegui | Avvio di un file di configurazione con coda di job, stop, ripresa | **Parziale**: avvio, stop, avanzamento, un lavoro alla volta | **Coda di più job** con posizione (in attesa / in corso / concluso); **ripresa da checkpoint** (`list_checkpoints`/`resume_job`) |
+| Report | Apertura di un report | **Fatto** per le copie della console (dettagli tecnici) | Aprire **un report qualsiasi** da file |
+| Storico | Esecuzioni, filtri, esportazione CSV, analisi | **Parziale**: per attività, con osservazioni | Filtro per esito, **esportazione CSV**, storico di un file qualsiasi |
+| Aiuto | Guida | **Manca** | Pagina Aiuto (testi) |
+| (fuori scheda) | Anteprima di un ripristino (`preview_restore`), esempio guidato (`create_example_workspace`), procedura nuovo job (`NewJobWizard`), `QuickSync` | **Mancano** | Esempio guidato per chi non ha nulla; anteprima di ripristino |
+| (fuori scheda) | Recenti e preferiti dei percorsi (`PathBar`) | **Manca** | Recenti per origine, destinazione e configurazioni |
+
+Ordine proposto per colmare le lacune (dal più usato): 1 aprire un file di configurazione e vederne i job; 2 coda di più job; 3 ripresa da checkpoint; 4 «Controlla prima»; 5 report e storico di un file qualsiasi con CSV; 6 credenziali; 7 selettori di cartella nell'editor; 8 recenti; 9 Aiuto ed esempio guidato; 10 anteprima di ripristino.
 
 ### Limiti noti e come li tratto
 | # | Limite | Cosa faccio | Stato |
