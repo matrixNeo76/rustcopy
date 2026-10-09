@@ -187,11 +187,22 @@ pub fn plan_move(
                 plan.keep(path, KeepReason::NotPlainFile);
                 continue;
             }
-            let Ok(relative) = path.strip_prefix(source_root) else {
-                plan.keep(path, KeepReason::NotPlainFile);
-                continue;
+            // A single file was copied *into* the destination folder under its own name.
+            let dest = if source_root.is_file() {
+                match path.file_name() {
+                    Some(name) => dest_root.join(name),
+                    None => {
+                        plan.keep(path, KeepReason::NotPlainFile);
+                        continue;
+                    }
+                }
+            } else {
+                let Ok(relative) = path.strip_prefix(source_root) else {
+                    plan.keep(path, KeepReason::NotPlainFile);
+                    continue;
+                };
+                dest_root.join(relative)
             };
-            let dest = dest_root.join(relative);
             let Ok(dest_meta) = std::fs::symlink_metadata(&dest) else {
                 plan.keep(path, KeepReason::MissingInDestination);
                 continue;
@@ -466,5 +477,27 @@ mod tests {
         assert_eq!(outcome.skipped_changed, 2);
         assert!(source.join("a.txt").exists());
         assert!(source.join("sub").join("b.txt").exists());
+    }
+    #[test]
+    fn a_single_file_source_is_matched_by_name_inside_the_destination_folder() {
+        let (_base, source, dest) = tree();
+        let file = source.join("a.txt");
+        let plan = plan_move(
+            SafetyLevel::Standard,
+            &[(file.clone(), dest.clone())],
+            proof(),
+        )
+        .expect("plan");
+        // `dest` holds an identical `a.txt` at its top, so exactly that one file is planned.
+        assert_eq!(plan.delete.len(), 1);
+        assert_eq!(plan.delete[0].dest, dest.join("a.txt"));
+        let outcome =
+            execute_move(SafetyLevel::Standard, &plan, Confirmation::Confirmed).expect("move");
+        assert_eq!(outcome.deleted, 1);
+        assert!(!file.exists());
+        assert!(
+            source.join("sub").join("b.txt").exists(),
+            "the rest of the folder is untouched"
+        );
     }
 }

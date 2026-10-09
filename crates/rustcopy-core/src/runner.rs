@@ -258,6 +258,98 @@ fn conservative_threads_for(dest: &Path) -> Option<u16> {
     is_network_destination(dest).then_some(CONSERVATIVE_NETWORK_THREADS)
 }
 
+/// A single file chosen as a source is copied as its **folder plus a one-name pattern** (robocopy's own
+/// way to copy one file): `(folder, Some(file name))`. A folder stays `(itself, None)`. Decided by asking
+/// the disk, because a path's text does not say whether it is a file. A file name cannot contain `*` or `?`
+/// on Windows, so the name is always a literal pattern.
+fn file_item(source: &Path) -> (PathBuf, Option<String>) {
+    if source.is_file() {
+        if let (Some(parent), Some(name)) = (source.parent(), source.file_name()) {
+            return (
+                parent.to_path_buf(),
+                Some(name.to_string_lossy().into_owned()),
+            );
+        }
+    }
+    (source.to_path_buf(), None)
+}
+
+/// [`plan_copy`] for a mix of folders **and single files** (the console's "Aggiungi file"): a folder is
+/// planned exactly as `plan_copy` does, a file is copied **into** `dest_root` under its own name, so its
+/// pair is `(the file, dest_root)`. Refused, besides everything `plan_copy` refuses: a file whose
+/// destination is its own folder, and two files with the same name.
+///
+/// Unlike `plan_copy`, this asks the disk which sources are files, so it is for the console only; the Shell
+/// extension keeps the purely lexical `plan_copy`, because it runs inside Explorer.
+pub fn plan_copy_with_files(
+    sources: &[PathBuf],
+    dest_root: &Path,
+) -> Result<Vec<(PathBuf, PathBuf)>, IngestError> {
+    let (files, folders): (Vec<&PathBuf>, Vec<&PathBuf>) =
+        sources.iter().partition(|path| path.is_file());
+    if files.is_empty() {
+        return plan_copy(sources, dest_root);
+    }
+    let invalid = |message: String| Err(IngestError::CopyPlanInvalid(message));
+    let dest_text = dest_root.to_string_lossy();
+    if path_parts(&dest_text).is_empty() {
+        return invalid("Scegli la cartella di destinazione.".to_string());
+    }
+
+    let folder_items = if folders.is_empty() {
+        Vec::new()
+    } else {
+        let folders: Vec<PathBuf> = folders.into_iter().cloned().collect();
+        plan_copy(&folders, dest_root)?
+    };
+
+    let mut seen: Vec<String> = Vec::new();
+    for file in &files {
+        let text = file.to_string_lossy();
+        let name = text
+            .trim_end_matches(['\\', '/'])
+            .rsplit(['\\', '/'])
+            .next()
+            .unwrap_or("")
+            .to_string();
+        let parent_text = lexical_parent_text(&text);
+        if path_parts(&parent_text) == path_parts(&dest_text) {
+            return invalid(format!(
+                "\"{name}\" è già nella cartella di destinazione: scegli una destinazione diversa."
+            ));
+        }
+        let key = name.to_lowercase();
+        if seen.contains(&key) {
+            return invalid(format!(
+                "Due file si chiamano \"{name}\": finirebbero nello stesso posto. Copiali con due operazioni separate."
+            ));
+        }
+        seen.push(key);
+    }
+
+    // The original order, each pair as `plan_copy` or the file rule makes it.
+    let mut folder_iter = folder_items.into_iter();
+    Ok(sources
+        .iter()
+        .filter_map(|source| {
+            if source.is_file() {
+                Some((source.clone(), dest_root.to_path_buf()))
+            } else {
+                folder_iter.next()
+            }
+        })
+        .collect())
+}
+
+/// The text of a path with its last component removed (plain string logic, host-independent).
+fn lexical_parent_text(path: &str) -> String {
+    let trimmed = path.trim_end_matches(['\\', '/']);
+    match trimmed.rfind(['\\', '/']) {
+        Some(at) => trimmed[..at].to_string(),
+        None => String::new(),
+    }
+}
+
 /// Writes a throwaway configuration file for one drag-and-drop batch: one `(source, dest)` pair
 /// becomes a plain single-job config (`defaults` only, exactly the pre-F33 shape); more than one
 /// becomes an `[[jobs]]` batch, one entry per dropped folder, each named after its own source
@@ -303,10 +395,12 @@ pub fn shell_drop_config_text(
     let config = match items {
         [] => return Err(IngestError::ShellDropConfigEmpty(PathBuf::new())),
         [(source, dest)] => {
+            let (source_dir, pattern) = file_item(source);
             let mut defaults = crate::config::JobConfig {
                 name: job_name.map(str::to_string),
-                source: Some(source.clone()),
+                source: Some(source_dir),
                 dest: Some(dest.clone()),
+                pattern,
                 threads: conservative_threads_for(dest),
                 ..Default::default()
             };
@@ -321,10 +415,21 @@ pub fn shell_drop_config_text(
             jobs: Some(
                 many.iter()
                     .map(|(source, dest)| {
+                        let (source_dir, pattern) = file_item(source);
+                        // A file's job is named apart from a folder's so the two can never share the
+                        // report, cache and manifest files that are namespaced by job name.
+                        let name = source.file_name().map(|n| {
+                            if pattern.is_some() {
+                                format!("file-{}", n.to_string_lossy())
+                            } else {
+                                n.to_string_lossy().into_owned()
+                            }
+                        });
                         let mut job = crate::config::JobConfig {
-                            name: source.file_name().map(|n| n.to_string_lossy().into_owned()),
-                            source: Some(source.clone()),
+                            name,
+                            source: Some(source_dir),
                             dest: Some(dest.clone()),
+                            pattern,
                             threads: conservative_threads_for(dest),
                             ..Default::default()
                         };
@@ -911,5 +1016,91 @@ mod tests {
             items,
             vec![(r"D:\Dati\Foto\".into(), r"E:\copia\Foto".into())]
         );
+    }
+    // ----- single files as sources ----------------------------------------------------------
+
+    fn real_tree() -> (tempfile::TempDir, PathBuf, PathBuf, PathBuf) {
+        let base = tempfile::tempdir().expect("tempdir");
+        let folder = base.path().join("Foto");
+        std::fs::create_dir_all(&folder).expect("mkdir");
+        let file = base.path().join("nota.txt");
+        std::fs::write(&file, b"x").expect("write");
+        let dest = base.path().join("backup");
+        (base, folder, file, dest)
+    }
+
+    #[test]
+    fn a_file_goes_into_the_destination_folder_and_a_folder_under_its_own_name() {
+        let (_base, folder, file, dest) = real_tree();
+        let items = plan_copy_with_files(&[file.clone(), folder.clone()], &dest).expect("plan");
+        assert_eq!(
+            items[0],
+            (file, dest.clone()),
+            "a file is copied into the destination itself"
+        );
+        assert_eq!(
+            items[1],
+            (folder, dest.join("Foto")),
+            "a folder keeps its own name"
+        );
+    }
+
+    #[test]
+    fn a_file_into_its_own_folder_and_two_files_with_one_name_are_refused() {
+        let (base, _folder, file, _dest) = real_tree();
+        assert!(
+            plan_copy_with_files(std::slice::from_ref(&file), base.path()).is_err(),
+            "its own folder"
+        );
+        let other = base.path().join("sub");
+        std::fs::create_dir_all(&other).expect("mkdir");
+        let same_name = other.join("NOTA.txt");
+        std::fs::write(&same_name, b"y").expect("write");
+        assert!(
+            plan_copy_with_files(&[file, same_name], &base.path().join("out")).is_err(),
+            "same name"
+        );
+    }
+
+    #[test]
+    fn with_no_file_the_result_is_exactly_plan_copys() {
+        let sources = [
+            PathBuf::from(r"D:\Dati\Foto"),
+            PathBuf::from(r"D:\Dati\Video"),
+        ];
+        let dest = Path::new(r"E:ackup");
+        assert_eq!(
+            plan_copy_with_files(&sources, dest).expect("a"),
+            plan_copy(&sources, dest).expect("b")
+        );
+        assert!(plan_copy_with_files(&[], dest).is_err());
+    }
+
+    #[test]
+    fn a_file_source_is_written_as_its_folder_plus_a_one_name_pattern() {
+        let (_base, folder, file, dest) = real_tree();
+        let alone =
+            shell_drop_config_text(&[(file.clone(), dest.clone())], None, None).expect("text");
+        let parsed: crate::config::IngestConfig = toml::from_str(&alone).expect("toml");
+        assert_eq!(parsed.defaults.source.as_deref(), file.parent());
+        assert_eq!(parsed.defaults.pattern.as_deref(), Some("nota.txt"));
+        assert_eq!(parsed.defaults.dest.as_deref(), Some(dest.as_path()));
+
+        let batch = shell_drop_config_text(
+            &[(file, dest.clone()), (folder.clone(), dest.join("Foto"))],
+            None,
+            None,
+        )
+        .expect("text");
+        let parsed: crate::config::IngestConfig = toml::from_str(&batch).expect("toml");
+        let jobs = parsed.jobs.expect("jobs");
+        assert_eq!(
+            jobs[0].name.as_deref(),
+            Some("file-nota.txt"),
+            "a file's job is named apart"
+        );
+        assert_eq!(jobs[0].pattern.as_deref(), Some("nota.txt"));
+        assert_eq!(jobs[1].name.as_deref(), Some("Foto"));
+        assert_eq!(jobs[1].pattern, None, "a folder copies everything");
     }
 }

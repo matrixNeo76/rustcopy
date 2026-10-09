@@ -752,7 +752,7 @@ fn start_copy(
         return;
     }
     let moving = ui.get_move_mode();
-    let planned = runner::plan_copy(sources, Path::new(dest.trim())).and_then(|items| {
+    let planned = runner::plan_copy_with_files(sources, Path::new(dest.trim())).and_then(|items| {
         if moving {
             // A move is always verified; the core refuses it below the Standard level.
             let level = safety::load(&robocopy_ingest::sessions::data_dir());
@@ -901,7 +901,8 @@ fn plan_a_move(session: &SessionSummary) -> Result<MovePlan, String> {
     let view = gui_api::read_report(report).map_err(|e| e.to_string())?;
     let proof = VerifiedCopy::from_report(&view).map_err(|e| e.to_string())?;
     let sources: Vec<PathBuf> = session.sources.iter().map(PathBuf::from).collect();
-    let pairs = runner::plan_copy(&sources, Path::new(&session.dest)).map_err(|e| e.to_string())?;
+    let pairs = runner::plan_copy_with_files(&sources, Path::new(&session.dest))
+        .map_err(|e| e.to_string())?;
     let level = safety::load(&robocopy_ingest::sessions::data_dir());
     moves::plan_move(level, &pairs, proof).map_err(|e| e.to_string())
 }
@@ -1955,6 +1956,25 @@ fn main() -> Result<(), slint::PlatformError> {
         });
     }
     {
+        let weak: Weak<AppWindow> = ui.as_weak();
+        let sources = sources.clone();
+        ui.on_add_files(move || {
+            let sources = sources.clone();
+            let weak = weak.clone();
+            std::thread::spawn(move || {
+                let picked = rfd::FileDialog::new().pick_files().unwrap_or_default();
+                let _ = weak.upgrade_in_event_loop(move |ui| {
+                    let mut list = sources.lock().unwrap_or_else(|p| p.into_inner());
+                    for path in &picked {
+                        push_unique(&mut list, path);
+                    }
+                    set_sources(&ui, &list);
+                    ui.set_error("".into());
+                });
+            });
+        });
+    }
+    {
         let weak = ui.as_weak();
         let sources = sources.clone();
         ui.on_remove_source(move |index| {
@@ -1992,7 +2012,7 @@ fn main() -> Result<(), slint::PlatformError> {
         let sources = sources.clone();
         ui.window().on_winit_window_event(move |_window, event| {
             if let WindowEvent::DroppedFile(path) = event {
-                if path.is_dir() {
+                if path.is_dir() || path.is_file() {
                     if let Some(ui) = weak.upgrade() {
                         let mut list = sources.lock().unwrap_or_else(|p| p.into_inner());
                         push_unique(&mut list, path);
