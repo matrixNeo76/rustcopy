@@ -192,6 +192,111 @@ pub fn build_task_run_command(exe_path: &Path, filtered_args: &[String]) -> Stri
     parts.join(" ")
 }
 
+/// What the console may ask the command line to install, after checking the safety level (GUI Slint
+/// plan, phase 6). The console never writes a schedule itself: it prepares **this fixed argument list**,
+/// runs the CLI with it (`--install-schedule` is the CLI's own, F36) and lets Windows' Task Scheduler do
+/// the rest. Pure, so every refusal is a unit test.
+///
+/// Refused, each with a sentence the person can act on:
+/// - a level below Standard ([`crate::safety::SafetyLevel::can_prepare_schedules`]) -- checked **here**,
+///   in the core, not only by hiding a button;
+/// - a malformed `spec` (the CLI's own grammar, [`parse_schedule_spec`]) or an unusable task `name`;
+/// - a configuration that cannot be read, or that has a job which **mirrors** or **prunes generations**:
+///   a schedule runs unattended, and the console never starts an unattended purge;
+/// - a job with a relative source or destination: the Task Scheduler starts the program from a system
+///   folder, so a relative path would resolve somewhere else on every run.
+pub fn install_arguments(
+    level: crate::safety::SafetyLevel,
+    config: &Path,
+    spec: &str,
+    name: &str,
+) -> Result<Vec<String>, IngestError> {
+    if !level.can_prepare_schedules() {
+        return Err(IngestError::Schedule(format!(
+            "Il livello di sicurezza «{}» non permette di preparare pianificazioni: servono almeno «{}».",
+            level.name(),
+            crate::safety::SafetyLevel::Standard.name()
+        )));
+    }
+    parse_schedule_spec(spec)?;
+    validate_task_name(name)?;
+
+    let drafts = crate::job_editor::read_drafts(config)?;
+    for draft in &drafts {
+        if draft.mirror || draft.keep_generations.is_some() {
+            return Err(IngestError::Schedule(format!(
+                "Il job «{}» fa un mirror o elimina vecchie generazioni: una pianificazione parte senza nessuno davanti e la console non avvia mai una pulizia non presidiata. Si pianifica soltanto dalla riga di comando, con una scelta esplicita.",
+                draft.name
+            )));
+        }
+        for path in [&draft.source, &draft.dest] {
+            if !is_absolute_windows_path(path) {
+                return Err(IngestError::Schedule(format!(
+                    "Il job «{}» usa il percorso relativo «{path}»: Windows avvia una pianificazione da una cartella di sistema, quindi quel percorso punterebbe altrove. Usa percorsi completi.",
+                    draft.name
+                )));
+            }
+        }
+    }
+
+    let config = std::path::absolute(config).map_err(|e| IngestError::io(config, e))?;
+    Ok(vec![
+        "--config".to_string(),
+        config.display().to_string(),
+        "--install-schedule".to_string(),
+        spec.to_string(),
+        "--schedule-name".to_string(),
+        name.to_string(),
+    ])
+}
+
+/// The argument list that removes the schedule `name`, under the same level check. Fixed shape: only
+/// `--uninstall-schedule` and the (validated) name.
+pub fn removal_arguments(
+    level: crate::safety::SafetyLevel,
+    name: &str,
+) -> Result<Vec<String>, IngestError> {
+    if !level.can_prepare_schedules() {
+        return Err(IngestError::Schedule(format!(
+            "Il livello di sicurezza «{}» non permette di togliere pianificazioni: servono almeno «{}».",
+            level.name(),
+            crate::safety::SafetyLevel::Standard.name()
+        )));
+    }
+    validate_task_name(name)?;
+    Ok(vec!["--uninstall-schedule".to_string(), name.to_string()])
+}
+
+/// A task name `schtasks.exe` takes without surprises: letters, digits, space, `_`, `.` and `-`, up to 64
+/// characters, not starting with a space or a dot, and without the `\` that would put the task in a folder.
+fn validate_task_name(name: &str) -> Result<(), IngestError> {
+    let ok = !name.is_empty()
+        && name.chars().count() <= 64
+        && !name.starts_with([' ', '.'])
+        && !name.ends_with(' ')
+        && name
+            .chars()
+            .all(|c| c.is_alphanumeric() || matches!(c, ' ' | '_' | '.' | '-'));
+    if ok {
+        Ok(())
+    } else {
+        Err(IngestError::Schedule(format!(
+            "Il nome «{name}» non va bene per una pianificazione: usa lettere, cifre, spazio, trattino, punto o trattino basso (massimo 64 caratteri)."
+        )))
+    }
+}
+
+/// `C:\...`, `C:/...` or a UNC path. Plain string logic, so it gives the same answer on every host
+/// (see `vss::remap_to_shadow`, D16).
+fn is_absolute_windows_path(path: &str) -> bool {
+    let bytes = path.as_bytes();
+    let drive = bytes.len() >= 3
+        && bytes[0].is_ascii_alphabetic()
+        && bytes[1] == b':'
+        && (bytes[2] == b'\\' || bytes[2] == b'/');
+    drive || path.starts_with("\\\\")
+}
+
 #[cfg(windows)]
 pub fn install(name: &str, spec: &ScheduleSpec, task_run: &str) -> Result<(), IngestError> {
     run_schtasks(&build_create_args(name, spec, task_run))
@@ -703,6 +808,102 @@ mod tests {
                 format!("{error}").contains("hourly") || format!("{error}").contains("spec"),
                 "the message must point at the spec, got: {error}"
             );
+        }
+    }
+    mod console_requests {
+        use super::*;
+        use crate::safety::SafetyLevel;
+
+        fn config(dir: &Path, body: &str) -> std::path::PathBuf {
+            let path = dir.join("job.toml");
+            std::fs::write(&path, body).expect("write");
+            path
+        }
+
+        const PLAIN: &str = "source = 'C:/a'\ndest = 'D:/b'\n";
+
+        #[test]
+        fn a_level_below_standard_cannot_prepare_or_remove_a_schedule() {
+            let dir = tempfile::tempdir().expect("tempdir");
+            let file = config(dir.path(), PLAIN);
+            let refused = install_arguments(SafetyLevel::Prudent, &file, "daily@02:00", "copia");
+            assert!(refused.is_err());
+            assert!(removal_arguments(SafetyLevel::Prudent, "copia").is_err());
+            assert!(
+                install_arguments(SafetyLevel::Standard, &file, "daily@02:00", "copia").is_ok()
+            );
+            assert!(removal_arguments(SafetyLevel::Expert, "copia").is_ok());
+        }
+
+        #[test]
+        fn the_argument_list_has_a_fixed_shape_with_no_destructive_flag() {
+            let dir = tempfile::tempdir().expect("tempdir");
+            let file = config(dir.path(), PLAIN);
+            let args = install_arguments(
+                SafetyLevel::Standard,
+                &file,
+                "weekly@MON,FRI@03:30",
+                "copia notturna",
+            )
+            .expect("plain job");
+            assert_eq!(args.len(), 6);
+            assert_eq!(args[0], "--config");
+            assert_eq!(args[2], "--install-schedule");
+            assert_eq!(args[3], "weekly@MON,FRI@03:30");
+            assert_eq!(args[4], "--schedule-name");
+            assert_eq!(args[5], "copia notturna");
+            let joined = args.join(" ");
+            for forbidden in [
+                "--force-purge",
+                "--mirror",
+                "--install-service",
+                "--keep-generations",
+                "--decrypt",
+            ] {
+                assert!(!joined.contains(forbidden), "{forbidden}: {joined}");
+            }
+            assert_eq!(
+                removal_arguments(SafetyLevel::Standard, "copia").expect("ok"),
+                vec!["--uninstall-schedule", "copia"]
+            );
+        }
+
+        #[test]
+        fn a_job_that_mirrors_or_prunes_is_never_scheduled_from_the_console() {
+            let dir = tempfile::tempdir().expect("tempdir");
+            for risky in [
+                "source = 'C:/a'\ndest = 'D:/b'\nmirror = true\n",
+                "source = 'C:/a'\ndest = 'D:/b'\nbackup_type = 'full'\nkeep_generations = 3\n",
+            ] {
+                let file = config(dir.path(), risky);
+                let refused = install_arguments(SafetyLevel::Expert, &file, "daily@02:00", "copia");
+                assert!(refused.is_err(), "{risky}");
+            }
+        }
+
+        #[test]
+        fn relative_paths_and_bad_names_and_bad_specs_are_refused() {
+            let dir = tempfile::tempdir().expect("tempdir");
+            let relative = config(dir.path(), "source = 'src'\ndest = 'D:/b'\n");
+            assert!(
+                install_arguments(SafetyLevel::Standard, &relative, "daily@02:00", "copia")
+                    .is_err()
+            );
+            let file = config(dir.path(), PLAIN);
+            for name in ["", " x", "a\\b", "x\"y", &"n".repeat(65)] {
+                assert!(
+                    install_arguments(SafetyLevel::Standard, &file, "daily@02:00", name).is_err(),
+                    "{name:?}"
+                );
+            }
+            assert!(install_arguments(SafetyLevel::Standard, &file, "every-day", "copia").is_err());
+            assert!(install_arguments(
+                SafetyLevel::Standard,
+                &dir.path().join("missing.toml"),
+                "daily@02:00",
+                "copia"
+            )
+            .is_err());
         }
     }
 }

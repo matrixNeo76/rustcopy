@@ -69,6 +69,17 @@ export component AppWindow inherits Window {
     in-out property <int> hist-filter;
     in property <string> hist-message;
     in property <string> report-name;
+    in property <bool> can-schedule;
+    in property <string> sch-task-name;
+    in property <string> sch-config;
+    in-out property <string> sch-name;
+    in-out property <int> sch-kind;
+    in-out property <string> sch-time;
+    in-out property <string> sch-hours;
+    in-out property <[bool]> sch-days;
+    in property <string> sch-message;
+    in property <bool> sch-ok;
+    in property <bool> sch-busy;
     in property <int> safety-level;
     in property <string> safety-level-name;
     in-out property <int> safety-pick;
@@ -162,6 +173,9 @@ export component AppWindow inherits Window {
     callback remove-config(string);
     callback open-report-file();
     callback show-help();
+    callback schedule-task(string);
+    callback install-schedule(string);
+    callback remove-schedule();
     callback show-safety();
     callback safety-picked(int);
     callback apply-safety(int, bool);
@@ -534,6 +548,10 @@ export component AppWindow inherits Window {
                         remove => {
                             root.remove-config(task.path);
                         }
+                        can-schedule: root.can-schedule;
+                        schedule => {
+                            root.schedule-task(task.path);
+                        }
                     }
                 }
                 if root.tasks.length == 0: Text {
@@ -735,6 +753,112 @@ export component AppWindow inherits Window {
                     font-size: Theme.body;
                     color: Theme.text-faint;
                 }
+            }
+        }
+
+        if root.page == 10: VerticalLayout {
+            padding: Theme.page-padding;
+            spacing: Theme.gap;
+            alignment: start;
+            HorizontalLayout {
+                spacing: 10px;
+                alignment: start;
+                Button {
+                    text: Strings.props-back;
+                    clicked => {
+                        root.show-tasks();
+                    }
+                }
+                Text {
+                    text: @tr("{}: {}", Strings.sch-title, root.sch-task-name);
+                    font-size: Theme.title;
+                    font-weight: 700;
+                    color: Theme.text;
+                    vertical-alignment: center;
+                    overflow: elide;
+                }
+            }
+            Text {
+                text: Strings.sch-intro;
+                wrap: word-wrap;
+                font-size: Theme.body;
+                color: Theme.text-muted;
+            }
+            SectionLabel {
+                text: Strings.sch-name;
+            }
+            LineEdit {
+                text <=> root.sch-name;
+                accessible-label: Strings.sch-name;
+            }
+            SectionLabel {
+                text: Strings.sch-when;
+            }
+            ComboBox {
+                model: [Strings.sch-daily, Strings.sch-hours, Strings.sch-weekly];
+                current-index <=> root.sch-kind;
+                accessible-label: Strings.sch-when;
+            }
+            if root.sch-kind != 1: VerticalLayout {
+                spacing: 2px;
+                SectionLabel {
+                    text: Strings.sch-time;
+                }
+                LineEdit {
+                    text <=> root.sch-time;
+                    accessible-label: Strings.sch-time;
+                }
+            }
+            if root.sch-kind == 1: VerticalLayout {
+                spacing: 2px;
+                SectionLabel {
+                    text: Strings.sch-every;
+                }
+                LineEdit {
+                    text <=> root.sch-hours;
+                    accessible-label: Strings.sch-every;
+                }
+            }
+            if root.sch-kind == 2: VerticalLayout {
+                spacing: 2px;
+                SectionLabel {
+                    text: Strings.sch-days;
+                }
+                HorizontalLayout {
+                    spacing: 12px;
+                    alignment: start;
+                    for day[i] in ["Lun", "Mar", "Mer", "Gio", "Ven", "Sab", "Dom"]: CheckBox {
+                        text: day;
+                        checked: root.sch-days[i];
+                        toggled => {
+                            root.sch-days[i] = self.checked;
+                        }
+                    }
+                }
+            }
+            HorizontalLayout {
+                spacing: 10px;
+                alignment: start;
+                Button {
+                    text: Strings.sch-install;
+                    primary: true;
+                    enabled: !root.sch-busy && root.sch-name != "";
+                    clicked => {
+                        root.install-schedule(root.sch-config);
+                    }
+                }
+                Button {
+                    text: Strings.sch-remove;
+                    enabled: !root.sch-busy && root.sch-name != "";
+                    clicked => {
+                        root.remove-schedule();
+                    }
+                }
+            }
+            if root.sch-message != "": Banner {
+                text: root.sch-message;
+                label-prefix: Strings.sch-title;
+                kind: root.sch-ok ? BadgeKind.ok : BadgeKind.warning;
             }
         }
 
