@@ -28,6 +28,14 @@ Dal 31 Agosto 2026 il terzo membro **esiste**: `crates/rustcopy-gui`, la console
 Svelte 5 + Tailwind 4). Non esegue backup e ha un solo percorso di scrittura, `job_editor`, che
 produce proposte di configurazione in file nuovi.
 
+Dal 9 Ottobre 2026 esiste un quinto membro, `crates/rustcopy-ui`: la **nuova console in Slint** (un solo processo, rendering
+software, nessun runtime web). Come la Tauri non esegue backup da sé: avvia la CLI con liste di argomenti fisse e legge i
+risultati attraverso `gui_api`, `sessions`, `job_editor`. Ciò che decide **se una cosa si può fare** sta sempre nel core, mai nella
+finestra: `safety` (livello di sicurezza), `moves` (Sposta), `schedule::install_arguments` (pianificazioni), `sessions` (esito di un lavoro,
+punti di ripresa), `runner::plan_copy_with_files` (cartelle e file). L'installer installa `rustcopy-ui.exe` come `rustcopy-gui.exe`: è la
+console del componente `gui`; la Tauri non è più impacchettata e resta nel repository fino al cancello di
+[CHECKLIST_ACCETTAZIONE_GUI.md](CHECKLIST_ACCETTAZIONE_GUI.md).
+
 Dal 10 Settembre 2026 esiste un quarto membro: `crates/rustcopy-shell` (F85), l'estensione Shell
 di Windows che propone "Copia con RustCopy" sul menu di conferma del drag & drop di Explorer. È la
 prima vera eccezione nel progetto al pattern "delega a un tool nativo invece di legare API COM
@@ -43,7 +51,8 @@ l'estensione è inerte senza la console. `Flags: regserver` chiama `DllRegisterS
 |---|---|---|
 | `crates/rustcopy-core` | Tutta la logica: scansione, motori di copia, integrità, crypto, VSS, generazioni, storico, report | La libreria **`robocopy_ingest`** |
 | `crates/rustcopy-cli` | Solo gli entry point e la loro orchestrazione | I binari **`robocopy_ingest`** e **`notify-server`** |
-| `crates/rustcopy-gui` | La console desktop: comandi Tauri come involucri sottili su `gui_api`/`job_editor`, più il frontend Svelte in `ui/` | Il binario **`rustcopy-gui`**, componente opzionale dell'installer |
+| `crates/rustcopy-ui` | La console Slint: interfaccia in `.slint`, logica sottile in Rust (pagine, thread di lavoro per ogni operazione lenta, istanza unica, notifica, tray, pausa) | Il binario **`rustcopy-ui`**, installato come **`rustcopy-gui.exe`** |
+| `crates/rustcopy-gui` | La console desktop precedente (in dismissione): comandi Tauri come involucri sottili su `gui_api`/`job_editor`, più il frontend Svelte in `ui/` | Il binario **`rustcopy-gui`**, componente opzionale dell'installer |
 | `crates/rustcopy-shell` | L'handler COM del drag & drop di Explorer: `IClassFactory`/`DllGetClassObject`/`DllRegisterServer` come involucri sottili, la vera logica (classificazione cartelle, calcolo percorsi, scrittura del TOML monouso) in funzioni pure testabili | La libreria dinamica **`rustcopy_shell.dll`** (`cdylib`), componente `gui\shell` dell'installer (F85, 11 Set 2026) |
 
 **Il nome della libreria e quelli dei binari non sono cambiati.** Il package si chiama

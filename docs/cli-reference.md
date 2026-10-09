@@ -193,6 +193,14 @@ vero.
 
 `--pre-command <CMD>` gira **prima di tutto**, incluso lo snapshot VSS — utile per fermare un servizio/database perché i suoi file siano coerenti al momento della copia. Se esce con codice diverso da zero (o non può essere lanciato), il job si interrompe **senza copiare nulla** (exit code 2). `--post-command <CMD>` gira dopo che il backup è già riuscito (es. riavviare il servizio fermato da `--pre-command`): a differenza del pre-command, un suo fallimento **non** fa fallire il job — viene solo loggato e registrato nel campo `post_command_error` del report JSON. Entrambi via `cmd /C` su Windows, `sh -c` altrove.
 
+### 🖥️ Console grafica e CLI: cosa resta alla riga di comando
+
+La console non aggiunge flag alla CLI e non può farle fare ciò che la CLI rifiuta. Alcune cose restano **solo** da riga di comando, per scelta:
+un mirror o una pulizia (`--mirror`, `--keep-generations`) **non presidiati**, `--force-purge`, l'installazione di servizi e la pianificazione di
+attività che fanno mirror o eliminano generazioni. La console può preparare una pianificazione (`--install-schedule`) solo per attività senza
+mirror e senza `keep_generations`, con percorsi assoluti, e solo dal livello di sicurezza Standard; lo fa chiamando la CLI con la lista di
+argomenti fissa `--config <file> --install-schedule <spec> --schedule-name <nome>`.
+
 ### ⚡ Fast Verify
 
 `--fast-verify` (richiede `--verify-integrity`) salta il ri-hashing dei file il cui size+mtime sorgente coincidono con l'ultima verifica riuscita, tracciata in `<dest>/.ingest_cache`. Un file che fallisce la verifica non viene mai messo in cache come "fidato": resta ri-controllato ad ogni run finché non passa davvero. **Limite dichiarato**: si fida dell'identità della sorgente (size+mtime), non ri-controlla i byte reali della destinazione — una corruzione indipendente lato destinazione (es. bit rot) con una sorgente invariata non verrebbe rilevata in un run in cui quel file viene saltato.

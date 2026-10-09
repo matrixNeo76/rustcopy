@@ -86,7 +86,10 @@ crates/
 │   └── src/
 │       ├── main.rs              # `robocopy_ingest` entrypoint, orchestration & signal handling (Ctrl+C).
 │       └── notify_server_bin.rs # `notify-server` entrypoint (feature "notify-server"); own Windows service identity (F41).
-└── rustcopy-gui/           # package `rustcopy-gui`; the desktop console (milestone 7.0.0)
+├── rustcopy-ui/            # package `rustcopy-ui`; the Slint console (installed as rustcopy-gui.exe)
+│   ├── ui/*.slint          # interface: app, components, sessions, editor, theme, strings (one place for text)
+│   └── src/                # thin Rust logic; pure parts (check, runs, csv, help, schedule_form, move_text, suspend, eject, toast) are unit-tested
+└── rustcopy-gui/           # package `rustcopy-gui`; the previous Tauri console (being retired, see CHECKLIST_ACCETTAZIONE_GUI.md)
     ├── src/main.rs         # Tauri commands: thin wrappers over `gui_api`/`job_editor`, no backup logic
     ├── capabilities/       # Tauri permissions: dialog open/save only, no filesystem access
     ├── tauri.conf.json     # `custom-protocol` decides dev-vs-production, not the cargo profile (D22)
