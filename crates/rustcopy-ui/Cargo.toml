@@ -37,3 +37,6 @@ slint-build = "1.18"
 [[bin]]
 name = "rustcopy-ui"
 path = "src/main.rs"
+
+[dev-dependencies]
+tempfile.workspace = true

@@ -11,6 +11,7 @@
 
 mod form;
 mod format;
+mod report_rows;
 mod run;
 mod single_instance;
 mod state;
@@ -40,7 +41,9 @@ use crate::state::{running_fraction, Generation, RunSlot, Running};
 mod generated {
     slint::include_modules!();
 }
-use generated::{AdviceRow, AppTray, AppWindow, EditForm, HistRow, PropRow, SessionRow, TaskRow};
+use generated::{
+    AdviceRow, AppTray, AppWindow, DetailRow, EditForm, HistRow, PropRow, SessionRow, TaskRow,
+};
 
 /// Names the mutex and the pipe of the single window (E12).
 const INSTANCE_TAG: &str = "rustcopy-ui";
@@ -405,6 +408,7 @@ fn fill_detail(ui: &AppWindow, ctx: &Rc<Ctx>, id: &str) {
     );
     ui.set_d_detail("".into());
     ui.set_d_verify(session.verify.map_or("", algorithm_name).into());
+    ui.set_d_has_reports(!session.reports.is_empty());
 
     if session.state == SessionState::NeedsLook {
         if let Some(report) = session.reports.first().cloned() {
@@ -428,6 +432,8 @@ fn fill_detail(ui: &AppWindow, ctx: &Rc<Ctx>, id: &str) {
 fn select_session(ui: &AppWindow, ctx: &Rc<Ctx>, id: &str) {
     ctx.details.next();
     ui.set_selected_id(id.into());
+    ui.set_d_show_technical(false);
+    ui.set_d_rows(ModelRc::new(VecModel::from(Vec::<DetailRow>::new())));
     ui.set_saving(false);
     ui.set_save_message("".into());
     ui.set_page(1);
@@ -852,6 +858,73 @@ fn main() -> Result<(), slint::PlatformError> {
                 }
             }
             ui.set_page(5);
+        });
+    }
+
+    // Technical report of the selected lavoro: read on a worker thread, discarded if another lavoro is
+    // opened meanwhile (E01).
+    {
+        let weak = ui.as_weak();
+        let ctx = ctx.clone();
+        ui.on_toggle_technical(move |id| {
+            let Some(ui) = weak.upgrade() else { return };
+            if ui.get_d_show_technical() {
+                ui.set_d_show_technical(false);
+                return;
+            }
+            ui.set_d_show_technical(true);
+            let reports: Vec<PathBuf> = ctx
+                .sessions
+                .borrow()
+                .iter()
+                .find(|s| s.id == id.as_str())
+                .map(|s| s.reports.clone())
+                .unwrap_or_default();
+            let ticket = ctx.details.next();
+            let generation = ctx.details.clone();
+            let weak = ui.as_weak();
+            std::thread::spawn(move || {
+                let many = reports.len() > 1;
+                let mut rows: Vec<report_rows::Row> = Vec::new();
+                for report in &reports {
+                    if many {
+                        rows.push(report_rows::Row {
+                            kind: report_rows::Kind::Heading,
+                            label: report
+                                .parent()
+                                .and_then(|p| p.file_name())
+                                .map(|n| n.to_string_lossy().into_owned())
+                                .unwrap_or_default()
+                                + " / "
+                                + &report
+                                    .file_name()
+                                    .map(|n| n.to_string_lossy().into_owned())
+                                    .unwrap_or_default(),
+                            value: String::new(),
+                        });
+                    }
+                    if let Ok(view) = gui_api::read_report(report) {
+                        rows.extend(report_rows::rows_for(&view));
+                    }
+                }
+                let _ = weak.upgrade_in_event_loop(move |ui| {
+                    if generation.is_current(ticket) {
+                        let shown: Vec<DetailRow> = rows
+                            .into_iter()
+                            .map(|row| DetailRow {
+                                kind: match row.kind {
+                                    report_rows::Kind::Heading => 0,
+                                    report_rows::Kind::Line => 1,
+                                    report_rows::Kind::Problem => 2,
+                                },
+                                label: row.label.into(),
+                                value: row.value.into(),
+                            })
+                            .collect();
+                        ui.set_d_rows(ModelRc::new(VecModel::from(shown)));
+                    }
+                });
+            });
         });
     }
 
