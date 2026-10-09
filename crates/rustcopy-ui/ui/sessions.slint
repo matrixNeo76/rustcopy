@@ -54,6 +54,13 @@ export struct AdviceRow {
     evidence: string,
 }
 
+// One line of the technical report. `kind`: 0 heading, 1 line, 2 problem.
+export struct DetailRow {
+    kind: int,
+    label: string,
+    value: string,
+}
+
 export global SessionUi {
     pure public function state-text(state: int) -> string {
         return state == 0 ? Strings.state-clean : (state == 1 ? Strings.state-dry-run : (state == 2 ? Strings.state-look : (state == 3 ? Strings.state-interrupted : Strings.state-running)));

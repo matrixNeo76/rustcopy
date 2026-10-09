@@ -26,12 +26,12 @@ spunta solo dopo che è in `main`, con la CI verde e, se è un comportamento, pr
 - [x] Fase 1 — prova a tempo, esito GO condizionato
 - [x] Fase 2 — fondamenta (tema, stringhe, componenti, istanza unica, icona di notifica, job CI)
 - [x] Fase 3 — lavoro immediato: elenco dei lavori, ripeti, salva come attività, verifica, tempo residuo, grafico, apri cartella
-- [~] Fase 4 — attività salvate e pianificate
+- [x] Fase 4 — attività salvate (la creazione di pianificazioni è nella Fase 6)
   - [x] 4a attività salvate, esecuzione sul posto, esegui un file di configurazione
   - [x] 4b griglia delle proprietà di un'attività, di sola lettura, con da dove viene ogni valore (pulsante «Proprietà» nella pagina Attività; tutto da `gui_api::read_settings`)
   - [x] 4c editor a schede (Base, Copia, Filtri, Conservazione, Sicurezza, Avanzate; scrive solo proposte accanto al file; può restringere il rischio, mai allargarlo; il nome non si cambia). Provato dal vivo: abbassare i cicli da 7 a 3 è rifiutato dal core, alzarli a 9 salva, e il job con mirror e `pre_command` resta intatto
   - [x] 4d storico delle esecuzioni e osservazioni del motore (`--advise`) per un'attività: pulsante «Storico». Provato dal vivo con 8 esecuzioni vere e tre osservazioni con le prove
-  - [ ] 4e report completo di una run (liste di errori, fasi) nella console Slint
+  - [x] 4e report completo di una copia (fasi, file, verifica, elenchi di problemi, avvisi, computer e versione): «Mostra i dettagli tecnici» nel dettaglio di un lavoro. Provato dal vivo su una copia verificata; i casi con problemi sono coperti da test sul modulo (`report_rows`), non provati dal vivo
 - [ ] Fase 5 — parità con la console Tauri, installer, **toast di sistema (con AppUserModelID creato dall'installer)**, rimozione di Tauri (**con tua conferma esplicita**)
 - [ ] Fase 6 — funzioni che toccano il core (vedi sotto)
 

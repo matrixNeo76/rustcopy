@@ -7,10 +7,10 @@ import { Button, LineEdit, ProgressIndicator, ListView, Palette, CheckBox, Combo
 import { Theme } from "theme.slint";
 import { Strings } from "strings.slint";
 import { Badge, BadgeKind, StatCard, Banner, SectionLabel, SpeedChart } from "components.slint";
-import { SessionRow, SessionItem, SessionUi, TaskRow, TaskItem, PropRow, HistRow, AdviceRow } from "sessions.slint";
+import { SessionRow, SessionItem, SessionUi, TaskRow, TaskItem, PropRow, HistRow, AdviceRow, DetailRow } from "sessions.slint";
 import { EditForm, TextField, ToggleField, TabPage } from "editor.slint";
 
-export { SessionRow, TaskRow, PropRow, EditForm, HistRow, AdviceRow }
+export { SessionRow, TaskRow, PropRow, EditForm, HistRow, AdviceRow, DetailRow }
 
 export component AppTray inherits SystemTrayIcon {
     icon: @image-url("icon.png");
@@ -107,6 +107,9 @@ export component AppWindow inherits Window {
     in property <string> d-detail;
     in property <string> d-saved;
     in property <string> d-verify;
+    in property <[DetailRow]> d-rows;
+    in-out property <bool> d-show-technical: false;
+    in property <bool> d-has-reports;
     in property <bool> d-has-numbers;
 
     // Save as task
@@ -122,6 +125,7 @@ export component AppWindow inherits Window {
     callback show-task-props(string);
     callback edit-task(string);
     callback show-history(string);
+    callback toggle-technical(string);
     callback edit-select-job(int);
     callback edit-save();
     callback run-config-file();
@@ -1036,6 +1040,64 @@ export component AppWindow inherits Window {
                     clicked => {
                         root.begin-save(root.selected-id);
                     }
+                }
+            }
+            if root.d-has-reports && root.d-state != 4: HorizontalLayout {
+                alignment: start;
+                Button {
+                    text: root.d-show-technical ? Strings.hide-technical : Strings.show-technical;
+                    clicked => {
+                        root.toggle-technical(root.selected-id);
+                    }
+                }
+            }
+            if root.d-show-technical: Rectangle {
+                vertical-stretch: 1;
+                min-height: 140px;
+                border-radius: Theme.radius;
+                border-width: 1px;
+                border-color: Theme.border;
+                background: Theme.surface;
+                clip: true;
+                ListView {
+                    for row in root.d-rows: Rectangle {
+                        height: row.kind == 0 ? 30px : 22px;
+                        HorizontalLayout {
+                            padding-left: 10px;
+                            padding-right: 10px;
+                            spacing: 10px;
+                            if row.kind == 0: Text {
+                                text: row.label;
+                                font-size: Theme.small;
+                                font-weight: 700;
+                                color: Theme.text-faint;
+                                vertical-alignment: bottom;
+                            }
+                            if row.kind != 0: Text {
+                                text: row.label;
+                                width: row.label == "" ? 0px : 240px;
+                                font-size: Theme.small;
+                                color: row.kind == 2 ? Theme.warning : Theme.text-muted;
+                                overflow: elide;
+                                vertical-alignment: center;
+                            }
+                            if row.kind != 0: Text {
+                                text: row.value;
+                                horizontal-stretch: 1;
+                                font-size: Theme.small;
+                                color: Theme.text;
+                                overflow: elide;
+                                vertical-alignment: center;
+                            }
+                        }
+                    }
+                }
+                if root.d-rows.length == 0: Text {
+                    text: Strings.technical-none;
+                    x: 10px;
+                    y: 8px;
+                    font-size: Theme.small;
+                    color: Theme.text-faint;
                 }
             }
             if root.d-saved != "": Text {
