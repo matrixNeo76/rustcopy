@@ -44,6 +44,7 @@ pub mod progress_file;
 pub mod report;
 pub mod restore;
 pub mod runner;
+pub mod safety;
 pub mod scan;
 pub mod schedule;
 pub mod service;
