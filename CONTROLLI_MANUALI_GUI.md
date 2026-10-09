@@ -81,6 +81,10 @@ registrato le cose, quindi **vanno provate sulla copia installata, non su `targe
   `--webhook-url http://127.0.0.1:3000/notify`.
   Atteso: arriva un messaggio con oggetto «[rustcopy] OK <computer>: <origine>» e il riepilogo. Prova anche con la password sbagliata:
   l'errore deve comparire nel registro del server, e il backup **non** deve fallire.
+- [ ] **Il PC non va in sospensione durante una copia.**
+  Perché a mano: serve un prompt con privilegi di Amministratore e una copia abbastanza lunga. Passi: avvia una copia grande dalla console
+  (o «Esegui» su un'attività); in un prompt **elevato** esegui `powercfg /requests`. Atteso: sotto «SISTEMA» compare `rustcopy-gui.exe`
+  (o il suo percorso); a copia finita, rieseguendo il comando, non c'è più. Non tiene acceso lo **schermo**: può spegnersi, il sistema no.
 - [ ] **Pausa lunga oltre 10 minuti** (facoltativa). Metti in pausa una copia sul NAS e lasciala: dopo 10 minuti la console deve
   riprenderla da sola e dirlo. (La pausa di 3 minuti sul NAS è già provata.)
 

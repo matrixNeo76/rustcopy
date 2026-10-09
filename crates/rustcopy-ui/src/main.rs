@@ -16,6 +16,7 @@ mod form;
 mod format;
 mod help;
 mod jobs_view;
+mod keep_awake;
 mod move_text;
 mod path_check;
 mod problems;
@@ -99,6 +100,8 @@ struct Ctx {
     /// When the copy now going was paused, if it is: the console resumes it by itself after
     /// `suspend::PAUSE_LIMIT`.
     paused_since: Cell<Option<std::time::Instant>>,
+    /// Keeps the computer awake while a copy started here is running.
+    awake: keep_awake::KeepAwake,
     /// Discards the answer for a configuration's jobs once another list was asked for.
     jobs_view: Generation,
     /// Discards the answer for a report page once another page or report was asked for.
@@ -1185,6 +1188,7 @@ fn main() -> Result<(), slint::PlatformError> {
         slot: RunSlot::default(),
         running_id: RefCell::new(None),
         open_when_done: Cell::new(false),
+        awake: keep_awake::KeepAwake::default(),
         sessions: RefCell::new(Vec::new()),
         details: Generation::default(),
         schedules: Generation::default(),
@@ -2645,6 +2649,9 @@ fn main() -> Result<(), slint::PlatformError> {
                     announce_finish(&ui, &ctx, &id, state.ok());
                 }
             }
+            // After the finish handling, so the request is withdrawn on the tick that ends the copy.
+            let running = ctx.slot.with(|run| run.is_running()) == Some(true);
+            ctx.awake.update(running, keep_awake::set_system_awake);
         });
     }
 
