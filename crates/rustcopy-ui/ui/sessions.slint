@@ -36,6 +36,24 @@ export struct PropRow {
     caution: string,
 }
 
+// One past run of a task. `outcome`: 0 clean, 1 dry run, 2 needs a look.
+export struct HistRow {
+    job: string,
+    when: string,
+    files: string,
+    size: string,
+    speed: string,
+    meaning: string,
+    outcome: int,
+}
+
+// One observation from the advisor. `severity`: 0 info, 1 suggestion, 2 warning.
+export struct AdviceRow {
+    severity: int,
+    headline: string,
+    evidence: string,
+}
+
 export global SessionUi {
     pure public function state-text(state: int) -> string {
         return state == 0 ? Strings.state-clean : (state == 1 ? Strings.state-dry-run : (state == 2 ? Strings.state-look : (state == 3 ? Strings.state-interrupted : Strings.state-running)));
@@ -103,6 +121,7 @@ export component TaskItem inherits Rectangle {
     callback run();
     callback details();
     callback edit();
+    callback history();
     height: 76px;
     border-radius: Theme.radius;
     border-width: 1px;
@@ -146,6 +165,13 @@ export component TaskItem inherits Rectangle {
                     color: Theme.text-muted;
                     vertical-alignment: center;
                 }
+            }
+        }
+        Button {
+            text: Strings.task-history;
+            horizontal-stretch: 0;
+            clicked => {
+                root.history();
             }
         }
         Button {

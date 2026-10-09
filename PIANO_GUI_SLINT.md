@@ -30,7 +30,7 @@ spunta solo dopo che è in `main`, con la CI verde e, se è un comportamento, pr
   - [x] 4a attività salvate, esecuzione sul posto, esegui un file di configurazione
   - [x] 4b griglia delle proprietà di un'attività, di sola lettura, con da dove viene ogni valore (pulsante «Proprietà» nella pagina Attività; tutto da `gui_api::read_settings`)
   - [x] 4c editor a schede (Base, Copia, Filtri, Conservazione, Sicurezza, Avanzate; scrive solo proposte accanto al file; può restringere il rischio, mai allargarlo; il nome non si cambia). Provato dal vivo: abbassare i cicli da 7 a 3 è rifiutato dal core, alzarli a 9 salva, e il job con mirror e `pre_command` resta intatto
-  - [ ] 4d storico delle esecuzioni e analisi `--advise`
+  - [x] 4d storico delle esecuzioni e osservazioni del motore (`--advise`) per un'attività: pulsante «Storico». Provato dal vivo con 8 esecuzioni vere e tre osservazioni con le prove
   - [ ] 4e report completo di una run (liste di errori, fasi) nella console Slint
 - [ ] Fase 5 — parità con la console Tauri, installer, **toast di sistema (con AppUserModelID creato dall'installer)**, rimozione di Tauri (**con tua conferma esplicita**)
 - [ ] Fase 6 — funzioni che toccano il core (vedi sotto)
