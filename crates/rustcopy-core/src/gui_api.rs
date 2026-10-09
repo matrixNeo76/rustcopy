@@ -688,6 +688,63 @@ pub fn check_copy(sources: &[PathBuf], dest: &Path) -> CopyCheck {
     }
 }
 
+/// Previews what restoring from `report` would copy, without copying anything (F64).
+///
+/// The one function here that starts a process, and not an exception to the "decides nothing"
+/// rule: the argument list is [`crate::runner::restore_preview_arguments`], a fixed shape tested never
+/// to carry a destructive flag, with `--dry-run` guaranteeing nothing is copied and its own scratch
+/// `--report-path` guaranteeing it cannot overwrite a real run's report. This spawns that exact
+/// invocation, waits, reads the scratch report back and deletes it.
+///
+/// `working_dir` is the folder the report's own relative `source`/`dest` were resolved against by the
+/// original run: the folder of the **configuration** that produced it (D26), which is often one level
+/// above the report file (the default `--report-path` nests the report under the destination). `None`
+/// when no such configuration is known: the process then keeps the caller's own directory rather than
+/// guessing one.
+pub fn preview_restore(
+    cli: &Path,
+    report: &Path,
+    working_dir: Option<&Path>,
+) -> Result<ReportView, IngestError> {
+    let report = std::path::absolute(report).map_err(|source| IngestError::io(report, source))?;
+    let scratch = crate::runner::restore_preview_report_path()?;
+    let args = crate::runner::restore_preview_arguments(&report, &scratch);
+
+    let mut command = std::process::Command::new(cli);
+    command.args(&args).stdin(std::process::Stdio::null());
+    if let Some(dir) = working_dir.filter(|d| !d.as_os_str().is_empty()) {
+        command.current_dir(dir);
+    }
+    // A console-subsystem binary launched from a windowed process otherwise gets a fresh console.
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt;
+        const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+        command.creation_flags(CREATE_NO_WINDOW);
+    }
+    let output = command
+        .output()
+        .map_err(|source| IngestError::SpawnFailed {
+            program: cli.display().to_string(),
+            source,
+        })?;
+
+    let result = read_report(&scratch);
+    // Scratch, not a report meant to persist; a failed cleanup must never mask the preview's result.
+    let _ = std::fs::remove_file(&scratch);
+
+    result.map_err(|error| {
+        if output.status.success() {
+            error
+        } else {
+            IngestError::RestorePreviewFailed {
+                code: output.status.code(),
+                stderr: String::from_utf8_lossy(&output.stderr).trim().to_string(),
+            }
+        }
+    })
+}
+
 /// The real value `--threads` uses on this machine when left unset (`cli::default_threads`,
 /// already clamped to `1..=128`). Found necessary by CodeRabbit on the PR that added the Thread
 /// field's placeholder in `Editor.svelte`: the original design read `navigator.hardwareConcurrency`

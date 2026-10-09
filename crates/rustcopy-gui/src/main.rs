@@ -176,66 +176,13 @@ async fn preview_restore(report_path: String, config_path: String) -> Result<Rep
             }
         })?;
         let cli = robocopy_ingest::runner::cli_beside(&exe)?;
-        let report = std::path::absolute(PathBuf::from(&report_path)).map_err(|source| {
-            robocopy_ingest::errors::IngestError::io(std::path::Path::new(&report_path), source)
-        })?;
-        let preview_report_path = robocopy_ingest::runner::restore_preview_report_path()?;
-        let args =
-            robocopy_ingest::runner::restore_preview_arguments(&report, &preview_report_path);
-
-        let mut command = std::process::Command::new(&cli);
-        command.args(&args).stdin(std::process::Stdio::null());
-        // D26 (found 6 Set 2026, first fix attempt wrong, corrected same day): a report's
-        // source/dest are stored exactly as the original run's `Args` held them
-        // (`report.rs::IngestReport::new`, verbatim from `args.source()`/`args.dest()`, never
-        // canonicalized) — commonly relative, resolved by the ORIGINAL run against the
-        // *configuration's* directory, the same convention `run_arguments`'s call site below
-        // uses. The report's own on-disk location is a different directory whenever
-        // `--report-path` nests it under the destination (the default for `demo-locale.toml`:
-        // `demo-out/report.json` lives one level *inside* the config's directory) — using
-        // `report.parent()` looks plausible but resolves one level too deep, which still failed
-        // this exact case on the first attempt. `config_path` is the console's own best-effort
-        // link between "the report on screen" and "the configuration that produced it" (true
-        // whenever the operator got here via "Apri il report di questa run", the documented
-        // path); left empty otherwise, in which case this matches today's behaviour rather than
-        // guess at a directory with no better basis than `report.parent()` already proved to be.
-        if !config_path.is_empty() {
-            if let Ok(config) = std::path::absolute(PathBuf::from(&config_path)) {
-                if let Some(parent) = config.parent().filter(|p| !p.as_os_str().is_empty()) {
-                    command.current_dir(parent);
-                }
-            }
-        }
-        // Same reasoning as `start_job`: a console-subsystem binary launched from a windowed
-        // process otherwise gets a fresh console Windows flashes on screen.
-        #[cfg(windows)]
-        {
-            use std::os::windows::process::CommandExt;
-            const CREATE_NO_WINDOW: u32 = 0x0800_0000;
-            command.creation_flags(CREATE_NO_WINDOW);
-        }
-        let output = command.output().map_err(|source| {
-            robocopy_ingest::errors::IngestError::SpawnFailed {
-                program: cli.display().to_string(),
-                source,
-            }
-        })?;
-
-        let result = gui_api::read_report(&preview_report_path);
-        // Best-effort: this is scratch, not a report meant to persist, but a failed cleanup must
-        // never mask whether the preview itself succeeded.
-        let _ = std::fs::remove_file(&preview_report_path);
-
-        result.map_err(|error| {
-            if output.status.success() {
-                error
-            } else {
-                robocopy_ingest::errors::IngestError::RestorePreviewFailed {
-                    code: output.status.code(),
-                    stderr: String::from_utf8_lossy(&output.stderr).trim().to_string(),
-                }
-            }
-        })
+        // D26: the configuration's folder, not the report's, is where the report's relative paths
+        // resolve from -- see `gui_api::preview_restore`.
+        let working_dir = (!config_path.is_empty())
+            .then(|| std::path::absolute(PathBuf::from(&config_path)).ok())
+            .flatten()
+            .and_then(|config| config.parent().map(std::path::Path::to_path_buf));
+        gui_api::preview_restore(&cli, &PathBuf::from(report_path), working_dir.as_deref())
     })
     .await
 }
