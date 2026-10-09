@@ -92,6 +92,8 @@ export component AppWindow inherits Window {
     in property <[string]> sources;
     in-out property <string> dest;
     in property <string> error;
+    in property <[string]> recent-sources;
+    in property <[string]> recent-dests;
     in property <string> check-text;
     in property <bool> check-attention;
     in property <bool> checking;
@@ -160,6 +162,8 @@ export component AppWindow inherits Window {
     callback begin-save(string);
     callback confirm-save(string);
     callback add-folders();
+    callback pick-recent-source(string);
+    callback pick-recent-dest(string);
     callback check-copy();
     callback clear-check();
     callback remove-source(int);
@@ -283,10 +287,31 @@ export component AppWindow inherits Window {
                     color: Theme.text-faint;
                 }
             }
-            Button {
-                text: Strings.add-folders;
-                clicked => {
-                    root.add-folders();
+            HorizontalLayout {
+                spacing: 8px;
+                Button {
+                    text: Strings.add-folders;
+                    clicked => {
+                        root.add-folders();
+                    }
+                }
+                if root.recent-sources.length > 0: Text {
+                    text: Strings.recent-label;
+                    font-size: Theme.small;
+                    color: Theme.text-muted;
+                    vertical-alignment: center;
+                    horizontal-stretch: 0;
+                }
+                if root.recent-sources.length > 0: ComboBox {
+                    model: root.recent-sources;
+                    current-index: -1;
+                    horizontal-stretch: 0;
+                    min-width: 220px;
+                    accessible-label: Strings.recent-sources;
+                    selected(value) => {
+                        root.pick-recent-source(value);
+                        self.current-index = -1;
+                    }
                 }
             }
             SectionLabel {
@@ -300,6 +325,24 @@ export component AppWindow inherits Window {
                     accessible-label: Strings.dest-label;
                     edited => {
                         root.clear-check();
+                    }
+                }
+                if root.recent-dests.length > 0: Text {
+                    text: Strings.recent-label;
+                    font-size: Theme.small;
+                    color: Theme.text-muted;
+                    vertical-alignment: center;
+                    horizontal-stretch: 0;
+                }
+                if root.recent-dests.length > 0: ComboBox {
+                    model: root.recent-dests;
+                    current-index: -1;
+                    horizontal-stretch: 0;
+                    min-width: 200px;
+                    accessible-label: Strings.recent-dests;
+                    selected(value) => {
+                        root.pick-recent-dest(value);
+                        self.current-index = -1;
                     }
                 }
                 Button {

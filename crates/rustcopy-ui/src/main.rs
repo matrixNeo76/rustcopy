@@ -27,7 +27,9 @@ use std::time::Duration;
 
 use robocopy_ingest::integrity::HashAlgorithm;
 use robocopy_ingest::job_editor::{self, JobDraft};
-use robocopy_ingest::sessions::{Session, SessionLog, SessionState, SessionSummary};
+use robocopy_ingest::sessions::{
+    recent_folders, Session, SessionLog, SessionState, SessionSummary,
+};
 use robocopy_ingest::{gui_api, runner};
 use slint::winit_030::{winit::event::WindowEvent, EventResult, WinitWindowAccessor};
 use slint::{ComponentHandle, ModelRc, SharedString, Timer, TimerMode, VecModel, Weak};
@@ -51,6 +53,8 @@ use generated::{
 
 /// Names the mutex and the pipe of the single window (E12).
 const INSTANCE_TAG: &str = "rustcopy-ui";
+/// How many recent folders each chooser offers.
+const RECENT_LIMIT: usize = 8;
 /// How many lavori the sidebar shows.
 const LIST_LIMIT: usize = 100;
 
@@ -135,6 +139,21 @@ fn refresh(ui: &AppWindow, ctx: &Rc<Ctx>) {
     let list = ctx.log.list(LIST_LIMIT, running.as_deref());
     let rows: Vec<SessionRow> = list.iter().map(row_for).collect();
     ui.set_sessions(ModelRc::new(VecModel::from(rows)));
+    let recent = recent_folders(&list, RECENT_LIMIT);
+    ui.set_recent_sources(ModelRc::new(VecModel::from(
+        recent
+            .sources
+            .iter()
+            .map(|p| SharedString::from(p.as_str()))
+            .collect::<Vec<_>>(),
+    )));
+    ui.set_recent_dests(ModelRc::new(VecModel::from(
+        recent
+            .dests
+            .iter()
+            .map(|p| SharedString::from(p.as_str()))
+            .collect::<Vec<_>>(),
+    )));
     *ctx.sessions.borrow_mut() = list;
     refresh_tasks(ui, ctx);
     if ui.get_page() == 1 {
@@ -1328,6 +1347,28 @@ fn main() -> Result<(), slint::PlatformError> {
                 Ok(()) => refresh_tasks(&ui, &ctx),
                 Err(error) => ui.set_error(error.to_string().into()),
             }
+        });
+    }
+
+    // Recent folders (from the log of lavori): choosing one only fills the form.
+    {
+        let weak = ui.as_weak();
+        let sources = sources.clone();
+        ui.on_pick_recent_source(move |value| {
+            let Some(ui) = weak.upgrade() else { return };
+            let mut list = sources.lock().unwrap_or_else(|p| p.into_inner());
+            push_unique(&mut list, Path::new(value.as_str()));
+            set_sources(&ui, &list);
+            ui.set_error("".into());
+        });
+    }
+    {
+        let weak = ui.as_weak();
+        ui.on_pick_recent_dest(move |value| {
+            let Some(ui) = weak.upgrade() else { return };
+            ui.set_dest(value);
+            ui.set_error("".into());
+            ui.invoke_clear_check();
         });
     }
 
