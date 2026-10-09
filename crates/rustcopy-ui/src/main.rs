@@ -259,6 +259,10 @@ fn refresh_tasks(ui: &AppWindow, ctx: &Rc<Ctx>) {
                 jobs: i32::try_from(task.jobs).unwrap_or(1),
                 saved: task.saved,
                 scheduled: false,
+                // Only a task with a generation backup in it has anything to force.
+                generations: gui_api::list_jobs(&task.path)
+                    .map(|jobs| jobs.iter().any(|j| j.backup_type.is_some()))
+                    .unwrap_or(false),
             }
         })
         .collect();
@@ -722,14 +726,14 @@ fn detail_row(row: report_rows::Row) -> DetailRow {
 }
 
 /// Runs a saved task (or any configuration file) in place, as a lavoro of the list.
-fn start_task(ui: &AppWindow, ctx: &Rc<Ctx>, config: &Path) {
+fn start_task(ui: &AppWindow, ctx: &Rc<Ctx>, config: &Path, mode: RunMode) {
     if ctx.slot.with(|run| run.is_running()) == Some(true) {
         ui.set_error(ui.get_busy_text());
         return;
     }
     ctx.open_when_done.set(false);
     match ctx.log.begin_task(config) {
-        Ok(session) => run_session(ui, ctx, &session, false),
+        Ok(session) => run_session(ui, ctx, &session, mode),
         Err(error) => ui.set_error(error.to_string().into()),
     }
 }
@@ -894,20 +898,26 @@ fn show_queue(ui: &AppWindow, ctx: &Ctx, current: Option<usize>) {
     ui.set_queue_rows(ModelRc::new(VecModel::from(rows)));
 }
 
+/// How a session's run is started: the three fixed argument forms of `robocopy_ingest::runner`.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum RunMode {
+    Normal,
+    Resume,
+    ForceFull,
+}
+
 /// Starts the CLI for a session already in the log and puts the new-copy page into its running state.
-fn run_session(ui: &AppWindow, ctx: &Rc<Ctx>, session: &Session, resume: bool) {
-    let started = ctx.slot.try_start(|| {
-        if resume {
-            ActiveRun::spawn_resume(&session.config)
-        } else {
-            ActiveRun::spawn(&session.config)
-        }
+fn run_session(ui: &AppWindow, ctx: &Rc<Ctx>, session: &Session, mode: RunMode) {
+    let started = ctx.slot.try_start(|| match mode {
+        RunMode::Resume => ActiveRun::spawn_resume(&session.config),
+        RunMode::ForceFull => ActiveRun::spawn_force_full(&session.config),
+        RunMode::Normal => ActiveRun::spawn(&session.config),
     });
     match started {
         Ok(()) => {
             *ctx.running_id.borrow_mut() = Some(session.id.clone());
             // A resume names a checkpoint, not a configuration: no queue to draw for it.
-            *ctx.queue_names.borrow_mut() = if resume {
+            *ctx.queue_names.borrow_mut() = if mode == RunMode::Resume {
                 Vec::new()
             } else {
                 gui_api::list_jobs(&session.config)
@@ -980,7 +990,7 @@ fn start_copy(
         }
     });
     match planned {
-        Ok(session) => run_session(ui, ctx, &session, false),
+        Ok(session) => run_session(ui, ctx, &session, RunMode::Normal),
         Err(error) => ui.set_error(error.to_string().into()),
     }
 }
@@ -1159,6 +1169,7 @@ fn show_safety(ui: &AppWindow) {
     ui.set_safety_pick(level_index(level));
     ui.set_safety_unlocks(level.unlocks().into());
     ui.set_can_schedule(level.can_prepare_schedules());
+    ui.set_can_force_full(level.can_force_full());
     ui.set_can_move(level.can_move());
     if !level.can_move() {
         ui.set_move_mode(false);
@@ -1276,7 +1287,7 @@ fn main() -> Result<(), slint::PlatformError> {
                 .log
                 .begin_resume(id.as_str(), Path::new(checkpoint.as_str()))
             {
-                Ok(session) => run_session(&ui, &ctx, &session, true),
+                Ok(session) => run_session(&ui, &ctx, &session, RunMode::Resume),
                 Err(error) => ui.set_error(error.to_string().into()),
             }
         });
@@ -1296,7 +1307,7 @@ fn main() -> Result<(), slint::PlatformError> {
             if let Some(session) = found {
                 // A saved task is run again from its file, not re-planned from folders.
                 if let Some(task) = session.task.as_deref() {
-                    start_task(&ui, &ctx, task);
+                    start_task(&ui, &ctx, task, RunMode::Normal);
                     return;
                 }
                 let chosen: Vec<PathBuf> = session.sources.iter().map(PathBuf::from).collect();
@@ -1362,8 +1373,31 @@ fn main() -> Result<(), slint::PlatformError> {
         let ctx = ctx.clone();
         ui.on_run_task(move |path| {
             if let Some(ui) = weak.upgrade() {
-                start_task(&ui, &ctx, Path::new(path.as_str()));
+                start_task(&ui, &ctx, Path::new(path.as_str()), RunMode::Normal);
             }
+        });
+    }
+    // "Forza completo": a run of the same configuration with its generation backups turned into full
+    // ones. The level is read from disk here, in the core's terms, not trusted from a button that was
+    // drawn earlier.
+    {
+        let weak = ui.as_weak();
+        let ctx = ctx.clone();
+        ui.on_force_full_task(move |path| {
+            let Some(ui) = weak.upgrade() else { return };
+            let level = safety::load(&robocopy_ingest::sessions::data_dir());
+            if !level.can_force_full() {
+                ui.set_error(
+                    format!(
+                        "Il livello di sicurezza «{}» non permette «Forza completo»: servono almeno «{}».",
+                        level.name(),
+                        SafetyLevel::Standard.name()
+                    )
+                    .into(),
+                );
+                return;
+            }
+            start_task(&ui, &ctx, Path::new(path.as_str()), RunMode::ForceFull);
         });
     }
     {
@@ -2597,7 +2631,7 @@ fn main() -> Result<(), slint::PlatformError> {
             }
             ctx.open_when_done.set(false);
             match ctx.log.begin_from_config(Path::new(path.as_str())) {
-                Ok(session) => run_session(&ui, &ctx, &session, false),
+                Ok(session) => run_session(&ui, &ctx, &session, RunMode::Normal),
                 Err(error) => ui.set_error(error.to_string().into()),
             }
         });

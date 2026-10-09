@@ -70,6 +70,8 @@ export component AppWindow inherits Window {
     in property <string> hist-message;
     in property <string> report-name;
     in property <bool> can-move;
+    in property <bool> can-force-full;
+    callback force-full-task(string);
     in property <[JobRow]> job-rows;
     in property <string> jobs-config-name;
     in property <string> jobs-config;
@@ -650,6 +652,10 @@ export component AppWindow inherits Window {
                         jobs => {
                             root.show-jobs(task.path);
                         }
+                        force-full => {
+                            root.force-full-task(task.path);
+                        }
+                        can-force-full: root.can-force-full;
                         can-schedule: root.can-schedule;
                         schedule => {
                             root.schedule-task(task.path);

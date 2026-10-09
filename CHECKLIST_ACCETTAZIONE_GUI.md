@@ -79,7 +79,7 @@ e destinazione · cronologia laterale di tutti i lavori con esito · un processo
 | Completo / Incrementale / Differenziale | ✅ | |
 | Pianificazione (creare, vedere, togliere) | ✅ | dal livello Standard; non si vede la «prossima esecuzione» |
 | Eventi prima/dopo | 🟡 | si leggono in Proprietà; **non si scrivono** dalla console (decisione F55 aperta) |
-| Conservazione per cicli, forza completo | 🟡 | cicli sì (si può solo alzare); «Forza completo» ❌ |
+| Conservazione per cicli, forza completo | ✅ | cicli sì (si può solo alzare); «Forza completo» dal livello Standard (L44) |
 | Cifratura | ✅ | AES-256, chiave nel Gestore credenziali |
 | Notifica via posta | ✅ | dal notify-server |
 | Copia di file in uso (VSS) | 🟡 | nel motore sì, **non esposta** nella console |

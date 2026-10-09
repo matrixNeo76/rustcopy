@@ -38,6 +38,13 @@ impl ActiveRun {
         Self::launch(&config, runner::run_arguments)
     }
 
+    /// Starts one configuration with its generation backups forced to full (`--force-full`): the
+    /// fixed form in `runner::force_full_arguments`.
+    pub fn spawn_force_full(config: &Path) -> Result<Self, String> {
+        let config = std::path::absolute(config).map_err(|e| e.to_string())?;
+        Self::launch(&config, runner::force_full_arguments)
+    }
+
     /// Resumes an interrupted run from its checkpoint (`--resume-from`): the fixed form in
     /// `runner::resume_arguments`, run from the checkpoint's own folder like the original was.
     pub fn spawn_resume(checkpoint: &Path) -> Result<Self, String> {

@@ -27,6 +27,7 @@ export struct TaskRow {
     jobs: int,
     saved: bool,
     scheduled: bool,
+    generations: bool,
 }
 
 // One job of a configuration. `last-state`: -2 no report to read, -1 never run, 0 clean, 1 dry run, 2 needs a look.
@@ -297,6 +298,8 @@ export component TaskItem inherits Rectangle {
     callback remove();
     callback schedule();
     callback jobs();
+    callback force-full();
+    in property <bool> can-force-full;
     in property <bool> can-schedule;
     height: 76px;
     border-radius: Theme.radius;
@@ -358,6 +361,13 @@ export component TaskItem inherits Rectangle {
             horizontal-stretch: 0;
             clicked => {
                 root.remove();
+            }
+        }
+        if root.entry.generations && root.can-force-full: Button {
+            text: Strings.task-force-full;
+            horizontal-stretch: 0;
+            clicked => {
+                root.force-full();
             }
         }
         if root.entry.jobs > 1: Button {
