@@ -11,6 +11,7 @@
 
 mod check;
 mod csv;
+mod eject;
 mod form;
 mod format;
 mod help;
@@ -89,6 +90,9 @@ struct Ctx {
     edit: RefCell<Option<EditState>>,
     /// Every run of the history page, unfiltered: the filter and the CSV work from this.
     history: RefCell<Vec<RunLine>>,
+    /// Whether to eject the removable destination drive when the run now going ends clean, and which
+    /// drive: a choice about this run only, like `open_when_done`.
+    eject_drive: Cell<Option<char>>,
     /// When the copy now going was paused, if it is: the console resumes it by itself after
     /// `suspend::PAUSE_LIMIT`.
     paused_since: Cell<Option<std::time::Instant>>,
@@ -821,6 +825,22 @@ fn announce_finish(ui: &AppWindow, ctx: &Rc<Ctx>, id: &str, state: Option<Sessio
             toast::show("rustcopy", &text);
         }
     }
+    // Eject the removable destination drive, only after a clean copy and only if it was asked for. Done
+    // off the window's thread: locking a volume can take a moment.
+    if let Some(letter) = ctx.eject_drive.take() {
+        if state == Some(SessionState::Clean) {
+            // Opening the folder first would hold the volume: it is skipped when ejecting.
+            ctx.open_when_done.set(false);
+            let weak = ui.as_weak();
+            std::thread::spawn(move || {
+                let outcome = eject::eject(letter);
+                let text = eject::message(letter, &outcome);
+                let _ = weak.upgrade_in_event_loop(move |ui| ui.set_eject_message(text.into()));
+            });
+        } else {
+            ui.set_eject_message("".into());
+        }
+    }
     if ctx.open_when_done.replace(false) && state == Some(SessionState::Clean) {
         let dest = ctx
             .sessions
@@ -1009,6 +1029,7 @@ fn main() -> Result<(), slint::PlatformError> {
         history: RefCell::new(Vec::new()),
         move_plan: Arc::new(Mutex::new(None)),
         paused_since: Cell::new(None),
+        eject_drive: Cell::new(None),
     });
     refresh(&ui, &ctx);
     show_safety(&ui);
@@ -1874,6 +1895,18 @@ fn main() -> Result<(), slint::PlatformError> {
         });
     }
 
+    {
+        let weak = ui.as_weak();
+        ui.on_dest_edited(move |text| {
+            let Some(ui) = weak.upgrade() else { return };
+            let removable = eject::destination_is_removable(text.as_str());
+            ui.set_dest_removable(removable);
+            if !removable {
+                ui.set_eject_when_done(false);
+            }
+        });
+    }
+
     // Recent folders (from the log of lavori): choosing one only fills the form.
     {
         let weak = ui.as_weak();
@@ -1893,6 +1926,7 @@ fn main() -> Result<(), slint::PlatformError> {
             ui.set_dest(value);
             ui.set_error("".into());
             ui.invoke_clear_check();
+            ui.invoke_dest_edited(ui.get_dest());
         });
     }
 
@@ -2004,6 +2038,7 @@ fn main() -> Result<(), slint::PlatformError> {
                         ui.set_dest(path.to_string_lossy().into_owned().into());
                         ui.set_error("".into());
                         ui.invoke_clear_check();
+                        ui.invoke_dest_edited(ui.get_dest());
                     }
                 });
             });
@@ -2047,6 +2082,12 @@ fn main() -> Result<(), slint::PlatformError> {
             let verify = (ui.get_verify() || ui.get_move_mode())
                 .then(|| algorithm_for(ui.get_verify_algo()));
             ctx.open_when_done.set(ui.get_open_when_done());
+            // Ejecting is asked only for a removable drive and only when the box is ticked.
+            ctx.eject_drive.set(
+                (ui.get_eject_when_done() && eject::destination_is_removable(&dest))
+                    .then(|| eject::drive_letter(&dest))
+                    .flatten(),
+            );
             start_copy(&ui, &ctx, &chosen, &dest, verify);
         });
     }

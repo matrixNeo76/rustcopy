@@ -119,6 +119,8 @@ Le regole di sicurezza chiave (nessun comando che copi, cancelli, pianifichi o i
 
 | L35 | La pausa **sospende** (tutti i thread della riga di comando e dei suoi figli), non uccide: nulla si perde; **riprende da sola dopo 10 minuti** e lo dice; «Ferma» **riprende prima** di scrivere il file di stop, perché un processo sospeso non lo vedrebbe | Una connessione di rete ferma troppo a lungo può essere chiusa dal server; uno stop dato a un processo in pausa resterebbe senza risposta | UI | `suspend::{set_suspended,descendants,PAUSE_LIMIT}` | 3 test + dal vivo (locale) |
 
+| L36 | L'espulsione dell'unità è proposta **solo** per una destinazione su una lettera che Windows dichiara *rimovibile* (mai disco fisso, rete, ottico, percorso senza lettera), avviene **solo dopo una copia pulita**, e se il volume è ancora in uso **non cambia nulla** e lo dice; l'apertura della cartella a fine copia viene saltata quando si espelle | Espellere un disco sbagliato o uno in uso farebbe perdere dati o lavoro; aprire la cartella proprio prima terrebbe il volume occupato | UI | `eject::{drive_letter,is_removable,eject}` | 4 test + C: mai toccato; chiavetta da provare |
+
 ## 3. Copia, anteprima, Explorer
 
 | ID | Comportamento | Perché | Dove vive | Come si porta | Verifica |
@@ -181,7 +183,7 @@ Le regole di sicurezza chiave (nessun comando che copi, cancelli, pianifichi o i
 
 ## 7. Stato e conteggi
 
-Righe: 13 confini, 12 esecuzione, 35 lavori, 11 copia/Explorer, 12 editor, 7 aspetto, 10 build. **100** voci. Quelle marcate **Nuovo**
+Righe: 13 confini, 12 esecuzione, 36 lavori, 11 copia/Explorer, 12 editor, 7 aspetto, 10 build. **101** voci. Quelle marcate **Nuovo**
 (E09, E12, A04, A05, A06, A07, C10 in parte) sono i requisiti che nascono dalla specifica, non da un difetto passato.
 
 ## 8. Come si usa questo catalogo
@@ -201,5 +203,5 @@ Righe: 13 confini, 12 esecuzione, 35 lavori, 11 copia/Explorer, 12 editor, 7 asp
   difetti D1-D30 resta da fare quando si arriva alle schermate corrispondenti.
 - **C08 è un'ipotesi favorevole**: `PopupWindow` non sta nel layout, ma non ho provato un pannello Recenti reale.
 - **E09 e A04** sono funzioni che non esistono ancora; la verifica "dal vivo" dipende dal tray (non riuscito nella Fase 1).
-- **Il conteggio 100** è fatto a mano e può non riflettere righe aggiunte dopo.
+- **Il conteggio 101** è fatto a mano e può non riflettere righe aggiunte dopo.
 - **Revisione contro D1-D30 fatta (8 Ott 2026)**: dei difetti documentati, quelli che toccano la console sono D22, D24, D25, D26, D28, D29, D30; D24 (G06), D26 (J12), D30 (I03) e D25 (core, `--resume-from`) erano già coperti; D22 (I10) e D28 (C11) sono state aggiunte; D29 riguarda solo la DLL Shell, invariata. D1-D21, D23 e D27 vivono nel core o nella CLI e la nuova interfaccia li eredita senza codice proprio.

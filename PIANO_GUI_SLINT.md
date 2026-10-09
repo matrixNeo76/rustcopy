@@ -86,6 +86,7 @@ Ordine proposto per colmare le lacune (dal più usato): 1 aprire un file di conf
 - [ ] lampeggio del pulsante nella barra delle applicazioni quando una copia finisce e la finestra non ha il focus
 - [ ] avvio e uso in una sessione RDP e in una macchina virtuale senza accelerazione grafica
 - [ ] pausa su una condivisione di rete vera (il NAS): copia lunga, pausa di qualche minuto, ripresa; il server può chiudere la connessione ferma
+- [ ] espelli l'unità alla fine con una chiavetta vera: copia, espulsione riuscita; poi con un file aperto sulla chiavetta, il messaggio «ancora in uso»
 - [ ] Narrator legge le schermate principali (Nuova copia, Attività, dettaglio di un lavoro)
 - [ ] scala di Windows al 125 %, 150 %, 200 %: nessun testo tagliato
 - [ ] tema scuro che segue il sistema, barra del titolo compresa
@@ -98,7 +99,7 @@ Ordine proposto per colmare le lacune (dal più usato): 1 aprire un file di conf
 - [~] pausa/riprendi (Livello A: `suspend.rs` sospende tutti i thread dell'albero di processi del lavoro, mai un kill; riprende da sola dopo 10 minuti e «Ferma» riprende prima di chiedere lo stop). **Provato in locale**: 28 GB, in pausa la destinazione è rimasta ferma a 358 file per 8 s, alla ripresa è finita pulita con 900 file. **Provato anche attraverso il client SMB** (destinazione `\localhost\C$`, 9,4 GB: in pausa 20 s la destinazione è rimasta ferma a 162 file, alla ripresa è finita pulita con 300). **Il NAS vero (Z:) non era raggiungibile** e il caso di un server che chiude una connessione ferma resta da provare sul NAS: voce nei controlli finali
 - [x] file singoli come origine («Aggiungi file...» e trascinamento di file nella Nuova copia; `runner::plan_copy_with_files`: un file va **dentro** la destinazione col suo nome, scritto nella configurazione come cartella + modello a un nome; vale anche per «Sposta» e per «Controlla prima»; l'estensione Shell resta sul `plan_copy` solo lessicale perché gira dentro Explorer). Provato col motore: un modello a un nome copia e verifica esattamente quel file. **Non provato dal vivo** nella finestra (il dialogo nativo)
 - [ ] notifica via posta
-- [ ] «espelli il disco alla fine» (solo unità rimovibili)
+- [~] «espelli il disco alla fine» (solo unità rimovibili): `eject.rs`, casella «Espelli l'unità alla fine» visibile solo se la destinazione è su una lettera di unità che Windows dichiara rimovibile; dopo una copia **pulita** blocca il volume, lo smonta e lo espelle come Esplora file; se il blocco fallisce (file aperti) non cambia nulla e lo dice. **Non provato dal vivo: serve una chiavetta**: voce nei controlli finali. Provato: una lettera non rimovibile (C:) non viene mai toccata
 
 ## 1. Principi del piano
 
