@@ -43,10 +43,14 @@ reqwest.workspace = true
 async-trait.workspace = true
 axum = { workspace = true, optional = true }
 subtle = { workspace = true, optional = true }
+# Email channel for notify-server. Optional: the CLI and the console never send mail themselves.
+lettre = { version = "0.11.23", default-features = false, features = ["builder", "smtp-transport", "tokio1", "tokio1-rustls", "ring", "webpki-roots"], optional = true }
 
 [features]
 # AGENTS.md rule 8: axum must never reach the default build.
-notify-server = ["dep:axum", "dep:subtle"]
+notify-server = ["dep:axum", "dep:subtle", "smtp"]
+# The SMTP notification channel (SmtpSink). Pulled in by notify-server, never by the default build.
+smtp = ["dep:lettre"]
 
 [target.'cfg(windows)'.dependencies]
 windows-service.workspace = true

@@ -241,6 +241,7 @@ pub struct NotifyServerConfig {
     pub bind: Option<String>,
     pub ntfy: Option<NtfyChannelConfig>,
     pub generic_webhook: Option<GenericWebhookChannelConfig>,
+    pub smtp: Option<SmtpChannelConfig>,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -255,6 +256,25 @@ pub struct GenericWebhookChannelConfig {
     #[serde(default)]
     pub enabled: bool,
     pub url: String,
+}
+
+/// The email channel (`[smtp]` in `notify-server.toml`). Always parsed, so a configuration that names it
+/// is never a parse error; the sink exists only in a build with the `smtp` feature.
+#[derive(Debug, Clone, Deserialize)]
+pub struct SmtpChannelConfig {
+    #[serde(default)]
+    pub enabled: bool,
+    pub host: String,
+    /// Defaults by `security`: 587 for starttls, 465 for tls, 25 for none.
+    pub port: Option<u16>,
+    /// `starttls` (default), `tls`, or `none` (loopback hosts only).
+    pub security: Option<String>,
+    pub username: Option<String>,
+    /// A secret spec, never the secret itself in a shared file: `keyring:NAME`, `env:NAME` or `file:PATH`.
+    pub password: Option<String>,
+    pub from: String,
+    pub to: Vec<String>,
+    pub subject_prefix: Option<String>,
 }
 
 impl NotifyServerConfig {
@@ -285,6 +305,19 @@ impl NotifyServerConfig {
                     webhook.url.clone(),
                     timeout,
                 )));
+            }
+        }
+        if let Some(smtp) = &self.smtp {
+            if smtp.enabled {
+                #[cfg(feature = "smtp")]
+                match crate::notify_smtp::SmtpSink::new(smtp, timeout) {
+                    Ok(sink) => sinks.push(Box::new(sink)),
+                    Err(reason) => tracing::error!(%reason, "smtp channel not started"),
+                }
+                #[cfg(not(feature = "smtp"))]
+                tracing::error!(
+                    "the smtp channel is configured but this build has no smtp feature"
+                );
             }
         }
         sinks
@@ -448,6 +481,7 @@ mod tests {
                 enabled: false,
                 url: "https://example.invalid/hook".to_string(),
             }),
+            smtp: None,
         };
         let sinks = config.build_sinks(Duration::from_secs(5));
         let names: Vec<_> = sinks.iter().map(|s| s.name()).collect();
