@@ -29,6 +29,7 @@ use std::time::Duration;
 
 use robocopy_ingest::integrity::HashAlgorithm;
 use robocopy_ingest::job_editor::{self, JobDraft};
+use robocopy_ingest::safety::{self, Confirmation, SafetyLevel};
 use robocopy_ingest::sessions::{
     recent_folders, Session, SessionLog, SessionState, SessionSummary,
 };
@@ -805,6 +806,32 @@ fn toast_text(session: &SessionSummary, state: Option<SessionState>) -> Option<S
     }
 }
 
+/// The index of a level in the combo box (the order of its model).
+fn level_index(level: SafetyLevel) -> i32 {
+    match level {
+        SafetyLevel::Prudent => 0,
+        SafetyLevel::Standard => 1,
+        SafetyLevel::Expert => 2,
+    }
+}
+
+fn level_for(index: i32) -> SafetyLevel {
+    match index {
+        1 => SafetyLevel::Standard,
+        2 => SafetyLevel::Expert,
+        _ => SafetyLevel::Prudent,
+    }
+}
+
+/// Shows the level in force in the status button and on the safety page.
+fn show_safety(ui: &AppWindow) {
+    let level = safety::load(&robocopy_ingest::sessions::data_dir());
+    ui.set_safety_level(level_index(level));
+    ui.set_safety_level_name(level.name().into());
+    ui.set_safety_pick(level_index(level));
+    ui.set_safety_unlocks(level.unlocks().into());
+}
+
 /// Opens a folder in Explorer. Failure is silent on purpose: the copy has finished and is reported;
 /// a folder that cannot be shown must not turn that into an error.
 fn open_folder(path: &str) {
@@ -872,6 +899,7 @@ fn main() -> Result<(), slint::PlatformError> {
         history: RefCell::new(Vec::new()),
     });
     refresh(&ui, &ctx);
+    show_safety(&ui);
 
     // The sidebar.
     {
@@ -1209,6 +1237,62 @@ fn main() -> Result<(), slint::PlatformError> {
                     ui.set_form(form);
                 });
             });
+        });
+    }
+
+    // Safety level (RF-Y12): read from the person's own settings, raised only after a confirmation that
+    // says what it unlocks, lowered freely, every change logged by the core.
+    {
+        let weak = ui.as_weak();
+        ui.on_show_safety(move || {
+            let Some(ui) = weak.upgrade() else { return };
+            show_safety(&ui);
+            ui.set_safety_confirming(false);
+            ui.set_safety_message("".into());
+            ui.set_page(9);
+        });
+    }
+    {
+        let weak = ui.as_weak();
+        ui.on_safety_picked(move |index| {
+            let Some(ui) = weak.upgrade() else { return };
+            ui.set_safety_unlocks(level_for(index).unlocks().into());
+            ui.set_safety_confirming(false);
+            ui.set_safety_message("".into());
+        });
+    }
+    {
+        let weak = ui.as_weak();
+        ui.on_cancel_safety(move || {
+            let Some(ui) = weak.upgrade() else { return };
+            show_safety(&ui);
+            ui.set_safety_confirming(false);
+        });
+    }
+    {
+        let weak = ui.as_weak();
+        ui.on_apply_safety(move |index, confirmed| {
+            let Some(ui) = weak.upgrade() else { return };
+            let dir = robocopy_ingest::sessions::data_dir();
+            let target = level_for(index);
+            if target > safety::load(&dir) && !confirmed {
+                // The first press only explains; the second, on the same page, confirms.
+                ui.set_safety_confirming(true);
+                return;
+            }
+            let confirmation = if confirmed {
+                Confirmation::Confirmed
+            } else {
+                Confirmation::NotConfirmed
+            };
+            match safety::set(&dir, target, confirmation) {
+                Ok(level) => {
+                    show_safety(&ui);
+                    ui.set_safety_confirming(false);
+                    ui.set_safety_message(format!("Livello ora: {}.", level.name()).into());
+                }
+                Err(error) => ui.set_safety_message(error.to_string().into()),
+            }
         });
     }
 

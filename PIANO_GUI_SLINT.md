@@ -91,7 +91,7 @@ Ordine proposto per colmare le lacune (dal più usato): 1 aprire un file di conf
 - [ ] installazione su un Windows Server senza Visual C++ (D30)
 
 ### Fase 6
-- [ ] livello di sicurezza nelle Impostazioni (predefinito Prudente)
+- [x] livello di sicurezza nelle Impostazioni (predefinito Prudente): `safety.rs` nel core (illeggibile = Prudente, mai in un file di job, alzarlo chiede conferma, ogni cambio nel `safety.log`, nessun livello avvia un mirror o una pulizia non presidiati); pulsante «Sicurezza: ...» in fondo alla barra laterale. Provato dal vivo: Prudente → Standard con conferma. **Da solo non sblocca ancora nulla**: lo useranno pianificazioni e Sposta, una funzione per volta
 - [ ] creare/modificare pianificazioni (la GUI prepara, la CLI installa dopo UAC)
 - [ ] Sposta a due passi con conferma
 - [ ] pausa/riprendi (Livello A, prova su SMB reale)

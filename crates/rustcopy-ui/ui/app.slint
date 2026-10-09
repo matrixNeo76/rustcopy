@@ -69,6 +69,12 @@ export component AppWindow inherits Window {
     in-out property <int> hist-filter;
     in property <string> hist-message;
     in property <string> report-name;
+    in property <int> safety-level;
+    in property <string> safety-level-name;
+    in-out property <int> safety-pick;
+    in property <string> safety-unlocks;
+    in property <bool> safety-confirming;
+    in property <string> safety-message;
     in property <string> report-note;
     in property <string> report-workdir;
     in property <bool> report-busy;
@@ -156,6 +162,10 @@ export component AppWindow inherits Window {
     callback remove-config(string);
     callback open-report-file();
     callback show-help();
+    callback show-safety();
+    callback safety-picked(int);
+    callback apply-safety(int, bool);
+    callback cancel-safety();
     callback preview-restore(string, string);
     callback preview-restore-session(string);
     callback create-example();
@@ -239,6 +249,13 @@ export component AppWindow inherits Window {
                         horizontal-alignment: left;
                         font-size: Theme.small;
                         color: Theme.text-faint;
+                    }
+                }
+                Button {
+                    text: @tr("{}: {}", Strings.safety-status, root.safety-level-name);
+                    accessible-description: Strings.safety-title;
+                    clicked => {
+                        root.show-safety();
                     }
                 }
             }
@@ -718,6 +735,79 @@ export component AppWindow inherits Window {
                     font-size: Theme.body;
                     color: Theme.text-faint;
                 }
+            }
+        }
+
+        if root.page == 9: VerticalLayout {
+            padding: Theme.page-padding;
+            spacing: Theme.gap;
+            alignment: start;
+            HorizontalLayout {
+                spacing: 10px;
+                alignment: start;
+                Button {
+                    text: Strings.props-back;
+                    clicked => {
+                        root.cancel-safety();
+                        root.new-copy();
+                    }
+                }
+                Text {
+                    text: Strings.safety-title;
+                    font-size: Theme.title;
+                    font-weight: 700;
+                    color: Theme.text;
+                    vertical-alignment: center;
+                }
+            }
+            Text {
+                text: Strings.safety-intro;
+                wrap: word-wrap;
+                font-size: Theme.body;
+                color: Theme.text-muted;
+            }
+            ComboBox {
+                model: ["Prudente", "Standard", "Esperto"];
+                current-index <=> root.safety-pick;
+                accessible-label: Strings.safety-title;
+                selected(value) => {
+                    root.safety-picked(self.current-index);
+                }
+            }
+            if !root.safety-confirming: Text {
+                text: root.safety-unlocks;
+                wrap: word-wrap;
+                font-size: Theme.body;
+                color: Theme.text;
+            }
+            if root.safety-confirming: Banner {
+                text: root.safety-unlocks;
+                label-prefix: Strings.safety-confirm-label;
+                kind: BadgeKind.warning;
+            }
+            HorizontalLayout {
+                spacing: 10px;
+                alignment: start;
+                Button {
+                    text: root.safety-confirming ? Strings.safety-confirm : Strings.safety-apply;
+                    primary: true;
+                    enabled: root.safety-pick != root.safety-level;
+                    clicked => {
+                        root.apply-safety(root.safety-pick, root.safety-confirming);
+                    }
+                }
+                if root.safety-confirming: Button {
+                    text: Strings.safety-cancel;
+                    clicked => {
+                        root.cancel-safety();
+                    }
+                }
+            }
+            if root.safety-message != "": Text {
+                text: root.safety-message;
+                wrap: word-wrap;
+                font-size: Theme.small;
+                color: Theme.text-muted;
             }
         }
 
