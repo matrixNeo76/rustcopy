@@ -79,6 +79,11 @@ Le regole di sicurezza chiave (nessun comando che copi, cancelli, pianifichi o i
 
 | L13 | La griglia delle proprietà **non calcola nulla**: valore, origine (nel file / ereditata / predefinita), avvisi e redazione del webhook arrivano da `gui_api::read_settings`; i comandi pre/post si mostrano verbatim | Il frontend non decide cosa è rischioso né cosa redigere (G11, G12) | Core | `property_rows` solo dispone le righe | Dal vivo con un file a due job |
 
+| L14 | L'editor **non decide**: il modulo (`form.rs`) converte testo in campi tipizzati e un numero non valido dà un errore col nome del campo; ogni rifiuto (mirror non attivabile, conservazione solo in salita, mirror+tipo, tipo+cifratura, thread 1-128) è del core e compare nel banner | Il frontend non decide cosa è rischioso (G01, J01) | Core + UI | `FormValues::to_draft` + `job_editor::propose_config_from_path` | 8 test del modulo + dal vivo |
+| L15 | Il nome del job **non si modifica** dall'editor; i controlli che il core vieterebbe sono **disattivati con il motivo** (mirror spento, conservazione assente), non nascosti | Rinominare orfana le generazioni (D12); RF-Y07 | Core + UI | `name` letto dal draft originale; `enabled:` da `mirror-was-on`/`retention-was-set` | Dal vivo |
+| L16 | La cifratura scritta a mano (`env:`, `file:`, letterale) è mostrata **sola lettura** e portata invariata; il modulo scrive solo `keyring:NOME` | Un segreto non passa dal modulo (G13, F80) | UI | `encrypt_other` | Test del modulo |
+| L17 | La proposta si scrive **accanto** al file (`create_new`, mai sopra); i campi che il modulo non possiede (pre/post, webhook, spazio libero) restano come nel file | Una sostituzione la fa la persona (F54) | Core | `suggest_proposal_path_now` | Dal vivo: originale intatto, `pre_command` conservato |
+
 ## 3. Copia, anteprima, Explorer
 
 | ID | Comportamento | Perché | Dove vive | Come si porta | Verifica |
@@ -141,7 +146,7 @@ Le regole di sicurezza chiave (nessun comando che copi, cancelli, pianifichi o i
 
 ## 7. Stato e conteggi
 
-Righe: 13 confini, 12 esecuzione, 13 lavori, 11 copia/Explorer, 12 editor, 7 aspetto, 10 build. **78** voci. Quelle marcate **Nuovo**
+Righe: 13 confini, 12 esecuzione, 17 lavori, 11 copia/Explorer, 12 editor, 7 aspetto, 10 build. **82** voci. Quelle marcate **Nuovo**
 (E09, E12, A04, A05, A06, A07, C10 in parte) sono i requisiti che nascono dalla specifica, non da un difetto passato.
 
 ## 8. Come si usa questo catalogo
@@ -161,5 +166,5 @@ Righe: 13 confini, 12 esecuzione, 13 lavori, 11 copia/Explorer, 12 editor, 7 asp
   difetti D1-D30 resta da fare quando si arriva alle schermate corrispondenti.
 - **C08 è un'ipotesi favorevole**: `PopupWindow` non sta nel layout, ma non ho provato un pannello Recenti reale.
 - **E09 e A04** sono funzioni che non esistono ancora; la verifica "dal vivo" dipende dal tray (non riuscito nella Fase 1).
-- **Il conteggio 78** è fatto a mano e può non riflettere righe aggiunte dopo.
+- **Il conteggio 82** è fatto a mano e può non riflettere righe aggiunte dopo.
 - **Revisione contro D1-D30 fatta (8 Ott 2026)**: dei difetti documentati, quelli che toccano la console sono D22, D24, D25, D26, D28, D29, D30; D24 (G06), D26 (J12), D30 (I03) e D25 (core, `--resume-from`) erano già coperti; D22 (I10) e D28 (C11) sono state aggiunte; D29 riguarda solo la DLL Shell, invariata. D1-D21, D23 e D27 vivono nel core o nella CLI e la nuova interfaccia li eredita senza codice proprio.

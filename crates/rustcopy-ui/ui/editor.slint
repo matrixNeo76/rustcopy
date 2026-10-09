@@ -1,0 +1,100 @@
+// The task editor (phase 4c). Fields are bound to `EditForm`; every refusal, and every rule about what a
+// draft may contain, belongs to the core (`job_editor`), which answers when the proposal is built.
+import { Button, LineEdit, CheckBox, ComboBox, TextEdit, TabWidget, ScrollView } from "std-widgets.slint";
+import { Theme } from "theme.slint";
+import { Strings } from "strings.slint";
+
+export struct EditForm {
+    name: string,
+    source: string,
+    dest: string,
+    pattern: string,
+    threads: string,
+    retries: string,
+    retry-wait-seconds: string,
+    bandwidth-limit-mbps: string,
+    verify-integrity: bool,
+    fast-verify: bool,
+    ignore-transient-missing: bool,
+    exclude-junctions: bool,
+    compare-baseline: bool,
+    dry-run: bool,
+    long-paths: bool,
+    preserve-timestamps: bool,
+    preserve-acl: bool,
+    no-prescan: bool,
+    mirror: bool,
+    hash-algo: int,
+    backup-type: int,
+    keep-generations: string,
+    exclude-files: string,
+    exclude-dirs: string,
+    min-age-days: string,
+    max-age-days: string,
+    report-path: string,
+    log-path: string,
+    html-report-path: string,
+    encrypt-keyring: string,
+    encrypt-other: bool,
+}
+
+// A labelled text box with an explanation under it. Every control says what it does (RF-Y07).
+export component TextField inherits VerticalLayout {
+    in property <string> label;
+    in property <string> hint;
+    in property <string> placeholder;
+    in property <bool> enabled: true;
+    in-out property <string> value;
+    spacing: 2px;
+    Text {
+        text: root.label;
+        font-size: Theme.small;
+        font-weight: 700;
+        color: Theme.text-faint;
+    }
+    LineEdit {
+        text <=> root.value;
+        enabled: root.enabled;
+        placeholder-text: root.placeholder;
+        accessible-label: root.label;
+        accessible-description: root.hint;
+    }
+    if root.hint != "": Text {
+        text: root.hint;
+        wrap: word-wrap;
+        font-size: Theme.small;
+        color: Theme.text-muted;
+    }
+}
+
+// A check box with an explanation under it.
+export component ToggleField inherits VerticalLayout {
+    in property <string> label;
+    in property <string> hint;
+    in property <bool> enabled: true;
+    in-out property <bool> value;
+    spacing: 0px;
+    CheckBox {
+        text: root.label;
+        checked <=> root.value;
+        enabled: root.enabled;
+        accessible-description: root.hint;
+    }
+    if root.hint != "": Text {
+        x: 28px;
+        text: root.hint;
+        wrap: word-wrap;
+        font-size: Theme.small;
+        color: Theme.text-muted;
+    }
+}
+
+// A page of a tab: scrolls, with room at the end.
+export component TabPage inherits ScrollView {
+    VerticalLayout {
+        padding: 14px;
+        spacing: 12px;
+        alignment: start;
+        @children
+    }
+}
