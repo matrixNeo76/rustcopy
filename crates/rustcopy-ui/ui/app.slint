@@ -69,6 +69,9 @@ export component AppWindow inherits Window {
     in-out property <int> hist-filter;
     in property <string> hist-message;
     in property <string> report-name;
+    in property <string> report-note;
+    in property <string> report-workdir;
+    in property <bool> report-busy;
     in property <[HelpRow]> help-rows;
     in property <string> help-message;
     in property <bool> help-ok;
@@ -153,6 +156,8 @@ export component AppWindow inherits Window {
     callback remove-config(string);
     callback open-report-file();
     callback show-help();
+    callback preview-restore(string, string);
+    callback preview-restore-session(string);
     callback create-example();
     callback edit-browse(int);
     callback show-credentials();
@@ -888,6 +893,11 @@ export component AppWindow inherits Window {
                 label-prefix: Strings.warning-prefix;
                 kind: BadgeKind.warning;
             }
+            if root.report-note != "": Banner {
+                text: root.report-note;
+                label-prefix: Strings.restore-title;
+                kind: BadgeKind.info;
+            }
             DetailRows {
                 vertical-stretch: 1;
                 min-height: 200px;
@@ -895,11 +905,19 @@ export component AppWindow inherits Window {
                 empty-text: Strings.technical-none;
             }
             HorizontalLayout {
+                spacing: 10px;
                 alignment: start;
                 Button {
                     text: Strings.report-history;
                     clicked => {
                         root.show-report-history(root.report-path);
+                    }
+                }
+                Button {
+                    text: root.report-busy ? Strings.restore-previewing : Strings.restore-preview;
+                    enabled: !root.report-busy;
+                    clicked => {
+                        root.preview-restore(root.report-path, root.report-workdir);
                     }
                 }
             }
@@ -1417,11 +1435,19 @@ export component AppWindow inherits Window {
                 }
             }
             if root.d-has-reports && root.d-state != 4: HorizontalLayout {
+                spacing: 10px;
                 alignment: start;
                 Button {
                     text: root.d-show-technical ? Strings.hide-technical : Strings.show-technical;
                     clicked => {
                         root.toggle-technical(root.selected-id);
+                    }
+                }
+                Button {
+                    text: root.report-busy ? Strings.restore-previewing : Strings.restore-preview;
+                    enabled: !root.report-busy && !root.running;
+                    clicked => {
+                        root.preview-restore-session(root.selected-id);
                     }
                 }
             }

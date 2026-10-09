@@ -105,6 +105,8 @@ Le regole di sicurezza chiave (nessun comando che copi, cancelli, pianifichi o i
 
 | L28 | Il significato di un codice di uscita nella pagina Aiuto **viene da `runner::exit_code_meaning`**, non è riscritto; l'esempio guidato non riscrive mai una cartella esistente e lo dice in italiano | Una seconda copia dei significati si disallinea al primo codice nuovo (F81); un secondo clic non deve rovinare ciò che la persona ha già modificato | Core + UI | `help::entries`, `example_workspace` | 2 test + dal vivo |
 
+| L29 | L'anteprima di ripristino **non copia nulla** (`--restore-from` con `--dry-run`, forma fissa senza flag distruttivi, report di servizio cancellato dopo) e il suo risultato è sempre dichiarato «Simulazione»; la cartella di lavoro è quella della configurazione, non del report (D26) | Una simulazione scambiata per un ripristino vero, o che risolve male i percorsi relativi, farebbe credere cose false | Core + UI | `gui_api::preview_restore` | Dal vivo |
+
 ## 3. Copia, anteprima, Explorer
 
 | ID | Comportamento | Perché | Dove vive | Come si porta | Verifica |
@@ -167,7 +169,7 @@ Le regole di sicurezza chiave (nessun comando che copi, cancelli, pianifichi o i
 
 ## 7. Stato e conteggi
 
-Righe: 13 confini, 12 esecuzione, 28 lavori, 11 copia/Explorer, 12 editor, 7 aspetto, 10 build. **93** voci. Quelle marcate **Nuovo**
+Righe: 13 confini, 12 esecuzione, 29 lavori, 11 copia/Explorer, 12 editor, 7 aspetto, 10 build. **94** voci. Quelle marcate **Nuovo**
 (E09, E12, A04, A05, A06, A07, C10 in parte) sono i requisiti che nascono dalla specifica, non da un difetto passato.
 
 ## 8. Come si usa questo catalogo
@@ -187,5 +189,5 @@ Righe: 13 confini, 12 esecuzione, 28 lavori, 11 copia/Explorer, 12 editor, 7 asp
   difetti D1-D30 resta da fare quando si arriva alle schermate corrispondenti.
 - **C08 è un'ipotesi favorevole**: `PopupWindow` non sta nel layout, ma non ho provato un pannello Recenti reale.
 - **E09 e A04** sono funzioni che non esistono ancora; la verifica "dal vivo" dipende dal tray (non riuscito nella Fase 1).
-- **Il conteggio 93** è fatto a mano e può non riflettere righe aggiunte dopo.
+- **Il conteggio 94** è fatto a mano e può non riflettere righe aggiunte dopo.
 - **Revisione contro D1-D30 fatta (8 Ott 2026)**: dei difetti documentati, quelli che toccano la console sono D22, D24, D25, D26, D28, D29, D30; D24 (G06), D26 (J12), D30 (I03) e D25 (core, `--resume-from`) erano già coperti; D22 (I10) e D28 (C11) sono state aggiunte; D29 riguarda solo la DLL Shell, invariata. D1-D21, D23 e D27 vivono nel core o nella CLI e la nuova interfaccia li eredita senza codice proprio.

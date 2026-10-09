@@ -620,6 +620,47 @@ fn select_session(ui: &AppWindow, ctx: &Rc<Ctx>, id: &str) {
     fill_detail(ui, ctx, id);
 }
 
+/// What the restore preview page says about itself.
+const RESTORE_NOTE: &str = "Simulazione: non è stato copiato nulla. Qui sotto c'è ciò che un ripristino copierebbe dalla destinazione verso la sorgente di quella copia.";
+
+/// Runs a restore preview off the window's thread and shows it on the report page.
+fn start_restore_preview(ui: &AppWindow, report: PathBuf, workdir: Option<PathBuf>) {
+    ui.set_report_busy(true);
+    ui.set_error("".into());
+    let weak = ui.as_weak();
+    std::thread::spawn(move || {
+        let outcome = std::env::current_exe()
+            .map_err(|e| e.to_string())
+            .and_then(|exe| runner::cli_beside(&exe).map_err(|e| e.to_string()))
+            .and_then(|cli| {
+                gui_api::preview_restore(&cli, &report, workdir.as_deref())
+                    .map_err(|e| e.to_string())
+            });
+        let report_text = report.to_string_lossy().into_owned();
+        let workdir_text = workdir
+            .map(|d| d.to_string_lossy().into_owned())
+            .unwrap_or_default();
+        let _ = weak.upgrade_in_event_loop(move |ui| {
+            ui.set_report_busy(false);
+            match outcome {
+                Ok(view) => {
+                    let shown: Vec<DetailRow> = report_rows::rows_for(&view)
+                        .into_iter()
+                        .map(detail_row)
+                        .collect();
+                    ui.set_report_name("anteprima".into());
+                    ui.set_report_note(RESTORE_NOTE.into());
+                    ui.set_report_path(report_text.into());
+                    ui.set_report_workdir(workdir_text.into());
+                    ui.set_report_rows(ModelRc::new(VecModel::from(shown)));
+                    ui.set_page(6);
+                }
+                Err(message) => ui.set_error(message.into()),
+            }
+        });
+    });
+}
+
 /// Starts the CLI for a session already in the log and puts the new-copy page into its running state.
 fn run_session(ui: &AppWindow, ctx: &Rc<Ctx>, session: &Session, resume: bool) {
     let started = ctx.slot.try_start(|| {
@@ -1133,6 +1174,39 @@ fn main() -> Result<(), slint::PlatformError> {
         });
     }
 
+    // Restore preview (F64): the core runs the CLI with --restore-from --dry-run into a scratch report
+    // and reads it back; the result is shown on the report page, clearly marked as a simulation.
+    {
+        let weak = ui.as_weak();
+        ui.on_preview_restore(move |report, workdir| {
+            let Some(ui) = weak.upgrade() else { return };
+            start_restore_preview(
+                &ui,
+                PathBuf::from(report.as_str()),
+                (!workdir.is_empty()).then(|| PathBuf::from(workdir.as_str())),
+            );
+        });
+    }
+    {
+        let weak = ui.as_weak();
+        let ctx = ctx.clone();
+        ui.on_preview_restore_session(move |id| {
+            let Some(ui) = weak.upgrade() else { return };
+            let found = ctx
+                .sessions
+                .borrow()
+                .iter()
+                .find(|s| s.id == id.as_str())
+                .map(|s| (s.reports.first().cloned(), s.folder.clone()));
+            match found {
+                Some((Some(report), folder)) => start_restore_preview(&ui, report, Some(folder)),
+                _ => ui.set_error(
+                    "Questa copia non ha lasciato un report da cui ripristinare.".into(),
+                ),
+            }
+        });
+    }
+
     // Aiuto: static text, plus the guided example (core `example_workspace`, which refuses to overwrite).
     {
         let weak = ui.as_weak();
@@ -1293,6 +1367,8 @@ fn main() -> Result<(), slint::PlatformError> {
                             .collect();
                         ui.set_error("".into());
                         ui.set_report_name(name.into());
+                        ui.set_report_note("".into());
+                        ui.set_report_workdir("".into());
                         ui.set_report_path(path_text.into());
                         ui.set_report_rows(ModelRc::new(VecModel::from(shown)));
                         ui.set_page(6);
