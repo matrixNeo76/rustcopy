@@ -412,7 +412,7 @@ fn start_task(ui: &AppWindow, ctx: &Rc<Ctx>, config: &Path) {
     }
     ctx.open_when_done.set(false);
     match ctx.log.begin_task(config) {
-        Ok(session) => run_session(ui, ctx, &session),
+        Ok(session) => run_session(ui, ctx, &session, false),
         Err(error) => ui.set_error(error.to_string().into()),
     }
 }
@@ -454,6 +454,14 @@ fn fill_detail(ui: &AppWindow, ctx: &Rc<Ctx>, id: &str) {
     ui.set_d_detail("".into());
     ui.set_d_verify(session.verify.map_or("", algorithm_name).into());
     ui.set_d_has_reports(!session.reports.is_empty());
+    // An interrupted run left a checkpoint in its folder: offer to continue it (newest first).
+    let checkpoint =
+        if session.state == SessionState::Interrupted || session.state == SessionState::NeedsLook {
+            ctx.log.checkpoints_of(id).into_iter().next()
+        } else {
+            None
+        };
+    ui.set_d_resume(checkpoint.map(|c| c.path).unwrap_or_default().into());
 
     if session.state == SessionState::NeedsLook {
         if let Some(report) = session.reports.first().cloned() {
@@ -481,13 +489,20 @@ fn select_session(ui: &AppWindow, ctx: &Rc<Ctx>, id: &str) {
     ui.set_d_rows(ModelRc::new(VecModel::from(Vec::<DetailRow>::new())));
     ui.set_saving(false);
     ui.set_save_message("".into());
+    ui.set_error("".into());
     ui.set_page(1);
     fill_detail(ui, ctx, id);
 }
 
 /// Starts the CLI for a session already in the log and puts the new-copy page into its running state.
-fn run_session(ui: &AppWindow, ctx: &Rc<Ctx>, session: &Session) {
-    let started = ctx.slot.try_start(|| ActiveRun::spawn(&session.config));
+fn run_session(ui: &AppWindow, ctx: &Rc<Ctx>, session: &Session, resume: bool) {
+    let started = ctx.slot.try_start(|| {
+        if resume {
+            ActiveRun::spawn_resume(&session.config)
+        } else {
+            ActiveRun::spawn(&session.config)
+        }
+    });
     match started {
         Ok(()) => {
             *ctx.running_id.borrow_mut() = Some(session.id.clone());
@@ -541,7 +556,7 @@ fn start_copy(
             .begin_with(sources, Path::new(dest.trim()), &items, verify)
     });
     match planned {
-        Ok(session) => run_session(ui, ctx, &session),
+        Ok(session) => run_session(ui, ctx, &session, false),
         Err(error) => ui.set_error(error.to_string().into()),
     }
 }
@@ -666,6 +681,27 @@ fn main() -> Result<(), slint::PlatformError> {
         ui.on_select_session(move |id| {
             if let Some(ui) = weak.upgrade() {
                 select_session(&ui, &ctx, id.as_str());
+            }
+        });
+    }
+    // Resume: continue an interrupted run from the checkpoint it left; the core refuses any
+    // checkpoint that is not this lavoro's own.
+    {
+        let weak = ui.as_weak();
+        let ctx = ctx.clone();
+        ui.on_resume_session(move |id, checkpoint| {
+            let Some(ui) = weak.upgrade() else { return };
+            if ctx.slot.with(|run| run.is_running()) == Some(true) {
+                ui.set_error(ui.get_busy_text());
+                return;
+            }
+            ctx.open_when_done.set(false);
+            match ctx
+                .log
+                .begin_resume(id.as_str(), Path::new(checkpoint.as_str()))
+            {
+                Ok(session) => run_session(&ui, &ctx, &session, true),
+                Err(error) => ui.set_error(error.to_string().into()),
             }
         });
     }
@@ -1110,7 +1146,7 @@ fn main() -> Result<(), slint::PlatformError> {
             }
             ctx.open_when_done.set(false);
             match ctx.log.begin_from_config(Path::new(path.as_str())) {
-                Ok(session) => run_session(&ui, &ctx, &session),
+                Ok(session) => run_session(&ui, &ctx, &session, false),
                 Err(error) => ui.set_error(error.to_string().into()),
             }
         });
