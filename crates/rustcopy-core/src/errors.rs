@@ -192,6 +192,12 @@ pub enum IngestError {
     )]
     InsufficientDiskSpace { needed: u64, available: u64 },
 
+    /// `--restore-generation` could not build the requested state, or was asked to do something
+    /// it refuses (a target inside the backup, a generation that does not exist, a chain with a
+    /// missing folder).
+    #[error("cannot restore from the generation backup: {0}")]
+    GenerationRestore(String),
+
     #[error("encryption error: {0}")]
     Crypto(String),
 
@@ -276,6 +282,7 @@ impl IngestError {
             | IngestError::RetentionPurgeAborted { .. }
             | IngestError::InsufficientDiskSpace { .. }
             | IngestError::RestorePreviewFailed { .. }
+            | IngestError::GenerationRestore(_)
             | IngestError::Crypto(_)
             | IngestError::EncryptAndDecryptConflict
             | IngestError::Vss(_)

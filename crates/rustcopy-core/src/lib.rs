@@ -26,6 +26,7 @@ pub mod engine;
 pub mod errors;
 pub mod example_workspace;
 pub mod exit_code;
+pub mod generation_restore;
 pub mod generations;
 pub mod gui_api;
 pub mod history;

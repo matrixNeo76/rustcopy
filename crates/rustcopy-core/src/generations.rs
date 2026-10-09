@@ -88,6 +88,12 @@ pub struct Generation {
 pub struct GenerationIndexEntry {
     pub id: String,
     pub backup_type: BackupType,
+    /// When it was recorded (RFC 3339); empty in a manifest line that predates the field.
+    #[serde(default)]
+    pub created_at: String,
+    /// How many files it copied (the delta, for an incremental).
+    #[serde(default)]
+    pub files_copied: usize,
 }
 
 impl From<&Generation> for GenerationIndexEntry {
@@ -95,6 +101,8 @@ impl From<&Generation> for GenerationIndexEntry {
         Self {
             id: generation.id.clone(),
             backup_type: generation.backup_type,
+            created_at: generation.created_at.clone(),
+            files_copied: generation.files_copied,
         }
     }
 }
@@ -397,6 +405,17 @@ impl GenerationManifest {
         job_name: Option<&str>,
     ) -> Result<Option<Generation>, IngestError> {
         Self::read_last_matching(&Self::path_for(dest_root, job_name), |_| true)
+    }
+
+    /// One generation by id, read without materializing the rest of the history (see
+    /// [`Self::read_last_matching`]) — what a restore needs: the file listing of the state it
+    /// rebuilds, and nothing else from the manifest.
+    pub fn load_generation(
+        dest_root: &Path,
+        job_name: Option<&str>,
+        id: &str,
+    ) -> Result<Option<Generation>, IngestError> {
+        Self::read_last_matching(&Self::path_for(dest_root, job_name), |entry| entry.id == id)
     }
 
     /// D20: the most recent `Full` generation, read **without** materializing the rest of the
