@@ -17,6 +17,7 @@ mod format;
 mod help;
 mod jobs_view;
 mod move_text;
+mod path_check;
 mod problems;
 mod report_rows;
 mod run;
@@ -102,6 +103,8 @@ struct Ctx {
     jobs_view: Generation,
     /// Discards the answer for a report page once another page or report was asked for.
     report_view: Generation,
+    /// Discards a "Verifica" answer for the source box (0) or the destination box (1) once that box was asked again.
+    path_checks: [Generation; 2],
     /// The plan of a move waiting for the person's confirmation: which lavoro, and what it would delete.
     /// Shared with the worker threads that compute and execute it.
     move_plan: Arc<Mutex<Option<(String, MovePlan)>>>,
@@ -419,6 +422,23 @@ fn load_editor_form(ui: &AppWindow, state: &EditState) {
     ui.set_edit_message("".into());
     ui.set_edit_ok(false);
     ui.set_edit_job_index(i32::try_from(state.index).unwrap_or(0));
+    // What was found for another job's folders says nothing about these.
+    ui.set_source_check("".into());
+    ui.set_dest_check("".into());
+}
+
+/// Shows the answer of a "Verifica" for the source box (0) or the destination box (1), tied to the text it
+/// was asked about, and ends that box's waiting state.
+fn set_path_check(ui: &AppWindow, which: usize, answer: String, checked: String) {
+    if which == 0 {
+        ui.set_source_check(answer.into());
+        ui.set_source_checked_for(checked.into());
+        ui.set_source_checking(false);
+    } else {
+        ui.set_dest_check(answer.into());
+        ui.set_dest_checked_for(checked.into());
+        ui.set_dest_checking(false);
+    }
 }
 
 /// The rows of the jobs page: each job's line plus its last run, read from its own run index.
@@ -1175,6 +1195,7 @@ fn main() -> Result<(), slint::PlatformError> {
         move_plan: Arc::new(Mutex::new(None)),
         jobs_view: Generation::default(),
         report_view: Generation::default(),
+        path_checks: [Generation::default(), Generation::default()],
         paused_since: Cell::new(None),
         eject_drive: Cell::new(None),
     });
@@ -1578,6 +1599,57 @@ fn main() -> Result<(), slint::PlatformError> {
                         form.dest = text.into();
                     }
                     ui.set_form(form);
+                });
+            });
+        });
+    }
+
+    // "Verifica" beside a folder box: what is at that path, counted on a worker thread (a big tree takes
+    // a while) and only on a press, never while typing. A relative path means relative to the file.
+    {
+        let weak = ui.as_weak();
+        let ctx = ctx.clone();
+        ui.on_edit_check(move |which| {
+            let Some(ui) = weak.upgrade() else { return };
+            let which = usize::from(which != 0);
+            let text = if which == 0 {
+                ui.get_form().source.to_string()
+            } else {
+                ui.get_form().dest.to_string()
+            };
+            let anchor = ctx
+                .edit
+                .borrow()
+                .as_ref()
+                .and_then(|state| state.config.parent().map(Path::to_path_buf))
+                .unwrap_or_else(|| PathBuf::from("."));
+            let role = if which == 0 {
+                path_check::Role::Source
+            } else {
+                path_check::Role::Dest
+            };
+            if text.trim().is_empty() {
+                set_path_check(&ui, which, "Scrivi prima un percorso.".to_string(), text);
+                return;
+            }
+            let ticket = ctx.path_checks[which].next();
+            let generation = ctx.path_checks[which].clone();
+            if which == 0 {
+                ui.set_source_checking(true);
+            } else {
+                ui.set_dest_checking(true);
+            }
+            let weak = ui.as_weak();
+            std::thread::spawn(move || {
+                let answer = match gui_api::inspect_path(Path::new(text.trim()), &anchor) {
+                    Ok(found) => path_check::describe(role, &found),
+                    Err(error) => error.to_string(),
+                };
+                let _ = weak.upgrade_in_event_loop(move |ui| {
+                    if !generation.is_current(ticket) {
+                        return;
+                    }
+                    set_path_check(&ui, which, answer, text);
                 });
             });
         });

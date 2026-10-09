@@ -123,6 +123,8 @@ Le regole di sicurezza chiave (nessun comando che copi, cancelli, pianifichi o i
 | L37 | La posta parte **dal notify-server**, non dalla console né dalla CLI; la password è una specifica (`keyring:`, `env:`, `file:`) letta al momento dell'invio; **senza cifratura solo verso un host locale**, altrimenti il canale non si avvia; un server morto o muto è un errore con scadenza, non un blocco | Un segreto non deve stare in un file condiviso né viaggiare in chiaro per una svista; un canale rotto non deve fermare gli altri | Core | `notify_smtp::SmtpSink` | 5 test con finto server |
 | L38 | Una configurazione a **più job** si guarda **un job per riga** (cosa copia, che tipo di copia, le impostazioni che contano, l'esito dell'ultima run di *quel* job letto dal suo indice) e si estende con **«+ Nuovo job»** nell'editor: il nome è convalidato dal core, un file a job singolo **rifiuta** di diventare multi-job (cambierebbe i nomi di report, cache e storico), e nulla si scrive finché non si preme «Scrivi proposta» | Con una riga per file non si vede quale job è andato male; aggiungere un job a un file a job singolo rinominerebbe i file del job che c'è già | UI | `jobs_view::job_line`, `job_editor::build_proposal` | 4 test + dal vivo (due job, esito per job, nuovo job scritto in proposta) |
 | L39 | I **problemi di un report** (differenze, mancanti, illeggibili) si sfogliano **100 per volta** e si esportano **tutti** in CSV (non solo la pagina a schermo); i nomi che iniziano con `=`, `+`, `-`, `@` sono neutralizzati; un'anteprima di ripristino **non** si sfoglia (le sue righe non sono quelle del report che il percorso nomina) | Con migliaia di errori «e altri N» non basta; un CSV con una riga formula verrebbe eseguito da un foglio di calcolo | UI | `problems::{page_info,neighbour,all_problems,problems_csv}` | 7 test + dal vivo (250 problemi, 3 pagine) |
+| L40 | «Verifica» accanto a origine e destinazione dell'editor dice **cosa c'è a quel percorso** (esiste, è una cartella, quanti file e quanto pesa); una destinazione che non esiste è **normale** (la crea la prima copia), un'origine che non esiste no; il conteggio parte **solo a pulsante premuto**, su un thread, e la risposta si mostra **solo finché il testo nella casella è quello controllato** | Un albero grande richiede minuti: contare a ogni tasto bloccherebbe la finestra; una risposta su un altro percorso mentirebbe | UI | `path_check::describe`, `gui_api::inspect_path` | 4 test + dal vivo (percorso relativo risolto sul file, risposta che sparisce se cambi il testo) |
+| L41 | **Ogni** casella dell'editor ha una frase che dice a cosa serve (visibile e come descrizione accessibile), compresi percorsi relativi, tentativi, date, permessi, report, registro e algoritmo di verifica; i percorsi predefiniti di report e registro sono mostrati come suggerimento nella casella vuota, mai scritti nel file | Un controllo senza spiegazione obbliga a indovinare, e uno screen reader legge solo l'etichetta | UI | `editor::TextField`/`ToggleField`, `strings.slint` | dal vivo; non esiste un tooltip al passaggio del mouse in Slint standard |
 
 ## 3. Copia, anteprima, Explorer
 
@@ -186,7 +188,7 @@ Le regole di sicurezza chiave (nessun comando che copi, cancelli, pianifichi o i
 
 ## 7. Stato e conteggi
 
-Righe: 13 confini, 12 esecuzione, 39 lavori, 11 copia/Explorer, 12 editor, 7 aspetto, 10 build. **104** voci. Quelle marcate **Nuovo**
+Righe: 13 confini, 12 esecuzione, 41 lavori, 11 copia/Explorer, 12 editor, 7 aspetto, 10 build. **106** voci. Quelle marcate **Nuovo**
 (E09, E12, A04, A05, A06, A07, C10 in parte) sono i requisiti che nascono dalla specifica, non da un difetto passato.
 
 ## 8. Come si usa questo catalogo
@@ -206,5 +208,5 @@ Righe: 13 confini, 12 esecuzione, 39 lavori, 11 copia/Explorer, 12 editor, 7 asp
   difetti D1-D30 resta da fare quando si arriva alle schermate corrispondenti.
 - **C08 è un'ipotesi favorevole**: `PopupWindow` non sta nel layout, ma non ho provato un pannello Recenti reale.
 - **E09 e A04** sono funzioni che non esistono ancora; la verifica "dal vivo" dipende dal tray (non riuscito nella Fase 1).
-- **Il conteggio 104** è fatto a mano e può non riflettere righe aggiunte dopo.
+- **Il conteggio 106** è fatto a mano e può non riflettere righe aggiunte dopo.
 - **Revisione contro D1-D30 fatta (8 Ott 2026)**: dei difetti documentati, quelli che toccano la console sono D22, D24, D25, D26, D28, D29, D30; D24 (G06), D26 (J12), D30 (I03) e D25 (core, `--resume-from`) erano già coperti; D22 (I10) e D28 (C11) sono state aggiunte; D29 riguarda solo la DLL Shell, invariata. D1-D21, D23 e D27 vivono nel core o nella CLI e la nuova interfaccia li eredita senza codice proprio.

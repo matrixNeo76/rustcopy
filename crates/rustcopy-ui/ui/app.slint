@@ -213,6 +213,13 @@ export component AppWindow inherits Window {
     callback preview-restore-session(string);
     callback create-example();
     callback edit-browse(int);
+    callback edit-check(int);
+    in property <string> source-check;
+    in property <string> source-checked-for;
+    in property <bool> source-checking;
+    in property <string> dest-check;
+    in property <string> dest-checked-for;
+    in property <bool> dest-checking;
     callback show-credentials();
     callback save-credential(string, string);
     callback delete-credential(string);
@@ -1366,18 +1373,34 @@ export component AppWindow inherits Window {
                         }
                         TextField {
                             label: Strings.f-source;
+                            hint: Strings.f-source-hint;
                             browse-text: Strings.browse;
                             value <=> root.form.source;
+                            check-text: root.source-checking ? Strings.f-checking : Strings.f-check;
+                            check-result: root.source-check;
+                            checked-for: root.source-checked-for;
+                            checking: root.source-checking;
                             browse => {
                                 root.edit-browse(0);
+                            }
+                            check => {
+                                root.edit-check(0);
                             }
                         }
                         TextField {
                             label: Strings.f-dest;
+                            hint: Strings.f-dest-hint;
                             browse-text: Strings.browse;
                             value <=> root.form.dest;
+                            check-text: root.dest-checking ? Strings.f-checking : Strings.f-check;
+                            check-result: root.dest-check;
+                            checked-for: root.dest-checked-for;
+                            checking: root.dest-checking;
                             browse => {
                                 root.edit-browse(1);
+                            }
+                            check => {
+                                root.edit-check(1);
                             }
                         }
                         TextField {
@@ -1445,6 +1468,13 @@ export component AppWindow inherits Window {
                                     root.form.hash-algo = self.current-index;
                                 }
                                 accessible-label: Strings.f-algo;
+                                accessible-description: Strings.f-algo-hint;
+                            }
+                            Text {
+                                text: Strings.f-algo-hint;
+                                wrap: word-wrap;
+                                font-size: Theme.small;
+                                color: Theme.text-muted;
                             }
                         }
                         ToggleField {
@@ -1464,10 +1494,12 @@ export component AppWindow inherits Window {
                         }
                         TextField {
                             label: Strings.f-retries;
+                            hint: Strings.f-retries-hint;
                             value <=> root.form.retries;
                         }
                         TextField {
                             label: Strings.f-retry-wait;
+                            hint: Strings.f-retry-wait-hint;
                             value <=> root.form.retry-wait-seconds;
                         }
                         TextField {
@@ -1482,10 +1514,12 @@ export component AppWindow inherits Window {
                         }
                         ToggleField {
                             label: Strings.f-timestamps;
+                            hint: Strings.f-timestamps-hint;
                             value <=> root.form.preserve-timestamps;
                         }
                         ToggleField {
                             label: Strings.f-acl;
+                            hint: Strings.f-acl-hint;
                             value <=> root.form.preserve-acl;
                         }
                         ToggleField {
@@ -1591,14 +1625,19 @@ export component AppWindow inherits Window {
                         }
                         TextField {
                             label: Strings.f-report;
+                            hint: Strings.f-report-hint;
+                            placeholder: Strings.f-report-placeholder;
                             value <=> root.form.report-path;
                         }
                         TextField {
                             label: Strings.f-log;
+                            hint: Strings.f-log-hint;
+                            placeholder: Strings.f-log-placeholder;
                             value <=> root.form.log-path;
                         }
                         TextField {
                             label: Strings.f-html;
+                            hint: Strings.f-html-hint;
                             value <=> root.form.html-report-path;
                         }
                     }
