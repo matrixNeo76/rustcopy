@@ -194,7 +194,7 @@ begin
   ReportAdd('vcruntime140.dll: ' + FileVersionText(ExpandConstant('{sys}\vcruntime140.dll')));
   ReportAdd('vcruntime140_1.dll: ' + FileVersionText(ExpandConstant('{sys}\vcruntime140_1.dll')));
   ReportAdd('ucrtbase.dll: ' + FileVersionText(ExpandConstant('{sys}\ucrtbase.dll')));
-  ReportAdd('WebView2 (richiesto solo dalla console): ' + WebView2VersionText());
+  ReportAdd('WebView2 (informativo, la console non lo richiede più): ' + WebView2VersionText());
 
   ReportAdd('');
   ReportAdd('--- Installazione precedente ---');

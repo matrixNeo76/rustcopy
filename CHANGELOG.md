@@ -21,6 +21,10 @@ For full technical detail behind any entry, see `ANALYSIS.md` (defect list, `D<N
 
 ## [Unreleased]
 
+### Changed
+
+- The installer's console component now ships the Slint console (`rustcopy-ui.exe`, installed as `rustcopy-gui.exe`): no WebView2 or other runtime is needed any more. The installer smoke job builds it without Node. The Tauri console is no longer packaged.
+
 ## [7.8.1] - 2026-10-08
 
 ### Changed
