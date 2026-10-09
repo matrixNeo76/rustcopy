@@ -27,7 +27,7 @@ pub fn describe(check: &CopyCheck) -> (String, Tone) {
         if !source.exists {
             tone = Tone::Attention;
             lines.push(format!("«{}» non esiste più.", folder_name(&source.path)));
-        } else if !source.is_dir {
+        } else if !source.is_dir && !source.is_file {
             tone = Tone::Attention;
             lines.push(format!(
                 "«{}» non è una cartella.",
@@ -37,12 +37,31 @@ pub fn describe(check: &CopyCheck) -> (String, Tone) {
     }
 
     let folders = check.sources.iter().filter(|s| s.is_dir).count();
+    let single_files = check.sources.iter().filter(|s| s.is_file).count();
+    let mut places = Vec::new();
+    if folders > 0 {
+        places.push(format!(
+            "{} {}",
+            folders,
+            if folders == 1 { "cartella" } else { "cartelle" }
+        ));
+    }
+    if single_files > 0 {
+        places.push(format!(
+            "{} {}",
+            single_files,
+            if single_files == 1 {
+                "file scelto"
+            } else {
+                "file scelti"
+            }
+        ));
+    }
     lines.push(format!(
-        "{} file, {} in {} {}.",
+        "{} file, {} in {}.",
         check.total_files,
         human_bytes(check.total_bytes),
-        folders,
-        if folders == 1 { "cartella" } else { "cartelle" }
+        places.join(" e ")
     ));
     lines.push(
         "Se la destinazione ha già file uguali non vengono riscritti: la copia può pesare meno."
@@ -77,6 +96,7 @@ mod tests {
             path: path.to_string(),
             exists,
             is_dir,
+            is_file: false,
             files,
             bytes,
         }

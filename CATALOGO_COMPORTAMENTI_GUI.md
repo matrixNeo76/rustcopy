@@ -115,6 +115,8 @@ Le regole di sicurezza chiave (nessun comando che copi, cancelli, pianifichi o i
 
 | L33 | Cancellare gli originali di uno «Sposta» richiede **tutti** insieme: livello Standard riletto dal disco, una copia **non simulata, riuscita e con verifica passata** (`VerifiedCopy`, il tipo è la prova), la conferma della persona; si cancellano solo i file con una copia di **stessa dimensione e data** e ognuno è riletto subito prima; mai in modo ricorsivo, le cartelle si tolgono solo se vuote; link e giunzioni non si toccano | Spostare è l'unica azione della console che distrugge dati: la sicurezza sta nell'ordine, nella prova e nel non fidarsi di ciò che è cambiato nel frattempo | Core + UI | `moves::{plan_move,execute_move,VerifiedCopy}`, `SessionLog::begin_move` | 12 test + dal vivo |
 
+| L34 | Un **file singolo** come origine va *dentro* la destinazione col suo nome (cartella + modello a un nome nella configurazione); è rifiutato se la destinazione è la sua stessa cartella o se due file hanno lo stesso nome; il suo job si chiama `file-<nome>` per non condividere report e cache con una cartella omonima; l'estensione Shell **non** lo usa | Un file non ha un «nome di cartella» sotto cui mettersi; l'estensione gira dentro Explorer e non deve fare accessi al disco in più | Core + UI | `runner::plan_copy_with_files`, `shell_drop_config_text` | 5 test + col motore |
+
 ## 3. Copia, anteprima, Explorer
 
 | ID | Comportamento | Perché | Dove vive | Come si porta | Verifica |
@@ -177,7 +179,7 @@ Le regole di sicurezza chiave (nessun comando che copi, cancelli, pianifichi o i
 
 ## 7. Stato e conteggi
 
-Righe: 13 confini, 12 esecuzione, 33 lavori, 11 copia/Explorer, 12 editor, 7 aspetto, 10 build. **98** voci. Quelle marcate **Nuovo**
+Righe: 13 confini, 12 esecuzione, 34 lavori, 11 copia/Explorer, 12 editor, 7 aspetto, 10 build. **99** voci. Quelle marcate **Nuovo**
 (E09, E12, A04, A05, A06, A07, C10 in parte) sono i requisiti che nascono dalla specifica, non da un difetto passato.
 
 ## 8. Come si usa questo catalogo
@@ -197,5 +199,5 @@ Righe: 13 confini, 12 esecuzione, 33 lavori, 11 copia/Explorer, 12 editor, 7 asp
   difetti D1-D30 resta da fare quando si arriva alle schermate corrispondenti.
 - **C08 è un'ipotesi favorevole**: `PopupWindow` non sta nel layout, ma non ho provato un pannello Recenti reale.
 - **E09 e A04** sono funzioni che non esistono ancora; la verifica "dal vivo" dipende dal tray (non riuscito nella Fase 1).
-- **Il conteggio 98** è fatto a mano e può non riflettere righe aggiunte dopo.
+- **Il conteggio 99** è fatto a mano e può non riflettere righe aggiunte dopo.
 - **Revisione contro D1-D30 fatta (8 Ott 2026)**: dei difetti documentati, quelli che toccano la console sono D22, D24, D25, D26, D28, D29, D30; D24 (G06), D26 (J12), D30 (I03) e D25 (core, `--resume-from`) erano già coperti; D22 (I10) e D28 (C11) sono state aggiunte; D29 riguarda solo la DLL Shell, invariata. D1-D21, D23 e D27 vivono nel core o nella CLI e la nuova interfaccia li eredita senza codice proprio.

@@ -585,7 +585,7 @@ impl SessionLog {
             .find(|s| s.id == id)
             .ok_or_else(|| IngestError::CopyPlanInvalid(format!("Lavoro {id} non trovato.")))?;
         let sources: Vec<PathBuf> = session.sources.iter().map(PathBuf::from).collect();
-        let items = runner::plan_copy(&sources, Path::new(&session.dest))?;
+        let items = runner::plan_copy_with_files(&sources, Path::new(&session.dest))?;
         let text = runner::shell_drop_config_text(&items, Some(name), session.verify)?;
 
         // Each task gets a folder of its own: the configuration runs with that folder as its working

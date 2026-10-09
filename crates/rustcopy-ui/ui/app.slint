@@ -204,6 +204,7 @@ export component AppWindow inherits Window {
     callback begin-save(string);
     callback confirm-save(string);
     callback add-folders();
+    callback add-files();
     callback pick-recent-source(string);
     callback pick-recent-dest(string);
     callback check-copy();
@@ -348,6 +349,13 @@ export component AppWindow inherits Window {
                     text: Strings.add-folders;
                     clicked => {
                         root.add-folders();
+                    }
+                }
+                Button {
+                    text: Strings.add-files;
+                    horizontal-stretch: 0;
+                    clicked => {
+                        root.add-files();
                     }
                 }
                 if root.recent-sources.length > 0: Text {

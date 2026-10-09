@@ -634,6 +634,8 @@ pub struct SourceCheck {
     pub path: String,
     pub exists: bool,
     pub is_dir: bool,
+    /// A single file chosen as a source.
+    pub is_file: bool,
     pub files: u64,
     pub bytes: u64,
 }
@@ -643,12 +645,27 @@ pub struct SourceCheck {
 /// [`inspect_path`]), so it is slow on a big tree: call it on an explicit press and off the window's
 /// thread. Never writes anything and never creates the destination.
 pub fn check_copy(sources: &[PathBuf], dest: &Path) -> CopyCheck {
-    let problem = crate::runner::plan_copy(sources, dest)
+    let problem = crate::runner::plan_copy_with_files(sources, dest)
         .err()
         .map(|error| error.to_string());
     let mut checks = Vec::with_capacity(sources.len());
     let (mut total_files, mut total_bytes) = (0u64, 0u64);
     for source in sources {
+        if let Ok(meta) = std::fs::metadata(source).map(|m| (m.is_file(), m.len())) {
+            if meta.0 {
+                total_files = total_files.saturating_add(1);
+                total_bytes = total_bytes.saturating_add(meta.1);
+                checks.push(SourceCheck {
+                    path: source.display().to_string(),
+                    exists: true,
+                    is_dir: false,
+                    is_file: true,
+                    files: 1,
+                    bytes: meta.1,
+                });
+                continue;
+            }
+        }
         let inspected = inspect_path(source, Path::new(".")).unwrap_or(PathInspection {
             exists: source.exists(),
             is_dir: source.is_dir(),
@@ -662,6 +679,7 @@ pub fn check_copy(sources: &[PathBuf], dest: &Path) -> CopyCheck {
             path: source.display().to_string(),
             exists: inspected.exists,
             is_dir: inspected.is_dir,
+            is_file: false,
             files: inspected.total_files,
             bytes: inspected.total_bytes,
         });
