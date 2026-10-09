@@ -103,3 +103,26 @@ impl ActiveRun {
         })
     }
 }
+
+/// Runs the CLI once with a ready-made argument list and waits for it, returning its exit code and the
+/// last of what it printed. For short commands that are not copies (installing or removing a schedule):
+/// the arguments come from the core, which has already decided whether they may exist at all.
+pub fn run_cli_once(args: &[String]) -> Result<(i32, String), String> {
+    let exe = std::env::current_exe().map_err(|e| e.to_string())?;
+    let cli = runner::cli_beside(&exe).map_err(|e| e.to_string())?;
+    let mut command = Command::new(&cli);
+    command.args(args).stdin(Stdio::null());
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt;
+        command.creation_flags(0x0800_0000); // CREATE_NO_WINDOW
+    }
+    let output = command
+        .output()
+        .map_err(|e| format!("cannot start {}: {e}", cli.display()))?;
+    let mut text = String::from_utf8_lossy(&output.stdout).into_owned();
+    text.push_str(&String::from_utf8_lossy(&output.stderr));
+    let last: Vec<&str> = text.lines().rev().take(6).collect();
+    let tail = last.into_iter().rev().collect::<Vec<_>>().join("\n");
+    Ok((output.status.code().unwrap_or(-1), tail))
+}

@@ -17,6 +17,7 @@ mod help;
 mod report_rows;
 mod run;
 mod runs;
+mod schedule_form;
 mod single_instance;
 mod state;
 mod toast;
@@ -35,7 +36,7 @@ use robocopy_ingest::sessions::{
 };
 use robocopy_ingest::{gui_api, runner};
 use slint::winit_030::{winit::event::WindowEvent, EventResult, WinitWindowAccessor};
-use slint::{ComponentHandle, ModelRc, SharedString, Timer, TimerMode, VecModel, Weak};
+use slint::{ComponentHandle, Model, ModelRc, SharedString, Timer, TimerMode, VecModel, Weak};
 
 use crate::form::FormValues;
 use crate::run::ActiveRun;
@@ -806,6 +807,48 @@ fn toast_text(session: &SessionSummary, state: Option<SessionState>) -> Option<S
     }
 }
 
+/// Asks the core for a schedule command (re-reading the safety level from disk, so a stale window cannot
+/// act on a level that was lowered meanwhile), runs the command line with it off the window's thread and
+/// shows what happened. A refusal from the core is shown as it is.
+fn run_schedule_command<F>(ui: &AppWindow, build: F)
+where
+    F: FnOnce(SafetyLevel) -> Result<Vec<String>, robocopy_ingest::errors::IngestError>
+        + Send
+        + 'static,
+{
+    ui.set_sch_busy(true);
+    ui.set_sch_message("".into());
+    let weak = ui.as_weak();
+    std::thread::spawn(move || {
+        let level = safety::load(&robocopy_ingest::sessions::data_dir());
+        let outcome = build(level)
+            .map_err(|e| e.to_string())
+            .and_then(|args| run::run_cli_once(&args));
+        let _ = weak.upgrade_in_event_loop(move |ui| {
+            ui.set_sch_busy(false);
+            match outcome {
+                Ok((0, tail)) => {
+                    ui.set_sch_ok(true);
+                    ui.set_sch_message(tail.into());
+                    // The badge on the task list comes from Task Scheduler itself.
+                    ui.invoke_show_tasks();
+                    ui.set_page(10);
+                }
+                Ok((code, tail)) => {
+                    ui.set_sch_ok(false);
+                    ui.set_sch_message(
+                        format!("Non è andata a buon fine (codice {code}).\n{tail}").into(),
+                    );
+                }
+                Err(message) => {
+                    ui.set_sch_ok(false);
+                    ui.set_sch_message(message.into());
+                }
+            }
+        });
+    });
+}
+
 /// The index of a level in the combo box (the order of its model).
 fn level_index(level: SafetyLevel) -> i32 {
     match level {
@@ -830,6 +873,7 @@ fn show_safety(ui: &AppWindow) {
     ui.set_safety_level_name(level.name().into());
     ui.set_safety_pick(level_index(level));
     ui.set_safety_unlocks(level.unlocks().into());
+    ui.set_can_schedule(level.can_prepare_schedules());
 }
 
 /// Opens a folder in Explorer. Failure is silent on purpose: the copy has finished and is reported;
@@ -1293,6 +1337,69 @@ fn main() -> Result<(), slint::PlatformError> {
                 }
                 Err(error) => ui.set_safety_message(error.to_string().into()),
             }
+        });
+    }
+
+    // Schedules (phase 6): the form only builds text; whether a schedule may exist at all is decided by the
+    // core (`schedule::install_arguments`, which re-reads the safety level itself), and the command line
+    // installs it. Nothing here writes a schedule.
+    {
+        let weak = ui.as_weak();
+        ui.on_schedule_task(move |path| {
+            let Some(ui) = weak.upgrade() else { return };
+            let config = PathBuf::from(path.as_str());
+            let name = config
+                .file_stem()
+                .map(|n| n.to_string_lossy().into_owned())
+                .unwrap_or_default();
+            ui.set_sch_task_name(name.clone().into());
+            ui.set_sch_config(path);
+            ui.set_sch_name(format!("rustcopy {name}").into());
+            ui.set_sch_kind(0);
+            ui.set_sch_time("02:00".into());
+            ui.set_sch_hours("6".into());
+            ui.set_sch_days(ModelRc::new(VecModel::from(vec![false; 7])));
+            ui.set_sch_message("".into());
+            ui.set_page(10);
+        });
+    }
+    {
+        let weak = ui.as_weak();
+        ui.on_install_schedule(move |config| {
+            let Some(ui) = weak.upgrade() else { return };
+            let days_model = ui.get_sch_days();
+            let mut days = [false; 7];
+            for (i, slot) in days.iter_mut().enumerate() {
+                *slot = days_model.row_data(i).unwrap_or(false);
+            }
+            let spec = match schedule_form::build_spec(
+                schedule_form::Recurrence::from_index(ui.get_sch_kind()),
+                ui.get_sch_time().as_str(),
+                ui.get_sch_hours().as_str(),
+                days,
+            ) {
+                Ok(spec) => spec,
+                Err(message) => {
+                    ui.set_sch_ok(false);
+                    ui.set_sch_message(message.into());
+                    return;
+                }
+            };
+            let name = ui.get_sch_name().to_string();
+            let config = PathBuf::from(config.as_str());
+            run_schedule_command(&ui, move |level| {
+                robocopy_ingest::schedule::install_arguments(level, &config, &spec, name.trim())
+            });
+        });
+    }
+    {
+        let weak = ui.as_weak();
+        ui.on_remove_schedule(move || {
+            let Some(ui) = weak.upgrade() else { return };
+            let name = ui.get_sch_name().to_string();
+            run_schedule_command(&ui, move |level| {
+                robocopy_ingest::schedule::removal_arguments(level, name.trim())
+            });
         });
     }
 

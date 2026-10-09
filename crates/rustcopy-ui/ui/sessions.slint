@@ -192,6 +192,8 @@ export component TaskItem inherits Rectangle {
     callback edit();
     callback history();
     callback remove();
+    callback schedule();
+    in property <bool> can-schedule;
     height: 76px;
     border-radius: Theme.radius;
     border-width: 1px;
@@ -252,6 +254,13 @@ export component TaskItem inherits Rectangle {
             horizontal-stretch: 0;
             clicked => {
                 root.remove();
+            }
+        }
+        if root.can-schedule: Button {
+            text: Strings.task-schedule;
+            horizontal-stretch: 0;
+            clicked => {
+                root.schedule();
             }
         }
         Button {

@@ -92,7 +92,7 @@ Ordine proposto per colmare le lacune (dal più usato): 1 aprire un file di conf
 
 ### Fase 6
 - [x] livello di sicurezza nelle Impostazioni (predefinito Prudente): `safety.rs` nel core (illeggibile = Prudente, mai in un file di job, alzarlo chiede conferma, ogni cambio nel `safety.log`, nessun livello avvia un mirror o una pulizia non presidiati); pulsante «Sicurezza: ...» in fondo alla barra laterale. Provato dal vivo: Prudente → Standard con conferma. **Da solo non sblocca ancora nulla**: lo useranno pianificazioni e Sposta, una funzione per volta
-- [ ] creare/modificare pianificazioni (la GUI prepara, la CLI installa dopo UAC)
+- [x] creare/modificare pianificazioni (pulsante «Pianifica» sull'attività, solo dal livello Standard; il core, `schedule::install_arguments`, rilegge il livello dal disco, rifiuta mirror, generazioni con pulizia e percorsi relativi, e la riga di comando installa). Provato dal vivo: attività creata e tolta in Utilità di pianificazione, e con il livello abbassato a mano mentre la finestra era aperta il core ha rifiutato. **Nota:** la pianificazione è dell'utente corrente e parte solo quando è connesso, quindi non c'è nessuna richiesta UAC
 - [ ] Sposta a due passi con conferma
 - [ ] pausa/riprendi (Livello A, prova su SMB reale)
 - [ ] file singoli come origine

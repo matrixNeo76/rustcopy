@@ -111,6 +111,8 @@ Le regole di sicurezza chiave (nessun comando che copi, cancelli, pianifichi o i
 
 | L31 | Il livello di sicurezza **si legge dalle impostazioni della persona** (mai da un file di job), **qualsiasi cosa illeggibile vale Prudente**, **alzarlo chiede una conferma che dice cosa sblocca**, abbassarlo no, ogni cambio finisce in `safety.log`, e **nessun livello** avvia un mirror o una pulizia non presidiati | Un `.toml` che passa da un computer all'altro non deve poter alzare i permessi; un aggiornamento o un file rovinato può solo rendere la console più prudente | Core + UI | `safety::{load,set}`, `SafetyLevel::can_run_unattended_purge` | 6 test + dal vivo |
 
+| L32 | La console **non scrive mai una pianificazione**: prepara una lista di argomenti fissa per la CLI (`--config`, `--install-schedule`, `--schedule-name`), dopo che il **core** ha riletto il livello di sicurezza dal disco; rifiuta mirror, pulizia di generazioni, percorsi relativi, nomi e specifiche malformate | Un livello abbassato mentre la finestra è aperta deve valere subito; una pianificazione parte senza nessuno davanti e non deve poter cancellare | Core + UI | `schedule::{install_arguments,removal_arguments}`, `schedule_form::build_spec` | 7 test + dal vivo |
+
 ## 3. Copia, anteprima, Explorer
 
 | ID | Comportamento | Perché | Dove vive | Come si porta | Verifica |
@@ -173,7 +175,7 @@ Le regole di sicurezza chiave (nessun comando che copi, cancelli, pianifichi o i
 
 ## 7. Stato e conteggi
 
-Righe: 13 confini, 12 esecuzione, 31 lavori, 11 copia/Explorer, 12 editor, 7 aspetto, 10 build. **96** voci. Quelle marcate **Nuovo**
+Righe: 13 confini, 12 esecuzione, 32 lavori, 11 copia/Explorer, 12 editor, 7 aspetto, 10 build. **97** voci. Quelle marcate **Nuovo**
 (E09, E12, A04, A05, A06, A07, C10 in parte) sono i requisiti che nascono dalla specifica, non da un difetto passato.
 
 ## 8. Come si usa questo catalogo
@@ -193,5 +195,5 @@ Righe: 13 confini, 12 esecuzione, 31 lavori, 11 copia/Explorer, 12 editor, 7 asp
   difetti D1-D30 resta da fare quando si arriva alle schermate corrispondenti.
 - **C08 è un'ipotesi favorevole**: `PopupWindow` non sta nel layout, ma non ho provato un pannello Recenti reale.
 - **E09 e A04** sono funzioni che non esistono ancora; la verifica "dal vivo" dipende dal tray (non riuscito nella Fase 1).
-- **Il conteggio 96** è fatto a mano e può non riflettere righe aggiunte dopo.
+- **Il conteggio 97** è fatto a mano e può non riflettere righe aggiunte dopo.
 - **Revisione contro D1-D30 fatta (8 Ott 2026)**: dei difetti documentati, quelli che toccano la console sono D22, D24, D25, D26, D28, D29, D30; D24 (G06), D26 (J12), D30 (I03) e D25 (core, `--resume-from`) erano già coperti; D22 (I10) e D28 (C11) sono state aggiunte; D29 riguarda solo la DLL Shell, invariata. D1-D21, D23 e D27 vivono nel core o nella CLI e la nuova interfaccia li eredita senza codice proprio.
