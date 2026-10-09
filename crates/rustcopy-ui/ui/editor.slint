@@ -47,7 +47,14 @@ export component TextField inherits VerticalLayout {
     // When set, a button beside the field asks for a folder (the native dialog is the owner's).
     in property <string> browse-text;
     in-out property <string> value;
+    // When set, a second button beside the field asks what is at that path. The answer is shown only
+    // while `checked-for` is still the text in the box: an answer about another path is never shown.
+    in property <string> check-text;
+    in property <string> check-result;
+    in property <string> checked-for;
+    in property <bool> checking;
     callback browse();
+    callback check();
     spacing: 2px;
     Text {
         text: root.label;
@@ -72,6 +79,21 @@ export component TextField inherits VerticalLayout {
                 root.browse();
             }
         }
+        if root.check-text != "": Button {
+            text: root.check-text;
+            enabled: root.enabled && !root.checking;
+            horizontal-stretch: 0;
+            clicked => {
+                root.check();
+            }
+        }
+    }
+    if root.check-result != "" && root.checked-for == root.value: Text {
+        text: root.check-result;
+        wrap: word-wrap;
+        font-size: Theme.small;
+        font-weight: 700;
+        color: Theme.text;
     }
     if root.hint != "": Text {
         text: root.hint;
