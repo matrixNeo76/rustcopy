@@ -99,7 +99,7 @@ Le regole di sicurezza chiave (nessun comando che copi, cancelli, pianifichi o i
 
 | L25 | Il segreto di una credenziale viaggia **solo** dal campo mascherato a Gestione credenziali di Windows (mai un argomento di processo, mai un file) e il campo si **svuota** appena salvato; la scrittura va su un thread a parte | Un argomento si vede nell'elenco dei processi; un segreto rimasto nella finestra si vede in uno screenshot | UI + Core | `gui_api::set_credential` / `delete_credential` | Dal vivo |
 
-| L26 | I selettori di cartella dell'editor **scrivono solo nel modulo**; gli avvisi in linea (mirror, verifica o cifratura con un tipo di copia a generazioni) sono un'indicazione, mentre il rifiuto vero resta di `job_editor::apply_draft` | Un selettore che scrivesse su disco farebbe dell'editor ciò che F54 vieta; un avviso non è una barriera | UI | `edit-browse` | Dal vivo |
+| L26 | I selettori di cartella dell'editor **scrivono solo nel modulo**; gli avvisi in linea (mirror o cifratura con un tipo di copia a generazioni) sono un'indicazione, mentre il rifiuto vero resta di `job_editor::apply_draft` | Un selettore che scrivesse su disco farebbe dell'editor ciò che F54 vieta; un avviso non è una barriera | UI | `edit-browse` | Dal vivo |
 
 | L27 | Le cartelle e le destinazioni **recenti** si ricavano dal registro dei lavori (più recenti prima, senza ripetizioni, confronto senza maiuscole); sceglierne una riempie solo il modulo | Una seconda lista salvata a parte potrebbe non coincidere mai col registro | Core + UI | `sessions::recent_folders` | 1 test + dal vivo |
 

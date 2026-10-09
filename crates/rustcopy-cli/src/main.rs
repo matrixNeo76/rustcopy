@@ -1025,9 +1025,10 @@ async fn record_run_history(report: &IngestReport, exit_code: u8, args: &Args) {
 /// differential always diffs against the last `Full` generation
 /// (`GenerationManifest::latest_full`), so its size doesn't reset with every run in between.
 ///
-/// Known scope limit of this first cut (F34): no baseline comparison, no `--verify-integrity`,
-/// no encrypt/decrypt, no VSS remap of the *destination* side. These aren't fundamentally
-/// incompatible with generations, just not wired up yet — `--backup-type` is opt-in (`None` by
+/// Known scope limit of this first cut (F34): no baseline comparison, no encrypt/decrypt, no VSS
+/// remap of the *destination* side (`--verify-integrity` *is* wired up, see
+/// `generations::verdict`). These aren't fundamentally incompatible with generations, just not
+/// wired up yet — `--backup-type` is opt-in (`None` by
 /// default), so none of the existing single-destination flows lose anything by this existing
 /// alongside them rather than folding into `execute()`'s main body.
 #[allow(clippy::too_many_arguments)]
@@ -1168,7 +1169,47 @@ async fn execute_generation_backup(
     };
     let transfer_seconds = start_transfer.elapsed().as_secs_f64();
 
-    if !args.dry_run && copy_error.is_none() {
+    // The report documents where *this generation's* files actually landed, not the destination
+    // root -- hence a clone of `args` with `dest` pointed at the generation subfolder, which is also
+    // what `verify` reads as the destination. `fast_verify` is switched off on the clone: its cache
+    // sits beside the destination it is given, and a generation folder is new on every run, so
+    // there is nothing to trust and nothing worth leaving inside a backup folder.
+    // `total_files`/`total_bytes` reflect what this generation actually copied (`copied_files`),
+    // not the full source inventory: for an incremental generation those are two very different
+    // numbers, and both the report and the verification must describe the delta written to disk.
+    let mut gen_args = args.clone();
+    gen_args.dest = Some(effective_dest.clone());
+    gen_args.fast_verify = false;
+    let scoped_inventory = ScanSummary {
+        files: copied_files,
+        total_bytes: copied_bytes,
+        total_files_hint: None,
+    };
+
+    // Verification of the copy just made, with the same routine the plain pipeline uses. Files that
+    // an earlier generation copied were verified by that generation and are not re-read here.
+    let (integrity_check, verification_seconds) = if args.verify_integrity
+        && !args.dry_run
+        && copy_error.is_none()
+    {
+        let start_ver = Instant::now();
+        let check = verify(&gen_args, effective_source, &scoped_inventory).await?;
+        (Some(check), Some(start_ver.elapsed().as_secs_f64()))
+    } else {
+        if args.verify_integrity && args.dry_run {
+            tracing::warn!("skipping integrity verification: nothing was copied in dry-run mode");
+        }
+        (None, None)
+    };
+
+    let verdict = generations::verdict(copy_error.is_some(), integrity_check.as_ref());
+    if integrity_check.as_ref().is_some_and(|c| !c.passed()) {
+        eprintln!(
+            "warning: the generation {generation_id} did not verify and was NOT recorded: the next              incremental/differential run will copy these files again instead of trusting them"
+        );
+    }
+
+    if !args.dry_run && verdict.record {
         let new_generation = generations::Generation {
             id: generation_id.clone(),
             backup_type,
@@ -1201,23 +1242,9 @@ async fn execute_generation_backup(
     let timing = robocopy_ingest::report::PhaseTiming {
         inventory_seconds,
         transfer_seconds,
-        verification_seconds: None,
+        verification_seconds,
         baseline_seconds: None,
         total_seconds: start_all.elapsed().as_secs_f64(),
-    };
-
-    // The report documents where *this generation's* files actually landed, not the destination
-    // root — hence a clone of `args` with `dest` pointed at the generation subfolder, purely for
-    // `IngestReport::with_timing`'s benefit (nothing else uses `gen_args`). `total_files`/
-    // `total_bytes` in the report reflect what this generation actually copied (`copied_files`),
-    // not the full source inventory — for an incremental generation those are two very different
-    // numbers, and the report should describe the delta that was actually written to disk.
-    let mut gen_args = args.clone();
-    gen_args.dest = Some(effective_dest.clone());
-    let scoped_inventory = ScanSummary {
-        files: copied_files,
-        total_bytes: copied_bytes,
-        total_files_hint: None,
     };
 
     let mut report = IngestReport::with_timing(
@@ -1225,7 +1252,7 @@ async fn execute_generation_backup(
         &scoped_inventory,
         &copy_outcome,
         None,
-        None,
+        integrity_check.clone(),
         timing,
         started_at,
     );
@@ -1270,11 +1297,7 @@ async fn execute_generation_backup(
         .with_context(|| format!("cannot write the report to {}", args.report_path.display()))?;
     tracing::info!(path = %args.report_path.display(), "report written");
 
-    let exit_code = if copy_error.is_some() {
-        EXIT_INGESTION_PROBLEM
-    } else {
-        0
-    };
+    let exit_code = verdict.exit_code;
     record_run_history(&report, exit_code, args).await;
 
     Ok(RunOutcome {

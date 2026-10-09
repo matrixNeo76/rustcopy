@@ -159,10 +159,13 @@ mod tests {
     fn the_safety_margin_increases_the_effective_requirement() {
         let dir = tempfile::tempdir().expect("tempdir");
         let available = free_bytes(dir.path()).expect("query succeeds");
-        // Exactly the available space passes with no margin, but a large margin on top of that
-        // same figure must push the requirement past what is actually free.
-        assert!(ensure_enough_free_space(dir.path(), available, 0).is_ok());
-        assert!(ensure_enough_free_space(dir.path(), available, 50).is_err());
+        // Just under the available space passes with no margin, but a large margin on top of that
+        // same figure must push the requirement past what is actually free. "Just under", not
+        // "exactly": the disk is live, and a parallel build writing between the two queries made
+        // the exact figure fail intermittently (seen running the whole workspace suite).
+        let needed = available - available / 1000;
+        assert!(ensure_enough_free_space(dir.path(), needed, 0).is_ok());
+        assert!(ensure_enough_free_space(dir.path(), needed, 50).is_err());
     }
 
     /// Regression test: `needed_bytes / 100 * margin` (division before multiplication) truncates

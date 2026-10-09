@@ -1437,11 +1437,6 @@ export component AppWindow inherits Window {
                                 label-prefix: Strings.warning-prefix;
                                 kind: BadgeKind.info;
                             }
-                            if root.form.backup-type != 0 && root.form.verify-integrity: Banner {
-                                text: Strings.w-backup-verify;
-                                label-prefix: Strings.warning-prefix;
-                                kind: BadgeKind.warning;
-                            }
                             if root.form.backup-type != 0 && (root.form.encrypt-keyring != "" || root.form.encrypt-other): Banner {
                                 text: Strings.w-backup-encrypt;
                                 label-prefix: Strings.warning-prefix;
