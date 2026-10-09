@@ -21,6 +21,7 @@ mod runs;
 mod schedule_form;
 mod single_instance;
 mod state;
+mod suspend;
 mod toast;
 
 use std::cell::{Cell, RefCell};
@@ -88,6 +89,9 @@ struct Ctx {
     edit: RefCell<Option<EditState>>,
     /// Every run of the history page, unfiltered: the filter and the CSV work from this.
     history: RefCell<Vec<RunLine>>,
+    /// When the copy now going was paused, if it is: the console resumes it by itself after
+    /// `suspend::PAUSE_LIMIT`.
+    paused_since: Cell<Option<std::time::Instant>>,
     /// The plan of a move waiting for the person's confirmation: which lavoro, and what it would delete.
     /// Shared with the worker threads that compute and execute it.
     move_plan: Arc<Mutex<Option<(String, MovePlan)>>>,
@@ -1004,6 +1008,7 @@ fn main() -> Result<(), slint::PlatformError> {
         edit: RefCell::new(None),
         history: RefCell::new(Vec::new()),
         move_plan: Arc::new(Mutex::new(None)),
+        paused_since: Cell::new(None),
     });
     refresh(&ui, &ctx);
     show_safety(&ui);
@@ -2047,8 +2052,41 @@ fn main() -> Result<(), slint::PlatformError> {
     }
     {
         let ctx = ctx.clone();
+        let weak = ui.as_weak();
         ui.on_stop_copy(move || {
+            // A paused copy cannot see the stop request: resume it first.
+            if ctx.paused_since.take().is_some() {
+                ctx.slot
+                    .with(|run| suspend::set_suspended(run.pid(), false));
+                if let Some(ui) = weak.upgrade() {
+                    ui.set_paused(false);
+                }
+            }
             ctx.slot.with(|run| run.request_stop());
+        });
+    }
+
+    {
+        let weak = ui.as_weak();
+        let ctx = ctx.clone();
+        ui.on_toggle_pause(move || {
+            let Some(ui) = weak.upgrade() else { return };
+            let pausing = ctx.paused_since.get().is_none();
+            let touched = ctx
+                .slot
+                .with(|run| suspend::set_suspended(run.pid(), pausing))
+                .unwrap_or(0);
+            if touched == 0 {
+                ui.set_error("Non sono riuscito a mettere in pausa la copia.".into());
+                return;
+            }
+            if pausing {
+                ctx.paused_since.set(Some(std::time::Instant::now()));
+            } else {
+                ctx.paused_since.set(None);
+            }
+            ui.set_paused(pausing);
+            ui.set_error("".into());
         });
     }
 
@@ -2099,6 +2137,17 @@ fn main() -> Result<(), slint::PlatformError> {
         let ctx = ctx.clone();
         timer.start(TimerMode::Repeated, Duration::from_millis(250), move || {
             let Some(ui) = weak.upgrade() else { return };
+            if let Some(since) = ctx.paused_since.get() {
+                if since.elapsed() >= suspend::PAUSE_LIMIT {
+                    ctx.slot.with(|run| suspend::set_suspended(run.pid(), false));
+                    ctx.paused_since.set(None);
+                    ui.set_paused(false);
+                    ui.set_error(
+                        "La pausa è durata troppo (10 minuti): la copia riprende da sola, perché una condivisione di rete può chiudere una connessione ferma da troppo tempo."
+                            .into(),
+                    );
+                }
+            }
             if let Some(sample) = ctx.slot.with(|run| run.progress()).flatten() {
                 ui.set_fraction(running_fraction(sample.fraction()));
                 ui.set_files_done_text(sample.files_done.to_string().into());
@@ -2130,6 +2179,8 @@ fn main() -> Result<(), slint::PlatformError> {
             }
             if let Some(done) = ctx.slot.with(|run| run.finished()).flatten() {
                 ctx.slot.take();
+                ctx.paused_since.set(None);
+                ui.set_paused(false);
                 ui.set_running(false);
                 let id = ctx.running_id.borrow_mut().take();
                 if let Some(id) = id {

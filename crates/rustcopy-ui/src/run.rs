@@ -84,6 +84,11 @@ impl ActiveRun {
         })
     }
 
+    /// The command line's process id, the root of the tree a pause suspends.
+    pub fn pid(&self) -> u32 {
+        self.child.id()
+    }
+
     /// G04: stopping is writing the stop file, never killing the process: the CLI's own cancel branch
     /// writes the checkpoint a kill would skip.
     pub fn request_stop(&self) {

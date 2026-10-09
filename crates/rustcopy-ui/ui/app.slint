@@ -70,6 +70,7 @@ export component AppWindow inherits Window {
     in property <string> hist-message;
     in property <string> report-name;
     in property <bool> can-move;
+    in property <bool> paused;
     in-out property <bool> move-mode;
     in property <int> d-move;
     in property <string> d-move-text;
@@ -213,6 +214,7 @@ export component AppWindow inherits Window {
     callback browse-dest();
     callback start-copy();
     callback stop-copy();
+    callback toggle-pause();
     // The first window is asked, by a second launch or by the Explorer extension, to run a configuration.
     callback external-open(string);
 
@@ -488,6 +490,12 @@ export component AppWindow inherits Window {
                     }
                 }
                 if root.running: Button {
+                    text: root.paused ? Strings.resume-run : Strings.pause-run;
+                    clicked => {
+                        root.toggle-pause();
+                    }
+                }
+                if root.running: Button {
                     text: Strings.stop;
                     clicked => {
                         root.stop-copy();
@@ -500,6 +508,11 @@ export component AppWindow inherits Window {
                     text: root.batch-label;
                     font-size: Theme.body;
                     color: Theme.info;
+                }
+                if root.paused: Banner {
+                    text: Strings.paused-text;
+                    label-prefix: Strings.pause-run;
+                    kind: BadgeKind.info;
                 }
                 Text {
                     text: @tr("In corso: {}", root.running-title);
