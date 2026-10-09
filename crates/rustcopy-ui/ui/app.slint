@@ -82,6 +82,9 @@ export component AppWindow inherits Window {
     in property <[string]> sources;
     in-out property <string> dest;
     in property <string> error;
+    in property <string> check-text;
+    in property <bool> check-attention;
+    in property <bool> checking;
     in property <bool> running;
     in property <float> fraction: -1;
     in property <string> files-done-text;
@@ -139,6 +142,8 @@ export component AppWindow inherits Window {
     callback begin-save(string);
     callback confirm-save(string);
     callback add-folders();
+    callback check-copy();
+    callback clear-check();
     callback remove-source(int);
     callback browse-dest();
     callback start-copy();
@@ -275,6 +280,9 @@ export component AppWindow inherits Window {
                     text <=> root.dest;
                     placeholder-text: Strings.dest-placeholder;
                     accessible-label: Strings.dest-label;
+                    edited => {
+                        root.clear-check();
+                    }
                 }
                 Button {
                     text: Strings.browse;
@@ -317,6 +325,11 @@ export component AppWindow inherits Window {
                 label-prefix: Strings.warning-prefix;
                 kind: BadgeKind.warning;
             }
+            if root.check-text != "": Banner {
+                text: root.check-text;
+                label-prefix: Strings.check-label;
+                kind: root.check-attention ? BadgeKind.warning : BadgeKind.ok;
+            }
             HorizontalLayout {
                 spacing: 10px;
                 alignment: start;
@@ -326,6 +339,13 @@ export component AppWindow inherits Window {
                     enabled: !root.running && root.sources.length > 0 && root.dest != "";
                     clicked => {
                         root.start-copy();
+                    }
+                }
+                Button {
+                    text: root.checking ? Strings.checking : Strings.check-first;
+                    enabled: !root.checking && root.sources.length > 0;
+                    clicked => {
+                        root.check-copy();
                     }
                 }
                 if root.running: Button {
