@@ -90,6 +90,7 @@ export component AppWindow inherits Window {
     in property <string> current-file;
     in property <string> running-title;
     in property <string> eta-text;
+    in property <string> batch-label;
     in property <string> chart-commands;
     // Session option: read the copied files back and compare them. Algorithm index: 0 xxHash3, 1 SHA-256, 2 BLAKE3.
     in-out property <bool> open-when-done: false;
@@ -129,6 +130,8 @@ export component AppWindow inherits Window {
     callback edit-select-job(int);
     callback edit-save();
     callback run-config-file();
+    callback add-config(string);
+    callback remove-config(string);
     callback select-session(string);
     callback repeat-session(string);
     callback begin-save(string);
@@ -332,6 +335,11 @@ export component AppWindow inherits Window {
             }
             if root.running: VerticalLayout {
                 spacing: Theme.gap-small;
+                if root.batch-label != "": Text {
+                    text: root.batch-label;
+                    font-size: Theme.body;
+                    color: Theme.info;
+                }
                 Text {
                     text: @tr("In corso: {}", root.running-title);
                     overflow: elide;
@@ -406,6 +414,9 @@ export component AppWindow inherits Window {
                         }
                         history => {
                             root.show-history(task.path);
+                        }
+                        remove => {
+                            root.remove-config(task.path);
                         }
                     }
                 }

@@ -24,7 +24,7 @@ use std::time::Duration;
 
 use robocopy_ingest::integrity::HashAlgorithm;
 use robocopy_ingest::job_editor::{self, JobDraft};
-use robocopy_ingest::sessions::{list_tasks, Session, SessionLog, SessionState, SessionSummary};
+use robocopy_ingest::sessions::{Session, SessionLog, SessionState, SessionSummary};
 use robocopy_ingest::{gui_api, runner};
 use slint::winit_030::{winit::event::WindowEvent, EventResult, WinitWindowAccessor};
 use slint::{ComponentHandle, ModelRc, SharedString, Timer, TimerMode, VecModel, Weak};
@@ -63,6 +63,8 @@ struct Ctx {
     sessions: RefCell<Vec<SessionSummary>>,
     /// Discards a slow report read when the user has opened another lavoro meanwhile (E01).
     details: Generation,
+    /// Discards a slow scheduled-task lookup if the list was rebuilt meanwhile.
+    schedules: Generation,
     /// Recent throughput samples for the speed chart (MB/s), newest last.
     speeds: RefCell<Vec<f64>>,
     /// The configuration being edited, if the editor is open.
@@ -134,7 +136,9 @@ fn refresh(ui: &AppWindow, ctx: &Rc<Ctx>) {
 /// Rereads the saved tasks and pairs each with how its latest run from this console went.
 fn refresh_tasks(ui: &AppWindow, ctx: &Rc<Ctx>) {
     let sessions = ctx.sessions.borrow();
-    let rows: Vec<TaskRow> = list_tasks(&tasks_dir())
+    let rows: Vec<TaskRow> = ctx
+        .log
+        .list_entries(&tasks_dir())
         .into_iter()
         .map(|task| {
             let last = sessions
@@ -151,10 +155,48 @@ fn refresh_tasks(ui: &AppWindow, ctx: &Rc<Ctx>) {
                     .unwrap_or_default()
                     .into(),
                 verify: task.verify.map_or("", algorithm_name).into(),
+                jobs: i32::try_from(task.jobs).unwrap_or(1),
+                saved: task.saved,
+                scheduled: false,
             }
         })
         .collect();
+    let paths: Vec<PathBuf> = rows
+        .iter()
+        .map(|row| PathBuf::from(row.path.as_str()))
+        .collect();
     ui.set_tasks(ModelRc::new(VecModel::from(rows)));
+
+    // Which of them a Windows scheduled task already runs: asked of `schtasks.exe` on a worker thread
+    // (it is slow), and shown when it answers, unless the list was rebuilt meanwhile.
+    let ticket = ctx.schedules.next();
+    let generation = ctx.schedules.clone();
+    let weak = ui.as_weak();
+    std::thread::spawn(move || {
+        let scheduled: Vec<bool> = paths
+            .iter()
+            .map(|path| {
+                gui_api::schedules_referencing(path)
+                    .map(|names| !names.is_empty())
+                    .unwrap_or(false)
+            })
+            .collect();
+        let _ = weak.upgrade_in_event_loop(move |ui| {
+            if !generation.is_current(ticket) {
+                return;
+            }
+            use slint::Model;
+            let model = ui.get_tasks();
+            for (index, flag) in scheduled.into_iter().enumerate() {
+                if let Some(mut row) = model.row_data(index) {
+                    if row.scheduled != flag {
+                        row.scheduled = flag;
+                        model.set_row_data(index, row);
+                    }
+                }
+            }
+        });
+    });
 }
 
 /// The properties grid for one configuration: every job's settings, grouped, with where each value
@@ -398,10 +440,13 @@ fn fill_detail(ui: &AppWindow, ctx: &Rc<Ctx>, id: &str) {
         ))
         .into(),
     );
+    // A run of a saved task or of an added file already *is* a configuration: show where it lives
+    // instead of offering to save it again.
     ui.set_d_saved(
         session
             .saved_as
             .as_ref()
+            .or(session.task.as_ref())
             .map(|p| p.to_string_lossy().into_owned())
             .unwrap_or_default()
             .into(),
@@ -600,6 +645,7 @@ fn main() -> Result<(), slint::PlatformError> {
         open_when_done: Cell::new(false),
         sessions: RefCell::new(Vec::new()),
         details: Generation::default(),
+        schedules: Generation::default(),
         speeds: RefCell::new(Vec::new()),
         edit: RefCell::new(None),
     });
@@ -718,7 +764,7 @@ fn main() -> Result<(), slint::PlatformError> {
                     .pick_file();
                 let _ = weak.upgrade_in_event_loop(move |ui| {
                     if let Some(path) = picked {
-                        ui.invoke_run_task(path.to_string_lossy().into_owned().into());
+                        ui.invoke_add_config(path.to_string_lossy().into_owned().into());
                     }
                 });
             });
@@ -928,6 +974,34 @@ fn main() -> Result<(), slint::PlatformError> {
         });
     }
 
+    // A configuration file the person chose is remembered (never copied or changed); removing takes it
+    // off the list and leaves the file.
+    {
+        let weak = ui.as_weak();
+        let ctx = ctx.clone();
+        ui.on_add_config(move |path| {
+            let Some(ui) = weak.upgrade() else { return };
+            match ctx.log.add_config(Path::new(path.as_str())) {
+                Ok(()) => {
+                    ui.set_error("".into());
+                    refresh_tasks(&ui, &ctx);
+                }
+                Err(error) => ui.set_error(error.to_string().into()),
+            }
+        });
+    }
+    {
+        let weak = ui.as_weak();
+        let ctx = ctx.clone();
+        ui.on_remove_config(move |path| {
+            let Some(ui) = weak.upgrade() else { return };
+            match ctx.log.remove_config(Path::new(path.as_str())) {
+                Ok(()) => refresh_tasks(&ui, &ctx),
+                Err(error) => ui.set_error(error.to_string().into()),
+            }
+        });
+    }
+
     // New copy: add folders. The native dialog blocks, so it runs on a worker thread (RNF-07).
     {
         let weak: Weak<AppWindow> = ui.as_weak();
@@ -1081,6 +1155,12 @@ fn main() -> Result<(), slint::PlatformError> {
                         .into(),
                 );
                 ui.set_speed_text(format::human_speed(sample.throughput_mbps).into());
+                ui.set_batch_label(match (sample.batch_index, sample.batch_total) {
+                    (Some(index), Some(total)) if total > 1 => {
+                        format!("Job {index} di {total}").into()
+                    }
+                    _ => "".into(),
+                });
                 ui.set_eta_text(
                     sample
                         .eta_seconds()

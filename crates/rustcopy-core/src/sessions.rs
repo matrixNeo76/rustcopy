@@ -498,6 +498,10 @@ pub struct TaskEntry {
     pub sources: Vec<String>,
     pub dest: String,
     pub verify: Option<HashAlgorithm>,
+    /// How many jobs the file describes (`[[jobs]]`, or 1 for a single-job file).
+    pub jobs: usize,
+    /// `true` for a task this console saved, `false` for a configuration file the person added.
+    pub saved: bool,
 }
 
 /// The saved tasks under `dir`: every `*.toml` in each sub-folder (`dir/<name>/<name>.toml`), sorted
@@ -540,11 +544,112 @@ pub fn list_tasks(dir: &Path) -> Vec<TaskEntry> {
                     .collect(),
                 dest: pairs[0].1.to_string_lossy().into_owned(),
                 verify,
+                jobs: pairs.len(),
+                saved: true,
             });
         }
     }
     tasks.sort_by_key(|t| t.name.to_lowercase());
     tasks
+}
+
+/// One configuration file as an entry of the list, or `None` when it cannot be read as one with at
+/// least one folder pair.
+fn entry_for_file(file: &Path, saved: bool) -> Option<TaskEntry> {
+    let (pairs, verify) = read_pairs(file).ok()?;
+    Some(TaskEntry {
+        name: file
+            .file_stem()
+            .map(|n| n.to_string_lossy().into_owned())
+            .unwrap_or_default(),
+        path: file.to_path_buf(),
+        sources: pairs
+            .iter()
+            .map(|(s, _)| s.to_string_lossy().into_owned())
+            .collect(),
+        dest: pairs[0].1.to_string_lossy().into_owned(),
+        verify,
+        jobs: pairs.len(),
+        saved,
+    })
+}
+
+const KNOWN_CONFIGS_FILE: &str = "configs.txt";
+
+impl SessionLog {
+    fn known_path(&self) -> PathBuf {
+        self.base.join(KNOWN_CONFIGS_FILE)
+    }
+
+    fn read_known(&self) -> Vec<PathBuf> {
+        std::fs::read_to_string(self.known_path())
+            .map(|text| {
+                // A hand-edited list may start with a byte-order mark (Notepad and PowerShell 5 add one).
+                text.trim_start_matches('\u{feff}')
+                    .lines()
+                    .map(str::trim)
+                    .filter(|line| !line.is_empty())
+                    .map(PathBuf::from)
+                    .collect()
+            })
+            .unwrap_or_default()
+    }
+
+    fn write_known(&self, paths: &[PathBuf]) -> Result<(), IngestError> {
+        std::fs::create_dir_all(&self.base).map_err(|e| IngestError::io(&self.base, e))?;
+        let text: String = paths
+            .iter()
+            .map(|p| format!("{}\n", p.to_string_lossy()))
+            .collect();
+        crate::atomic_write(&self.known_path(), text.as_bytes())
+            .map_err(|e| IngestError::io(self.known_path(), e))
+    }
+
+    /// Adds a configuration file the person chose to the list, after checking that it can be read as
+    /// one with at least one folder pair. The file is **not copied or changed**: only its path is
+    /// remembered. Adding the same path twice (case-insensitively) keeps one entry.
+    pub fn add_config(&self, file: &Path) -> Result<(), IngestError> {
+        let file = std::path::absolute(file).map_err(|e| IngestError::io(file, e))?;
+        read_pairs(&file)?;
+        let mut known = self.read_known();
+        let text = file.to_string_lossy().to_lowercase();
+        if !known
+            .iter()
+            .any(|p| p.to_string_lossy().to_lowercase() == text)
+        {
+            known.push(file);
+            self.write_known(&known)?;
+        }
+        Ok(())
+    }
+
+    /// Takes a configuration file off the list. The file itself is never touched.
+    pub fn remove_config(&self, file: &Path) -> Result<(), IngestError> {
+        let text = file.to_string_lossy().to_lowercase();
+        let known: Vec<PathBuf> = self
+            .read_known()
+            .into_iter()
+            .filter(|p| p.to_string_lossy().to_lowercase() != text)
+            .collect();
+        self.write_known(&known)
+    }
+
+    /// The list of attività: the tasks saved under `tasks_dir` and the configuration files the person
+    /// added, by name. A listed file that no longer exists or is no longer readable is skipped, not
+    /// removed: it may be on a drive that is simply not connected right now.
+    pub fn list_entries(&self, tasks_dir: &Path) -> Vec<TaskEntry> {
+        let mut entries = list_tasks(tasks_dir);
+        for file in self.read_known() {
+            if entries.iter().any(|e| e.path == file) {
+                continue;
+            }
+            if let Some(entry) = entry_for_file(&file, false) {
+                entries.push(entry);
+            }
+        }
+        entries.sort_by_key(|t| t.name.to_lowercase());
+        entries
+    }
 }
 
 /// The folder that contains `path`, by string logic with both separators: `Path::parent` follows the
@@ -911,6 +1016,93 @@ mod tests {
             vec!["foto", "video"]
         );
         assert_eq!(listed[0].sources, vec![r"C:\Dati\Foto".to_string()]);
+    }
+
+    fn write_config(dir: &Path, name: &str, body: &str) -> PathBuf {
+        let path = dir.join(name);
+        std::fs::write(&path, body).expect("write");
+        path
+    }
+
+    #[test]
+    fn an_added_configuration_is_listed_with_its_job_count_and_never_copied() {
+        let base = tempfile::tempdir().expect("tempdir");
+        let files = tempfile::tempdir().expect("tempdir");
+        let tasks = tempfile::tempdir().expect("tempdir");
+        let log = SessionLog::at(base.path());
+        let config = write_config(
+            files.path(),
+            "notte.toml",
+            "[[jobs]]\nname='a'\nsource='C:\\a'\ndest='D:\\a'\n[[jobs]]\nname='b'\nsource='C:\\b'\ndest='D:\\b'\n",
+        );
+        log.add_config(&config).expect("add");
+        log.add_config(&config)
+            .expect("adding twice is not an error");
+
+        let listed = log.list_entries(tasks.path());
+        assert_eq!(listed.len(), 1, "one entry however many times it was added");
+        assert_eq!(listed[0].jobs, 2);
+        assert!(!listed[0].saved, "an added file is not a saved task");
+        assert!(config.exists(), "the file is left where it is");
+    }
+
+    #[test]
+    fn a_list_edited_by_hand_with_a_byte_order_mark_still_reads() {
+        let base = tempfile::tempdir().expect("tempdir");
+        let files = tempfile::tempdir().expect("tempdir");
+        let tasks = tempfile::tempdir().expect("tempdir");
+        let config = write_config(files.path(), "a.toml", "source='C:\\a'\ndest='D:\\a'\n");
+        let list = format!("\u{feff}{}\n", config.display());
+        std::fs::write(base.path().join(KNOWN_CONFIGS_FILE), list).expect("write");
+        assert_eq!(
+            SessionLog::at(base.path()).list_entries(tasks.path()).len(),
+            1
+        );
+    }
+
+    #[test]
+    fn a_file_that_is_not_a_configuration_is_refused_when_added() {
+        let base = tempfile::tempdir().expect("tempdir");
+        let files = tempfile::tempdir().expect("tempdir");
+        let log = SessionLog::at(base.path());
+        let bad = write_config(files.path(), "x.toml", "threads = 2\n");
+        assert!(log.add_config(&bad).is_err());
+        assert!(log.add_config(&files.path().join("missing.toml")).is_err());
+    }
+
+    #[test]
+    fn removing_a_configuration_takes_it_off_the_list_and_leaves_the_file() {
+        let base = tempfile::tempdir().expect("tempdir");
+        let files = tempfile::tempdir().expect("tempdir");
+        let tasks = tempfile::tempdir().expect("tempdir");
+        let log = SessionLog::at(base.path());
+        let config = write_config(files.path(), "a.toml", "source='C:\\a'\ndest='D:\\a'\n");
+        log.add_config(&config).expect("add");
+        let absolute = std::path::absolute(&config).expect("abs");
+        log.remove_config(&absolute).expect("remove");
+        assert!(log.list_entries(tasks.path()).is_empty());
+        assert!(config.exists());
+    }
+
+    #[test]
+    fn a_listed_file_that_disappeared_is_skipped_not_forgotten() {
+        let base = tempfile::tempdir().expect("tempdir");
+        let files = tempfile::tempdir().expect("tempdir");
+        let tasks = tempfile::tempdir().expect("tempdir");
+        let log = SessionLog::at(base.path());
+        let config = write_config(files.path(), "a.toml", "source='C:\\a'\ndest='D:\\a'\n");
+        log.add_config(&config).expect("add");
+        std::fs::remove_file(&config).expect("remove file");
+        assert!(
+            log.list_entries(tasks.path()).is_empty(),
+            "nothing to show right now"
+        );
+        std::fs::write(&config, "source='C:\\a'\ndest='D:\\a'\n").expect("back again");
+        assert_eq!(
+            log.list_entries(tasks.path()).len(),
+            1,
+            "it comes back when the drive does"
+        );
     }
 
     #[test]

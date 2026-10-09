@@ -24,6 +24,9 @@ export struct TaskRow {
     last-state: int,
     last-when: string,
     verify: string,
+    jobs: int,
+    saved: bool,
+    scheduled: bool,
 }
 
 // One line of the properties grid. `kind`: 0 job heading, 1 group heading, 2 setting.
@@ -129,6 +132,7 @@ export component TaskItem inherits Rectangle {
     callback details();
     callback edit();
     callback history();
+    callback remove();
     height: 76px;
     border-radius: Theme.radius;
     border-width: 1px;
@@ -160,6 +164,16 @@ export component TaskItem inherits Rectangle {
                     text: SessionUi.state-text(root.entry.last-state);
                     kind: SessionUi.state-kind(root.entry.last-state);
                 }
+                if root.entry.jobs > 1: Text {
+                    text: @tr("{} job", root.entry.jobs);
+                    font-size: Theme.small;
+                    color: Theme.text-muted;
+                    vertical-alignment: center;
+                }
+                if root.entry.scheduled: Badge {
+                    text: Strings.task-scheduled;
+                    kind: BadgeKind.info;
+                }
                 Text {
                     text: root.entry.last-state >= 0 ? root.entry.last-when : Strings.task-never;
                     font-size: Theme.small;
@@ -172,6 +186,13 @@ export component TaskItem inherits Rectangle {
                     color: Theme.text-muted;
                     vertical-alignment: center;
                 }
+            }
+        }
+        if !root.entry.saved: Button {
+            text: Strings.task-remove;
+            horizontal-stretch: 0;
+            clicked => {
+                root.remove();
             }
         }
         Button {

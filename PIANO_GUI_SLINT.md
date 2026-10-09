@@ -34,7 +34,17 @@ spunta solo dopo che è in `main`, con la CI verde e, se è un comportamento, pr
   - [x] 4e report completo di una copia (fasi, file, verifica, elenchi di problemi, avvisi, computer e versione): «Mostra i dettagli tecnici» nel dettaglio di un lavoro. Provato dal vivo su una copia verificata; i casi con problemi sono coperti da test sul modulo (`report_rows`), non provati dal vivo
 - [~] Fase 5 — parità con la console Tauri, installer, **toast di sistema (con AppUserModelID creato dall'installer)**, rimozione di Tauri (**con tua conferma esplicita**)
   - [x] 5a verifica di parità: confronto scheda per scheda con la console Tauri (tabella sotto)
-  - [ ] 5b lacune di parità, nell'ordine della tabella
+  - [~] 5b lacune di parità, nell'ordine della tabella
+    - [x] 1 aprire un file di configurazione e vederne i job (aggiunto all'elenco, mai copiato; elenco ricordato; «Togli» lo toglie dall'elenco e lascia il file; badge «pianificata» da `schtasks`)
+    - [x] 2 coda di più job (etichetta «Job N di M» dal progresso; esito aggregato). Provato dal vivo con 3 job da 8,4 GB totali
+    - [ ] 3 ripresa da checkpoint
+    - [ ] 4 «Controlla prima»
+    - [ ] 5 report e storico di un file qualsiasi, con filtro per esito ed esportazione CSV
+    - [ ] 6 gestione credenziali
+    - [ ] 7 selettori di cartella nell'editor
+    - [ ] 8 recenti per origine, destinazione e configurazioni
+    - [ ] 9 Aiuto ed esempio guidato
+    - [ ] 10 anteprima di ripristino
   - [ ] 5c installer: il componente «console» installa `rustcopy-ui.exe` (stesso nome della console attuale, `rustcopy-gui.exe`, per non rompere Shell e `runner::gui_beside`), senza WebView2; installer smoke aggiornato
   - [ ] 5d toast di sistema (con l'AppUserModelID creato dall'installer)
   - [ ] 5e rimozione di Tauri e della toolchain JS: **solo dopo la tua conferma esplicita**, in una PR separata e annullabile
