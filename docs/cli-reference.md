@@ -185,7 +185,7 @@ vero.
 
 ### ⏰ Scheduling e Servizi Windows
 
-`--install-schedule <SPEC>` registra l'invocazione corrente (senza i flag di scheduling stessi) come voce ricorrente di Task Scheduler via `schtasks.exe` — `SPEC` accetta `daily@HH:MM`, `hourly@N` o `weekly@LUN,...@HH:MM`. Nessuno scheduler interno: è Windows stesso a risvegliare il binario alla scadenza, rileggendo `--config` se presente. `--install-service`/`--uninstall-service` registra invece questo binario come **servizio Windows reale** via Service Control Manager.
+`--install-schedule <SPEC>` registra l'invocazione corrente (senza i flag di scheduling stessi) come voce ricorrente di Task Scheduler via `schtasks.exe` — `SPEC` accetta `daily@HH:MM`, `hourly@N` o `weekly@LUN,...@HH:MM`. Nessuno scheduler interno: è Windows stesso a risvegliare il binario alla scadenza, rileggendo `--config` se presente. `--install-service`/`--uninstall-service` registra invece questo binario come **servizio Windows reale** via Service Control Manager. La voce è creata da un file XML, non da flag, perché i flag non possono esprimere le impostazioni che decidono se un backup notturno parte davvero: **parte anche a batteria e non viene fermata se si stacca il caricatore, recupera l'esecuzione persa se il PC era spento o in sospensione all'ora prevista, non ha il limite di 72 ore** dei valori predefiniti, e non si sovrappone a se stessa. Gira solo con l'utente collegato (farlo girare «anche se non collegato» richiederebbe la password dell'account, che questo strumento non gestisce).
 
 > [!IMPORTANT]
 > **Ci sono due identità di servizio distinte, non una sola**:
