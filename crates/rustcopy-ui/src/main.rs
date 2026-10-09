@@ -15,7 +15,9 @@ mod eject;
 mod form;
 mod format;
 mod help;
+mod jobs_view;
 mod move_text;
+mod problems;
 mod report_rows;
 mod run;
 mod runs;
@@ -56,8 +58,8 @@ mod generated {
     slint::include_modules!();
 }
 use generated::{
-    AdviceRow, AppTray, AppWindow, DetailRow, EditForm, HelpRow, HistRow, PropRow, SessionRow,
-    TaskRow,
+    AdviceRow, AppTray, AppWindow, DetailRow, EditForm, HelpRow, HistRow, JobRow, PropRow,
+    SessionRow, TaskRow,
 };
 
 /// Names the mutex and the pipe of the single window (E12).
@@ -96,6 +98,10 @@ struct Ctx {
     /// When the copy now going was paused, if it is: the console resumes it by itself after
     /// `suspend::PAUSE_LIMIT`.
     paused_since: Cell<Option<std::time::Instant>>,
+    /// Discards the answer for a configuration's jobs once another list was asked for.
+    jobs_view: Generation,
+    /// Discards the answer for a report page once another page or report was asked for.
+    report_view: Generation,
     /// The plan of a move waiting for the person's confirmation: which lavoro, and what it would delete.
     /// Shared with the worker threads that compute and execute it.
     move_plan: Arc<Mutex<Option<(String, MovePlan)>>>,
@@ -104,8 +110,46 @@ struct Ctx {
 /// What the editor holds between opening a task and saving a proposal.
 struct EditState {
     config: PathBuf,
+    /// What the file says about each job (a blank draft for a job added in this session): the form is
+    /// always built over it, and the core's "may only narrow risk" rules are read from it.
+    originals: Vec<JobDraft>,
+    /// The working copy of each job. Switching jobs keeps what was typed; saving writes only the jobs
+    /// that differ from `originals`, and every added job.
     drafts: Vec<JobDraft>,
     index: usize,
+}
+
+impl EditState {
+    /// A state over the drafts a file holds.
+    fn new(config: PathBuf, drafts: Vec<JobDraft>) -> Self {
+        Self {
+            config,
+            originals: drafts.clone(),
+            drafts,
+            index: 0,
+        }
+    }
+
+    /// Keeps what the form holds for the job being edited.
+    fn commit(&mut self, form: FormValues) -> Result<(), String> {
+        let original = self
+            .originals
+            .get(self.index)
+            .ok_or_else(|| "Nessun job selezionato.".to_string())?;
+        let draft = form.to_draft(original)?;
+        self.drafts[self.index] = draft;
+        Ok(())
+    }
+
+    /// The drafts a proposal must carry: the changed ones and the added ones.
+    fn to_write(&self, file_jobs: usize) -> Vec<JobDraft> {
+        self.drafts
+            .iter()
+            .enumerate()
+            .filter(|(i, draft)| *i >= file_jobs || **draft != self.originals[*i])
+            .map(|(_, draft)| draft.clone())
+            .collect()
+    }
 }
 
 fn set_sources(ui: &AppWindow, sources: &[String]) {
@@ -368,11 +412,62 @@ fn load_editor_form(ui: &AppWindow, state: &EditState) {
         return;
     };
     ui.set_form(to_slint(&FormValues::from_draft(draft)));
-    ui.set_mirror_was_on(draft.mirror);
-    ui.set_retention_was_set(draft.keep_generations.is_some());
+    // The rules are about what the *file* says, not about what was typed and not yet saved.
+    let original = state.originals.get(state.index).unwrap_or(draft);
+    ui.set_mirror_was_on(original.mirror);
+    ui.set_retention_was_set(original.keep_generations.is_some());
     ui.set_edit_message("".into());
     ui.set_edit_ok(false);
     ui.set_edit_job_index(i32::try_from(state.index).unwrap_or(0));
+}
+
+/// The rows of the jobs page: each job's line plus its last run, read from its own run index.
+fn job_rows(config: &Path) -> Result<Vec<JobRow>, String> {
+    let jobs = gui_api::list_jobs(config).map_err(|e| e.to_string())?;
+    let default_threads = gui_api::default_threads();
+    Ok(jobs
+        .iter()
+        .map(|job| {
+            let line = jobs_view::job_line(job, default_threads);
+            let (state, when, speed) = match job.report_path.as_deref() {
+                None => (-2, String::new(), String::new()),
+                Some(report) => {
+                    match gui_api::read_history(
+                        Path::new(report),
+                        job.history_job_name.as_deref(),
+                        1,
+                    ) {
+                        Ok(view) => match view.runs.first() {
+                            Some(run) => (
+                                if run.dry_run {
+                                    1
+                                } else if run.exit_code == 0 {
+                                    0
+                                } else {
+                                    2
+                                },
+                                format::when_text(run.timestamp),
+                                format::human_speed(run.throughput_mbps),
+                            ),
+                            None => (-1, String::new(), String::new()),
+                        },
+                        Err(_) => (-2, String::new(), String::new()),
+                    }
+                }
+            };
+            JobRow {
+                name: line.name.into(),
+                route: line.route.into(),
+                kind: line.kind.into(),
+                badges: line.badges.into(),
+                mirror: line.mirror,
+                unconfigured: line.unconfigured,
+                last_state: state,
+                last_when: when.into(),
+                last_speed: speed.into(),
+            }
+        })
+        .collect())
 }
 
 /// Number of past runs read for the history page.
@@ -459,7 +554,7 @@ fn finish_history(mut data: HistoryData) -> HistoryData {
 }
 
 /// Past runs for a configuration, from the run index that sits beside each job's report.
-fn history_rows(config: &Path) -> Result<HistoryData, String> {
+fn history_rows(config: &Path, only: Option<&str>) -> Result<HistoryData, String> {
     let jobs = gui_api::list_jobs(config).map_err(|e| e.to_string())?;
     let many = jobs.len() > 1;
     let mut data = HistoryData {
@@ -468,10 +563,17 @@ fn history_rows(config: &Path) -> Result<HistoryData, String> {
         skipped: false,
     };
     for job in &jobs {
+        if only.is_some_and(|name| name != job.name) {
+            continue;
+        }
         let Some(report) = job.report_path.as_deref() else {
             continue;
         };
-        let label = if many { job.name.as_str() } else { "" };
+        let label = if many && only.is_none() {
+            job.name.as_str()
+        } else {
+            ""
+        };
         read_runs(
             Path::new(report),
             job.history_job_name.as_deref(),
@@ -534,6 +636,52 @@ fn show_history_page(
 }
 
 /// A line of the technical report as the interface draws it.
+/// Puts one page of a report's rows and the paging state on the report page. A restore preview is not
+/// pageable: its rows are the preview's own, not the report the path names.
+fn apply_report_page(ui: &AppWindow, view: &gui_api::ReportView, pageable: bool) {
+    let shown: Vec<DetailRow> = report_rows::rows_for(view)
+        .into_iter()
+        .map(detail_row)
+        .collect();
+    let info = problems::page_info([&view.mismatches, &view.missing_in_dest, &view.unreadable]);
+    ui.set_report_rows(ModelRc::new(VecModel::from(shown)));
+    ui.set_report_offset(i32::try_from(view.mismatches.offset).unwrap_or(0));
+    ui.set_report_pageable(pageable && info.any);
+    ui.set_report_has_prev(pageable && info.has_prev);
+    ui.set_report_has_next(pageable && info.has_next);
+    ui.set_report_page_text(if pageable { info.text } else { String::new() }.into());
+}
+
+/// Reads the first page of the report at `path` and shows it on the report page. Blocking: it is called
+/// from a worker thread, and its answer is dropped if another report was asked for meanwhile.
+fn load_report(weak: slint::Weak<AppWindow>, generation: Generation, path: PathBuf) {
+    let ticket = generation.next();
+    let read = gui_api::read_report_page(&path, 0, problems::PAGE).map_err(|e| e.to_string());
+    let name = path
+        .file_name()
+        .map(|n| n.to_string_lossy().into_owned())
+        .unwrap_or_default();
+    let path_text = path.to_string_lossy().into_owned();
+    let _ = weak.upgrade_in_event_loop(move |ui| {
+        if !generation.is_current(ticket) {
+            return;
+        }
+        match read {
+            Ok(view) => {
+                ui.set_error("".into());
+                ui.set_report_name(name.into());
+                ui.set_report_note("".into());
+                ui.set_report_workdir("".into());
+                ui.set_report_message("".into());
+                ui.set_report_path(path_text.into());
+                apply_report_page(&ui, &view, true);
+                ui.set_page(6);
+            }
+            Err(message) => ui.set_error(message.into()),
+        }
+    });
+}
+
 fn detail_row(row: report_rows::Row) -> DetailRow {
     DetailRow {
         kind: match row.kind {
@@ -685,15 +833,12 @@ fn start_restore_preview(ui: &AppWindow, report: PathBuf, workdir: Option<PathBu
             ui.set_report_busy(false);
             match outcome {
                 Ok(view) => {
-                    let shown: Vec<DetailRow> = report_rows::rows_for(&view)
-                        .into_iter()
-                        .map(detail_row)
-                        .collect();
                     ui.set_report_name("anteprima".into());
                     ui.set_report_note(RESTORE_NOTE.into());
                     ui.set_report_path(report_text.into());
                     ui.set_report_workdir(workdir_text.into());
-                    ui.set_report_rows(ModelRc::new(VecModel::from(shown)));
+                    ui.set_report_message("".into());
+                    apply_report_page(&ui, &view, false);
                     ui.set_page(6);
                 }
                 Err(message) => ui.set_error(message.into()),
@@ -1028,6 +1173,8 @@ fn main() -> Result<(), slint::PlatformError> {
         edit: RefCell::new(None),
         history: RefCell::new(Vec::new()),
         move_plan: Arc::new(Mutex::new(None)),
+        jobs_view: Generation::default(),
+        report_view: Generation::default(),
         paused_since: Cell::new(None),
         eject_drive: Cell::new(None),
     });
@@ -1223,11 +1370,7 @@ fn main() -> Result<(), slint::PlatformError> {
                             .unwrap_or_default()
                             .into(),
                     );
-                    let state = EditState {
-                        config,
-                        drafts,
-                        index: 0,
-                    };
+                    let state = EditState::new(config, drafts);
                     load_editor_form(&ui, &state);
                     *ctx.edit.borrow_mut() = Some(state);
                     ui.set_error("".into());
@@ -1244,6 +1387,13 @@ fn main() -> Result<(), slint::PlatformError> {
         ui.on_edit_select_job(move |index| {
             let Some(ui) = weak.upgrade() else { return };
             if let Some(state) = ctx.edit.borrow_mut().as_mut() {
+                // What was typed for this job is kept; a box that is not a number stops the switch.
+                if let Err(message) = state.commit(from_slint(ui.get_form())) {
+                    ui.set_edit_ok(false);
+                    ui.set_edit_message(message.into());
+                    ui.set_edit_job_index(i32::try_from(state.index).unwrap_or(0));
+                    return;
+                }
                 state.index = usize::try_from(index)
                     .unwrap_or(0)
                     .min(state.drafts.len().saturating_sub(1));
@@ -1254,18 +1404,78 @@ fn main() -> Result<(), slint::PlatformError> {
     {
         let weak = ui.as_weak();
         let ctx = ctx.clone();
+        ui.on_edit_add_job(move |name| {
+            let Some(ui) = weak.upgrade() else { return };
+            let mut guard = ctx.edit.borrow_mut();
+            let Some(state) = guard.as_mut() else { return };
+            let name = name.trim().to_string();
+            let refuse = |ui: &AppWindow, message: String| {
+                ui.set_edit_ok(false);
+                ui.set_edit_message(message.into());
+            };
+            // A file with one job and no [[jobs]] cannot grow a second: that would rename the files the
+            // job's report, cache and history live in. The core refuses it; saying so here saves a typed form.
+            let single = robocopy_ingest::config::IngestConfig::load_from(&state.config)
+                .map(|c| c.jobs.unwrap_or_default().is_empty())
+                .unwrap_or(false);
+            if single {
+                return refuse(
+                    &ui,
+                    "Questo file descrive un solo job: aggiungerne un secondo lo trasformerebbe in un file a più job e cambierebbe il nome dei file di report, cache e storico del job. La console non lo fa.".to_string(),
+                );
+            }
+            if let Err(error) = robocopy_ingest::validate_job_name(&name) {
+                return refuse(&ui, error.to_string());
+            }
+            if state.drafts.iter().any(|d| d.name.eq_ignore_ascii_case(&name)) {
+                return refuse(&ui, format!("C'è già un job che si chiama «{name}»."));
+            }
+            if let Err(message) = state.commit(from_slint(ui.get_form())) {
+                return refuse(&ui, message);
+            }
+            let blank = job_editor::draft_from(&robocopy_ingest::config::JobConfig::default(), &name);
+            state.originals.push(blank.clone());
+            state.drafts.push(blank);
+            state.index = state.drafts.len() - 1;
+            let names: Vec<SharedString> = state
+                .drafts
+                .iter()
+                .map(|d| SharedString::from(d.name.as_str()))
+                .collect();
+            ui.set_edit_jobs(ModelRc::new(VecModel::from(names)));
+            ui.set_new_job_name("".into());
+            load_editor_form(&ui, state);
+        });
+    }
+    {
+        let weak = ui.as_weak();
+        let ctx = ctx.clone();
         ui.on_edit_save(move || {
             let Some(ui) = weak.upgrade() else { return };
-            let guard = ctx.edit.borrow();
-            let Some(state) = guard.as_ref() else { return };
-            let Some(original) = state.drafts.get(state.index) else {
-                return;
-            };
-            let result = from_slint(ui.get_form())
-                .to_draft(original)
-                .and_then(|draft| {
+            let mut guard = ctx.edit.borrow_mut();
+            let Some(state) = guard.as_mut() else { return };
+            let file_jobs = job_editor::read_drafts(&state.config)
+                .map(|d| d.len())
+                .unwrap_or(state.drafts.len());
+            let result = state
+                .commit(from_slint(ui.get_form()))
+                .and_then(|()| {
+                    let changed = state.to_write(file_jobs);
+                    if changed.is_empty() {
+                        return Err("Nessuna modifica da scrivere.".to_string());
+                    }
+                    // A job added here has nothing to copy until it has a source and a destination.
+                    if let Some(empty) = changed
+                        .iter()
+                        .find(|d| d.source.trim().is_empty() || d.dest.trim().is_empty())
+                    {
+                        return Err(format!(
+                            "Il job «{}» ha bisogno di una cartella di origine e di una di destinazione.",
+                            empty.name
+                        ));
+                    }
                     let out = job_editor::suggest_proposal_path_now(&state.config);
-                    job_editor::propose_config_from_path(Some(&state.config), &[draft], &out)
+                    job_editor::propose_config_from_path(Some(&state.config), &changed, &out)
                         .map(|()| out)
                         .map_err(|error| error.to_string())
                 });
@@ -1292,7 +1502,7 @@ fn main() -> Result<(), slint::PlatformError> {
                 .file_stem()
                 .map(|n| n.to_string_lossy().into_owned())
                 .unwrap_or_default();
-            show_history_page(&ui, &ctx, name, history_rows(&config));
+            show_history_page(&ui, &ctx, name, history_rows(&config, None));
         });
     }
     {
@@ -1674,6 +1884,68 @@ fn main() -> Result<(), slint::PlatformError> {
         });
     }
 
+    // The jobs of a configuration, one line each, with how each one's last run went (read off the window's
+    // thread: it reads one run index per job).
+    {
+        let weak = ui.as_weak();
+        let ctx = ctx.clone();
+        ui.on_show_jobs(move |path| {
+            let Some(ui) = weak.upgrade() else { return };
+            let config = PathBuf::from(path.as_str());
+            ui.set_jobs_config(path);
+            ui.set_jobs_config_name(
+                config
+                    .file_stem()
+                    .map(|n| n.to_string_lossy().into_owned())
+                    .unwrap_or_default()
+                    .into(),
+            );
+            ui.set_error("".into());
+            ui.set_job_rows(ModelRc::new(VecModel::from(Vec::<JobRow>::new())));
+            ui.set_page(11);
+            let ticket = ctx.jobs_view.next();
+            let generation = ctx.jobs_view.clone();
+            let weak = ui.as_weak();
+            std::thread::spawn(move || {
+                let result = job_rows(&config);
+                let _ = weak.upgrade_in_event_loop(move |ui| {
+                    if !generation.is_current(ticket) {
+                        return;
+                    }
+                    match result {
+                        Ok(rows) => ui.set_job_rows(ModelRc::new(VecModel::from(rows))),
+                        Err(message) => ui.set_error(message.into()),
+                    }
+                });
+            });
+        });
+    }
+    {
+        let weak = ui.as_weak();
+        let ctx = ctx.clone();
+        ui.on_show_job_history(move |path, index| {
+            let Some(ui) = weak.upgrade() else { return };
+            let config = PathBuf::from(path.as_str());
+            let name = gui_api::list_jobs(&config)
+                .ok()
+                .and_then(|jobs| {
+                    jobs.get(usize::try_from(index).unwrap_or(0))
+                        .map(|j| j.name.clone())
+                })
+                .unwrap_or_default();
+            let result = history_rows(&config, Some(&name));
+            show_history_page(&ui, &ctx, name, result);
+        });
+    }
+    {
+        let weak = ui.as_weak();
+        ui.on_edit_job(move |path, index| {
+            let Some(ui) = weak.upgrade() else { return };
+            ui.invoke_edit_task(path);
+            ui.invoke_edit_select_job(index);
+        });
+    }
+
     // Credentials (F56): the secret goes from this window straight to Windows' Credential Manager,
     // never to a process argument, and the field is emptied as soon as it has done its one job.
     {
@@ -1754,35 +2026,105 @@ fn main() -> Result<(), slint::PlatformError> {
     // sits beside it, so the history of "this report" needs no configuration.
     {
         let weak = ui.as_weak();
+        let ctx = ctx.clone();
         ui.on_open_report_file(move || {
             let weak = weak.clone();
+            let generation = ctx.report_view.clone();
             std::thread::spawn(move || {
                 let picked = rfd::FileDialog::new()
                     .add_filter("Report JSON", &["json"])
                     .pick_file();
                 let Some(path) = picked else { return };
-                let read = gui_api::read_report(&path).map_err(|e| e.to_string());
-                let name = path
-                    .file_name()
-                    .map(|n| n.to_string_lossy().into_owned())
-                    .unwrap_or_default();
-                let path_text = path.to_string_lossy().into_owned();
-                let _ = weak.upgrade_in_event_loop(move |ui| match read {
-                    Ok(view) => {
-                        let shown: Vec<DetailRow> = report_rows::rows_for(&view)
-                            .into_iter()
-                            .map(detail_row)
-                            .collect();
-                        ui.set_error("".into());
-                        ui.set_report_name(name.into());
-                        ui.set_report_note("".into());
-                        ui.set_report_workdir("".into());
-                        ui.set_report_path(path_text.into());
-                        ui.set_report_rows(ModelRc::new(VecModel::from(shown)));
-                        ui.set_page(6);
+                load_report(weak, generation, path);
+            });
+        });
+    }
+    // All the problems of a lavoro's report, a page at a time: the detail page shows the first hundred of
+    // each list, this is the way to the rest. The first report that lists a problem, else the first.
+    {
+        let weak = ui.as_weak();
+        let ctx = ctx.clone();
+        ui.on_open_session_report(move |id| {
+            let Some(ui) = weak.upgrade() else { return };
+            let reports: Vec<PathBuf> = ctx
+                .sessions
+                .borrow()
+                .iter()
+                .find(|s| s.id == id.as_str())
+                .map(|s| s.reports.clone())
+                .unwrap_or_default();
+            let weak = ui.as_weak();
+            let generation = ctx.report_view.clone();
+            std::thread::spawn(move || {
+                let has_problem = |path: &PathBuf| {
+                    gui_api::read_report_page(path, 0, 1).is_ok_and(|v| {
+                        v.mismatches.total + v.missing_in_dest.total + v.unreadable.total > 0
+                    })
+                };
+                let pick = reports
+                    .iter()
+                    .find(|r| has_problem(r))
+                    .or_else(|| reports.first())
+                    .cloned();
+                if let Some(path) = pick {
+                    load_report(weak, generation, path);
+                }
+            });
+        });
+    }
+    {
+        let weak = ui.as_weak();
+        let ctx = ctx.clone();
+        ui.on_report_page(move |forward| {
+            let Some(ui) = weak.upgrade() else { return };
+            let path = PathBuf::from(ui.get_report_path().as_str());
+            let offset = problems::neighbour(
+                usize::try_from(ui.get_report_offset()).unwrap_or(0),
+                forward,
+            );
+            let ticket = ctx.report_view.next();
+            let generation = ctx.report_view.clone();
+            let weak = ui.as_weak();
+            std::thread::spawn(move || {
+                let read = gui_api::read_report_page(&path, offset, problems::PAGE)
+                    .map_err(|e| e.to_string());
+                let _ = weak.upgrade_in_event_loop(move |ui| {
+                    if !generation.is_current(ticket) {
+                        return;
                     }
-                    Err(message) => ui.set_error(message.into()),
+                    match read {
+                        Ok(view) => apply_report_page(&ui, &view, true),
+                        Err(message) => ui.set_error(message.into()),
+                    }
                 });
+            });
+        });
+    }
+    // Every problem of the report, not only the page on screen: a person hands this file to someone else.
+    {
+        let weak = ui.as_weak();
+        ui.on_export_problems(move || {
+            let Some(ui) = weak.upgrade() else { return };
+            let path = PathBuf::from(ui.get_report_path().as_str());
+            let weak = ui.as_weak();
+            std::thread::spawn(move || {
+                let picked = rfd::FileDialog::new()
+                    .set_file_name("rustcopy-problemi.csv")
+                    .add_filter("CSV", &["csv"])
+                    .save_file();
+                let Some(target) = picked else { return };
+                let message = match problems::all_problems(&path) {
+                    Ok(rows) => match std::fs::write(&target, problems::problems_csv(&rows)) {
+                        Ok(()) => {
+                            format!("{} problemi esportati in {}", rows.len(), target.display())
+                        }
+                        Err(error) => {
+                            format!("Non sono riuscito a scrivere {}: {error}", target.display())
+                        }
+                    },
+                    Err(error) => error,
+                };
+                let _ = weak.upgrade_in_event_loop(move |ui| ui.set_report_message(message.into()));
             });
         });
     }

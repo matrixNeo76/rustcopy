@@ -69,6 +69,8 @@ Confronto con le otto schede della console attuale (`App.svelte`) e i suoi 24 co
 
 Ordine proposto per colmare le lacune (dal più usato): 1 aprire un file di configurazione e vederne i job; 2 coda di più job; 3 ripresa da checkpoint; 4 «Controlla prima»; 5 report e storico di un file qualsiasi con CSV; 6 credenziali; 7 selettori di cartella nell'editor; 8 recenti; 9 Aiuto ed esempio guidato; 10 anteprima di ripristino.
 
+**Lacune verso Tauri colmate dopo questa verifica (9 Ott 2026)** — tracciate in `CHECKLIST_ACCETTAZIONE_GUI.md` §2: L2 «+ Nuovo job» nell'editor, L7 pagina dei job di una configurazione con l'esito di ciascuno, L4 problemi del report a pagine con CSV completo. Aperte: L1 preferiti, L3 «Verifica» per campo, L5 procedura guidata, L6 scelta del checkpoint e stato per job in coda, L8 descrizioni. **Limite noto n.1: lasciato com'è per tua decisione (9 Ott 2026)**, nessuna modifica.
+
 ### Limiti noti e come li tratto
 | # | Limite | Cosa faccio | Stato |
 |---|---|---|---|

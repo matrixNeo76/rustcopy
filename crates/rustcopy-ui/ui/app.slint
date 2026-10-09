@@ -7,10 +7,10 @@ import { Button, LineEdit, ProgressIndicator, ListView, Palette, CheckBox, Combo
 import { Theme } from "theme.slint";
 import { Strings } from "strings.slint";
 import { Badge, BadgeKind, StatCard, Banner, SectionLabel, SpeedChart } from "components.slint";
-import { SessionRow, SessionItem, SessionUi, TaskRow, TaskItem, PropRow, HistRow, AdviceRow, DetailRow, DetailRows, HelpRow } from "sessions.slint";
+import { SessionRow, SessionItem, SessionUi, TaskRow, TaskItem, PropRow, HistRow, AdviceRow, DetailRow, DetailRows, HelpRow, JobRow, JobItem } from "sessions.slint";
 import { EditForm, TextField, ToggleField, TabPage } from "editor.slint";
 
-export { SessionRow, TaskRow, PropRow, EditForm, HistRow, AdviceRow, DetailRow, HelpRow }
+export { SessionRow, TaskRow, PropRow, EditForm, HistRow, AdviceRow, DetailRow, HelpRow, JobRow }
 
 export component AppTray inherits SystemTrayIcon {
     icon: @image-url("icon.png");
@@ -70,6 +70,9 @@ export component AppWindow inherits Window {
     in property <string> hist-message;
     in property <string> report-name;
     in property <bool> can-move;
+    in property <[JobRow]> job-rows;
+    in property <string> jobs-config-name;
+    in property <string> jobs-config;
     in property <bool> dest-removable;
     in-out property <bool> eject-when-done;
     in property <string> eject-message;
@@ -98,6 +101,12 @@ export component AppWindow inherits Window {
     in property <string> report-note;
     in property <string> report-workdir;
     in property <bool> report-busy;
+    in property <string> report-message;
+    in property <string> report-page-text;
+    in property <bool> report-pageable;
+    in property <bool> report-has-prev;
+    in property <bool> report-has-next;
+    in-out property <int> report-offset;
     in property <[HelpRow]> help-rows;
     in property <string> help-message;
     in property <bool> help-ok;
@@ -114,6 +123,7 @@ export component AppWindow inherits Window {
     in-out property <int> edit-job-index: 0;
     in property <string> edit-title;
     in property <string> edit-message;
+    in-out property <string> new-job-name;
     in property <bool> edit-ok;
     in property <bool> mirror-was-on;
     in property <bool> retention-was-set;
@@ -175,13 +185,20 @@ export component AppWindow inherits Window {
     callback edit-task(string);
     callback show-history(string);
     callback toggle-technical(string);
+    callback open-session-report(string);
+    callback report-page(bool);
+    callback export-problems();
     callback edit-select-job(int);
+    callback edit-add-job(string);
     callback edit-save();
     callback run-config-file();
     callback add-config(string);
     callback remove-config(string);
     callback open-report-file();
     callback show-help();
+    callback show-jobs(string);
+    callback show-job-history(string, int);
+    callback edit-job(string, int);
     callback check-move(string);
     callback confirm-move(string);
     callback cancel-move();
@@ -602,6 +619,9 @@ export component AppWindow inherits Window {
                         remove => {
                             root.remove-config(task.path);
                         }
+                        jobs => {
+                            root.show-jobs(task.path);
+                        }
                         can-schedule: root.can-schedule;
                         schedule => {
                             root.schedule-task(task.path);
@@ -806,6 +826,50 @@ export component AppWindow inherits Window {
                     y: 8px;
                     font-size: Theme.body;
                     color: Theme.text-faint;
+                }
+            }
+        }
+
+        if root.page == 11: VerticalLayout {
+            padding: Theme.page-padding;
+            spacing: Theme.gap;
+            HorizontalLayout {
+                spacing: 10px;
+                alignment: start;
+                Button {
+                    text: Strings.props-back;
+                    clicked => {
+                        root.show-tasks();
+                    }
+                }
+                Text {
+                    text: @tr("{} {}", Strings.jobs-title, root.jobs-config-name);
+                    font-size: Theme.title;
+                    font-weight: 700;
+                    color: Theme.text;
+                    vertical-alignment: center;
+                    overflow: elide;
+                }
+            }
+            if root.error != "": Banner {
+                text: root.error;
+                label-prefix: Strings.warning-prefix;
+                kind: BadgeKind.warning;
+            }
+            Rectangle {
+                vertical-stretch: 1;
+                min-height: 200px;
+                clip: true;
+                ListView {
+                    for job[i] in root.job-rows: JobItem {
+                        entry: job;
+                        history => {
+                            root.show-job-history(root.jobs-config, i);
+                        }
+                        edit => {
+                            root.edit-job(root.jobs-config, i);
+                        }
+                    }
                 }
             }
         }
@@ -1172,6 +1236,42 @@ export component AppWindow inherits Window {
                 rows: root.report-rows;
                 empty-text: Strings.technical-none;
             }
+            if root.report-pageable: HorizontalLayout {
+                spacing: 10px;
+                alignment: start;
+                Button {
+                    text: Strings.report-prev;
+                    enabled: root.report-has-prev;
+                    clicked => {
+                        root.report-page(false);
+                    }
+                }
+                Text {
+                    text: root.report-page-text;
+                    font-size: Theme.small;
+                    color: Theme.text-muted;
+                    vertical-alignment: center;
+                }
+                Button {
+                    text: Strings.report-next;
+                    enabled: root.report-has-next;
+                    clicked => {
+                        root.report-page(true);
+                    }
+                }
+                Button {
+                    text: Strings.export-problems;
+                    clicked => {
+                        root.export-problems();
+                    }
+                }
+            }
+            if root.report-message != "": Text {
+                text: root.report-message;
+                wrap: word-wrap;
+                font-size: Theme.small;
+                color: Theme.text-muted;
+            }
             HorizontalLayout {
                 spacing: 10px;
                 alignment: start;
@@ -1218,7 +1318,7 @@ export component AppWindow inherits Window {
                 font-size: Theme.small;
                 color: Theme.text-muted;
             }
-            if root.edit-jobs.length > 1: HorizontalLayout {
+            HorizontalLayout {
                 spacing: 10px;
                 alignment: start;
                 Text {
@@ -1230,10 +1330,26 @@ export component AppWindow inherits Window {
                 ComboBox {
                     model: root.edit-jobs;
                     current-index: root.edit-job-index;
+                    // Re-stated so the shown name follows a job added while the page is open.
+                    current-value: root.edit-jobs[root.edit-job-index];
                     selected(value) => {
                         root.edit-select-job(self.current-index);
                     }
                     accessible-label: Strings.ed-job;
+                }
+                LineEdit {
+                    text <=> root.new-job-name;
+                    placeholder-text: Strings.ed-new-job-name;
+                    accessible-label: Strings.ed-new-job-name;
+                    min-width: 180px;
+                }
+                Button {
+                    text: Strings.ed-add-job;
+                    enabled: root.new-job-name != "";
+                    horizontal-stretch: 0;
+                    clicked => {
+                        root.edit-add-job(root.new-job-name);
+                    }
                 }
             }
             TabWidget {
@@ -1754,6 +1870,12 @@ export component AppWindow inherits Window {
                     text: root.d-show-technical ? Strings.hide-technical : Strings.show-technical;
                     clicked => {
                         root.toggle-technical(root.selected-id);
+                    }
+                }
+                Button {
+                    text: Strings.all-problems;
+                    clicked => {
+                        root.open-session-report(root.selected-id);
                     }
                 }
                 Button {
