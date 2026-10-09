@@ -43,7 +43,7 @@ spunta solo dopo che è in `main`, con la CI verde e, se è un comportamento, pr
     - [x] 6 gestione credenziali (pagina «Credenziali...» da Attività: Nome + Segreto mascherato, Salva/Elimina su Gestione credenziali di Windows; il campo si svuota appena il segreto ha fatto il suo lavoro). Provato dal vivo con una credenziale di prova, poi rimossa
     - [x] 7 selettori di cartella nell'editor (pulsante «Sfoglia...» accanto a origine e destinazione: scrive solo nel modulo, mai su disco finché non si preme «Scrivi proposta»; avvisi in linea per mirror, verifica e cifratura insieme al tipo di copia a generazioni, il vero rifiuto resta del core). Provato dal vivo
     - [x] 8 recenti per origine, destinazione e configurazioni (cartelle e destinazioni recenti dalla Nuova copia, ricavate dal registro dei lavori senza una seconda lista da tenere allineata; le configurazioni recenti sono l'elenco di Attività, già ricordato da 5b.1). Provato dal vivo
-    - [ ] 9 Aiuto ed esempio guidato
+    - [x] 9 Aiuto ed esempio guidato (pagina «Aiuto» dalla barra laterale: guida breve, termini, esiti; «Crea un esempio in Documenti» usa `example_workspace` del core, che non riscrive mai una cartella esistente, e aggiunge l'esempio alle attività). Provato dal vivo, comprese le due pressioni di seguito
     - [ ] 10 anteprima di ripristino
   - [ ] 5c installer: il componente «console» installa `rustcopy-ui.exe` (stesso nome della console attuale, `rustcopy-gui.exe`, per non rompere Shell e `runner::gui_beside`), senza WebView2; installer smoke aggiornato
   - [ ] 5d toast di sistema (con l'AppUserModelID creato dall'installer)
