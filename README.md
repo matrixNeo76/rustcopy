@@ -57,11 +57,19 @@ Log file   : E:\backup\ingest.log
 > progress bar a terminale; a run concluso restano il report JSON e la dashboard HTML statica
 > (`--html-report-path`).
 >
-> Dalla milestone **7.0.0** esiste anche una **console desktop** (Tauri, componente opzionale
-> dell'installer): mostra job, impostazioni risolte e storico, avvia backup avviando la stessa CLI
-> come processo separato, e prepara proposte di configurazione in file nuovi. Non installa servizi
-> né pianificazioni, non forza un mirror non presidiato, e non tocca mai la configurazione in uso —
-> vedi [ROADMAP.md](ROADMAP.md) e [`PIANO_GUI.md`](PIANO_GUI.md).
+> Esiste anche una **console grafica** (componente opzionale dell'installer, `rustcopy-gui.exe`): dalle
+> versioni successive alla 7.8.1 è la console **Slint** (`crates/rustcopy-ui`), un solo processo senza runtime web. Avvia la stessa
+> CLI come processo separato e permette di: copiare cartelle e file al volo (anche trascinandoli), controllare
+> prima cosa si copierà, verificare, **mettere in pausa**, fermare e **riprendere**, **spostare** (copia,
+> verifica e solo dopo conferma cancella gli originali), salvare una copia come attività, aprire configurazioni e
+> report qualsiasi, leggere lo storico con osservazioni ed esportarlo, vedere le impostazioni risolte con la
+> loro provenienza, preparare **proposte** di configurazione in file nuovi, creare e togliere **pianificazioni**,
+> gestire le credenziali e ricevere una notifica di sistema a fine copia. Cosa può preparare dipende da un
+> **livello di sicurezza** (Prudente di base) che sta nelle impostazioni dell'utente e mai in un file di job;
+> un mirror o una pulizia **non presidiati** non partono mai dalla console. La console Tauri precedente
+> (`crates/rustcopy-gui`) resta nel repository finché la Slint non supera la
+> [checklist di accettazione](CHECKLIST_ACCETTAZIONE_GUI.md). Dettagli in [ROADMAP.md](ROADMAP.md) e
+> [`PIANO_GUI_SLINT.md`](PIANO_GUI_SLINT.md).
 >
 > Dal 10 Settembre 2026 esiste anche `crates/rustcopy-shell` (F85): un'estensione Shell che
 > propone "Copia con RustCopy" sul menu di conferma del drag & drop di Explorer (solo cartelle,
@@ -83,6 +91,9 @@ Log file   : E:\backup\ingest.log
 | 📊 **[ANALYSIS](ANALYSIS.md)** | Audit di robustezza e difetti storici documentati. |
 | 📝 **[CHANGELOG](CHANGELOG.md)** | Cronologia delle versioni. |
 | 🤖 **[AGENTS](AGENTS.md)** | Linee guida per sviluppatori e contributori AI. |
+| 🖥️ **[Console Slint: piano](PIANO_GUI_SLINT.md)** | Piano a fasi, registro di avanzamento e limiti noti. |
+| ✅ **[Checklist di accettazione](CHECKLIST_ACCETTAZIONE_GUI.md)** | Lacune verso la console Tauri, confronto con TeraCopy e Cobian, prove da fare. |
+| 🧪 **[Controlli manuali](CONTROLLI_MANUALI_GUI.md)** | Le prove che richiedono una persona o un'altra macchina. |
 
 ---
 

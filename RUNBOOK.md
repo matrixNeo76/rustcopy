@@ -370,6 +370,23 @@ tramite questo stesso comando, senza `--source`/`--dest`.
 
 ---
 
+### 6. Console grafica: pausa, sposta, pianifica
+
+La console (Slint) avvia la CLI come processo separato e non cambia ciò che la CLI fa. Le cose da sapere a livello operativo:
+
+- **Pausa**: sospende la CLI e il suo robocopy; non uccide nulla. Riprende da sola dopo 10 minuti, perché una condivisione di rete può chiudere
+  una connessione ferma da troppo. «Ferma» riprende prima di chiedere lo stop. Provata anche su un NAS vero (3 minuti di pausa).
+- **Sposta** (dal livello di sicurezza Standard): copia con verifica sempre attiva; poi «Controlla gli originali da cancellare...» mostra cosa
+  si cancellerebbe e cosa resta; solo dopo la conferma si cancellano i file di origine che hanno una copia con stessa dimensione e data
+  (riletti subito prima). Un file creato o cambiato dopo la copia resta dov'è.
+- **Pianificare** (dal livello Standard): la console prepara `--config <file> --install-schedule <spec> --schedule-name <nome>` e la CLI
+  installa l'attività per l'utente corrente (parte solo quando è connesso). Rifiuta attività con mirror o `keep_generations` e percorsi relativi.
+- **Livello di sicurezza**: sta in `%LOCALAPPDATA%ustcopy\console\settings.json` (e `safety.log` ne registra i cambi). Se il file manca o
+  non si legge, vale Prudente. Un file di job non può alzarlo.
+- **Posta**: la manda il `notify-server` (sezione `[smtp]`, vedi `docs/installation.md`), non la console.
+
+---
+
 ## 🏢 3. Distribuzione in produzione: Windows Server 2016/2019/2022
 
 Ogni verifica dal vivo di questo progetto, incluso l'incidente D29, è avvenuta finora su Windows 11

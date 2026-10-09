@@ -23,6 +23,10 @@ For full technical detail behind any entry, see `ANALYSIS.md` (defect list, `D<N
 
 ### Added
 
+- **Slint console, phase 5b parity**: open any configuration or report file, a queue of several jobs with its position, resume from a checkpoint, "Controlla prima" (files, size, free space, refusals before anything is copied), history of any report with an outcome filter and CSV export, credentials, folder pickers and inline warnings in the editor, recent folders and destinations, a help page with a guided example, restore preview.
+- **Slint console, phase 6**: a safety level (Prudent by default, Standard, Expert) read only from the user's own settings, with every change logged; schedules prepared from the console and installed by the CLI; **Sposta** (copy, verify, then delete the originals after a confirmation, only files with an identical copy); single files as sources; pause and resume; eject a removable destination drive after a clean copy; an email channel for `notify-server` (`[smtp]`, behind the `smtp` feature, never in the default CLI).
+- `README.md` carries the "Made with Slint" attribution badge.
+- New documents: `CHECKLIST_ACCETTAZIONE_GUI.md` (gaps toward the Tauri console, comparison with TeraCopy and Cobian, side-by-side tests) and `CONTROLLI_MANUALI_GUI.md` (checks only a person or another machine can do).
 - The Slint console shows a system notification when a copy ends while its window is not in front. The installer registers the identity (`rustcopy.console`) through the Start menu shortcut and a registry name; without it Windows simply shows nothing and the taskbar button still flashes.
 
 ### Changed
