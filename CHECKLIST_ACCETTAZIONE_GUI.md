@@ -32,12 +32,12 @@ La colonna «Blocca?» dice se la lacuna impedisce di togliere Tauri senza una t
 | # | Cosa fa la Tauri e la Slint no | Dove si vede | Blocca? |
 |---|---|---|---|
 | L1 | **Preferiti** dei percorsi (oltre ai recenti), con etichetta, che restano finché non li rimuovi | casella percorso in ogni scheda | No, comodità |
-| L2 | **«+ Nuovo job»** nell'editor: aggiungere un job a una configurazione (multi-job) | Modifica | **Sì**: senza, un file multi-job non si costruisce dalla console |
+| L2 | **«+ Nuovo job»** nell'editor: aggiungere un job a una configurazione (multi-job) | Modifica | ~~Sì~~ **colmata** (9 Ott 2026): «+ Nuovo job», provato dal vivo (L38) |
 | L3 | **«Verifica»** accanto a Origine e Destinazione nell'editor: conta file e dimensione di quel percorso | Modifica | No, in Nuova copia c'è «Controlla prima» |
-| L4 | **Problemi del report a pagine** (100 per volta, «Precedenti/Successivi») e **Esporta CSV** dell'elenco dei problemi | Report | **Sì**: con migliaia di errori la Slint ne mostra solo i primi e «altri N» |
+| L4 | **Problemi del report a pagine** (100 per volta, «Precedenti/Successivi») e **Esporta CSV** dell'elenco dei problemi | Report | ~~Sì~~ **colmata** (9 Ott 2026): pagine da 100 e CSV di tutti i problemi, provati dal vivo (L39) |
 | L5 | **Procedura guidata «Nuovo job»** e «Sincronizza ora» dalla scheda vuota | Job | No: il caso comune è coperto da Nuova copia → «Salva come attività» |
 | L6 | **Scheda Esegui**: scegliere **fra più checkpoint** (la Slint offre il più recente) e vedere per ogni job della coda *in attesa / in corso / concluso* (la Slint dice «Job N di M») | Esegui | No per l'uso normale; sì se hai batch lunghi |
-| L7 | **Scheda Job per job**: ogni job di una configurazione in una tabella, con **ultima esecuzione per job** e icone (cifrata, retention, esclusioni, thread) | Job | **Sì per i file multi-job**: la Slint mostra una riga per configurazione |
+| L7 | **Scheda Job per job**: ogni job di una configurazione in una tabella, con **ultima esecuzione per job** e icone (cifrata, retention, esclusioni, thread) | Job | ~~Sì~~ **colmata** (9 Ott 2026): pulsante «Job» per ogni attività, un job per riga con il suo esito (L38) |
 | L8 | Un **tooltip su ogni controllo dell'editor** (la Slint ha le descrizioni per l'accessibilità solo su alcuni) | Modifica | No |
 
 Cose che avevo temuto mancassero e invece **non** sono lacune: l'output della CLI in tempo reale e l'elenco di tutte le pianificazioni con
@@ -74,8 +74,8 @@ e destinazione · cronologia laterale di tutti i lavori con esito · un processo
 
 | Funzione di Cobian | Slint | Nota |
 |---|---|---|
-| Elenco attività con esito e ultima esecuzione | ✅ | per configurazione, non per job (L7) |
-| Creare / modificare un'attività | ✅ | modifica per proposte; nuova da «Salva come attività» (L2, L5) |
+| Elenco attività con esito e ultima esecuzione | ✅ | per configurazione e, col pulsante «Job», per job (L7 colmata) |
+| Creare / modificare un'attività | ✅ | modifica per proposte, anche «+ Nuovo job» (L2 colmata); nuova da «Salva come attività» (L5) |
 | Completo / Incrementale / Differenziale | ✅ | |
 | Pianificazione (creare, vedere, togliere) | ✅ | dal livello Standard; non si vede la «prossima esecuzione» |
 | Eventi prima/dopo | 🟡 | si leggono in Proprietà; **non si scrivono** dalla console (decisione F55 aperta) |

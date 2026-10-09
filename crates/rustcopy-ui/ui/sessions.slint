@@ -29,6 +29,19 @@ export struct TaskRow {
     scheduled: bool,
 }
 
+// One job of a configuration. `last-state`: -2 no report to read, -1 never run, 0 clean, 1 dry run, 2 needs a look.
+export struct JobRow {
+    name: string,
+    route: string,
+    kind: string,
+    badges: string,
+    mirror: bool,
+    unconfigured: bool,
+    last-state: int,
+    last-when: string,
+    last-speed: string,
+}
+
 // One line of the properties grid. `kind`: 0 job heading, 1 group heading, 2 setting.
 // `origin`: 0 written in the file, 1 inherited from the file's defaults, 2 rustcopy's own default.
 export struct PropRow {
@@ -123,6 +136,89 @@ export struct HelpRow {
     text: string,
 }
 
+export component JobItem inherits Rectangle {
+    in property <JobRow> entry;
+    callback history();
+    callback edit();
+    callback details();
+    height: 92px;
+    border-radius: Theme.radius;
+    border-width: 1px;
+    border-color: root.entry.mirror ? Theme.warning : Theme.border;
+    background: Theme.surface;
+    HorizontalLayout {
+        padding: 10px;
+        spacing: 10px;
+        VerticalLayout {
+            horizontal-stretch: 1;
+            spacing: 3px;
+            HorizontalLayout {
+                spacing: 8px;
+                alignment: start;
+                Text {
+                    text: root.entry.name;
+                    font-size: Theme.body;
+                    font-weight: 700;
+                    color: Theme.text;
+                    vertical-alignment: center;
+                }
+                Badge {
+                    text: root.entry.kind;
+                    kind: BadgeKind.neutral;
+                }
+                if root.entry.mirror: Badge {
+                    text: Strings.job-mirror;
+                    kind: BadgeKind.warning;
+                }
+                if root.entry.unconfigured: Badge {
+                    text: Strings.job-unconfigured;
+                    kind: BadgeKind.warning;
+                }
+            }
+            Text {
+                text: root.entry.route;
+                overflow: elide;
+                font-size: Theme.small;
+                color: Theme.text-muted;
+            }
+            if root.entry.badges != "": Text {
+                text: root.entry.badges;
+                overflow: elide;
+                font-size: Theme.small;
+                color: Theme.text-muted;
+            }
+            HorizontalLayout {
+                spacing: 8px;
+                alignment: start;
+                if root.entry.last-state >= 0: Badge {
+                    text: root.entry.last-state == 0 ? Strings.hist-ok : (root.entry.last-state == 1 ? Strings.hist-dry : Strings.state-look);
+                    kind: root.entry.last-state == 0 ? BadgeKind.ok : (root.entry.last-state == 1 ? BadgeKind.info : BadgeKind.warning);
+                }
+                Text {
+                    text: root.entry.last-state >= 0 ? @tr("{}  ·  {}", root.entry.last-when, root.entry.last-speed) : (root.entry.last-state == -1 ? Strings.task-never : Strings.job-no-report);
+                    font-size: Theme.small;
+                    color: Theme.text-muted;
+                    vertical-alignment: center;
+                }
+            }
+        }
+        Button {
+            text: Strings.task-history;
+            horizontal-stretch: 0;
+            clicked => {
+                root.history();
+            }
+        }
+        Button {
+            text: Strings.task-edit;
+            horizontal-stretch: 0;
+            clicked => {
+                root.edit();
+            }
+        }
+    }
+}
+
 export global SessionUi {
     pure public function state-text(state: int) -> string {
         return state == 0 ? Strings.state-clean : (state == 1 ? Strings.state-dry-run : (state == 2 ? Strings.state-look : (state == 3 ? Strings.state-interrupted : Strings.state-running)));
@@ -193,6 +289,7 @@ export component TaskItem inherits Rectangle {
     callback history();
     callback remove();
     callback schedule();
+    callback jobs();
     in property <bool> can-schedule;
     height: 76px;
     border-radius: Theme.radius;
@@ -254,6 +351,13 @@ export component TaskItem inherits Rectangle {
             horizontal-stretch: 0;
             clicked => {
                 root.remove();
+            }
+        }
+        if root.entry.jobs > 1: Button {
+            text: Strings.task-jobs;
+            horizontal-stretch: 0;
+            clicked => {
+                root.jobs();
             }
         }
         if root.can-schedule: Button {
