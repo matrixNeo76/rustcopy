@@ -40,7 +40,7 @@ spunta solo dopo che è in `main`, con la CI verde e, se è un comportamento, pr
     - [x] 3 ripresa da checkpoint («Riprendi» nel dettaglio di una copia interrotta; il core rifiuta un punto di ripresa che non sia di quella copia; uno già portato a termine non si offre più). Provato dal vivo: 26 GB, Ferma a 350 file, Riprendi ha copiato i 551 rimanenti con esito pulito
     - [x] 4 «Controlla prima» (file e dimensione di ogni cartella, spazio libero della destinazione con lo stesso margine del controllo preliminare della CLI, rifiuti di `plan_copy`; solo su pressione e fuori dal thread della finestra; il risultato sparisce se cambiano cartelle o destinazione). Provato dal vivo
     - [x] 5 report e storico di un file qualsiasi, con filtro per esito ed esportazione CSV (lo storico di un file di configurazione qualsiasi era già coperto da 5b.1; qui «Apri un report...» da Attività mostra il report tecnico di un `.json` e il suo storico; filtro Tutte/Riuscite/Da controllare/Di prova; «Esporta CSV...» scrive esattamente le righe filtrate). Provato dal vivo
-    - [ ] 6 gestione credenziali
+    - [x] 6 gestione credenziali (pagina «Credenziali...» da Attività: Nome + Segreto mascherato, Salva/Elimina su Gestione credenziali di Windows; il campo si svuota appena il segreto ha fatto il suo lavoro). Provato dal vivo con una credenziale di prova, poi rimossa
     - [ ] 7 selettori di cartella nell'editor
     - [ ] 8 recenti per origine, destinazione e configurazioni
     - [ ] 9 Aiuto ed esempio guidato

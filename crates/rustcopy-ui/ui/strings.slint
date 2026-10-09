@@ -106,6 +106,15 @@ export global Strings {
     out property <string> run-config-file: @tr("Aggiungi un file di configurazione...");
     out property <string> run-config-hint: @tr("Per i file .toml che hai già: restano dove sono e si eseguono con le loro impostazioni. Mirror e pulizie restano protetti dalla conferma della riga di comando, che senza un terminale si rifiuta.");
     out property <string> task-remove: @tr("Togli");
+    out property <string> cred-open: @tr("Credenziali...");
+    out property <string> cred-title: @tr("Credenziali");
+    out property <string> cred-intro: @tr("Salva o rimuove un segreto in Gestione credenziali di Windows: mai nel file di un'attività, mai come argomento di un comando. Lo si usa poi scrivendo keyring:NOME dove un campo accetta una chiave o una password.");
+    out property <string> cred-name: @tr("Nome");
+    out property <string> cred-name-hint: @tr("es. backup-nas");
+    out property <string> cred-secret: @tr("Segreto");
+    out property <string> cred-save: @tr("Salva");
+    out property <string> cred-delete: @tr("Elimina");
+    out property <string> cred-delete-hint: @tr("Elimina toglie quel nome da Gestione credenziali; un'attività che lo usa smetterà di trovare la chiave.");
     out property <string> open-report-hint: @tr("Per il report .json di una copia fatta altrove o da una pianificazione: si legge soltanto, non si modifica nulla.");
     out property <string> report-history: @tr("Storico di questo report");
     out property <string> hist-filter-all: @tr("Tutte");
