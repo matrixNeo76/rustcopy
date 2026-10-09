@@ -44,7 +44,10 @@ export component TextField inherits VerticalLayout {
     in property <string> hint;
     in property <string> placeholder;
     in property <bool> enabled: true;
+    // When set, a button beside the field asks for a folder (the native dialog is the owner's).
+    in property <string> browse-text;
     in-out property <string> value;
+    callback browse();
     spacing: 2px;
     Text {
         text: root.label;
@@ -52,12 +55,23 @@ export component TextField inherits VerticalLayout {
         font-weight: 700;
         color: Theme.text-faint;
     }
-    LineEdit {
-        text <=> root.value;
-        enabled: root.enabled;
-        placeholder-text: root.placeholder;
-        accessible-label: root.label;
-        accessible-description: root.hint;
+    HorizontalLayout {
+        spacing: 8px;
+        LineEdit {
+            text <=> root.value;
+            enabled: root.enabled;
+            placeholder-text: root.placeholder;
+            accessible-label: root.label;
+            accessible-description: root.hint;
+        }
+        if root.browse-text != "": Button {
+            text: root.browse-text;
+            enabled: root.enabled;
+            horizontal-stretch: 0;
+            clicked => {
+                root.browse();
+            }
+        }
     }
     if root.hint != "": Text {
         text: root.hint;
