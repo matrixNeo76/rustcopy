@@ -69,6 +69,11 @@ export component AppWindow inherits Window {
     in-out property <int> hist-filter;
     in property <string> hist-message;
     in property <string> report-name;
+    in property <bool> can-move;
+    in-out property <bool> move-mode;
+    in property <int> d-move;
+    in property <string> d-move-text;
+    in property <bool> d-move-busy;
     in property <bool> can-schedule;
     in property <string> sch-task-name;
     in property <string> sch-config;
@@ -173,6 +178,9 @@ export component AppWindow inherits Window {
     callback remove-config(string);
     callback open-report-file();
     callback show-help();
+    callback check-move(string);
+    callback confirm-move(string);
+    callback cancel-move();
     callback schedule-task(string);
     callback install-schedule(string);
     callback remove-schedule();
@@ -406,22 +414,37 @@ export component AppWindow inherits Window {
                     alignment: start;
                     CheckBox {
                         text: Strings.verify-label;
-                        checked <=> root.verify;
-                        enabled: !root.running;
+                        checked: root.verify || root.move-mode;
+                        toggled => {
+                            root.verify = self.checked;
+                        }
+                        enabled: !root.running && !root.move-mode;
                     }
-                    if root.verify: ComboBox {
+                    if root.verify || root.move-mode: ComboBox {
                         model: [Strings.algo-xxh3, Strings.algo-sha256, Strings.algo-blake3];
                         current-index <=> root.verify-algo;
                         enabled: !root.running;
                         accessible-label: Strings.verify-label;
                     }
                 }
+                if root.can-move: CheckBox {
+                    text: Strings.move-mode;
+                    checked <=> root.move-mode;
+                    enabled: !root.running;
+                    accessible-description: Strings.move-mode-hint;
+                }
+                if root.can-move && root.move-mode: Text {
+                    text: Strings.move-mode-hint;
+                    wrap: word-wrap;
+                    font-size: Theme.small;
+                    color: Theme.text-muted;
+                }
                 CheckBox {
                     text: Strings.open-when-done;
                     checked <=> root.open-when-done;
                     enabled: !root.running;
                 }
-                if root.verify: Text {
+                if root.verify || root.move-mode: Text {
                     text: root.verify-algo == 0 ? Strings.algo-xxh3-hint : Strings.algo-strong-hint;
                     wrap: word-wrap;
                     font-size: Theme.small;
@@ -1647,6 +1670,46 @@ export component AppWindow inherits Window {
                         root.begin-save(root.selected-id);
                     }
                 }
+            }
+            if root.d-move == 1: Button {
+                text: root.d-move-busy ? Strings.move-checking : Strings.move-check;
+                enabled: !root.d-move-busy && !root.running;
+                horizontal-stretch: 0;
+                clicked => {
+                    root.check-move(root.selected-id);
+                }
+            }
+            if root.d-move == 2: VerticalLayout {
+                spacing: Theme.gap-small;
+                Banner {
+                    text: root.d-move-text;
+                    label-prefix: Strings.move-title;
+                    kind: BadgeKind.warning;
+                }
+                HorizontalLayout {
+                    spacing: 10px;
+                    alignment: start;
+                    Button {
+                        text: root.d-move-busy ? Strings.move-checking : Strings.move-confirm;
+                        primary: true;
+                        enabled: !root.d-move-busy;
+                        clicked => {
+                            root.confirm-move(root.selected-id);
+                        }
+                    }
+                    Button {
+                        text: Strings.move-cancel;
+                        enabled: !root.d-move-busy;
+                        clicked => {
+                            root.cancel-move();
+                        }
+                    }
+                }
+            }
+            if root.d-move == 3 || root.d-move == 4: Banner {
+                text: root.d-move-text;
+                label-prefix: Strings.move-title;
+                kind: root.d-move == 3 ? BadgeKind.ok : BadgeKind.warning;
             }
             if root.d-has-reports && root.d-state != 4: HorizontalLayout {
                 spacing: 10px;
