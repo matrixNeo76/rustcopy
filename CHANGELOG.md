@@ -21,6 +21,10 @@ For full technical detail behind any entry, see `ANALYSIS.md` (defect list, `D<N
 
 ## [Unreleased]
 
+### Added
+
+- The Slint console shows a system notification when a copy ends while its window is not in front. The installer registers the identity (`rustcopy.console`) through the Start menu shortcut and a registry name; without it Windows simply shows nothing and the taskbar button still flashes.
+
 ### Changed
 
 - The installer's console component now ships the Slint console (`rustcopy-ui.exe`, installed as `rustcopy-gui.exe`): no WebView2 or other runtime is needed any more. The installer smoke job builds it without Node. The Tauri console is no longer packaged.
