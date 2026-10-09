@@ -610,6 +610,84 @@ pub fn inspect_path(path: &Path, anchor: &Path) -> Result<PathInspection, Ingest
     })
 }
 
+/// What "Controlla prima" tells a person about a copy they have chosen but not started.
+#[derive(Debug, Clone, Serialize)]
+pub struct CopyCheck {
+    /// One entry per chosen folder, in the order given.
+    pub sources: Vec<SourceCheck>,
+    /// Sum over the folders that exist: an upper bound on what a run can write (a destination that
+    /// already holds unchanged files is not written again).
+    pub total_files: u64,
+    pub total_bytes: u64,
+    /// Free bytes on the destination's volume, when it can be known.
+    pub free_bytes: Option<u64>,
+    /// `Some(false)` when the free space would not cover `total_bytes` plus the margin the CLI
+    /// requires; `None` when free space is unknown.
+    pub enough_space: Option<bool>,
+    /// Why this copy would be refused (`runner::plan_copy`), shown verbatim.
+    pub problem: Option<String>,
+}
+
+/// One chosen folder as it is right now.
+#[derive(Debug, Clone, Serialize)]
+pub struct SourceCheck {
+    pub path: String,
+    pub exists: bool,
+    pub is_dir: bool,
+    pub files: u64,
+    pub bytes: u64,
+}
+
+/// Looks at a copy before it starts: how much is in each folder, whether the destination has room,
+/// and whether `runner::plan_copy` would refuse it. Walks every folder (the same walk as
+/// [`inspect_path`]), so it is slow on a big tree: call it on an explicit press and off the window's
+/// thread. Never writes anything and never creates the destination.
+pub fn check_copy(sources: &[PathBuf], dest: &Path) -> CopyCheck {
+    let problem = crate::runner::plan_copy(sources, dest)
+        .err()
+        .map(|error| error.to_string());
+    let mut checks = Vec::with_capacity(sources.len());
+    let (mut total_files, mut total_bytes) = (0u64, 0u64);
+    for source in sources {
+        let inspected = inspect_path(source, Path::new(".")).unwrap_or(PathInspection {
+            exists: source.exists(),
+            is_dir: source.is_dir(),
+            total_files: 0,
+            total_dirs: 0,
+            total_bytes: 0,
+        });
+        total_files = total_files.saturating_add(inspected.total_files);
+        total_bytes = total_bytes.saturating_add(inspected.total_bytes);
+        checks.push(SourceCheck {
+            path: source.display().to_string(),
+            exists: inspected.exists,
+            is_dir: inspected.is_dir,
+            files: inspected.total_files,
+            bytes: inspected.total_bytes,
+        });
+    }
+    let free_bytes = if dest.as_os_str().is_empty() {
+        None
+    } else {
+        crate::disk_space::available_bytes(dest)
+    };
+    let enough_space = free_bytes.map(|available| {
+        crate::disk_space::covers(
+            available,
+            total_bytes,
+            crate::disk_space::DEFAULT_SAFETY_MARGIN_PERCENT,
+        )
+    });
+    CopyCheck {
+        sources: checks,
+        total_files,
+        total_bytes,
+        free_bytes,
+        enough_space,
+        problem,
+    }
+}
+
 /// The real value `--threads` uses on this machine when left unset (`cli::default_threads`,
 /// already clamped to `1..=128`). Found necessary by CodeRabbit on the PR that added the Thread
 /// field's placeholder in `Editor.svelte`: the original design read `navigator.hardwareConcurrency`
@@ -2303,5 +2381,39 @@ dest = "E:/docs"
         assert_eq!(jobs[0].keep_generations, None);
         assert_eq!(jobs[0].exclude_count, 0);
         assert_eq!(jobs[0].threads, None);
+    }
+    #[test]
+    fn check_copy_counts_each_folder_and_flags_a_missing_one() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let a = dir.path().join("a");
+        std::fs::create_dir_all(&a).expect("mkdir");
+        std::fs::write(a.join("one.txt"), b"hello").expect("write");
+        std::fs::write(a.join("two.txt"), b"world!").expect("write");
+        let missing = dir.path().join("gone");
+        let dest = dir.path().join("out");
+
+        let check = check_copy(&[a.clone(), missing.clone()], &dest);
+        assert_eq!(check.sources.len(), 2);
+        assert!(check.sources[0].exists && check.sources[0].is_dir);
+        assert_eq!(check.sources[0].files, 2);
+        assert_eq!(check.sources[0].bytes, 11);
+        assert!(!check.sources[1].exists);
+        assert_eq!(check.total_files, 2);
+        assert_eq!(check.total_bytes, 11);
+        assert!(!dest.exists(), "checking never creates the destination");
+    }
+
+    #[test]
+    fn check_copy_reports_what_plan_copy_would_refuse() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let a = dir.path().join("a");
+        std::fs::create_dir_all(&a).expect("mkdir");
+
+        let inside_itself = check_copy(std::slice::from_ref(&a), &a.join("sub"));
+        assert!(inside_itself.problem.is_some());
+        let nothing_chosen = check_copy(&[], &dir.path().join("out"));
+        assert!(nothing_chosen.problem.is_some());
+        let fine = check_copy(&[a], &dir.path().join("elsewhere"));
+        assert!(fine.problem.is_none());
     }
 }

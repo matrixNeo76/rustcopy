@@ -309,7 +309,7 @@ pub struct Args {
     /// Extra slack required on top of the prescan's byte total before the free-space check
     /// (above) passes — 5 means "require the total plus 5% more free". Has no effect with
     /// --skip-space-check.
-    #[arg(long, default_value_t = 5, value_name = "PERCENT")]
+    #[arg(long, default_value_t = crate::disk_space::DEFAULT_SAFETY_MARGIN_PERCENT, value_name = "PERCENT")]
     pub space_safety_margin_percent: u32,
 
     // ── F6.1: Windows Long Path support ─────────────────────────────────────

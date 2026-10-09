@@ -54,6 +54,23 @@ fn free_bytes(_path: &Path) -> std::io::Result<u64> {
     ))
 }
 
+/// The slack the CLI requires on top of the bytes to copy when `--space-safety-margin-percent` is not
+/// given. One definition, shared by the CLI's flag default and the console's "Controlla prima".
+pub const DEFAULT_SAFETY_MARGIN_PERCENT: u32 = 5;
+
+/// Free bytes on the volume that holds `dest` (or its nearest existing ancestor), when that can be
+/// known: `None` for a share that will not answer, a missing ancestor, or a non-Windows host.
+pub fn available_bytes(dest: &Path) -> Option<u64> {
+    let existing = nearest_existing_ancestor(dest)?;
+    free_bytes(&existing).ok()
+}
+
+/// Whether `available` covers `needed_bytes` plus the margin -- the same rule
+/// [`ensure_enough_free_space`] applies, so a preview and the real preflight cannot disagree.
+pub fn covers(available: u64, needed_bytes: u64, safety_margin_percent: u32) -> bool {
+    available >= required_bytes(needed_bytes, safety_margin_percent)
+}
+
 /// `Err(IngestError::InsufficientDiskSpace)` when `dest` (or its nearest existing ancestor) has
 /// less free space than `needed_bytes` plus `safety_margin_percent`'s worth of slack —
 /// `Ok(())` otherwise, including whenever free space could not be determined at all (an unusual
@@ -72,7 +89,7 @@ pub fn ensure_enough_free_space(
         return Ok(());
     };
     let required = required_bytes(needed_bytes, safety_margin_percent);
-    if available < required {
+    if !covers(available, needed_bytes, safety_margin_percent) {
         return Err(IngestError::InsufficientDiskSpace {
             needed: required,
             available,

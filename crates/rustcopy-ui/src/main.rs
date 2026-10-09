@@ -9,6 +9,7 @@
 //! can be repeated or saved as a task.
 #![cfg_attr(windows, windows_subsystem = "windows")]
 
+mod check;
 mod form;
 mod format;
 mod report_rows;
@@ -65,6 +66,8 @@ struct Ctx {
     details: Generation,
     /// Discards a slow scheduled-task lookup if the list was rebuilt meanwhile.
     schedules: Generation,
+    /// Discards a "Controlla prima" answer once the folders or the destination have changed.
+    checks: Generation,
     /// Recent throughput samples for the speed chart (MB/s), newest last.
     speeds: RefCell<Vec<f64>>,
     /// The configuration being edited, if the editor is open.
@@ -84,6 +87,8 @@ fn set_sources(ui: &AppWindow, sources: &[String]) {
         .map(|s| SharedString::from(s.as_str()))
         .collect();
     ui.set_sources(ModelRc::new(VecModel::from(model)));
+    // What was checked no longer describes this list.
+    ui.invoke_clear_check();
 }
 
 /// Adds a folder to the list unless it is already there (case-insensitive, as Windows paths are).
@@ -661,6 +666,7 @@ fn main() -> Result<(), slint::PlatformError> {
         sessions: RefCell::new(Vec::new()),
         details: Generation::default(),
         schedules: Generation::default(),
+        checks: Generation::default(),
         speeds: RefCell::new(Vec::new()),
         edit: RefCell::new(None),
     });
@@ -1038,6 +1044,50 @@ fn main() -> Result<(), slint::PlatformError> {
         });
     }
 
+    // "Controlla prima" (C03): counts only on press, off the window's thread; an answer for folders or
+    // a destination that have changed meanwhile is discarded.
+    {
+        let weak = ui.as_weak();
+        let ctx = ctx.clone();
+        let sources = sources.clone();
+        ui.on_check_copy(move || {
+            let Some(ui) = weak.upgrade() else { return };
+            let chosen: Vec<PathBuf> = sources
+                .lock()
+                .unwrap_or_else(|p| p.into_inner())
+                .iter()
+                .map(PathBuf::from)
+                .collect();
+            let dest = PathBuf::from(ui.get_dest().trim());
+            let ticket = ctx.checks.next();
+            let generation = ctx.checks.clone();
+            ui.set_check_text("".into());
+            ui.set_checking(true);
+            let weak = ui.as_weak();
+            std::thread::spawn(move || {
+                let result = gui_api::check_copy(&chosen, &dest);
+                let (text, tone) = check::describe(&result);
+                let _ = weak.upgrade_in_event_loop(move |ui| {
+                    if generation.is_current(ticket) {
+                        ui.set_check_text(text.into());
+                        ui.set_check_attention(tone == check::Tone::Attention);
+                        ui.set_checking(false);
+                    }
+                });
+            });
+        });
+    }
+    {
+        let weak = ui.as_weak();
+        let ctx = ctx.clone();
+        ui.on_clear_check(move || {
+            let Some(ui) = weak.upgrade() else { return };
+            ctx.checks.next();
+            ui.set_check_text("".into());
+            ui.set_checking(false);
+        });
+    }
+
     // New copy: add folders. The native dialog blocks, so it runs on a worker thread (RNF-07).
     {
         let weak: Weak<AppWindow> = ui.as_weak();
@@ -1082,6 +1132,7 @@ fn main() -> Result<(), slint::PlatformError> {
                     if let Some(path) = picked {
                         ui.set_dest(path.to_string_lossy().into_owned().into());
                         ui.set_error("".into());
+                        ui.invoke_clear_check();
                     }
                 });
             });

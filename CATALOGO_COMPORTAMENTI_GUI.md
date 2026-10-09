@@ -93,6 +93,8 @@ Le regole di sicurezza chiave (nessun comando che copi, cancelli, pianifichi o i
 
 | L22 | «Riprendi» compare solo nel dettaglio di una copia **interrotta** che ha lasciato un punto di ripresa nella propria cartella; il core rifiuta ogni punto di ripresa che non appartenga a quella copia e non offre più uno già portato a termine con esito pulito | Un percorso incollato altrove non deve poter avviare una run; riprendere un lavoro finito è solo una seconda run inutile | Core | `checkpoints_of` / `begin_resume` | 3 test + dal vivo |
 
+| L23 | Il risultato di «Controlla prima» **sparisce** appena cambiano le cartelle o la destinazione, e una risposta lenta arrivata dopo il cambio si scarta; lo spazio libero usa la stessa regola e lo stesso margine (5%) del controllo preliminare della CLI | Un esito vecchio accanto a una scelta nuova è peggio di nessun esito; due regole diverse per «basta» farebbero dire all'interfaccia una cosa e alla CLI un'altra | UI + Core | `gui_api::check_copy`, `disk_space::covers` | 6 test + dal vivo |
+
 ## 3. Copia, anteprima, Explorer
 
 | ID | Comportamento | Perché | Dove vive | Come si porta | Verifica |
@@ -155,7 +157,7 @@ Le regole di sicurezza chiave (nessun comando che copi, cancelli, pianifichi o i
 
 ## 7. Stato e conteggi
 
-Righe: 13 confini, 12 esecuzione, 22 lavori, 11 copia/Explorer, 12 editor, 7 aspetto, 10 build. **87** voci. Quelle marcate **Nuovo**
+Righe: 13 confini, 12 esecuzione, 23 lavori, 11 copia/Explorer, 12 editor, 7 aspetto, 10 build. **88** voci. Quelle marcate **Nuovo**
 (E09, E12, A04, A05, A06, A07, C10 in parte) sono i requisiti che nascono dalla specifica, non da un difetto passato.
 
 ## 8. Come si usa questo catalogo
@@ -175,5 +177,5 @@ Righe: 13 confini, 12 esecuzione, 22 lavori, 11 copia/Explorer, 12 editor, 7 asp
   difetti D1-D30 resta da fare quando si arriva alle schermate corrispondenti.
 - **C08 è un'ipotesi favorevole**: `PopupWindow` non sta nel layout, ma non ho provato un pannello Recenti reale.
 - **E09 e A04** sono funzioni che non esistono ancora; la verifica "dal vivo" dipende dal tray (non riuscito nella Fase 1).
-- **Il conteggio 87** è fatto a mano e può non riflettere righe aggiunte dopo.
+- **Il conteggio 88** è fatto a mano e può non riflettere righe aggiunte dopo.
 - **Revisione contro D1-D30 fatta (8 Ott 2026)**: dei difetti documentati, quelli che toccano la console sono D22, D24, D25, D26, D28, D29, D30; D24 (G06), D26 (J12), D30 (I03) e D25 (core, `--resume-from`) erano già coperti; D22 (I10) e D28 (C11) sono state aggiunte; D29 riguarda solo la DLL Shell, invariata. D1-D21, D23 e D27 vivono nel core o nella CLI e la nuova interfaccia li eredita senza codice proprio.
