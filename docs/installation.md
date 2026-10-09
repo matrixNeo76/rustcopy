@@ -81,28 +81,24 @@ rustcopy-7.8.1-setup.exe /VERYSILENT /SUPPRESSMSGBOXES /NORESTART /TASKS="addtop
 rustcopy-7.8.1-setup.exe /VERYSILENT /SUPPRESSMSGBOXES /NORESTART /TYPE=cli /TASKS="addtopath"
 ```
 
-#### WebView2
+#### Nessun runtime da installare prima
 
-La console rende l'interfaccia attraverso il runtime **WebView2** di sistema invece di
-impacchettare un motore browser — è il motivo per cui pesa 8,9 MB invece di ~150. Quel runtime
-è presente su Windows 11 e arriva alla maggior parte delle installazioni Windows 10 aggiornate,
-ma può mancare su immagini LTSC o offline. L'installer lo rileva e **avvisa** — solo se hai
-scelto la console — senza bloccare il setup e senza impacchettare un secondo installer. Senza WebView2 la CLI funziona comunque: è solo la finestra
-della console che non si aprirebbe.
-
-Il bundler di Tauri resta **disattivato** (`bundle.active: false`): produrrebbe un secondo
-MSI/NSIS per la sola console, cioè esattamente la separazione che questo installer evita.
+La console disegna da sé la propria interfaccia (Slint): un solo processo, nessun runtime web da
+avere sul computer e nessun Visual C++ (il runtime C è collegato staticamente in ogni binario).
+Parte anche su un Windows Server con Desktop Experience e su una sessione Remote Desktop senza
+scheda grafica. Nell'installer il file si chiama `rustcopy-ui.exe` quando si compila e viene
+installato come `rustcopy-gui.exe`, il nome che l'estensione Shell e il menu Start già cercano.
 
 #### Windows Server 2016/2019/2022
 
 Dal 21 Settembre 2026 (F90, `ROADMAP.md`) l'installer rileva l'ambiente Server e si comporta di
 conseguenza, sempre senza mai bloccare il setup:
 
-- **Server Core**: nessuna shell Explorer, quindi né la console (WebView2) né l'estensione Shell
+- **Server Core**: nessuna shell Explorer, quindi né la console né l'estensione Shell
   potrebbero mai funzionare — l'installer le nasconde del tutto dalla selezione componenti invece
   di offrirle inutilmente.
 - **Versione Windows/Server precedente a 10/2016**: il target Rust `windows-msvc` richiede almeno
-  quelle versioni — avviso, stesso trattamento già riservato a WebView2 (non blocca il setup).
+  quelle versioni — avviso che non blocca il setup.
 - **Estensione Shell su una SKU Server con Desktop Experience**: avviso aggiuntivo se selezionata,
   perché su un Remote Desktop Session Host (comune su Server 2016/2019/2022) carica nella sessione
   di ogni utente collegato, non di un singolo desktop personale.

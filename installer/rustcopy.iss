@@ -3,22 +3,23 @@
 ; Packages the CLI, the notify-server and — as an OPTIONAL component — the desktop console
 ; (F60). Build artifacts only, no source changes.
 ;
-; One installer, not two. Measured on 2 Set 2026: the console is 8.9 MB against a 13.7 MB CLI
-; install, because Tauri renders through the system WebView2 instead of shipping a browser
-; engine. Two separate installers would mean two version streams, two SmartScreen reputations to
-; build from zero, and two things to keep in sync — a poor trade for 8.9 MB. For the same reason
-; Tauri's own bundler stays off ("bundle.active": false in tauri.conf.json): it would produce a
-; second MSI/NSIS for the console alone, which is precisely the split this avoids.
+; One installer, not two: two separate installers would mean two version streams, two SmartScreen
+; reputations to build from zero, and two things to keep in sync.
+;
+; The console is the Slint one (crates/rustcopy-ui, GUI Slint plan phase 5c): one process, no web
+; runtime, nothing to install first. Its executable is built as rustcopy-ui.exe and INSTALLED as
+; rustcopy-gui.exe, the name the Shell extension (runner::gui_beside), the Start menu and the
+; scripts already look for -- renaming it at install time keeps all of them working untouched.
+; The previous Tauri console (crates/rustcopy-gui) is no longer packaged; its removal is a separate
+; step.
 ;
 ; Build:
-;   1. npm --prefix crates/rustcopy-gui/ui ci          (only when packaging the console)
-;   2. npm --prefix crates/rustcopy-gui/ui run build   (only when packaging the console)
-;   3. cargo build --release --workspace --features rustcopy-cli/notify-server
-;   4. "C:\Users\<you>\AppData\Local\Programs\Inno Setup 6\ISCC.exe" installer\rustcopy.iss
+;   1. cargo build --release -p rustcopy-cli -p rustcopy-shell -p rustcopy-ui --features rustcopy-cli/notify-server
+;   2. "C:\Users\<you>\AppData\Local\Programs\Inno Setup 6\ISCC.exe" installer\rustcopy.iss
 ;   Output: installer-output\rustcopy-<version>-setup.exe
 ;
 ; The VERSION #define below must match Cargo.toml's [workspace.package].version. That is no
-; longer left to memory: scripts/check-versions.sh fails CI when the four declarations
+; longer left to memory: scripts/check-versions.sh fails CI when the declarations
 ; (Cargo.toml, this file, tauri.conf.json, ui/package.json) disagree — version drift had bitten
 ; this repo before, and the previous wording of this comment admitted it without preventing it.
 
@@ -28,6 +29,8 @@
 #define MyAppURL "https://github.com/matrixNeo76/rustcopy"
 #define MyAppExeName "robocopy_ingest.exe"
 #define MyGuiExeName "rustcopy-gui.exe"
+; What cargo builds; installed under MyGuiExeName (see the header).
+#define MyGuiSourceName "rustcopy-ui.exe"
 #define MyNotifyExeName "notify-server.exe"
 #define MyShellDllName "rustcopy_shell.dll"
 
@@ -72,12 +75,12 @@ Name: "custom"; Description: "Scelta manuale"; Flags: iscustom
 ; installed next to it. The "gui\shell" nesting keeps that dependency visible in the wizard
 ; instead of relying on an operator to notice it; NextButtonClick below is the actual backstop.
 ; "Check" hides an entry from the wizard entirely rather than just leaving it unchecked -- on
-; Server Core there is no explorer.exe/desktop shell at all, so neither WebView2 (the console)
+; Server Core there is no explorer.exe/desktop shell at all, so neither the console
 ; nor a shell extension could ever run: offering them would just self-register a COM DLL nothing
 ; loads (F90, ROADMAP.md).
 [Components]
 Name: "cli"; Description: "CLI e notify-server"; Types: full cli custom; Flags: fixed
-Name: "gui"; Description: "Console grafica (richiede WebView2)"; Types: full; Check: not IsServerCore
+Name: "gui"; Description: "Console grafica"; Types: full; Check: not IsServerCore
 Name: "gui\shell"; Description: "Estensione Shell per Explorer (drag & drop, ""Copia con RustCopy"")"; Types: full; Check: not IsServerCore
 
 [Tasks]
@@ -86,9 +89,8 @@ Name: "addtopath"; Description: "Aggiungi rustcopy al PATH di sistema (consiglia
 [Files]
 Source: "..\target\release\{#MyAppExeName}"; DestDir: "{app}"; Components: cli; Flags: ignoreversion
 Source: "..\target\release\{#MyNotifyExeName}"; DestDir: "{app}"; Components: cli; Flags: ignoreversion skipifsourcedoesntexist
-; The console carries its frontend inside the executable (Tauri embeds ui/dist), so there is no
-; web asset directory to install beside it.
-Source: "..\target\release\{#MyGuiExeName}"; DestDir: "{app}"; Components: gui; Flags: ignoreversion
+; One self-contained executable (the interface is compiled in): no asset directory beside it.
+Source: "..\target\release\{#MyGuiSourceName}"; DestDir: "{app}"; DestName: "{#MyGuiExeName}"; Components: gui; Flags: ignoreversion
 ; No regserver flag (F92 / D30): with it, a DLL that cannot register -- e.g. a missing runtime -- made
 ; Setup roll the WHOLE install back and exit with code 5. Registration is done from [Code]
 ; (RegisterShellExtension, install-report.pas) where a failure is reported and the rest installs.
@@ -103,25 +105,13 @@ Name: "{group}\Disinstalla rustcopy"; Filename: "{uninstallexe}"
 
 [Code]
 const
-  WEBVIEW2_URL = 'https://developer.microsoft.com/microsoft-edge/webview2/';
-  // The Evergreen WebView2 Runtime registers itself under this fixed client id.
+  // Kept only because the install report (install-report.pas) still says whether the runtime is
+  // there: the console no longer needs it, and the line is informational.
   WEBVIEW2_CLIENT = '{F3017226-FE2A-4295-8BDF-00C3A9A7E4C5}';
 
-// The console renders through the system WebView2 Runtime rather than shipping a browser engine
-// — which is why it costs 8.9 MB instead of ~150 — so that runtime has to be present. It ships
-// with Windows 11 and reaches most updated Windows 10 machines through Windows Update, but LTSC
-// and offline images can lack it. Detected and never blocks setup: warn, do not bundle a second installer.
-// (There is no equivalent check for the Visual C++ Redistributable any more: from 7.7.0 every
-// binary links the C runtime statically -- .cargo/config.toml -- so it is not a requirement.)
-function IsWebView2Installed(): Boolean;
-var
-  version: string;
-begin
-  Result :=
-    (RegQueryStringValue(HKLM, 'SOFTWARE\WOW6432Node\Microsoft\EdgeUpdate\Clients\' + WEBVIEW2_CLIENT, 'pv', version) and (version <> '') and (version <> '0.0.0.0')) or
-    (RegQueryStringValue(HKLM, 'SOFTWARE\Microsoft\EdgeUpdate\Clients\' + WEBVIEW2_CLIENT, 'pv', version) and (version <> '') and (version <> '0.0.0.0')) or
-    (RegQueryStringValue(HKCU, 'SOFTWARE\Microsoft\EdgeUpdate\Clients\' + WEBVIEW2_CLIENT, 'pv', version) and (version <> '') and (version <> '0.0.0.0'));
-end;
+// (There is no check for the Visual C++ Redistributable or for WebView2 any more: from 7.7.0 every
+// binary links the C runtime statically -- .cargo/config.toml -- and the console draws itself,
+// so neither is a requirement.)
 
 // --- Server/Server Core detection (F90, ROADMAP.md) -------------------------------------------
 //
@@ -151,7 +141,7 @@ end;
 // official platform-support page), which docs/installation.md documents as the real requirement.
 // An older system would accept the install and only fail at first launch, with a cryptic "this app
 // can't run on your PC"-style error instead of a clear message here. Same warn-not-block treatment
-// as IsWebView2Installed: a hard MinVersion block is a bigger, separate decision, not made here.
+// as every other warning here: a hard MinVersion block is a bigger, separate decision, not made here.
 function IsOsVersionSupported(): Boolean;
 var
   Version: TWindowsVersion;
@@ -258,21 +248,10 @@ begin
         'installazione, in ' + ReportDirectory() + '.',
         mbInformation, MB_OK, IDOK);
 
-  // Checked here rather than in InitializeSetup because components are not chosen yet at that
-  // point: warning about WebView2 on a CLI-only install would be noise about a runtime nothing
-  // installed is going to use.
   // SuppressibleMsgBox (not MsgBox) on every warning from here down: /SUPPRESSMSGBOXES does NOT
   // suppress a script-authored MsgBox (only Setup's own built-in prompts) -- verified against
   // Inno Setup's own docs, found by CodeRabbit reviewing this PR. Without this, an unattended
   // /VERYSILENT /SUPPRESSMSGBOXES install would hang waiting for a click nobody is there to give.
-  if WizardIsComponentSelected('gui') and not IsWebView2Installed() then
-    SuppressibleMsgBox(
-      'La console grafica richiede il runtime WebView2 (Microsoft), non rilevato su questo ' +
-      'sistema.' + #13#10 + #13#10 +
-      'La CLI funziona comunque: e'' solo la finestra della console che non si aprirebbe. ' +
-      'Scarica il runtime da:' + #13#10 +
-      WEBVIEW2_URL,
-      mbInformation, MB_OK, IDOK);
 
   // F90 (ROADMAP.md): Windows Server 2016/2019/2022 with Desktop Experience can run the shell
   // extension, unlike Server Core (already excluded from selection above) -- but on a Remote
@@ -304,8 +283,8 @@ begin
   ReportStart();
 
   // F90 (ROADMAP.md): Rust's Windows target needs Windows 10 / Server 2016 or later (already
-  // documented in docs/installation.md, never enforced before this). Checked here, unlike the
-  // WebView2 warning, because it applies to every component -- components are not chosen yet at
+  // documented in docs/installation.md, never enforced before this). Checked here, rather than
+  // after the components are chosen, because it applies to every component -- components are not chosen yet at
   // InitializeSetup, but this warning does not depend on them.
   if not IsOsVersionSupported() then
     SuppressibleMsgBox(

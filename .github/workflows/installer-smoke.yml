@@ -23,7 +23,7 @@ on:
       - ".github/workflows/installer-smoke.yml"
       - ".cargo/**"
       - "Cargo.toml"
-      - "crates/rustcopy-gui/**"
+      - "crates/rustcopy-ui/**"
       # A lockfile-only change can still change what the binaries link: tauri-build 2.7 turned on
       # `staticVCRuntime` by default and the console quietly started importing the dynamic UCRT
       # (found by this very job, on a Dependabot lockfile bump that touched no installer file).
@@ -56,24 +56,12 @@ jobs:
       - name: Cache cargo registry and build artifacts
         uses: Swatinem/rust-cache@v2
 
-      - uses: actions/setup-node@v7
-        with:
-          node-version: "22"
-          cache: npm
-          cache-dependency-path: crates/rustcopy-gui/ui/package-lock.json
-
-      - name: Build the console frontend
-        working-directory: crates/rustcopy-gui/ui
-        run: |
-          npm ci
-          npm run build
-
       - name: Build the release binaries
-        run: cargo build --release --locked -p rustcopy-cli -p rustcopy-shell -p rustcopy-gui
+        run: cargo build --release --locked -p rustcopy-cli -p rustcopy-shell -p rustcopy-ui
 
       - name: Static C runtime on all three binaries
         shell: powershell
-        run: ./scripts/check-static-crt.ps1 -Path target/release/robocopy_ingest.exe, target/release/rustcopy_shell.dll, target/release/rustcopy-gui.exe
+        run: ./scripts/check-static-crt.ps1 -Path target/release/robocopy_ingest.exe, target/release/rustcopy_shell.dll, target/release/rustcopy-ui.exe
 
       - name: Install Inno Setup if the image lacks it
         shell: powershell

@@ -130,7 +130,7 @@ Capture 'vcuninstall' {
 }
 
 # --- 3. WebView2 ---------------------------------------------------------------------------------
-Section 'WebView2 (richiesto solo dalla console grafica)'
+Section 'WebView2 (informativo: la console non lo richiede più)'
 Capture 'webview2' {
   $client = '{F3017226-FE2A-4295-8BDF-00C3A9A7E4C5}'
   foreach ($k in "HKLM:\SOFTWARE\WOW6432Node\Microsoft\EdgeUpdate\Clients\$client",
