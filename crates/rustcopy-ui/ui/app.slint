@@ -7,10 +7,10 @@ import { Button, LineEdit, ProgressIndicator, ListView, Palette, CheckBox, Combo
 import { Theme } from "theme.slint";
 import { Strings } from "strings.slint";
 import { Badge, BadgeKind, StatCard, Banner, SectionLabel, SpeedChart } from "components.slint";
-import { SessionRow, SessionItem, SessionUi, TaskRow, TaskItem, PropRow } from "sessions.slint";
+import { SessionRow, SessionItem, SessionUi, TaskRow, TaskItem, PropRow, HistRow, AdviceRow } from "sessions.slint";
 import { EditForm, TextField, ToggleField, TabPage } from "editor.slint";
 
-export { SessionRow, TaskRow, PropRow, EditForm }
+export { SessionRow, TaskRow, PropRow, EditForm, HistRow, AdviceRow }
 
 export component AppTray inherits SystemTrayIcon {
     icon: @image-url("icon.png");
@@ -45,7 +45,7 @@ export component AppWindow inherits Window {
     min-height: 500px;
     background: Palette.background;
 
-    // 0 = new copy, 1 = detail of the selected lavoro, 2 = saved tasks, 3 = properties of a task, 4 = editor
+    // 0 = new copy, 1 = detail of the selected lavoro, 2 = saved tasks, 3 = properties of a task, 4 = editor, 5 = history of a task
     in-out property <int> page: 0;
     // Text the Rust side shows when a second launch asks for something the first window refuses.
     out property <string> refused-request-text: Strings.request-refused;
@@ -62,6 +62,10 @@ export component AppWindow inherits Window {
     in property <[SessionRow]> sessions;
     in property <[TaskRow]> tasks;
     in property <[PropRow]> props;
+    in property <[HistRow]> hist-runs;
+    in property <[AdviceRow]> hist-advice;
+    in property <string> hist-name;
+    in property <bool> hist-skipped;
     // Editor
     in-out property <EditForm> form;
     in property <[string]> edit-jobs;
@@ -117,6 +121,7 @@ export component AppWindow inherits Window {
     callback run-task(string);
     callback show-task-props(string);
     callback edit-task(string);
+    callback show-history(string);
     callback edit-select-job(int);
     callback edit-save();
     callback run-config-file();
@@ -395,6 +400,9 @@ export component AppWindow inherits Window {
                         edit => {
                             root.edit-task(task.path);
                         }
+                        history => {
+                            root.show-history(task.path);
+                        }
                     }
                 }
                 if root.tasks.length == 0: Text {
@@ -421,6 +429,136 @@ export component AppWindow inherits Window {
                     clicked => {
                         root.run-config-file();
                     }
+                }
+            }
+        }
+
+        if root.page == 5: VerticalLayout {
+            padding: Theme.page-padding;
+            spacing: Theme.gap;
+            HorizontalLayout {
+                spacing: 10px;
+                alignment: start;
+                Button {
+                    text: Strings.props-back;
+                    clicked => {
+                        root.show-tasks();
+                    }
+                }
+                Text {
+                    text: @tr("{}: {}", Strings.hist-title, root.hist-name);
+                    font-size: Theme.title;
+                    font-weight: 700;
+                    color: Theme.text;
+                    vertical-alignment: center;
+                    overflow: elide;
+                }
+            }
+            Text {
+                text: Strings.hist-hint;
+                wrap: word-wrap;
+                font-size: Theme.small;
+                color: Theme.text-muted;
+            }
+            if root.hist-skipped: Banner {
+                text: Strings.hist-skipped;
+                label-prefix: Strings.warning-prefix;
+                kind: BadgeKind.info;
+            }
+            if root.error != "": Banner {
+                text: root.error;
+                label-prefix: Strings.warning-prefix;
+                kind: BadgeKind.warning;
+            }
+            SectionLabel {
+                text: Strings.hist-advice;
+            }
+            Rectangle {
+                height: root.hist-advice.length == 0 ? 36px : min(root.hist-advice.length * 56px, 170px);
+                clip: true;
+                ListView {
+                    for a in root.hist-advice: Rectangle {
+                        height: 56px;
+                        VerticalLayout {
+                            padding-top: 4px;
+                            spacing: 2px;
+                            HorizontalLayout {
+                                spacing: 8px;
+                                alignment: start;
+                                Badge {
+                                    text: a.severity == 2 ? Strings.state-look : (a.severity == 1 ? "→" : "i");
+                                    kind: a.severity == 2 ? BadgeKind.warning : (a.severity == 1 ? BadgeKind.info : BadgeKind.neutral);
+                                }
+                                Text {
+                                    text: a.headline;
+                                    overflow: elide;
+                                    font-size: Theme.body;
+                                    font-weight: 700;
+                                    color: Theme.text;
+                                    vertical-alignment: center;
+                                }
+                            }
+                            Text {
+                                text: a.evidence;
+                                overflow: elide;
+                                font-size: Theme.small;
+                                color: Theme.text-muted;
+                            }
+                        }
+                    }
+                }
+                if root.hist-advice.length == 0: Text {
+                    text: Strings.hist-no-advice;
+                    x: 6px;
+                    y: 6px;
+                    font-size: Theme.small;
+                    color: Theme.text-faint;
+                }
+            }
+            SectionLabel {
+                text: Strings.hist-runs;
+            }
+            Rectangle {
+                vertical-stretch: 1;
+                min-height: 160px;
+                clip: true;
+                ListView {
+                    for r in root.hist-runs: Rectangle {
+                        height: 54px;
+                        VerticalLayout {
+                            padding-top: 4px;
+                            spacing: 2px;
+                            HorizontalLayout {
+                                spacing: 8px;
+                                Text {
+                                    text: root.hist-runs.length > 0 && r.job != "" ? @tr("{}  ·  {}", r.when, r.job) : r.when;
+                                    horizontal-stretch: 1;
+                                    overflow: elide;
+                                    font-size: Theme.body;
+                                    color: Theme.text;
+                                    vertical-alignment: center;
+                                }
+                                Badge {
+                                    text: r.outcome == 0 ? Strings.hist-ok : (r.outcome == 1 ? Strings.hist-dry : Strings.state-look);
+                                    kind: r.outcome == 0 ? BadgeKind.ok : (r.outcome == 1 ? BadgeKind.info : BadgeKind.warning);
+                                    horizontal-stretch: 0;
+                                }
+                            }
+                            Text {
+                                text: @tr("{} file  ·  {}  ·  {}  ·  {}", r.files, r.size, r.speed, r.meaning);
+                                overflow: elide;
+                                font-size: Theme.small;
+                                color: Theme.text-muted;
+                            }
+                        }
+                    }
+                }
+                if root.hist-runs.length == 0: Text {
+                    text: Strings.hist-empty;
+                    x: 6px;
+                    y: 8px;
+                    font-size: Theme.body;
+                    color: Theme.text-faint;
                 }
             }
         }

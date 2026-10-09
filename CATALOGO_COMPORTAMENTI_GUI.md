@@ -84,6 +84,8 @@ Le regole di sicurezza chiave (nessun comando che copi, cancelli, pianifichi o i
 | L16 | La cifratura scritta a mano (`env:`, `file:`, letterale) è mostrata **sola lettura** e portata invariata; il modulo scrive solo `keyring:NOME` | Un segreto non passa dal modulo (G13, F80) | UI | `encrypt_other` | Test del modulo |
 | L17 | La proposta si scrive **accanto** al file (`create_new`, mai sopra); i campi che il modulo non possiede (pre/post, webhook, spazio libero) restano come nel file | Una sostituzione la fa la persona (F54) | Core | `suggest_proposal_path_now` | Dal vivo: originale intatto, `pre_command` conservato |
 
+| L18 | Lo storico di un'attività si legge dall'indice che sta **accanto al report di ogni job**; il nome del job è `history_job_name` (non `name`: il job singolo non ha suffisso); le osservazioni sono di `gui_api::read_advice` e **propongono, non cambiano nulla**; le righe illeggibili sono dichiarate | Altrimenti si cerca l'indice sbagliato e si mostra «nessuna run» (F86); l'analisi non è giudizio del frontend | Core + UI | `history_rows` | Dal vivo con 8 run |
+
 ## 3. Copia, anteprima, Explorer
 
 | ID | Comportamento | Perché | Dove vive | Come si porta | Verifica |
@@ -146,7 +148,7 @@ Le regole di sicurezza chiave (nessun comando che copi, cancelli, pianifichi o i
 
 ## 7. Stato e conteggi
 
-Righe: 13 confini, 12 esecuzione, 17 lavori, 11 copia/Explorer, 12 editor, 7 aspetto, 10 build. **82** voci. Quelle marcate **Nuovo**
+Righe: 13 confini, 12 esecuzione, 18 lavori, 11 copia/Explorer, 12 editor, 7 aspetto, 10 build. **83** voci. Quelle marcate **Nuovo**
 (E09, E12, A04, A05, A06, A07, C10 in parte) sono i requisiti che nascono dalla specifica, non da un difetto passato.
 
 ## 8. Come si usa questo catalogo
@@ -166,5 +168,5 @@ Righe: 13 confini, 12 esecuzione, 17 lavori, 11 copia/Explorer, 12 editor, 7 asp
   difetti D1-D30 resta da fare quando si arriva alle schermate corrispondenti.
 - **C08 è un'ipotesi favorevole**: `PopupWindow` non sta nel layout, ma non ho provato un pannello Recenti reale.
 - **E09 e A04** sono funzioni che non esistono ancora; la verifica "dal vivo" dipende dal tray (non riuscito nella Fase 1).
-- **Il conteggio 82** è fatto a mano e può non riflettere righe aggiunte dopo.
+- **Il conteggio 83** è fatto a mano e può non riflettere righe aggiunte dopo.
 - **Revisione contro D1-D30 fatta (8 Ott 2026)**: dei difetti documentati, quelli che toccano la console sono D22, D24, D25, D26, D28, D29, D30; D24 (G06), D26 (J12), D30 (I03) e D25 (core, `--resume-from`) erano già coperti; D22 (I10) e D28 (C11) sono state aggiunte; D29 riguarda solo la DLL Shell, invariata. D1-D21, D23 e D27 vivono nel core o nella CLI e la nuova interfaccia li eredita senza codice proprio.

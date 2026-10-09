@@ -40,7 +40,7 @@ use crate::state::{running_fraction, Generation, RunSlot, Running};
 mod generated {
     slint::include_modules!();
 }
-use generated::{AppTray, AppWindow, EditForm, PropRow, SessionRow, TaskRow};
+use generated::{AdviceRow, AppTray, AppWindow, EditForm, HistRow, PropRow, SessionRow, TaskRow};
 
 /// Names the mutex and the pipe of the single window (E12).
 const INSTANCE_TAG: &str = "rustcopy-ui";
@@ -281,6 +281,82 @@ fn load_editor_form(ui: &AppWindow, state: &EditState) {
     ui.set_edit_message("".into());
     ui.set_edit_ok(false);
     ui.set_edit_job_index(i32::try_from(state.index).unwrap_or(0));
+}
+
+/// Number of past runs read for the history page.
+const HISTORY_LIMIT: usize = 200;
+
+/// Past runs and the advisor's observations for a configuration, read from the run index that sits
+/// beside each job's report. Whether a run was clean, and what the advisor concludes, are the core's
+/// (`runner::exit_code_meaning`, `gui_api::read_advice`); the process exit code 0 is the CLI's own
+/// contract for success (AGENTS.md rule 12), not robocopy's bitmask.
+fn history_rows(config: &Path) -> Result<(Vec<HistRow>, Vec<AdviceRow>, bool), String> {
+    use robocopy_ingest::advise::Severity;
+    let jobs = gui_api::list_jobs(config).map_err(|e| e.to_string())?;
+    let many = jobs.len() > 1;
+    let mut runs: Vec<(chrono::DateTime<chrono::Utc>, HistRow)> = Vec::new();
+    let mut advice: Vec<AdviceRow> = Vec::new();
+    let mut skipped = false;
+    for job in &jobs {
+        let Some(report) = job.report_path.as_deref() else {
+            continue;
+        };
+        let report = Path::new(report);
+        let job_name = job.history_job_name.as_deref();
+        let view =
+            gui_api::read_history(report, job_name, HISTORY_LIMIT).map_err(|e| e.to_string())?;
+        skipped |= view.skipped_lines > 0;
+        for run in view.runs {
+            let outcome = if run.dry_run {
+                1
+            } else if run.exit_code == 0 {
+                0
+            } else {
+                2
+            };
+            runs.push((
+                run.timestamp,
+                HistRow {
+                    job: if many {
+                        job.name.as_str().into()
+                    } else {
+                        "".into()
+                    },
+                    when: format::when_text(run.timestamp).into(),
+                    files: run.files_copied.to_string().into(),
+                    size: format::human_bytes(run.bytes_copied).into(),
+                    speed: format::human_speed(run.throughput_mbps).into(),
+                    meaning: runner::exit_code_meaning(run.exit_code).into(),
+                    outcome,
+                },
+            ));
+        }
+        if let Ok(found) = gui_api::read_advice(report, job_name) {
+            for item in found {
+                let prefix = if many {
+                    format!("{}: ", job.name)
+                } else {
+                    String::new()
+                };
+                advice.push(AdviceRow {
+                    severity: match item.severity {
+                        Severity::Info => 0,
+                        Severity::Suggestion => 1,
+                        Severity::Warning => 2,
+                    },
+                    headline: format!("{prefix}{}", item.headline).into(),
+                    evidence: item.evidence.join("  ·  ").into(),
+                });
+            }
+        }
+    }
+    runs.sort_by_key(|run| std::cmp::Reverse(run.0));
+    advice.sort_by_key(|a| std::cmp::Reverse(a.severity));
+    Ok((
+        runs.into_iter().map(|(_, row)| row).collect(),
+        advice,
+        skipped,
+    ))
 }
 
 /// Runs a saved task (or any configuration file) in place, as a lavoro of the list.
@@ -747,6 +823,35 @@ fn main() -> Result<(), slint::PlatformError> {
                     ui.set_edit_message(message.into());
                 }
             }
+        });
+    }
+
+    {
+        let weak = ui.as_weak();
+        ui.on_show_history(move |path| {
+            let Some(ui) = weak.upgrade() else { return };
+            let config = PathBuf::from(path.as_str());
+            ui.set_hist_name(
+                config
+                    .file_stem()
+                    .map(|n| n.to_string_lossy().into_owned())
+                    .unwrap_or_default()
+                    .into(),
+            );
+            match history_rows(&config) {
+                Ok((runs, advice, skipped)) => {
+                    ui.set_error("".into());
+                    ui.set_hist_skipped(skipped);
+                    ui.set_hist_runs(ModelRc::new(VecModel::from(runs)));
+                    ui.set_hist_advice(ModelRc::new(VecModel::from(advice)));
+                }
+                Err(message) => {
+                    ui.set_hist_runs(ModelRc::new(VecModel::from(Vec::<HistRow>::new())));
+                    ui.set_hist_advice(ModelRc::new(VecModel::from(Vec::<AdviceRow>::new())));
+                    ui.set_error(message.into());
+                }
+            }
+            ui.set_page(5);
         });
     }
 
