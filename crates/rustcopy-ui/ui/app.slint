@@ -3,13 +3,14 @@
 //
 // One entity, the "lavoro" (SPEC §5.0): the sidebar lists every copy started from here with how it
 // went; "Nuova copia" is the quick way in, a row opens the detail of one copy.
-import { Button, LineEdit, ProgressIndicator, ListView, Palette, CheckBox, ComboBox } from "std-widgets.slint";
+import { Button, LineEdit, ProgressIndicator, ListView, Palette, CheckBox, ComboBox, TabWidget, TextEdit } from "std-widgets.slint";
 import { Theme } from "theme.slint";
 import { Strings } from "strings.slint";
 import { Badge, BadgeKind, StatCard, Banner, SectionLabel, SpeedChart } from "components.slint";
 import { SessionRow, SessionItem, SessionUi, TaskRow, TaskItem, PropRow } from "sessions.slint";
+import { EditForm, TextField, ToggleField, TabPage } from "editor.slint";
 
-export { SessionRow, TaskRow, PropRow }
+export { SessionRow, TaskRow, PropRow, EditForm }
 
 export component AppTray inherits SystemTrayIcon {
     icon: @image-url("icon.png");
@@ -44,7 +45,7 @@ export component AppWindow inherits Window {
     min-height: 500px;
     background: Palette.background;
 
-    // 0 = new copy, 1 = detail of the selected lavoro, 2 = saved tasks, 3 = properties of a task
+    // 0 = new copy, 1 = detail of the selected lavoro, 2 = saved tasks, 3 = properties of a task, 4 = editor
     in-out property <int> page: 0;
     // Text the Rust side shows when a second launch asks for something the first window refuses.
     out property <string> refused-request-text: Strings.request-refused;
@@ -61,6 +62,15 @@ export component AppWindow inherits Window {
     in property <[SessionRow]> sessions;
     in property <[TaskRow]> tasks;
     in property <[PropRow]> props;
+    // Editor
+    in-out property <EditForm> form;
+    in property <[string]> edit-jobs;
+    in-out property <int> edit-job-index: 0;
+    in property <string> edit-title;
+    in property <string> edit-message;
+    in property <bool> edit-ok;
+    in property <bool> mirror-was-on;
+    in property <bool> retention-was-set;
     in property <string> props-title;
     in-out property <string> selected-id;
 
@@ -106,6 +116,9 @@ export component AppWindow inherits Window {
     callback show-tasks();
     callback run-task(string);
     callback show-task-props(string);
+    callback edit-task(string);
+    callback edit-select-job(int);
+    callback edit-save();
     callback run-config-file();
     callback select-session(string);
     callback repeat-session(string);
@@ -379,6 +392,9 @@ export component AppWindow inherits Window {
                         details => {
                             root.show-task-props(task.path);
                         }
+                        edit => {
+                            root.edit-task(task.path);
+                        }
                     }
                 }
                 if root.tasks.length == 0: Text {
@@ -404,6 +420,297 @@ export component AppWindow inherits Window {
                     enabled: !root.running;
                     clicked => {
                         root.run-config-file();
+                    }
+                }
+            }
+        }
+
+        if root.page == 4: VerticalLayout {
+            padding: Theme.page-padding;
+            spacing: Theme.gap;
+            HorizontalLayout {
+                spacing: 10px;
+                alignment: start;
+                Button {
+                    text: Strings.ed-back;
+                    clicked => {
+                        root.show-tasks();
+                    }
+                }
+                Text {
+                    text: root.edit-title;
+                    font-size: Theme.title;
+                    font-weight: 700;
+                    color: Theme.text;
+                    vertical-alignment: center;
+                    overflow: elide;
+                }
+            }
+            Text {
+                text: Strings.ed-intro;
+                wrap: word-wrap;
+                font-size: Theme.small;
+                color: Theme.text-muted;
+            }
+            if root.edit-jobs.length > 1: HorizontalLayout {
+                spacing: 10px;
+                alignment: start;
+                Text {
+                    text: Strings.ed-job;
+                    vertical-alignment: center;
+                    font-size: Theme.body;
+                    color: Theme.text;
+                }
+                ComboBox {
+                    model: root.edit-jobs;
+                    current-index: root.edit-job-index;
+                    selected(value) => {
+                        root.edit-select-job(self.current-index);
+                    }
+                    accessible-label: Strings.ed-job;
+                }
+            }
+            TabWidget {
+                vertical-stretch: 1;
+                min-height: 260px;
+                Tab {
+                    title: Strings.tab-base;
+                    TabPage {
+                        TextField {
+                            label: Strings.f-name;
+                            hint: Strings.f-name-hint;
+                            value: root.form.name;
+                            enabled: false;
+                        }
+                        TextField {
+                            label: Strings.f-source;
+                            value <=> root.form.source;
+                        }
+                        TextField {
+                            label: Strings.f-dest;
+                            value <=> root.form.dest;
+                        }
+                        TextField {
+                            label: Strings.f-pattern;
+                            hint: Strings.f-pattern-hint;
+                            value <=> root.form.pattern;
+                        }
+                        VerticalLayout {
+                            spacing: 2px;
+                            Text {
+                                text: Strings.f-backup-type;
+                                font-size: Theme.small;
+                                font-weight: 700;
+                                color: Theme.text-faint;
+                            }
+                            ComboBox {
+                                model: [Strings.bt-plain, Strings.bt-full, Strings.bt-incremental, Strings.bt-differential];
+                                current-index: root.form.backup-type;
+                                enabled: !root.form.mirror;
+                                selected(value) => {
+                                    root.form.backup-type = self.current-index;
+                                }
+                                accessible-label: Strings.f-backup-type;
+                                accessible-description: Strings.f-backup-hint;
+                            }
+                            Text {
+                                text: Strings.f-backup-hint;
+                                wrap: word-wrap;
+                                font-size: Theme.small;
+                                color: Theme.text-muted;
+                            }
+                        }
+                        ToggleField {
+                            label: Strings.f-verify;
+                            hint: Strings.f-verify-hint;
+                            value <=> root.form.verify-integrity;
+                        }
+                        if root.form.verify-integrity: VerticalLayout {
+                            spacing: 2px;
+                            Text {
+                                text: Strings.f-algo;
+                                font-size: Theme.small;
+                                font-weight: 700;
+                                color: Theme.text-faint;
+                            }
+                            ComboBox {
+                                model: [Strings.algo-default, Strings.algo-sha256, Strings.algo-blake3, Strings.algo-xxh3];
+                                current-index: root.form.hash-algo;
+                                selected(value) => {
+                                    root.form.hash-algo = self.current-index;
+                                }
+                                accessible-label: Strings.f-algo;
+                            }
+                        }
+                        ToggleField {
+                            label: Strings.f-dryrun;
+                            hint: Strings.f-dryrun-hint;
+                            value <=> root.form.dry-run;
+                        }
+                    }
+                }
+                Tab {
+                    title: Strings.tab-copy;
+                    TabPage {
+                        TextField {
+                            label: Strings.f-threads;
+                            hint: Strings.f-threads-hint;
+                            value <=> root.form.threads;
+                        }
+                        TextField {
+                            label: Strings.f-retries;
+                            value <=> root.form.retries;
+                        }
+                        TextField {
+                            label: Strings.f-retry-wait;
+                            value <=> root.form.retry-wait-seconds;
+                        }
+                        TextField {
+                            label: Strings.f-bandwidth;
+                            hint: Strings.f-bandwidth-hint;
+                            value <=> root.form.bandwidth-limit-mbps;
+                        }
+                        ToggleField {
+                            label: Strings.f-longpaths;
+                            hint: Strings.f-longpaths-hint;
+                            value <=> root.form.long-paths;
+                        }
+                        ToggleField {
+                            label: Strings.f-timestamps;
+                            value <=> root.form.preserve-timestamps;
+                        }
+                        ToggleField {
+                            label: Strings.f-acl;
+                            value <=> root.form.preserve-acl;
+                        }
+                        ToggleField {
+                            label: Strings.f-junctions;
+                            hint: Strings.f-junctions-hint;
+                            value <=> root.form.exclude-junctions;
+                        }
+                    }
+                }
+                Tab {
+                    title: Strings.tab-filters;
+                    TabPage {
+                        VerticalLayout {
+                            spacing: 2px;
+                            Text {
+                                text: Strings.f-exclude-files;
+                                font-size: Theme.small;
+                                font-weight: 700;
+                                color: Theme.text-faint;
+                            }
+                            TextEdit {
+                                text <=> root.form.exclude-files;
+                                min-height: 90px;
+                                accessible-label: Strings.f-exclude-files;
+                            }
+                        }
+                        VerticalLayout {
+                            spacing: 2px;
+                            Text {
+                                text: Strings.f-exclude-dirs;
+                                font-size: Theme.small;
+                                font-weight: 700;
+                                color: Theme.text-faint;
+                            }
+                            TextEdit {
+                                text <=> root.form.exclude-dirs;
+                                min-height: 90px;
+                                accessible-label: Strings.f-exclude-dirs;
+                            }
+                        }
+                        TextField {
+                            label: Strings.f-min-age;
+                            hint: Strings.f-min-age-hint;
+                            value <=> root.form.min-age-days;
+                        }
+                        TextField {
+                            label: Strings.f-max-age;
+                            hint: Strings.f-max-age-hint;
+                            value <=> root.form.max-age-days;
+                        }
+                    }
+                }
+                Tab {
+                    title: Strings.tab-keep;
+                    TabPage {
+                        TextField {
+                            label: Strings.f-keep;
+                            hint: root.retention-was-set ? Strings.f-keep-hint-set : Strings.f-keep-hint-unset;
+                            enabled: root.retention-was-set;
+                            value <=> root.form.keep-generations;
+                        }
+                    }
+                }
+                Tab {
+                    title: Strings.tab-safety;
+                    TabPage {
+                        ToggleField {
+                            label: Strings.f-mirror;
+                            hint: root.mirror-was-on ? Strings.f-mirror-hint-on : Strings.f-mirror-hint-off;
+                            enabled: root.mirror-was-on;
+                            value <=> root.form.mirror;
+                        }
+                        TextField {
+                            label: Strings.f-encrypt;
+                            hint: root.form.encrypt-other ? Strings.f-encrypt-other : Strings.f-encrypt-hint;
+                            enabled: !root.form.encrypt-other;
+                            value <=> root.form.encrypt-keyring;
+                        }
+                        ToggleField {
+                            label: Strings.f-fast-verify;
+                            hint: Strings.f-fast-verify-hint;
+                            value <=> root.form.fast-verify;
+                        }
+                        ToggleField {
+                            label: Strings.f-transient;
+                            hint: Strings.f-transient-hint;
+                            value <=> root.form.ignore-transient-missing;
+                        }
+                        ToggleField {
+                            label: Strings.f-baseline;
+                            hint: Strings.f-baseline-hint;
+                            value <=> root.form.compare-baseline;
+                        }
+                    }
+                }
+                Tab {
+                    title: Strings.tab-advanced;
+                    TabPage {
+                        ToggleField {
+                            label: Strings.f-noprescan;
+                            hint: Strings.f-noprescan-hint;
+                            value <=> root.form.no-prescan;
+                        }
+                        TextField {
+                            label: Strings.f-report;
+                            value <=> root.form.report-path;
+                        }
+                        TextField {
+                            label: Strings.f-log;
+                            value <=> root.form.log-path;
+                        }
+                        TextField {
+                            label: Strings.f-html;
+                            value <=> root.form.html-report-path;
+                        }
+                    }
+                }
+            }
+            if root.edit-message != "": Banner {
+                text: root.edit-ok ? @tr("Proposta salvata in {}", root.edit-message) : root.edit-message;
+                label-prefix: Strings.warning-prefix;
+                kind: root.edit-ok ? BadgeKind.ok : BadgeKind.warning;
+            }
+            HorizontalLayout {
+                alignment: start;
+                Button {
+                    text: Strings.ed-save;
+                    primary: true;
+                    clicked => {
+                        root.edit-save();
                     }
                 }
             }

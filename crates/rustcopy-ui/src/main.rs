@@ -9,6 +9,7 @@
 //! can be repeated or saved as a task.
 #![cfg_attr(windows, windows_subsystem = "windows")]
 
+mod form;
 mod format;
 mod run;
 mod single_instance;
@@ -21,11 +22,13 @@ use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use robocopy_ingest::integrity::HashAlgorithm;
+use robocopy_ingest::job_editor::{self, JobDraft};
 use robocopy_ingest::sessions::{list_tasks, Session, SessionLog, SessionState, SessionSummary};
 use robocopy_ingest::{gui_api, runner};
 use slint::winit_030::{winit::event::WindowEvent, EventResult, WinitWindowAccessor};
 use slint::{ComponentHandle, ModelRc, SharedString, Timer, TimerMode, VecModel, Weak};
 
+use crate::form::FormValues;
 use crate::run::ActiveRun;
 use crate::single_instance::Request;
 use crate::state::{running_fraction, Generation, RunSlot, Running};
@@ -37,7 +40,7 @@ use crate::state::{running_fraction, Generation, RunSlot, Running};
 mod generated {
     slint::include_modules!();
 }
-use generated::{AppTray, AppWindow, PropRow, SessionRow, TaskRow};
+use generated::{AppTray, AppWindow, EditForm, PropRow, SessionRow, TaskRow};
 
 /// Names the mutex and the pipe of the single window (E12).
 const INSTANCE_TAG: &str = "rustcopy-ui";
@@ -59,6 +62,15 @@ struct Ctx {
     details: Generation,
     /// Recent throughput samples for the speed chart (MB/s), newest last.
     speeds: RefCell<Vec<f64>>,
+    /// The configuration being edited, if the editor is open.
+    edit: RefCell<Option<EditState>>,
+}
+
+/// What the editor holds between opening a task and saving a proposal.
+struct EditState {
+    config: PathBuf,
+    drafts: Vec<JobDraft>,
+    index: usize,
 }
 
 fn set_sources(ui: &AppWindow, sources: &[String]) {
@@ -183,6 +195,92 @@ fn property_rows(config: &Path) -> Result<Vec<PropRow>, String> {
         }
     }
     Ok(rows)
+}
+
+fn to_slint(form: &FormValues) -> EditForm {
+    EditForm {
+        name: form.name.as_str().into(),
+        source: form.source.as_str().into(),
+        dest: form.dest.as_str().into(),
+        pattern: form.pattern.as_str().into(),
+        threads: form.threads.as_str().into(),
+        retries: form.retries.as_str().into(),
+        retry_wait_seconds: form.retry_wait_seconds.as_str().into(),
+        bandwidth_limit_mbps: form.bandwidth_limit_mbps.as_str().into(),
+        verify_integrity: form.verify_integrity,
+        fast_verify: form.fast_verify,
+        ignore_transient_missing: form.ignore_transient_missing,
+        exclude_junctions: form.exclude_junctions,
+        compare_baseline: form.compare_baseline,
+        dry_run: form.dry_run,
+        long_paths: form.long_paths,
+        preserve_timestamps: form.preserve_timestamps,
+        preserve_acl: form.preserve_acl,
+        no_prescan: form.no_prescan,
+        mirror: form.mirror,
+        hash_algo: form.hash_algo,
+        backup_type: form.backup_type,
+        keep_generations: form.keep_generations.as_str().into(),
+        exclude_files: form.exclude_files.as_str().into(),
+        exclude_dirs: form.exclude_dirs.as_str().into(),
+        min_age_days: form.min_age_days.as_str().into(),
+        max_age_days: form.max_age_days.as_str().into(),
+        report_path: form.report_path.as_str().into(),
+        log_path: form.log_path.as_str().into(),
+        html_report_path: form.html_report_path.as_str().into(),
+        encrypt_keyring: form.encrypt_keyring.as_str().into(),
+        encrypt_other: form.encrypt_other,
+    }
+}
+
+fn from_slint(form: EditForm) -> FormValues {
+    FormValues {
+        name: form.name.to_string(),
+        source: form.source.to_string(),
+        dest: form.dest.to_string(),
+        pattern: form.pattern.to_string(),
+        threads: form.threads.to_string(),
+        retries: form.retries.to_string(),
+        retry_wait_seconds: form.retry_wait_seconds.to_string(),
+        bandwidth_limit_mbps: form.bandwidth_limit_mbps.to_string(),
+        verify_integrity: form.verify_integrity,
+        fast_verify: form.fast_verify,
+        ignore_transient_missing: form.ignore_transient_missing,
+        exclude_junctions: form.exclude_junctions,
+        compare_baseline: form.compare_baseline,
+        dry_run: form.dry_run,
+        long_paths: form.long_paths,
+        preserve_timestamps: form.preserve_timestamps,
+        preserve_acl: form.preserve_acl,
+        no_prescan: form.no_prescan,
+        mirror: form.mirror,
+        hash_algo: form.hash_algo,
+        backup_type: form.backup_type,
+        keep_generations: form.keep_generations.to_string(),
+        exclude_files: form.exclude_files.to_string(),
+        exclude_dirs: form.exclude_dirs.to_string(),
+        min_age_days: form.min_age_days.to_string(),
+        max_age_days: form.max_age_days.to_string(),
+        report_path: form.report_path.to_string(),
+        log_path: form.log_path.to_string(),
+        html_report_path: form.html_report_path.to_string(),
+        encrypt_keyring: form.encrypt_keyring.to_string(),
+        encrypt_other: form.encrypt_other,
+    }
+}
+
+/// Puts draft number `index` into the editor and records what the form may not widen (the core's
+/// rules, shown as disabled controls with their reason; the core remains the one that refuses).
+fn load_editor_form(ui: &AppWindow, state: &EditState) {
+    let Some(draft) = state.drafts.get(state.index) else {
+        return;
+    };
+    ui.set_form(to_slint(&FormValues::from_draft(draft)));
+    ui.set_mirror_was_on(draft.mirror);
+    ui.set_retention_was_set(draft.keep_generations.is_some());
+    ui.set_edit_message("".into());
+    ui.set_edit_ok(false);
+    ui.set_edit_job_index(i32::try_from(state.index).unwrap_or(0));
 }
 
 /// Runs a saved task (or any configuration file) in place, as a lavoro of the list.
@@ -421,6 +519,7 @@ fn main() -> Result<(), slint::PlatformError> {
         sessions: RefCell::new(Vec::new()),
         details: Generation::default(),
         speeds: RefCell::new(Vec::new()),
+        edit: RefCell::new(None),
     });
     refresh(&ui, &ctx);
 
@@ -567,6 +666,87 @@ fn main() -> Result<(), slint::PlatformError> {
                 }
             }
             ui.set_page(3);
+        });
+    }
+
+    // Editor (phase 4c): opens a configuration's jobs as drafts; saving writes a proposal beside the
+    // file, never over it, and every rule about what a draft may contain is the core's.
+    {
+        let weak = ui.as_weak();
+        let ctx = ctx.clone();
+        ui.on_edit_task(move |path| {
+            let Some(ui) = weak.upgrade() else { return };
+            let config = PathBuf::from(path.as_str());
+            match job_editor::read_drafts(&config) {
+                Ok(drafts) if !drafts.is_empty() => {
+                    let names: Vec<SharedString> = drafts
+                        .iter()
+                        .map(|d| SharedString::from(d.name.as_str()))
+                        .collect();
+                    ui.set_edit_jobs(ModelRc::new(VecModel::from(names)));
+                    ui.set_edit_title(
+                        config
+                            .file_stem()
+                            .map(|n| n.to_string_lossy().into_owned())
+                            .unwrap_or_default()
+                            .into(),
+                    );
+                    let state = EditState {
+                        config,
+                        drafts,
+                        index: 0,
+                    };
+                    load_editor_form(&ui, &state);
+                    *ctx.edit.borrow_mut() = Some(state);
+                    ui.set_error("".into());
+                    ui.set_page(4);
+                }
+                Ok(_) => ui.set_error("Nessun job da modificare in questo file.".into()),
+                Err(error) => ui.set_error(error.to_string().into()),
+            }
+        });
+    }
+    {
+        let weak = ui.as_weak();
+        let ctx = ctx.clone();
+        ui.on_edit_select_job(move |index| {
+            let Some(ui) = weak.upgrade() else { return };
+            if let Some(state) = ctx.edit.borrow_mut().as_mut() {
+                state.index = usize::try_from(index)
+                    .unwrap_or(0)
+                    .min(state.drafts.len().saturating_sub(1));
+                load_editor_form(&ui, state);
+            }
+        });
+    }
+    {
+        let weak = ui.as_weak();
+        let ctx = ctx.clone();
+        ui.on_edit_save(move || {
+            let Some(ui) = weak.upgrade() else { return };
+            let guard = ctx.edit.borrow();
+            let Some(state) = guard.as_ref() else { return };
+            let Some(original) = state.drafts.get(state.index) else {
+                return;
+            };
+            let result = from_slint(ui.get_form())
+                .to_draft(original)
+                .and_then(|draft| {
+                    let out = job_editor::suggest_proposal_path_now(&state.config);
+                    job_editor::propose_config_from_path(Some(&state.config), &[draft], &out)
+                        .map(|()| out)
+                        .map_err(|error| error.to_string())
+                });
+            match result {
+                Ok(out) => {
+                    ui.set_edit_ok(true);
+                    ui.set_edit_message(out.to_string_lossy().into_owned().into());
+                }
+                Err(message) => {
+                    ui.set_edit_ok(false);
+                    ui.set_edit_message(message.into());
+                }
+            }
         });
     }
 

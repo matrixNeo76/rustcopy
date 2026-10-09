@@ -102,6 +102,7 @@ export component TaskItem inherits Rectangle {
     in property <bool> enabled: true;
     callback run();
     callback details();
+    callback edit();
     height: 76px;
     border-radius: Theme.radius;
     border-width: 1px;
@@ -145,6 +146,13 @@ export component TaskItem inherits Rectangle {
                     color: Theme.text-muted;
                     vertical-alignment: center;
                 }
+            }
+        }
+        Button {
+            text: Strings.task-edit;
+            horizontal-stretch: 0;
+            clicked => {
+                root.edit();
             }
         }
         Button {
