@@ -69,6 +69,11 @@ export component AppWindow inherits Window {
     in-out property <int> hist-filter;
     in property <string> hist-message;
     in property <string> report-name;
+    in-out property <string> cred-name;
+    in-out property <string> cred-secret;
+    in property <string> cred-message;
+    in property <bool> cred-ok;
+    in property <bool> cred-busy;
     in property <string> report-path;
     in property <[DetailRow]> report-rows;
     // Editor
@@ -142,6 +147,9 @@ export component AppWindow inherits Window {
     callback add-config(string);
     callback remove-config(string);
     callback open-report-file();
+    callback show-credentials();
+    callback save-credential(string, string);
+    callback delete-credential(string);
     callback show-report-history(string);
     callback hist-filter-changed();
     callback export-history();
@@ -488,6 +496,12 @@ export component AppWindow inherits Window {
                         root.open-report-file();
                     }
                 }
+                Button {
+                    text: Strings.cred-open;
+                    clicked => {
+                        root.show-credentials();
+                    }
+                }
             }
         }
 
@@ -644,6 +658,82 @@ export component AppWindow inherits Window {
                     font-size: Theme.body;
                     color: Theme.text-faint;
                 }
+            }
+        }
+
+        if root.page == 7: VerticalLayout {
+            padding: Theme.page-padding;
+            spacing: Theme.gap;
+            alignment: start;
+            HorizontalLayout {
+                spacing: 10px;
+                alignment: start;
+                Button {
+                    text: Strings.props-back;
+                    clicked => {
+                        root.cred-secret = "";
+                        root.show-tasks();
+                    }
+                }
+                Text {
+                    text: Strings.cred-title;
+                    font-size: Theme.title;
+                    font-weight: 700;
+                    color: Theme.text;
+                    vertical-alignment: center;
+                }
+            }
+            Text {
+                text: Strings.cred-intro;
+                wrap: word-wrap;
+                font-size: Theme.body;
+                color: Theme.text-muted;
+            }
+            SectionLabel {
+                text: Strings.cred-name;
+            }
+            LineEdit {
+                text <=> root.cred-name;
+                placeholder-text: Strings.cred-name-hint;
+                accessible-label: Strings.cred-name;
+            }
+            SectionLabel {
+                text: Strings.cred-secret;
+            }
+            LineEdit {
+                text <=> root.cred-secret;
+                input-type: InputType.password;
+                accessible-label: Strings.cred-secret;
+            }
+            HorizontalLayout {
+                spacing: 10px;
+                alignment: start;
+                Button {
+                    text: Strings.cred-save;
+                    primary: true;
+                    enabled: !root.cred-busy && root.cred-name != "" && root.cred-secret != "";
+                    clicked => {
+                        root.save-credential(root.cred-name, root.cred-secret);
+                    }
+                }
+                Button {
+                    text: Strings.cred-delete;
+                    enabled: !root.cred-busy && root.cred-name != "";
+                    clicked => {
+                        root.delete-credential(root.cred-name);
+                    }
+                }
+            }
+            Text {
+                text: Strings.cred-delete-hint;
+                wrap: word-wrap;
+                font-size: Theme.small;
+                color: Theme.text-muted;
+            }
+            if root.cred-message != "": Banner {
+                text: root.cred-message;
+                label-prefix: Strings.cred-title;
+                kind: root.cred-ok ? BadgeKind.ok : BadgeKind.warning;
             }
         }
 

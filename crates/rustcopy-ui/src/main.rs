@@ -1077,6 +1077,82 @@ fn main() -> Result<(), slint::PlatformError> {
         });
     }
 
+    // Credentials (F56): the secret goes from this window straight to Windows' Credential Manager,
+    // never to a process argument, and the field is emptied as soon as it has done its one job.
+    {
+        let weak = ui.as_weak();
+        ui.on_show_credentials(move || {
+            let Some(ui) = weak.upgrade() else { return };
+            ui.set_cred_message("".into());
+            ui.set_cred_secret("".into());
+            ui.set_page(7);
+        });
+    }
+    {
+        let weak = ui.as_weak();
+        ui.on_save_credential(move |name, secret| {
+            let Some(ui) = weak.upgrade() else { return };
+            ui.set_cred_busy(true);
+            ui.set_cred_message("".into());
+            let name = name.to_string();
+            let secret = secret.to_string();
+            let weak = ui.as_weak();
+            std::thread::spawn(move || {
+                let result = gui_api::set_credential(name.trim(), &secret);
+                let _ = weak.upgrade_in_event_loop(move |ui| {
+                    ui.set_cred_busy(false);
+                    match result {
+                        Ok(()) => {
+                            // Cleared, not just hidden: nothing of the secret stays in the window.
+                            ui.set_cred_secret("".into());
+                            ui.set_cred_ok(true);
+                            ui.set_cred_message(
+                                format!(
+                                    "Credenziale «{}» salvata. Usala come keyring:{}.",
+                                    name.trim(),
+                                    name.trim()
+                                )
+                                .into(),
+                            );
+                        }
+                        Err(error) => {
+                            ui.set_cred_ok(false);
+                            ui.set_cred_message(error.to_string().into());
+                        }
+                    }
+                });
+            });
+        });
+    }
+    {
+        let weak = ui.as_weak();
+        ui.on_delete_credential(move |name| {
+            let Some(ui) = weak.upgrade() else { return };
+            ui.set_cred_busy(true);
+            ui.set_cred_message("".into());
+            let name = name.to_string();
+            let weak = ui.as_weak();
+            std::thread::spawn(move || {
+                let result = gui_api::delete_credential(name.trim());
+                let _ = weak.upgrade_in_event_loop(move |ui| {
+                    ui.set_cred_busy(false);
+                    match result {
+                        Ok(()) => {
+                            ui.set_cred_ok(true);
+                            ui.set_cred_message(
+                                format!("Credenziale «{}» rimossa.", name.trim()).into(),
+                            );
+                        }
+                        Err(error) => {
+                            ui.set_cred_ok(false);
+                            ui.set_cred_message(error.to_string().into());
+                        }
+                    }
+                });
+            });
+        });
+    }
+
     // A report file chosen from disk: read on a worker thread and only ever read. Its own run index
     // sits beside it, so the history of "this report" needs no configuration.
     {
