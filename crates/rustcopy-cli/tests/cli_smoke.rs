@@ -842,6 +842,31 @@ fn install_and_uninstall_schedule_round_trip_via_real_schtasks() {
         stdout_of(&install_output)
     );
 
+    // What Task Scheduler actually stored, not what was asked: these are the settings that decide
+    // whether a nightly backup happens on a laptop (see `schedule::build_create_args`).
+    let stored = std::process::Command::new("schtasks.exe")
+        .args(["/Query", "/TN", &task_name, "/XML"])
+        .output()
+        .expect("query the task");
+    let xml = String::from_utf8_lossy(&stored.stdout).into_owned();
+    for wanted in [
+        "<DisallowStartIfOnBatteries>false</DisallowStartIfOnBatteries>",
+        "<StopIfGoingOnBatteries>false</StopIfGoingOnBatteries>",
+        "<StartWhenAvailable>true</StartWhenAvailable>",
+        "<ExecutionTimeLimit>PT0S</ExecutionTimeLimit>",
+    ] {
+        assert!(
+            xml.contains(wanted),
+            "the stored task lacks {wanted}:
+{xml}"
+        );
+    }
+    assert!(
+        xml.contains(source.path().to_str().expect("utf8")),
+        "the stored action must carry the arguments that were typed:
+{xml}"
+    );
+
     let uninstall_output = run(&["--uninstall-schedule", &task_name]);
     assert!(
         uninstall_output.status.success(),
@@ -901,6 +926,13 @@ fn list_schedules_finds_a_real_task_this_binary_installed() {
     assert!(
         stdout_of(&list_output).contains(&task_name),
         "stdout: {}",
+        stdout_of(&list_output)
+    );
+    // The listing shows what the task runs (program *and* arguments), which is what tells two
+    // schedules of the same binary apart.
+    assert!(
+        stdout_of(&list_output).contains(source.path().to_str().expect("utf8")),
+        "the command shown must include the arguments: {}",
         stdout_of(&list_output)
     );
 }

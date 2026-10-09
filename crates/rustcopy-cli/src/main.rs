@@ -280,7 +280,7 @@ async fn run(mut args: Args) -> Result<u8> {
         let raw_args: Vec<String> = std::env::args().skip(1).collect();
         let filtered_args = robocopy_ingest::schedule::strip_schedule_flags(&raw_args);
         let task_run = robocopy_ingest::schedule::build_task_run_command(&exe_path, &filtered_args);
-        robocopy_ingest::schedule::install(&name, &spec, &task_run)
+        robocopy_ingest::schedule::install(&name, &spec, &exe_path, &filtered_args)
             .with_context(|| format!("cannot install the scheduled task {name:?}"))?;
         println!("installed scheduled task '{name}' ({spec_raw})\n  runs: {task_run}");
         return Ok(0);

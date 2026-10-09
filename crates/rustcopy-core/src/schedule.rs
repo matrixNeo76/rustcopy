@@ -86,48 +86,162 @@ fn parse_time(time: &str) -> Option<String> {
     Some(format!("{h:02}:{m:02}"))
 }
 
-/// The `schtasks.exe /Create ...` arguments for installing `spec` under `name`, running
-/// `task_run` (a full command line, already quoted where needed — see `build_task_run_command`).
-/// `/F` forces overwriting an existing task of the same name, so re-running `--install-schedule`
-/// with the same `--schedule-name` updates it instead of failing.
-pub fn build_create_args(name: &str, spec: &ScheduleSpec, task_run: &str) -> Vec<String> {
-    let mut args = vec![
+/// The `schtasks.exe /Create ...` arguments that register the task described by the XML file at
+/// `xml_path` under `name`. `/F` forces overwriting an existing task of the same name, so
+/// re-running `--install-schedule` with the same `--schedule-name` updates it instead of failing.
+///
+/// The task is described by **XML**, not by `/SC`/`/ST`/`/TR` flags, because those flags cannot
+/// express the settings that decide whether a nightly backup actually happens. A task created from
+/// flags gets Task Scheduler's defaults, read back from a real one (`schtasks /Query /XML`):
+/// it does **not** start on battery and is **stopped** if the machine goes onto battery, it is
+/// killed after 72 hours, and a run missed because the PC was off or asleep at the scheduled time
+/// is simply lost. A laptop backing up at 02:00 is exactly the case those defaults break.
+pub fn build_create_args(name: &str, xml_path: &str) -> Vec<String> {
+    vec![
         "/Create".to_string(),
         "/TN".to_string(),
         name.to_string(),
-        "/TR".to_string(),
-        task_run.to_string(),
+        "/XML".to_string(),
+        xml_path.to_string(),
         "/F".to_string(),
-    ];
+    ]
+}
+
+/// The moment the task's trigger starts counting from: always in the **future**. A start in the
+/// past is not harmless once `StartWhenAvailable` is on (it is what makes a missed run catch up),
+/// because the first occurrence would then count as already missed and fire at install time.
+pub fn first_start(spec: &ScheduleSpec, now: chrono::NaiveDateTime) -> chrono::NaiveDateTime {
+    use chrono::{Datelike, Duration, NaiveTime, Timelike};
+    let at = |date: chrono::NaiveDate, time: &str| {
+        let parsed = NaiveTime::parse_from_str(time, "%H:%M").unwrap_or(NaiveTime::MIN);
+        date.and_time(parsed)
+    };
     match spec {
         ScheduleSpec::Daily { time } => {
-            args.extend([
-                "/SC".to_string(),
-                "DAILY".to_string(),
-                "/ST".to_string(),
-                time.clone(),
-            ]);
-        }
-        ScheduleSpec::Hourly { every_n_hours } => {
-            args.extend([
-                "/SC".to_string(),
-                "HOURLY".to_string(),
-                "/MO".to_string(),
-                every_n_hours.to_string(),
-            ]);
+            let today = at(now.date(), time);
+            if today > now {
+                today
+            } else {
+                today + Duration::days(1)
+            }
         }
         ScheduleSpec::Weekly { days, time } => {
-            args.extend([
-                "/SC".to_string(),
-                "WEEKLY".to_string(),
-                "/D".to_string(),
-                days.join(","),
-                "/ST".to_string(),
-                time.clone(),
-            ]);
+            for offset in 0..=7 {
+                let date = now.date() + Duration::days(offset);
+                let code = WEEKDAY_CODES[date.weekday().num_days_from_monday() as usize];
+                let candidate = at(date, time);
+                if days.iter().any(|d| d == code) && candidate > now {
+                    return candidate;
+                }
+            }
+            // Unreachable for a parsed spec (it has at least one valid day), but a fixed fallback
+            // is better than a panic in the middle of an install.
+            at(now.date() + Duration::days(1), time)
+        }
+        ScheduleSpec::Hourly { .. } => {
+            let next = now + Duration::minutes(1);
+            next.with_second(0)
+                .unwrap_or(next)
+                .with_nanosecond(0)
+                .unwrap_or(next)
         }
     }
-    args
+}
+
+fn xml_escape(text: &str) -> String {
+    text.replace('&', "&amp;")
+        .replace('<', "&lt;")
+        .replace('>', "&gt;")
+        .replace('"', "&quot;")
+        .replace('\'', "&apos;")
+}
+
+fn weekday_element(code: &str) -> &'static str {
+    match code {
+        "MON" => "Monday",
+        "TUE" => "Tuesday",
+        "WED" => "Wednesday",
+        "THU" => "Thursday",
+        "FRI" => "Friday",
+        "SAT" => "Saturday",
+        _ => "Sunday",
+    }
+}
+
+/// The Task Scheduler XML for `spec`, running `exe` with `arguments` (one command-line string,
+/// already quoted where needed), first firing at `start`.
+///
+/// What it sets, and why (each is a deliberate departure from what `/SC` flags give):
+/// - `DisallowStartIfOnBatteries`/`StopIfGoingOnBatteries` **off**: a backup on a laptop must neither
+///   refuse to start nor be killed halfway because the charger was unplugged;
+/// - `StartWhenAvailable` **on**: the run missed because the PC was off or asleep happens as soon as
+///   it can, instead of being lost until the next day;
+/// - `ExecutionTimeLimit` `PT0S` (none): the default kills a task after 72 hours, which a large
+///   first copy can exceed;
+/// - `MultipleInstancesPolicy` `IgnoreNew`: a slow run is not started on top of itself.
+///
+/// The task still runs only while its owner is logged on (`InteractiveToken`): running "whether or
+/// not logged on" needs the account password, which this tool never handles.
+pub fn build_task_xml(
+    spec: &ScheduleSpec,
+    exe: &str,
+    arguments: &str,
+    start: chrono::NaiveDateTime,
+) -> String {
+    let boundary = start.format("%Y-%m-%dT%H:%M:%S");
+    let trigger = match spec {
+        ScheduleSpec::Daily { .. } => format!(
+            "<CalendarTrigger><StartBoundary>{boundary}</StartBoundary><Enabled>true</Enabled>\
+             <ScheduleByDay><DaysInterval>1</DaysInterval></ScheduleByDay></CalendarTrigger>"
+        ),
+        ScheduleSpec::Hourly { every_n_hours } => format!(
+            "<TimeTrigger><StartBoundary>{boundary}</StartBoundary><Enabled>true</Enabled>\
+             <Repetition><Interval>PT{every_n_hours}H</Interval></Repetition></TimeTrigger>"
+        ),
+        ScheduleSpec::Weekly { days, .. } => {
+            let days: String = days
+                .iter()
+                .map(|d| format!("<{0}/>", weekday_element(d)))
+                .collect();
+            format!(
+                "<CalendarTrigger><StartBoundary>{boundary}</StartBoundary><Enabled>true</Enabled>\
+                 <ScheduleByWeek><DaysOfWeek>{days}</DaysOfWeek><WeeksInterval>1</WeeksInterval>\
+                 </ScheduleByWeek></CalendarTrigger>"
+            )
+        }
+    };
+    let command = xml_escape(exe);
+    let arguments = xml_escape(arguments);
+    format!(
+        "<?xml version=\"1.0\" encoding=\"UTF-16\"?>\n\
+         <Task version=\"1.2\" xmlns=\"http://schemas.microsoft.com/windows/2004/02/mit/task\">\n\
+         <RegistrationInfo><Description>rustcopy scheduled backup</Description></RegistrationInfo>\n\
+         <Triggers>{trigger}</Triggers>\n\
+         <Principals><Principal id=\"Author\"><LogonType>InteractiveToken</LogonType>\
+         <RunLevel>LeastPrivilege</RunLevel></Principal></Principals>\n\
+         <Settings>\
+         <MultipleInstancesPolicy>IgnoreNew</MultipleInstancesPolicy>\
+         <DisallowStartIfOnBatteries>false</DisallowStartIfOnBatteries>\
+         <StopIfGoingOnBatteries>false</StopIfGoingOnBatteries>\
+         <AllowHardTerminate>true</AllowHardTerminate>\
+         <StartWhenAvailable>true</StartWhenAvailable>\
+         <AllowStartOnDemand>true</AllowStartOnDemand>\
+         <Enabled>true</Enabled>\
+         <ExecutionTimeLimit>PT0S</ExecutionTimeLimit>\
+         </Settings>\n\
+         <Actions Context=\"Author\"><Exec><Command>{command}</Command>\
+         <Arguments>{arguments}</Arguments></Exec></Actions>\n\
+         </Task>\n"
+    )
+}
+
+/// The XML as the bytes `schtasks /XML` reads reliably: UTF-16 little endian with a byte-order mark.
+pub fn task_xml_bytes(xml: &str) -> Vec<u8> {
+    let mut bytes = vec![0xFF, 0xFE];
+    for unit in xml.encode_utf16() {
+        bytes.extend_from_slice(&unit.to_le_bytes());
+    }
+    bytes
 }
 
 /// The `schtasks.exe /Delete ...` arguments for removing `name`. `/F` suppresses the interactive
@@ -190,6 +304,16 @@ pub fn build_task_run_command(exe_path: &Path, filtered_args: &[String]) -> Stri
     let mut parts = vec![quote_if_needed(&exe_path.display().to_string())];
     parts.extend(filtered_args.iter().map(|a| quote_if_needed(a)));
     parts.join(" ")
+}
+
+/// Just the arguments of [`build_task_run_command`], for the task XML, which keeps the program and
+/// its arguments apart.
+pub fn build_task_arguments(filtered_args: &[String]) -> String {
+    filtered_args
+        .iter()
+        .map(|a| quote_if_needed(a))
+        .collect::<Vec<_>>()
+        .join(" ")
 }
 
 /// What the console may ask the command line to install, after checking the safety level (GUI Slint
@@ -297,9 +421,30 @@ fn is_absolute_windows_path(path: &str) -> bool {
     drive || path.starts_with("\\\\")
 }
 
+/// Registers the task: writes its XML to a private temporary file, hands it to `schtasks /XML`,
+/// and removes the file whatever the outcome.
 #[cfg(windows)]
-pub fn install(name: &str, spec: &ScheduleSpec, task_run: &str) -> Result<(), IngestError> {
-    run_schtasks(&build_create_args(name, spec, task_run))
+pub fn install(
+    name: &str,
+    spec: &ScheduleSpec,
+    exe_path: &Path,
+    filtered_args: &[String],
+) -> Result<(), IngestError> {
+    let xml = build_task_xml(
+        spec,
+        &exe_path.display().to_string(),
+        &build_task_arguments(filtered_args),
+        first_start(spec, chrono::Local::now().naive_local()),
+    );
+    let file = std::env::temp_dir().join(format!(
+        "rustcopy-task-{}-{}.xml",
+        std::process::id(),
+        chrono::Utc::now().timestamp_nanos_opt().unwrap_or_default()
+    ));
+    std::fs::write(&file, task_xml_bytes(&xml)).map_err(|e| IngestError::io(&file, e))?;
+    let result = run_schtasks(&build_create_args(name, &file.display().to_string()));
+    let _ = std::fs::remove_file(&file);
+    result
 }
 
 #[cfg(windows)]
@@ -308,7 +453,12 @@ pub fn uninstall(name: &str) -> Result<(), IngestError> {
 }
 
 #[cfg(not(windows))]
-pub fn install(_name: &str, _spec: &ScheduleSpec, _task_run: &str) -> Result<(), IngestError> {
+pub fn install(
+    _name: &str,
+    _spec: &ScheduleSpec,
+    _exe_path: &Path,
+    _filtered_args: &[String],
+) -> Result<(), IngestError> {
     Err(IngestError::Schedule(
         "--install-schedule requires Windows Task Scheduler (schtasks.exe), unavailable on this platform"
             .to_string(),
@@ -694,42 +844,147 @@ mod tests {
         assert!(parse_schedule_spec("daily").is_err());
     }
 
+    fn at(date: &str, time: &str) -> chrono::NaiveDateTime {
+        chrono::NaiveDateTime::parse_from_str(&format!("{date} {time}"), "%Y-%m-%d %H:%M:%S")
+            .expect("valid test instant")
+    }
+
     #[test]
-    fn build_create_args_for_daily() {
-        let spec = ScheduleSpec::Daily {
-            time: "02:00".to_string(),
-        };
-        let args = build_create_args(
-            "rustcopy-photos",
-            &spec,
-            "C:\\rustcopy.exe --config job.toml",
-        );
+    fn create_args_register_the_xml_file_not_trigger_flags() {
         assert_eq!(
-            args,
+            build_create_args("rustcopy-photos", "C:\\Temp\\task.xml"),
             vec![
                 "/Create",
                 "/TN",
                 "rustcopy-photos",
-                "/TR",
-                "C:\\rustcopy.exe --config job.toml",
-                "/F",
-                "/SC",
-                "DAILY",
-                "/ST",
-                "02:00",
+                "/XML",
+                "C:\\Temp\\task.xml",
+                "/F"
             ]
         );
     }
 
     #[test]
-    fn build_create_args_for_weekly() {
-        let spec = ScheduleSpec::Weekly {
-            days: vec!["MON".to_string(), "FRI".to_string()],
-            time: "03:00".to_string(),
+    fn the_first_start_is_always_in_the_future() {
+        let now = at("2026-10-09", "10:00:00"); // a Friday
+        let daily = |t: &str| ScheduleSpec::Daily { time: t.into() };
+        assert_eq!(
+            first_start(&daily("11:30"), now),
+            at("2026-10-09", "11:30:00")
+        );
+        assert_eq!(
+            first_start(&daily("09:00"), now),
+            at("2026-10-10", "09:00:00"),
+            "today's 09:00 has passed: tomorrow, never the past (StartWhenAvailable would fire it at once)"
+        );
+        assert_eq!(
+            first_start(&daily("10:00"), now),
+            at("2026-10-10", "10:00:00"),
+            "exactly now is not the future"
+        );
+    }
+
+    #[test]
+    fn a_weekly_start_is_the_next_listed_day_at_that_time() {
+        let now = at("2026-10-09", "10:00:00"); // Friday
+        let weekly = |days: &[&str], t: &str| ScheduleSpec::Weekly {
+            days: days.iter().map(|d| d.to_string()).collect(),
+            time: t.into(),
         };
-        let args = build_create_args("job", &spec, "run.exe");
-        assert!(args.contains(&"WEEKLY".to_string()));
-        assert!(args.contains(&"MON,FRI".to_string()));
+        assert_eq!(
+            first_start(&weekly(&["MON", "FRI"], "23:00"), now),
+            at("2026-10-09", "23:00:00"),
+            "today is a listed day and the time is ahead"
+        );
+        assert_eq!(
+            first_start(&weekly(&["MON", "FRI"], "09:00"), now),
+            at("2026-10-12", "09:00:00"),
+            "Friday 09:00 has passed: next Monday"
+        );
+        assert_eq!(
+            first_start(&weekly(&["FRI"], "09:00"), now),
+            at("2026-10-16", "09:00:00"),
+            "the same weekday next week"
+        );
+    }
+
+    #[test]
+    fn an_hourly_start_is_the_next_whole_minute() {
+        let now = at("2026-10-09", "10:00:42");
+        assert_eq!(
+            first_start(&ScheduleSpec::Hourly { every_n_hours: 4 }, now),
+            at("2026-10-09", "10:01:00")
+        );
+    }
+
+    fn daily_xml() -> String {
+        build_task_xml(
+            &ScheduleSpec::Daily {
+                time: "02:00".into(),
+            },
+            r"C:\Program Files\rustcopy\robocopy_ingest.exe",
+            r#"--config "C:\jobs\a & b.toml""#,
+            at("2026-10-10", "02:00:00"),
+        )
+    }
+
+    #[test]
+    fn the_task_xml_lets_a_laptop_back_up_and_catches_up_a_missed_run() {
+        let xml = daily_xml();
+        for wanted in [
+            "<DisallowStartIfOnBatteries>false</DisallowStartIfOnBatteries>",
+            "<StopIfGoingOnBatteries>false</StopIfGoingOnBatteries>",
+            "<StartWhenAvailable>true</StartWhenAvailable>",
+            "<ExecutionTimeLimit>PT0S</ExecutionTimeLimit>",
+            "<MultipleInstancesPolicy>IgnoreNew</MultipleInstancesPolicy>",
+            "<StartBoundary>2026-10-10T02:00:00</StartBoundary>",
+            "<ScheduleByDay><DaysInterval>1</DaysInterval></ScheduleByDay>",
+        ] {
+            assert!(xml.contains(wanted), "missing {wanted} in {xml}");
+        }
+    }
+
+    #[test]
+    fn the_command_and_its_arguments_are_kept_apart_and_escaped() {
+        let xml = daily_xml();
+        assert!(xml.contains("<Command>C:\\Program Files\\rustcopy\\robocopy_ingest.exe</Command>"));
+        assert!(
+            xml.contains("<Arguments>--config &quot;C:\\jobs\\a &amp; b.toml&quot;</Arguments>"),
+            "{xml}"
+        );
+    }
+
+    #[test]
+    fn hourly_and_weekly_triggers_have_their_own_shape() {
+        let start = at("2026-10-10", "02:00:00");
+        let hourly = build_task_xml(
+            &ScheduleSpec::Hourly { every_n_hours: 6 },
+            "x.exe",
+            "",
+            start,
+        );
+        assert!(hourly.contains("<TimeTrigger>") && hourly.contains("<Interval>PT6H</Interval>"));
+        let weekly = build_task_xml(
+            &ScheduleSpec::Weekly {
+                days: vec!["MON".into(), "SAT".into()],
+                time: "03:00".into(),
+            },
+            "x.exe",
+            "",
+            start,
+        );
+        assert!(weekly.contains("<DaysOfWeek><Monday/><Saturday/></DaysOfWeek>"));
+    }
+
+    #[test]
+    fn the_xml_is_written_as_utf16_with_a_byte_order_mark() {
+        let bytes = task_xml_bytes("<a>é</a>");
+        assert_eq!(&bytes[..2], &[0xFF, 0xFE]);
+        let units: Vec<u16> = bytes[2..]
+            .chunks(2)
+            .map(|c| u16::from_le_bytes([c[0], c[1]]))
+            .collect();
+        assert_eq!(String::from_utf16(&units).unwrap(), "<a>é</a>");
     }
 
     #[test]

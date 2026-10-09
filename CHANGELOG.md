@@ -23,6 +23,7 @@ For full technical detail behind any entry, see `ANALYSIS.md` (defect list, `D<N
 
 ### Fixed
 
+- **`--install-schedule` now creates a task that actually runs.** It used `schtasks /SC` flags, whose Task Scheduler defaults do not start a task on battery, stop it when the charger is unplugged, kill it after 72 hours and lose a run missed while the PC was off. The task is now registered from XML with those settings fixed (a missed run is caught up as soon as possible, and a run does not overlap itself).
 - **`--backup-type` now honours `--verify-integrity`.** It used to be silently ignored for generation backups. The copy is verified file by file against the source (only the files that generation copied), the report carries the integrity check, a failure exits with code 4, and a generation that did not verify is **not** recorded in the manifest, so the next incremental copies those files again instead of trusting them. The console warnings that said otherwise are gone.
 
 ### Added
