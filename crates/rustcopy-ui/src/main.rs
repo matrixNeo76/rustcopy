@@ -10,10 +10,12 @@
 #![cfg_attr(windows, windows_subsystem = "windows")]
 
 mod check;
+mod csv;
 mod form;
 mod format;
 mod report_rows;
 mod run;
+mod runs;
 mod single_instance;
 mod state;
 
@@ -32,6 +34,7 @@ use slint::{ComponentHandle, ModelRc, SharedString, Timer, TimerMode, VecModel, 
 
 use crate::form::FormValues;
 use crate::run::ActiveRun;
+use crate::runs::{history_csv, passes_filter, RunLine};
 use crate::single_instance::Request;
 use crate::state::{running_fraction, Generation, RunSlot, Running};
 
@@ -72,6 +75,8 @@ struct Ctx {
     speeds: RefCell<Vec<f64>>,
     /// The configuration being edited, if the editor is open.
     edit: RefCell<Option<EditState>>,
+    /// Every run of the history page, unfiltered: the filter and the CSV work from this.
+    history: RefCell<Vec<RunLine>>,
 }
 
 /// What the editor holds between opening a task and saving a proposal.
@@ -336,77 +341,172 @@ fn load_editor_form(ui: &AppWindow, state: &EditState) {
 /// Number of past runs read for the history page.
 const HISTORY_LIMIT: usize = 200;
 
-/// Past runs and the advisor's observations for a configuration, read from the run index that sits
-/// beside each job's report. Whether a run was clean, and what the advisor concludes, are the core's
-/// (`runner::exit_code_meaning`, `gui_api::read_advice`); the process exit code 0 is the CLI's own
-/// contract for success (AGENTS.md rule 12), not robocopy's bitmask.
-fn history_rows(config: &Path) -> Result<(Vec<HistRow>, Vec<AdviceRow>, bool), String> {
+/// A run as the list row draws it.
+fn hist_row(run: &RunLine) -> HistRow {
+    HistRow {
+        job: run.job.as_str().into(),
+        when: format::when_text(run.at).into(),
+        files: run.files.to_string().into(),
+        size: format::human_bytes(run.bytes).into(),
+        speed: format::human_speed(run.throughput_mbps).into(),
+        meaning: run.meaning.as_str().into(),
+        outcome: run.outcome,
+    }
+}
+
+/// What the history page holds: the runs, the advisor's observations, and whether any index line was
+/// unreadable.
+struct HistoryData {
+    runs: Vec<RunLine>,
+    advice: Vec<AdviceRow>,
+    skipped: bool,
+}
+
+/// Reads one report's run index and the advisor's observations about it into `data`. Whether a run
+/// was clean, and what the advisor concludes, are the core's (`runner::exit_code_meaning`,
+/// `gui_api::read_advice`); the process exit code 0 is the CLI's own contract for success (AGENTS.md
+/// rule 12), not robocopy's bitmask. `label` names the job when several share the page.
+fn read_runs(
+    report: &Path,
+    job_name: Option<&str>,
+    label: &str,
+    data: &mut HistoryData,
+) -> Result<(), String> {
     use robocopy_ingest::advise::Severity;
+    let view = gui_api::read_history(report, job_name, HISTORY_LIMIT).map_err(|e| e.to_string())?;
+    data.skipped |= view.skipped_lines > 0;
+    for run in view.runs {
+        let outcome = if run.dry_run {
+            1
+        } else if run.exit_code == 0 {
+            0
+        } else {
+            2
+        };
+        data.runs.push(RunLine {
+            at: run.timestamp,
+            job: label.to_string(),
+            files: run.files_copied,
+            bytes: run.bytes_copied,
+            throughput_mbps: run.throughput_mbps,
+            exit_code: i32::from(run.exit_code),
+            meaning: runner::exit_code_meaning(run.exit_code).to_string(),
+            outcome,
+        });
+    }
+    if let Ok(found) = gui_api::read_advice(report, job_name) {
+        for item in found {
+            let prefix = if label.is_empty() {
+                String::new()
+            } else {
+                format!("{label}: ")
+            };
+            data.advice.push(AdviceRow {
+                severity: match item.severity {
+                    Severity::Info => 0,
+                    Severity::Suggestion => 1,
+                    Severity::Warning => 2,
+                },
+                headline: format!("{prefix}{}", item.headline).into(),
+                evidence: item.evidence.join("  ·  ").into(),
+            });
+        }
+    }
+    Ok(())
+}
+
+fn finish_history(mut data: HistoryData) -> HistoryData {
+    data.runs.sort_by_key(|run| std::cmp::Reverse(run.at));
+    data.advice.sort_by_key(|a| std::cmp::Reverse(a.severity));
+    data
+}
+
+/// Past runs for a configuration, from the run index that sits beside each job's report.
+fn history_rows(config: &Path) -> Result<HistoryData, String> {
     let jobs = gui_api::list_jobs(config).map_err(|e| e.to_string())?;
     let many = jobs.len() > 1;
-    let mut runs: Vec<(chrono::DateTime<chrono::Utc>, HistRow)> = Vec::new();
-    let mut advice: Vec<AdviceRow> = Vec::new();
-    let mut skipped = false;
+    let mut data = HistoryData {
+        runs: Vec::new(),
+        advice: Vec::new(),
+        skipped: false,
+    };
     for job in &jobs {
         let Some(report) = job.report_path.as_deref() else {
             continue;
         };
-        let report = Path::new(report);
-        let job_name = job.history_job_name.as_deref();
-        let view =
-            gui_api::read_history(report, job_name, HISTORY_LIMIT).map_err(|e| e.to_string())?;
-        skipped |= view.skipped_lines > 0;
-        for run in view.runs {
-            let outcome = if run.dry_run {
-                1
-            } else if run.exit_code == 0 {
-                0
-            } else {
-                2
-            };
-            runs.push((
-                run.timestamp,
-                HistRow {
-                    job: if many {
-                        job.name.as_str().into()
-                    } else {
-                        "".into()
-                    },
-                    when: format::when_text(run.timestamp).into(),
-                    files: run.files_copied.to_string().into(),
-                    size: format::human_bytes(run.bytes_copied).into(),
-                    speed: format::human_speed(run.throughput_mbps).into(),
-                    meaning: runner::exit_code_meaning(run.exit_code).into(),
-                    outcome,
-                },
-            ));
+        let label = if many { job.name.as_str() } else { "" };
+        read_runs(
+            Path::new(report),
+            job.history_job_name.as_deref(),
+            label,
+            &mut data,
+        )?;
+    }
+    Ok(finish_history(data))
+}
+
+/// Past runs for a single report file chosen from disk: its index is the one beside it.
+fn history_of_report(report: &Path) -> Result<HistoryData, String> {
+    let mut data = HistoryData {
+        runs: Vec::new(),
+        advice: Vec::new(),
+        skipped: false,
+    };
+    read_runs(report, None, "", &mut data)?;
+    Ok(finish_history(data))
+}
+
+/// Shows the history page's runs through the current filter.
+fn apply_history_filter(ui: &AppWindow, ctx: &Rc<Ctx>) {
+    let filter = ui.get_hist_filter();
+    let shown: Vec<HistRow> = ctx
+        .history
+        .borrow()
+        .iter()
+        .filter(|run| passes_filter(filter, run))
+        .map(hist_row)
+        .collect();
+    ui.set_hist_runs(ModelRc::new(VecModel::from(shown)));
+}
+
+/// Puts `result` on the history page, or the reason it could not be read.
+fn show_history_page(
+    ui: &AppWindow,
+    ctx: &Rc<Ctx>,
+    name: String,
+    result: Result<HistoryData, String>,
+) {
+    ui.set_hist_name(name.into());
+    ui.set_hist_filter(0);
+    ui.set_hist_message("".into());
+    match result {
+        Ok(data) => {
+            ui.set_error("".into());
+            ui.set_hist_skipped(data.skipped);
+            ui.set_hist_advice(ModelRc::new(VecModel::from(data.advice)));
+            *ctx.history.borrow_mut() = data.runs;
         }
-        if let Ok(found) = gui_api::read_advice(report, job_name) {
-            for item in found {
-                let prefix = if many {
-                    format!("{}: ", job.name)
-                } else {
-                    String::new()
-                };
-                advice.push(AdviceRow {
-                    severity: match item.severity {
-                        Severity::Info => 0,
-                        Severity::Suggestion => 1,
-                        Severity::Warning => 2,
-                    },
-                    headline: format!("{prefix}{}", item.headline).into(),
-                    evidence: item.evidence.join("  ·  ").into(),
-                });
-            }
+        Err(message) => {
+            ui.set_hist_advice(ModelRc::new(VecModel::from(Vec::<AdviceRow>::new())));
+            ctx.history.borrow_mut().clear();
+            ui.set_error(message.into());
         }
     }
-    runs.sort_by_key(|run| std::cmp::Reverse(run.0));
-    advice.sort_by_key(|a| std::cmp::Reverse(a.severity));
-    Ok((
-        runs.into_iter().map(|(_, row)| row).collect(),
-        advice,
-        skipped,
-    ))
+    apply_history_filter(ui, ctx);
+    ui.set_page(5);
+}
+
+/// A line of the technical report as the interface draws it.
+fn detail_row(row: report_rows::Row) -> DetailRow {
+    DetailRow {
+        kind: match row.kind {
+            report_rows::Kind::Heading => 0,
+            report_rows::Kind::Line => 1,
+            report_rows::Kind::Problem => 2,
+        },
+        label: row.label.into(),
+        value: row.value.into(),
+    }
 }
 
 /// Runs a saved task (or any configuration file) in place, as a lavoro of the list.
@@ -669,6 +769,7 @@ fn main() -> Result<(), slint::PlatformError> {
         checks: Generation::default(),
         speeds: RefCell::new(Vec::new()),
         edit: RefCell::new(None),
+        history: RefCell::new(Vec::new()),
     });
     refresh(&ui, &ctx);
 
@@ -922,30 +1023,105 @@ fn main() -> Result<(), slint::PlatformError> {
 
     {
         let weak = ui.as_weak();
+        let ctx = ctx.clone();
         ui.on_show_history(move |path| {
             let Some(ui) = weak.upgrade() else { return };
             let config = PathBuf::from(path.as_str());
-            ui.set_hist_name(
-                config
-                    .file_stem()
+            let name = config
+                .file_stem()
+                .map(|n| n.to_string_lossy().into_owned())
+                .unwrap_or_default();
+            show_history_page(&ui, &ctx, name, history_rows(&config));
+        });
+    }
+    {
+        let weak = ui.as_weak();
+        let ctx = ctx.clone();
+        ui.on_hist_filter_changed(move || {
+            let Some(ui) = weak.upgrade() else { return };
+            apply_history_filter(&ui, &ctx);
+        });
+    }
+    // Exports exactly what the list shows (the filter applied): a CSV that quietly held rows the
+    // person had just filtered out would misstate what they chose to export.
+    {
+        let weak = ui.as_weak();
+        let ctx = ctx.clone();
+        ui.on_export_history(move || {
+            let Some(ui) = weak.upgrade() else { return };
+            let filter = ui.get_hist_filter();
+            let shown: Vec<RunLine> = ctx
+                .history
+                .borrow()
+                .iter()
+                .filter(|run| passes_filter(filter, run))
+                .cloned()
+                .collect();
+            let text = history_csv(&shown);
+            let count = shown.len();
+            let weak = ui.as_weak();
+            std::thread::spawn(move || {
+                let picked = rfd::FileDialog::new()
+                    .set_file_name("rustcopy-storico.csv")
+                    .add_filter("CSV", &["csv"])
+                    .save_file();
+                let Some(path) = picked else { return };
+                let message = match std::fs::write(&path, text) {
+                    Ok(()) => format!("{count} esecuzioni esportate in {}", path.display()),
+                    Err(error) => {
+                        format!("Non sono riuscito a scrivere {}: {error}", path.display())
+                    }
+                };
+                let _ = weak.upgrade_in_event_loop(move |ui| ui.set_hist_message(message.into()));
+            });
+        });
+    }
+
+    // A report file chosen from disk: read on a worker thread and only ever read. Its own run index
+    // sits beside it, so the history of "this report" needs no configuration.
+    {
+        let weak = ui.as_weak();
+        ui.on_open_report_file(move || {
+            let weak = weak.clone();
+            std::thread::spawn(move || {
+                let picked = rfd::FileDialog::new()
+                    .add_filter("Report JSON", &["json"])
+                    .pick_file();
+                let Some(path) = picked else { return };
+                let read = gui_api::read_report(&path).map_err(|e| e.to_string());
+                let name = path
+                    .file_name()
                     .map(|n| n.to_string_lossy().into_owned())
-                    .unwrap_or_default()
-                    .into(),
-            );
-            match history_rows(&config) {
-                Ok((runs, advice, skipped)) => {
-                    ui.set_error("".into());
-                    ui.set_hist_skipped(skipped);
-                    ui.set_hist_runs(ModelRc::new(VecModel::from(runs)));
-                    ui.set_hist_advice(ModelRc::new(VecModel::from(advice)));
-                }
-                Err(message) => {
-                    ui.set_hist_runs(ModelRc::new(VecModel::from(Vec::<HistRow>::new())));
-                    ui.set_hist_advice(ModelRc::new(VecModel::from(Vec::<AdviceRow>::new())));
-                    ui.set_error(message.into());
-                }
-            }
-            ui.set_page(5);
+                    .unwrap_or_default();
+                let path_text = path.to_string_lossy().into_owned();
+                let _ = weak.upgrade_in_event_loop(move |ui| match read {
+                    Ok(view) => {
+                        let shown: Vec<DetailRow> = report_rows::rows_for(&view)
+                            .into_iter()
+                            .map(detail_row)
+                            .collect();
+                        ui.set_error("".into());
+                        ui.set_report_name(name.into());
+                        ui.set_report_path(path_text.into());
+                        ui.set_report_rows(ModelRc::new(VecModel::from(shown)));
+                        ui.set_page(6);
+                    }
+                    Err(message) => ui.set_error(message.into()),
+                });
+            });
+        });
+    }
+    {
+        let weak = ui.as_weak();
+        let ctx = ctx.clone();
+        ui.on_show_report_history(move |path| {
+            let Some(ui) = weak.upgrade() else { return };
+            let report = PathBuf::from(path.as_str());
+            let name = report
+                .file_stem()
+                .map(|n| n.to_string_lossy().into_owned())
+                .unwrap_or_default();
+            show_history_page(&ui, &ctx, name, history_of_report(&report));
         });
     }
 

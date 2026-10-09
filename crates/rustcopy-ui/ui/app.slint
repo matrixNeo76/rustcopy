@@ -7,7 +7,7 @@ import { Button, LineEdit, ProgressIndicator, ListView, Palette, CheckBox, Combo
 import { Theme } from "theme.slint";
 import { Strings } from "strings.slint";
 import { Badge, BadgeKind, StatCard, Banner, SectionLabel, SpeedChart } from "components.slint";
-import { SessionRow, SessionItem, SessionUi, TaskRow, TaskItem, PropRow, HistRow, AdviceRow, DetailRow } from "sessions.slint";
+import { SessionRow, SessionItem, SessionUi, TaskRow, TaskItem, PropRow, HistRow, AdviceRow, DetailRow, DetailRows } from "sessions.slint";
 import { EditForm, TextField, ToggleField, TabPage } from "editor.slint";
 
 export { SessionRow, TaskRow, PropRow, EditForm, HistRow, AdviceRow, DetailRow }
@@ -66,6 +66,11 @@ export component AppWindow inherits Window {
     in property <[AdviceRow]> hist-advice;
     in property <string> hist-name;
     in property <bool> hist-skipped;
+    in-out property <int> hist-filter;
+    in property <string> hist-message;
+    in property <string> report-name;
+    in property <string> report-path;
+    in property <[DetailRow]> report-rows;
     // Editor
     in-out property <EditForm> form;
     in property <[string]> edit-jobs;
@@ -136,6 +141,10 @@ export component AppWindow inherits Window {
     callback run-config-file();
     callback add-config(string);
     callback remove-config(string);
+    callback open-report-file();
+    callback show-report-history(string);
+    callback hist-filter-changed();
+    callback export-history();
     callback select-session(string);
     callback repeat-session(string);
     callback resume-session(string, string);
@@ -458,6 +467,12 @@ export component AppWindow inherits Window {
                 font-size: Theme.small;
                 color: Theme.text-muted;
             }
+            Text {
+                text: Strings.open-report-hint;
+                wrap: word-wrap;
+                font-size: Theme.small;
+                color: Theme.text-muted;
+            }
             HorizontalLayout {
                 alignment: start;
                 Button {
@@ -465,6 +480,12 @@ export component AppWindow inherits Window {
                     enabled: !root.running;
                     clicked => {
                         root.run-config-file();
+                    }
+                }
+                Button {
+                    text: Strings.open-report;
+                    clicked => {
+                        root.open-report-file();
                     }
                 }
             }
@@ -552,8 +573,34 @@ export component AppWindow inherits Window {
                     color: Theme.text-faint;
                 }
             }
-            SectionLabel {
-                text: Strings.hist-runs;
+            HorizontalLayout {
+                spacing: 10px;
+                alignment: start;
+                SectionLabel {
+                    text: Strings.hist-runs;
+                    vertical-alignment: center;
+                }
+                ComboBox {
+                    model: [Strings.hist-filter-all, Strings.hist-filter-ok, Strings.hist-filter-look, Strings.hist-filter-dry];
+                    current-index <=> root.hist-filter;
+                    accessible-label: Strings.hist-runs;
+                    selected => {
+                        root.hist-filter-changed();
+                    }
+                }
+                Button {
+                    text: Strings.hist-export;
+                    enabled: root.hist-runs.length > 0;
+                    clicked => {
+                        root.export-history();
+                    }
+                }
+            }
+            if root.hist-message != "": Text {
+                text: root.hist-message;
+                wrap: word-wrap;
+                font-size: Theme.small;
+                color: Theme.text-muted;
             }
             Rectangle {
                 vertical-stretch: 1;
@@ -596,6 +643,49 @@ export component AppWindow inherits Window {
                     y: 8px;
                     font-size: Theme.body;
                     color: Theme.text-faint;
+                }
+            }
+        }
+
+        if root.page == 6: VerticalLayout {
+            padding: Theme.page-padding;
+            spacing: Theme.gap;
+            HorizontalLayout {
+                spacing: 10px;
+                alignment: start;
+                Button {
+                    text: Strings.props-back;
+                    clicked => {
+                        root.show-tasks();
+                    }
+                }
+                Text {
+                    text: @tr("{}: {}", Strings.report-title, root.report-name);
+                    font-size: Theme.title;
+                    font-weight: 700;
+                    color: Theme.text;
+                    vertical-alignment: center;
+                    overflow: elide;
+                }
+            }
+            if root.error != "": Banner {
+                text: root.error;
+                label-prefix: Strings.warning-prefix;
+                kind: BadgeKind.warning;
+            }
+            DetailRows {
+                vertical-stretch: 1;
+                min-height: 200px;
+                rows: root.report-rows;
+                empty-text: Strings.technical-none;
+            }
+            HorizontalLayout {
+                alignment: start;
+                Button {
+                    text: Strings.report-history;
+                    clicked => {
+                        root.show-report-history(root.report-path);
+                    }
                 }
             }
         }
@@ -1097,54 +1187,11 @@ export component AppWindow inherits Window {
                     }
                 }
             }
-            if root.d-show-technical: Rectangle {
+            if root.d-show-technical: DetailRows {
                 vertical-stretch: 1;
                 min-height: 140px;
-                border-radius: Theme.radius;
-                border-width: 1px;
-                border-color: Theme.border;
-                background: Theme.surface;
-                clip: true;
-                ListView {
-                    for row in root.d-rows: Rectangle {
-                        height: row.kind == 0 ? 30px : 22px;
-                        HorizontalLayout {
-                            padding-left: 10px;
-                            padding-right: 10px;
-                            spacing: 10px;
-                            if row.kind == 0: Text {
-                                text: row.label;
-                                font-size: Theme.small;
-                                font-weight: 700;
-                                color: Theme.text-faint;
-                                vertical-alignment: bottom;
-                            }
-                            if row.kind != 0: Text {
-                                text: row.label;
-                                width: row.label == "" ? 0px : 240px;
-                                font-size: Theme.small;
-                                color: row.kind == 2 ? Theme.warning : Theme.text-muted;
-                                overflow: elide;
-                                vertical-alignment: center;
-                            }
-                            if row.kind != 0: Text {
-                                text: row.value;
-                                horizontal-stretch: 1;
-                                font-size: Theme.small;
-                                color: Theme.text;
-                                overflow: elide;
-                                vertical-alignment: center;
-                            }
-                        }
-                    }
-                }
-                if root.d-rows.length == 0: Text {
-                    text: Strings.technical-none;
-                    x: 10px;
-                    y: 8px;
-                    font-size: Theme.small;
-                    color: Theme.text-faint;
-                }
+                rows: root.d-rows;
+                empty-text: Strings.technical-none;
             }
             if root.d-saved != "": Text {
                 text: root.d-saved;

@@ -1,7 +1,7 @@
 // One row of the list of lavori (CATALOGO: the list shows life and outcome at a glance). The state
 // numbers are the interface's reading of `sessions::SessionState`:
 // 0 clean, 1 dry run, 2 needs a look, 3 interrupted, 4 running.
-import { Button } from "std-widgets.slint";
+import { Button, ListView } from "std-widgets.slint";
 import { Theme } from "theme.slint";
 import { Strings } from "strings.slint";
 import { Badge, BadgeKind } from "components.slint";
@@ -62,6 +62,58 @@ export struct DetailRow {
     kind: int,
     label: string,
     value: string,
+}
+
+// The technical report as a list of lines (a heading, a "label  value" line, or a problem). Shown in the
+// detail of a copy and, on its own, for a report file chosen from disk.
+export component DetailRows inherits Rectangle {
+    in property <[DetailRow]> rows;
+    in property <string> empty-text;
+    border-radius: Theme.radius;
+    border-width: 1px;
+    border-color: Theme.border;
+    background: Theme.surface;
+    clip: true;
+    ListView {
+        for row in root.rows: Rectangle {
+            height: row.kind == 0 ? 30px : 22px;
+            HorizontalLayout {
+                padding-left: 10px;
+                padding-right: 10px;
+                spacing: 10px;
+                if row.kind == 0: Text {
+                    text: row.label;
+                    font-size: Theme.small;
+                    font-weight: 700;
+                    color: Theme.text-faint;
+                    vertical-alignment: bottom;
+                }
+                if row.kind != 0: Text {
+                    text: row.label;
+                    width: row.label == "" ? 0px : 240px;
+                    font-size: Theme.small;
+                    color: row.kind == 2 ? Theme.warning : Theme.text-muted;
+                    overflow: elide;
+                    vertical-alignment: center;
+                }
+                if row.kind != 0: Text {
+                    text: row.value;
+                    horizontal-stretch: 1;
+                    font-size: Theme.small;
+                    color: Theme.text;
+                    overflow: elide;
+                    vertical-alignment: center;
+                }
+            }
+        }
+    }
+    if root.rows.length == 0: Text {
+        text: root.empty-text;
+        x: 10px;
+        y: 8px;
+        font-size: Theme.small;
+        color: Theme.text-faint;
+    }
 }
 
 export global SessionUi {
