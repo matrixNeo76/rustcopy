@@ -226,6 +226,16 @@ async fn run(mut args: Args) -> Result<u8> {
         return Ok(0);
     }
 
+    // Generation backups: listing and rebuilding a state are meta-operations like the ones above,
+    // not a transfer of a source into a destination, so they return before any of the machinery
+    // below (config merge, validate, VSS, the mirror check) that describes one.
+    if let Some(root) = args.list_generations.clone() {
+        return list_generations(&root, args.generation_job.as_deref());
+    }
+    if let Some(wanted) = args.restore_generation.clone() {
+        return restore_generation(&args, &wanted).await;
+    }
+
     if let Some(restore_report) = args.restore_from.clone() {
         args = robocopy_ingest::restore::build_restore_args(&args, &restore_report, None)?;
     } else if let Some(checkpoint_path) = args.resume_from.clone() {
@@ -1305,6 +1315,176 @@ async fn execute_generation_backup(
         summary: report.human_summary(),
         report_path: args.report_path.clone(),
     })
+}
+
+/// `--list-generations`: what a `--backup-type` destination holds, oldest first.
+fn list_generations(root: &Path, job: Option<&str>) -> Result<u8> {
+    let index = robocopy_ingest::generations::GenerationIndex::load(root, job)
+        .with_context(|| format!("cannot read the generation manifest at {}", root.display()))?;
+    if index.entries.is_empty() {
+        println!("no generation is recorded at {}", root.display());
+        return Ok(0);
+    }
+    println!(
+        "{} generation(s) recorded at {}:
+",
+        index.entries.len(),
+        root.display()
+    );
+    for entry in &index.entries {
+        println!(
+            "{}  {:<12}  {}  {} file(s) copied",
+            entry.id,
+            entry.backup_type.as_str(),
+            entry.created_at,
+            entry.files_copied
+        );
+    }
+    Ok(0)
+}
+
+/// `--restore-generation`: rebuilds the state of one generation at `--dest` from the generation
+/// folders at `--source`. See `generation_restore` for what makes the result correct; this does the
+/// disk work around it and keeps one promise of its own: **nothing already at the target is
+/// overwritten or deleted** — a file that is there is kept and counted.
+async fn restore_generation(args: &Args, wanted: &str) -> Result<u8> {
+    use robocopy_ingest::generation_restore as restore;
+
+    let root = args.source().to_path_buf();
+    let target = args.dest().to_path_buf();
+    if !root.is_dir() {
+        anyhow::bail!("the backup destination {} does not exist", root.display());
+    }
+    if restore::target_is_inside_backup(&root, &target) {
+        return Err(IngestError::GenerationRestore(format!(
+            "{} is inside the backup at {}: restoring there would mix restored files into the generation folders",
+            target.display(),
+            root.display()
+        ))
+        .into());
+    }
+
+    let (plan, to_copy, kept) = {
+        let (root, target, job, wanted) = (
+            root.clone(),
+            target.clone(),
+            args.generation_job.clone(),
+            wanted.to_string(),
+        );
+        spawn_blocking_with_span(move || -> Result<_, IngestError> {
+            let plan = restore::plan_restore(&root, job.as_deref(), &wanted)?;
+            let mut kept = 0usize;
+            let mut to_copy: Vec<Vec<ScannedFile>> = Vec::with_capacity(plan.steps.len());
+            for files in &plan.steps {
+                let mut fresh = Vec::with_capacity(files.len());
+                for file in files {
+                    if target.join(&file.relative_path).exists() {
+                        kept += 1;
+                    } else {
+                        fresh.push(file.clone());
+                    }
+                }
+                to_copy.push(fresh);
+            }
+            Ok((plan, to_copy, kept))
+        })
+        .await
+        .context("the restore planning task panicked")??
+    };
+
+    let copy_count: usize = to_copy.iter().map(Vec::len).sum();
+    let copy_bytes: u64 = to_copy.iter().flatten().map(|f| f.size_bytes).sum();
+    println!(
+        "Restoring generation {} ({} generation folder(s) layered: {})",
+        plan.target_id,
+        plan.chain.len(),
+        plan.chain.join(" -> ")
+    );
+    println!(
+        "  {copy_count} file(s), {} to copy; {kept} already at the target and left untouched; {} the backup cannot supply",
+        format_bytes(copy_bytes),
+        plan.missing.len()
+    );
+    for path in plan.missing.iter().take(20) {
+        println!("  missing in the backup: {path}");
+    }
+    if plan.missing.len() > 20 {
+        println!("  ... and {} more", plan.missing.len() - 20);
+    }
+
+    if args.dry_run {
+        println!("dry run: nothing was copied");
+        return Ok(restore::exit_code(false, plan.missing.len(), 0));
+    }
+
+    tokio::fs::create_dir_all(&target)
+        .await
+        .map_err(|error| IngestError::io(&target, error))
+        .context("cannot create the restore target")?;
+
+    let progress = new_progress(args, copy_bytes, "restore");
+    let mut copy_failed = false;
+    for (position, files) in to_copy.iter().enumerate() {
+        if files.is_empty() {
+            continue;
+        }
+        let (folder, target, files, sink) = (
+            root.join(&plan.chain[position]),
+            target.clone(),
+            files.clone(),
+            Arc::clone(&progress),
+        );
+        let result = spawn_blocking_with_span(move || {
+            robocopy_ingest::engine::naive::copy_selected(
+                &folder,
+                &target,
+                &files,
+                false,
+                sink.as_ref(),
+            )
+        })
+        .await
+        .context("the restore copy task panicked")?;
+        if let Err(error) = result {
+            eprintln!("restore copy failed: {error}");
+            copy_failed = true;
+            break;
+        }
+    }
+    progress.finish(if copy_failed {
+        "restore FAILED"
+    } else {
+        "restore done"
+    });
+
+    // What landed is checked against the sizes the backup listed: the cheapest check that can still
+    // catch a truncated copy. Content hashes are not in the manifest, so this is not a checksum.
+    let size_mismatches = {
+        let target = target.clone();
+        let files: Vec<ScannedFile> = to_copy.into_iter().flatten().collect();
+        spawn_blocking_with_span(move || {
+            files
+                .iter()
+                .filter(|f| {
+                    std::fs::metadata(target.join(&f.relative_path))
+                        .map(|m| m.len() != f.size_bytes)
+                        .unwrap_or(true)
+                })
+                .count()
+        })
+        .await
+        .context("the restore size check task panicked")?
+    };
+    let code = restore::exit_code(
+        copy_failed,
+        plan.missing.len(),
+        if copy_failed { 0 } else { size_mismatches },
+    );
+    println!(
+        "Restore finished: {size_mismatches} restored file(s) with an unexpected size, {} missing in the backup",
+        plan.missing.len()
+    );
+    Ok(code)
 }
 
 /// F35: delete old backup generations beyond the `keep_cycles` most recent ones. A "cycle" is one

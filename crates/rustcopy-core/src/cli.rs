@@ -98,7 +98,8 @@ pub struct Args {
             "advise",
             "set_credential",
             "delete_credential",
-            "list_schedules"
+            "list_schedules",
+            "list_generations"
         ]
     )]
     pub source: Option<PathBuf>,
@@ -118,7 +119,8 @@ pub struct Args {
             "advise",
             "set_credential",
             "delete_credential",
-            "list_schedules"
+            "list_schedules",
+            "list_generations"
         ]
     )]
     pub dest: Option<PathBuf>,
@@ -408,6 +410,48 @@ pub struct Args {
     /// passes robocopy's /Z, deliberately, for its throughput cost on small files).
     #[arg(long, value_name = "CHECKPOINT_PATH", conflicts_with = "restore_from")]
     pub resume_from: Option<PathBuf>,
+
+    // ── Generation backups: list and restore ─────────────────────────────────
+    /// List the generations (`--backup-type` runs) recorded at a backup destination, then exit.
+    ///
+    /// Takes the **backup destination** (the folder holding the generation folders and the
+    /// manifest). Shows each generation's id, type, date and how many files it copied, which is
+    /// what `--restore-generation` is given.
+    #[arg(
+        long,
+        value_name = "BACKUP_DIR",
+        conflicts_with_all = ["restore_from", "resume_from", "restore_generation", "install_schedule", "uninstall_schedule"]
+    )]
+    pub list_generations: Option<PathBuf>,
+
+    /// Rebuild the state of one generation of a `--backup-type` backup: `latest`, or an id from
+    /// `--list-generations`.
+    ///
+    /// `--source` is the backup destination (where the generation folders are) and `--dest` is
+    /// where to rebuild the files. The chain of generations the state depends on is layered in the
+    /// order the runs depended on each other, and files deleted from the source by then are left
+    /// out. Never overwrites or deletes anything at `--dest`: files already there are kept and
+    /// counted; and `--dest` may not be inside the backup. `--dry-run` shows the plan only.
+    /// Exits 4 when the backup cannot supply every file the generation lists.
+    #[arg(
+        long,
+        value_name = "ID|latest",
+        conflicts_with_all = [
+            "restore_from",
+            "resume_from",
+            "list_generations",
+            "backup_type",
+            "mirror",
+            "install_schedule",
+            "uninstall_schedule"
+        ]
+    )]
+    pub restore_generation: Option<String>,
+
+    /// With `--list-generations`/`--restore-generation`: the job whose generations to read, when the
+    /// backup was made by a `[[jobs]]` entry (its manifest is named after the job).
+    #[arg(long, value_name = "NAME")]
+    pub generation_job: Option<String>,
 
     // ── F10.1: HTML Standalone Dashboard Report ──────────────────────────────
     /// Path to write an interactive HTML summary report.
@@ -781,6 +825,9 @@ impl Args {
             // Credential management touches no path: none of the transfer checks below apply.
             || self.set_credential.is_some()
             || self.delete_credential.is_some()
+            // Generation listing/restore do their own checks (they read a backup, not a source).
+            || self.list_generations.is_some()
+            || self.restore_generation.is_some()
         {
             return Ok(());
         }

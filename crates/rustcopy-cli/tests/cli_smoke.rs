@@ -2432,6 +2432,202 @@ fn generation_backup_verifies_what_it_copied() {
     assert_eq!(manifest.as_array().expect("array").len(), 2);
 }
 
+/// Builds a three-generation history at one destination: a full, an incremental that changes `a`,
+/// deletes `b` and adds `c`, and returns `(source, workdir, dest, ids)`.
+#[cfg(windows)]
+fn three_state_backup() -> (
+    tempfile::TempDir,
+    tempfile::TempDir,
+    std::path::PathBuf,
+    Vec<String>,
+) {
+    let source = fixture_tree(&[("a.txt", 1), ("b.txt", 1), ("sub/d.txt", 1)]);
+    std::fs::write(source.path().join("a.txt"), b"version one").expect("a v1");
+    std::fs::write(source.path().join("b.txt"), b"will be deleted").expect("b");
+    let workdir = tempfile::tempdir().expect("workdir");
+    let dest = workdir.path().join("dest");
+
+    let full = run_generation_backup(source.path(), &dest, workdir.path(), "full", "r1.json", &[]);
+    assert!(full.status.success(), "stderr: {}", stderr_of(&full));
+
+    std::thread::sleep(std::time::Duration::from_millis(1100));
+    std::fs::write(source.path().join("a.txt"), b"version two, longer").expect("a v2");
+    std::fs::remove_file(source.path().join("b.txt")).expect("delete b");
+    std::fs::write(source.path().join("c.txt"), b"brand new").expect("c");
+    let inc = run_generation_backup(
+        source.path(),
+        &dest,
+        workdir.path(),
+        "incremental",
+        "r2.json",
+        &[],
+    );
+    assert!(inc.status.success(), "stderr: {}", stderr_of(&inc));
+
+    let manifest = read_manifest_generations(&dest.join(".rustcopy_generations.json"));
+    let ids = manifest
+        .as_array()
+        .expect("array")
+        .iter()
+        .map(|g| g["id"].as_str().expect("id").to_string())
+        .collect();
+    (source, workdir, dest, ids)
+}
+
+#[cfg(windows)]
+fn restore_generation_into(
+    backup: &Path,
+    target: &Path,
+    which: &str,
+    extra: &[&str],
+) -> std::process::Output {
+    let mut args = vec![
+        "--source",
+        backup.to_str().expect("utf8"),
+        "--dest",
+        target.to_str().expect("utf8"),
+        "--restore-generation",
+        which,
+    ];
+    args.extend_from_slice(extra);
+    run(&args)
+}
+
+/// The latest state is the full layered under the incremental: the changed file is the new
+/// version, the deleted file is **not** brought back, the new file is there, the untouched one
+/// comes from the full folder.
+#[cfg(windows)]
+#[test]
+fn restoring_the_latest_generation_layers_the_chain_and_leaves_out_deleted_files() {
+    let (_source, workdir, dest, _ids) = three_state_backup();
+    let target = workdir.path().join("restored");
+
+    let out = restore_generation_into(&dest, &target, "latest", &[]);
+    assert!(out.status.success(), "stderr: {}", stderr_of(&out));
+
+    assert_eq!(
+        std::fs::read(target.join("a.txt")).expect("a"),
+        b"version two, longer"
+    );
+    assert_eq!(
+        std::fs::read(target.join("c.txt")).expect("c"),
+        b"brand new"
+    );
+    assert!(target.join("sub").join("d.txt").is_file(), "from the full");
+    assert!(
+        !target.join("b.txt").exists(),
+        "b was deleted from the source before the incremental: it is not part of that state"
+    );
+}
+
+/// An older state is still reachable: the first generation restores the original version of `a`
+/// and the file that was later deleted.
+#[cfg(windows)]
+#[test]
+fn restoring_an_older_generation_brings_back_what_was_there_then() {
+    let (_source, workdir, dest, ids) = three_state_backup();
+    let target = workdir.path().join("restored-old");
+
+    let out = restore_generation_into(&dest, &target, &ids[0], &[]);
+    assert!(out.status.success(), "stderr: {}", stderr_of(&out));
+    assert_eq!(
+        std::fs::read(target.join("a.txt")).expect("a"),
+        b"version one"
+    );
+    assert_eq!(
+        std::fs::read(target.join("b.txt")).expect("b"),
+        b"will be deleted"
+    );
+    assert!(!target.join("c.txt").exists(), "c did not exist yet");
+}
+
+/// Nothing already at the target is overwritten: the user's file stays, and is counted.
+#[cfg(windows)]
+#[test]
+fn restoring_never_overwrites_what_is_already_at_the_target() {
+    let (_source, workdir, dest, _ids) = three_state_backup();
+    let target = workdir.path().join("restored-existing");
+    std::fs::create_dir_all(&target).expect("target");
+    std::fs::write(target.join("a.txt"), b"my newer work").expect("existing");
+
+    let out = restore_generation_into(&dest, &target, "latest", &[]);
+    assert!(out.status.success(), "stderr: {}", stderr_of(&out));
+    assert_eq!(
+        std::fs::read(target.join("a.txt")).expect("a"),
+        b"my newer work",
+        "an existing file is kept"
+    );
+    assert!(target.join("c.txt").is_file(), "the rest is restored");
+    assert!(
+        stdout_of(&out).contains("1 already at the target"),
+        "the kept file is counted: {}",
+        stdout_of(&out)
+    );
+}
+
+/// A target inside the backup would mix restored files into the generation folders.
+#[cfg(windows)]
+#[test]
+fn restoring_into_the_backup_itself_is_refused() {
+    let (_source, _workdir, dest, _ids) = three_state_backup();
+    let out = restore_generation_into(&dest, &dest.join("restored"), "latest", &[]);
+    assert_eq!(out.status.code(), Some(2), "stderr: {}", stderr_of(&out));
+    assert!(!dest.join("restored").exists());
+}
+
+/// A dry run shows the plan and writes nothing.
+#[cfg(windows)]
+#[test]
+fn restoring_with_dry_run_copies_nothing() {
+    let (_source, workdir, dest, _ids) = three_state_backup();
+    let target = workdir.path().join("restored-dry");
+    let out = restore_generation_into(&dest, &target, "latest", &["--dry-run"]);
+    assert!(out.status.success(), "stderr: {}", stderr_of(&out));
+    assert!(!target.exists());
+    assert!(stdout_of(&out).contains("nothing was copied"));
+}
+
+/// A generation id that is not there is a clear refusal, not an empty restore.
+#[cfg(windows)]
+#[test]
+fn restoring_an_unknown_generation_fails_clearly() {
+    let (_source, workdir, dest, _ids) = three_state_backup();
+    let out = restore_generation_into(
+        &dest,
+        &workdir.path().join("x"),
+        "20000101T000000000Z_full",
+        &[],
+    );
+    assert_eq!(out.status.code(), Some(2));
+    assert!(stderr_of(&out).contains("--list-generations"));
+}
+
+/// A generation folder gone from disk means the state cannot be rebuilt: say so, copy nothing.
+#[cfg(windows)]
+#[test]
+fn restoring_with_a_missing_generation_folder_fails_instead_of_restoring_half() {
+    let (_source, workdir, dest, ids) = three_state_backup();
+    std::fs::remove_dir_all(dest.join(&ids[0])).expect("remove the full's folder");
+    let target = workdir.path().join("restored-broken");
+    let out = restore_generation_into(&dest, &target, "latest", &[]);
+    assert_eq!(out.status.code(), Some(2), "stderr: {}", stderr_of(&out));
+    assert!(!target.exists());
+}
+
+/// `--list-generations` prints the ids `--restore-generation` accepts.
+#[cfg(windows)]
+#[test]
+fn listing_generations_prints_every_id_and_type() {
+    let (_source, _workdir, dest, ids) = three_state_backup();
+    let out = run(&["--list-generations", dest.to_str().expect("utf8")]);
+    assert!(out.status.success(), "stderr: {}", stderr_of(&out));
+    let text = stdout_of(&out);
+    for id in &ids {
+        assert!(text.contains(id.as_str()), "{id} missing from: {text}");
+    }
+    assert!(text.contains("full") && text.contains("incremental"));
+}
+
 /// A dry run copies nothing, so it must verify nothing and record nothing.
 #[cfg(windows)]
 #[test]
