@@ -70,6 +70,9 @@ export component AppWindow inherits Window {
     in property <string> hist-message;
     in property <string> report-name;
     in property <bool> can-move;
+    in property <bool> dest-removable;
+    in-out property <bool> eject-when-done;
+    in property <string> eject-message;
     in property <bool> paused;
     in-out property <bool> move-mode;
     in property <int> d-move;
@@ -206,6 +209,7 @@ export component AppWindow inherits Window {
     callback confirm-save(string);
     callback add-folders();
     callback add-files();
+    callback dest-edited(string);
     callback pick-recent-source(string);
     callback pick-recent-dest(string);
     callback check-copy();
@@ -390,6 +394,7 @@ export component AppWindow inherits Window {
                     accessible-label: Strings.dest-label;
                     edited => {
                         root.clear-check();
+                        root.dest-edited(self.text);
                     }
                 }
                 if root.recent-dests.length > 0: Text {
@@ -452,6 +457,11 @@ export component AppWindow inherits Window {
                 CheckBox {
                     text: Strings.open-when-done;
                     checked <=> root.open-when-done;
+                    enabled: !root.running;
+                }
+                if root.dest-removable: CheckBox {
+                    text: Strings.eject-when-done;
+                    checked <=> root.eject-when-done;
                     enabled: !root.running;
                 }
                 if root.verify || root.move-mode: Text {
@@ -1691,6 +1701,11 @@ export component AppWindow inherits Window {
                         root.begin-save(root.selected-id);
                     }
                 }
+            }
+            if root.eject-message != "": Banner {
+                text: root.eject-message;
+                label-prefix: Strings.eject-title;
+                kind: BadgeKind.info;
             }
             if root.d-move == 1: Button {
                 text: root.d-move-busy ? Strings.move-checking : Strings.move-check;
