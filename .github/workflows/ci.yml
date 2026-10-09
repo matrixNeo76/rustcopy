@@ -104,6 +104,11 @@ jobs:
             exit 1
           fi
           cargo tree --locked -p rustcopy-cli --features rustcopy-cli/notify-server | grep -qi axum    || { echo "::error::axum missing even with --features notify-server"; exit 1; }
+          # The mail channel (lettre) follows the same rule: only notify-server carries it.
+          if cargo tree --locked -p rustcopy-cli | grep -qi lettre; then
+            echo "::error::lettre reached the default build — it must stay behind --features notify-server"
+            exit 1
+          fi
 
       # F52: the GUI (milestone 7.0.0) will be a workspace member with an npm/vite toolchain. The
       # CLI must never acquire a dependency on it -- that is what keeps a scheduled, unattended

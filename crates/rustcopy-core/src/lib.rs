@@ -39,6 +39,8 @@ pub mod notify;
 #[cfg(feature = "notify-server")]
 pub mod notify_server;
 pub mod notify_sink;
+#[cfg(feature = "smtp")]
+pub mod notify_smtp;
 pub mod oem_codec;
 pub mod progress;
 pub mod progress_file;

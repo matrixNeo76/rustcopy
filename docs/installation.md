@@ -183,7 +183,24 @@ topic_url = "https://ntfy.sh/i-miei-backup"
 [generic_webhook]
 enabled = false
 url = "https://hooks.slack.com/services/..."
+
+# Posta (dalla 7.9): lo stesso riepilogo per email.
+[smtp]
+enabled = false
+host = "smtp.example.com"
+port = 587                        # predefinita: 587 con starttls, 465 con tls
+security = "starttls"             # starttls | tls | none (none solo per un host locale)
+username = "rustcopy@example.com"
+password = "keyring:smtp-rustcopy"  # mai il segreto in chiaro: keyring:NOME, env:NOME o file:PERCORSO
+from = "rustcopy@example.com"
+to = ["admin@example.com"]
 ```
+
+La password della posta si salva in Gestione credenziali di Windows (pagina «Credenziali...» della
+console, o `--set-credential`) e il file la nomina soltanto. Una connessione **senza** cifratura
+(`security = "none"`) è accettata solo verso `localhost`/`127.0.0.1`: verso qualunque altro server il
+canale non parte e lo scrive nel registro, così una password non attraversa la rete in chiaro per una
+svista di configurazione.
 
 Collegare un backup al server (avviato **senza** token, sul solo loopback):
 ```powershell
