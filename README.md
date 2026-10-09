@@ -22,6 +22,12 @@ verified:
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 [![Crate version](https://img.shields.io/badge/version-7.8.1-informational.svg)](Cargo.toml)
 
+<p>
+  <a href="https://slint.dev" title="La console grafica di rustcopy è fatta con Slint">
+    <img src="https://raw.githubusercontent.com/slint-ui/slint/master/logo/MadeWithSlint-logo-whitebg.png" alt="Made with Slint" width="160">
+  </a>
+</p>
+
 **Backup e ingestion di grandi volumi di dati su Windows, con verifica di integrità.** `rustcopy`
 avvolge `robocopy.exe` in un binario Rust che ne risolve i limiti pratici sui dataset enormi —
 deadlock sulle pipe, saturazione della RAM, nessuna verifica dei checksum — e aggiunge backup a
