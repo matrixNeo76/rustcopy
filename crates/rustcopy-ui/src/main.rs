@@ -14,6 +14,7 @@ mod csv;
 mod form;
 mod format;
 mod help;
+mod move_text;
 mod report_rows;
 mod run;
 mod runs;
@@ -30,6 +31,7 @@ use std::time::Duration;
 
 use robocopy_ingest::integrity::HashAlgorithm;
 use robocopy_ingest::job_editor::{self, JobDraft};
+use robocopy_ingest::moves::{self, MovePlan, VerifiedCopy};
 use robocopy_ingest::safety::{self, Confirmation, SafetyLevel};
 use robocopy_ingest::sessions::{
     recent_folders, Session, SessionLog, SessionState, SessionSummary,
@@ -86,6 +88,9 @@ struct Ctx {
     edit: RefCell<Option<EditState>>,
     /// Every run of the history page, unfiltered: the filter and the CSV work from this.
     history: RefCell<Vec<RunLine>>,
+    /// The plan of a move waiting for the person's confirmation: which lavoro, and what it would delete.
+    /// Shared with the worker threads that compute and execute it.
+    move_plan: Arc<Mutex<Option<(String, MovePlan)>>>,
 }
 
 /// What the editor holds between opening a task and saving a proposal.
@@ -583,6 +588,31 @@ fn fill_detail(ui: &AppWindow, ctx: &Rc<Ctx>, id: &str) {
     ui.set_d_detail("".into());
     ui.set_d_verify(session.verify.map_or("", algorithm_name).into());
     ui.set_d_has_reports(!session.reports.is_empty());
+    // The second step of a move: offered once the copy ended clean and the originals are still there.
+    let pending = ctx
+        .move_plan
+        .lock()
+        .unwrap_or_else(|p| p.into_inner())
+        .as_ref()
+        .is_some_and(|(plan_id, _)| plan_id == id);
+    match (session.moving, session.state, session.moved) {
+        (true, _, Some((deleted, kept))) => {
+            ui.set_d_move(3);
+            ui.set_d_move_text(
+                format!("Originali cancellati: {deleted} file. Rimasti al loro posto: {kept}.")
+                    .into(),
+            );
+        }
+        (true, SessionState::Clean, None) if !pending => {
+            ui.set_d_move(1);
+            ui.set_d_move_text("".into());
+        }
+        (true, SessionState::Clean, None) => ui.set_d_move(2),
+        _ => {
+            ui.set_d_move(0);
+            ui.set_d_move_text("".into());
+        }
+    }
     // An interrupted run left a checkpoint in its folder: offer to continue it (newest first).
     let checkpoint =
         if session.state == SessionState::Interrupted || session.state == SessionState::NeedsLook {
@@ -721,9 +751,22 @@ fn start_copy(
         ui.set_error(ui.get_busy_text());
         return;
     }
+    let moving = ui.get_move_mode();
     let planned = runner::plan_copy(sources, Path::new(dest.trim())).and_then(|items| {
-        ctx.log
-            .begin_with(sources, Path::new(dest.trim()), &items, verify)
+        if moving {
+            // A move is always verified; the core refuses it below the Standard level.
+            let level = safety::load(&robocopy_ingest::sessions::data_dir());
+            ctx.log.begin_move(
+                level,
+                sources,
+                Path::new(dest.trim()),
+                &items,
+                verify.unwrap_or(HashAlgorithm::Xxh3),
+            )
+        } else {
+            ctx.log
+                .begin_with(sources, Path::new(dest.trim()), &items, verify)
+        }
     });
     match planned {
         Ok(session) => run_session(ui, ctx, &session, false),
@@ -849,6 +892,20 @@ where
     });
 }
 
+/// The plan for the second step of a move: the report must prove the copy was verified, the destination
+/// folders are recomputed from the sources exactly as the copy did, and the core looks at the disk.
+fn plan_a_move(session: &SessionSummary) -> Result<MovePlan, String> {
+    let report = session.reports.first().ok_or_else(|| {
+        "Questa copia non ha lasciato un report: non posso provare che sia verificata.".to_string()
+    })?;
+    let view = gui_api::read_report(report).map_err(|e| e.to_string())?;
+    let proof = VerifiedCopy::from_report(&view).map_err(|e| e.to_string())?;
+    let sources: Vec<PathBuf> = session.sources.iter().map(PathBuf::from).collect();
+    let pairs = runner::plan_copy(&sources, Path::new(&session.dest)).map_err(|e| e.to_string())?;
+    let level = safety::load(&robocopy_ingest::sessions::data_dir());
+    moves::plan_move(level, &pairs, proof).map_err(|e| e.to_string())
+}
+
 /// The index of a level in the combo box (the order of its model).
 fn level_index(level: SafetyLevel) -> i32 {
     match level {
@@ -874,6 +931,10 @@ fn show_safety(ui: &AppWindow) {
     ui.set_safety_pick(level_index(level));
     ui.set_safety_unlocks(level.unlocks().into());
     ui.set_can_schedule(level.can_prepare_schedules());
+    ui.set_can_move(level.can_move());
+    if !level.can_move() {
+        ui.set_move_mode(false);
+    }
 }
 
 /// Opens a folder in Explorer. Failure is silent on purpose: the copy has finished and is reported;
@@ -941,6 +1002,7 @@ fn main() -> Result<(), slint::PlatformError> {
         speeds: RefCell::new(Vec::new()),
         edit: RefCell::new(None),
         history: RefCell::new(Vec::new()),
+        move_plan: Arc::new(Mutex::new(None)),
     });
     refresh(&ui, &ctx);
     show_safety(&ui);
@@ -1279,6 +1341,96 @@ fn main() -> Result<(), slint::PlatformError> {
                         form.dest = text.into();
                     }
                     ui.set_form(form);
+                });
+            });
+        });
+    }
+
+    // Move, second step: plan what would be deleted (reads only), then delete after a confirmation. The
+    // core re-checks the level, the proof of verification and every file; this only runs the two calls.
+    {
+        let weak = ui.as_weak();
+        let ctx = ctx.clone();
+        ui.on_check_move(move |id| {
+            let Some(ui) = weak.upgrade() else { return };
+            let found = ctx
+                .sessions
+                .borrow()
+                .iter()
+                .find(|s| s.id == id.as_str())
+                .cloned();
+            let Some(session) = found else { return };
+            ui.set_d_move_busy(true);
+            let slot = ctx.move_plan.clone();
+            let weak = ui.as_weak();
+            std::thread::spawn(move || {
+                let result = plan_a_move(&session);
+                let _ = weak.upgrade_in_event_loop(move |ui| {
+                    ui.set_d_move_busy(false);
+                    match result {
+                        Ok(plan) => {
+                            ui.set_d_move_text(move_text::plan_text(&plan).into());
+                            ui.set_d_move(2);
+                            *slot.lock().unwrap_or_else(|p| p.into_inner()) =
+                                Some((session.id.clone(), plan));
+                        }
+                        Err(message) => {
+                            ui.set_d_move(4);
+                            ui.set_d_move_text(message.into());
+                        }
+                    }
+                });
+            });
+        });
+    }
+    {
+        let weak = ui.as_weak();
+        let ctx = ctx.clone();
+        ui.on_cancel_move(move || {
+            let Some(ui) = weak.upgrade() else { return };
+            *ctx.move_plan.lock().unwrap_or_else(|p| p.into_inner()) = None;
+            ui.set_d_move(1);
+            ui.set_d_move_text("".into());
+        });
+    }
+    {
+        let weak = ui.as_weak();
+        let ctx = ctx.clone();
+        ui.on_confirm_move(move |id| {
+            let Some(ui) = weak.upgrade() else { return };
+            let taken = ctx
+                .move_plan
+                .lock()
+                .unwrap_or_else(|p| p.into_inner())
+                .take();
+            let Some((plan_id, plan)) = taken.filter(|(plan_id, _)| plan_id == id.as_str()) else {
+                ui.set_d_move(1);
+                return;
+            };
+            ui.set_d_move_busy(true);
+            let weak = ui.as_weak();
+            std::thread::spawn(move || {
+                // The level is read again from disk: the window may have been open a long time.
+                let level = safety::load(&robocopy_ingest::sessions::data_dir());
+                let result = moves::execute_move(level, &plan, Confirmation::Confirmed)
+                    .map_err(|e| e.to_string());
+                let kept = plan.kept();
+                if let Ok(outcome) = &result {
+                    let log = SessionLog::default_location();
+                    let _ = log.record_moved(&plan_id, outcome.deleted, kept);
+                }
+                let _ = weak.upgrade_in_event_loop(move |ui| {
+                    ui.set_d_move_busy(false);
+                    match result {
+                        Ok(outcome) => {
+                            ui.set_d_move(3);
+                            ui.set_d_move_text(move_text::outcome_text(&outcome, kept).into());
+                        }
+                        Err(message) => {
+                            ui.set_d_move(4);
+                            ui.set_d_move_text(message.into());
+                        }
+                    }
                 });
             });
         });
@@ -1867,7 +2019,8 @@ fn main() -> Result<(), slint::PlatformError> {
                 .map(PathBuf::from)
                 .collect();
             let dest = ui.get_dest().to_string();
-            let verify = ui.get_verify().then(|| algorithm_for(ui.get_verify_algo()));
+            let verify = (ui.get_verify() || ui.get_move_mode())
+                .then(|| algorithm_for(ui.get_verify_algo()));
             ctx.open_when_done.set(ui.get_open_when_done());
             start_copy(&ui, &ctx, &chosen, &dest, verify);
         });

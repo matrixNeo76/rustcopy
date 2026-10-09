@@ -64,6 +64,16 @@ enum Line {
         /// reports of the resumed run are written.
         #[serde(default)]
         resume_dir: Option<String>,
+        /// A **move**: the originals may be deleted afterwards, once the copy is verified and the person
+        /// confirms (`crate::moves`). An older line has none.
+        #[serde(default)]
+        moving: bool,
+    },
+    Moved {
+        id: String,
+        at: DateTime<Utc>,
+        deleted: u64,
+        kept: u64,
     },
     Finished {
         id: String,
@@ -107,6 +117,10 @@ pub struct SessionSummary {
     pub folder: PathBuf,
     /// The folder a resumed run took its checkpoint from, when this lavoro is a resume.
     pub resume_dir: Option<PathBuf>,
+    /// Whether this lavoro is a move (its originals may be deleted after the verified copy).
+    pub moving: bool,
+    /// `(deleted, kept)` once the originals were deleted, so the step is never offered twice.
+    pub moved: Option<(u64, u64)>,
 }
 
 /// A session just begun: where its configuration is, and its id.
@@ -190,6 +204,47 @@ impl SessionLog {
         items: &[(PathBuf, PathBuf)],
         verify: Option<HashAlgorithm>,
     ) -> Result<Session, IngestError> {
+        self.begin_inner(sources, dest, items, verify, false)
+    }
+
+    /// Begins a **move**: an ordinary copy that is always verified, and whose originals may be deleted
+    /// afterwards, in a second step of its own (`crate::moves`). Refused below the Standard level.
+    pub fn begin_move(
+        &self,
+        level: crate::safety::SafetyLevel,
+        sources: &[PathBuf],
+        dest: &Path,
+        items: &[(PathBuf, PathBuf)],
+        verify: HashAlgorithm,
+    ) -> Result<Session, IngestError> {
+        if !level.can_move() {
+            return Err(IngestError::CopyPlanInvalid(format!(
+                "Il livello di sicurezza «{}» non permette di spostare: servono almeno «{}».",
+                level.name(),
+                crate::safety::SafetyLevel::Standard.name()
+            )));
+        }
+        self.begin_inner(sources, dest, items, Some(verify), true)
+    }
+
+    /// Records that the originals of a move were deleted (`deleted`) and how many were left (`kept`).
+    pub fn record_moved(&self, id: &str, deleted: u64, kept: u64) -> Result<(), IngestError> {
+        self.append(&Line::Moved {
+            id: id.to_string(),
+            at: Utc::now(),
+            deleted,
+            kept,
+        })
+    }
+
+    fn begin_inner(
+        &self,
+        sources: &[PathBuf],
+        dest: &Path,
+        items: &[(PathBuf, PathBuf)],
+        verify: Option<HashAlgorithm>,
+        moving: bool,
+    ) -> Result<Session, IngestError> {
         let id = self.new_id();
         let dir = self.base.join(SESSIONS_DIR).join(&id);
         std::fs::create_dir_all(&dir).map_err(|e| IngestError::io(&dir, e))?;
@@ -207,6 +262,7 @@ impl SessionLog {
             verify,
             task: None,
             resume_dir: None,
+            moving,
         })?;
         Ok(Session { id, dir, config })
     }
@@ -238,6 +294,7 @@ impl SessionLog {
             verify,
             task: None,
             resume_dir: None,
+            moving: false,
         })?;
         Ok(Session {
             id,
@@ -268,6 +325,7 @@ impl SessionLog {
             verify,
             task: Some(config.to_string_lossy().into_owned()),
             resume_dir: None,
+            moving: false,
         })?;
         Ok(Session { id, dir, config })
     }
@@ -335,6 +393,7 @@ impl SessionLog {
             dest: old.dest.clone(),
             verify: old.verify,
             task: old.task.as_ref().map(|p| p.to_string_lossy().into_owned()),
+            moving: old.moving,
             resume_dir: Some(folder.to_string_lossy().into_owned()),
         })?;
         Ok(Session {
@@ -437,6 +496,7 @@ impl SessionLog {
                     verify,
                     task,
                     resume_dir,
+                    moving,
                 } => {
                     order.push(id.clone());
                     let session_dir = self.base.join(SESSIONS_DIR).join(&id);
@@ -462,6 +522,8 @@ impl SessionLog {
                                 .map_or(session_dir, Path::to_path_buf),
                             task: task.map(PathBuf::from),
                             resume_dir: resume_dir.map(PathBuf::from),
+                            moving,
+                            moved: None,
                         },
                     );
                 }
@@ -482,6 +544,13 @@ impl SessionLog {
                         entry.bytes_copied = bytes_copied;
                         entry.elapsed_seconds = elapsed_seconds;
                         entry.reports = reports.into_iter().map(PathBuf::from).collect();
+                    }
+                }
+                Line::Moved {
+                    id, deleted, kept, ..
+                } => {
+                    if let Some(entry) = by_id.get_mut(&id) {
+                        entry.moved = Some((deleted, kept));
                     }
                 }
                 Line::Saved { id, saved_as, .. } => {
@@ -1443,5 +1512,60 @@ dest='D:/a'
         assert_eq!(recent.sources, vec![r"c:\FOTO", r"C:\docs"]);
         assert_eq!(recent.dests, vec![r"E:\altro", r"D:\backup"]);
         assert_eq!(recent_folders(&log.list(10, None), 1).dests.len(), 1);
+    }
+    #[test]
+    fn a_move_is_recorded_as_one_and_refused_below_standard() {
+        use crate::safety::SafetyLevel;
+        let base = tempfile::tempdir().expect("tempdir");
+        let log = SessionLog::at(base.path());
+        let sources = [PathBuf::from("C:/a")];
+        let items = [pair("C:/a", "D:/out/a")];
+        assert!(log
+            .begin_move(
+                SafetyLevel::Prudent,
+                &sources,
+                Path::new("D:/out"),
+                &items,
+                HashAlgorithm::Xxh3
+            )
+            .is_err());
+        assert!(
+            log.list(10, None).is_empty(),
+            "a refused move leaves no lavoro behind"
+        );
+
+        let started = log
+            .begin_move(
+                SafetyLevel::Standard,
+                &sources,
+                Path::new("D:/out"),
+                &items,
+                HashAlgorithm::Xxh3,
+            )
+            .expect("move");
+        let listed = log.list(1, Some(&started.id));
+        assert!(listed[0].moving);
+        assert_eq!(
+            listed[0].verify,
+            Some(HashAlgorithm::Xxh3),
+            "a move is always verified"
+        );
+        assert_eq!(listed[0].moved, None);
+
+        log.record_moved(&started.id, 5, 2).expect("record");
+        assert_eq!(log.list(1, None)[0].moved, Some((5, 2)));
+    }
+
+    #[test]
+    fn a_plain_copy_is_not_a_move() {
+        let base = tempfile::tempdir().expect("tempdir");
+        let log = SessionLog::at(base.path());
+        log.begin(
+            &[PathBuf::from("C:/a")],
+            Path::new("D:/out"),
+            &[pair("C:/a", "D:/out/a")],
+        )
+        .expect("begin");
+        assert!(!log.list(1, None)[0].moving);
     }
 }

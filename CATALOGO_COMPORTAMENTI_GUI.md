@@ -113,6 +113,8 @@ Le regole di sicurezza chiave (nessun comando che copi, cancelli, pianifichi o i
 
 | L32 | La console **non scrive mai una pianificazione**: prepara una lista di argomenti fissa per la CLI (`--config`, `--install-schedule`, `--schedule-name`), dopo che il **core** ha riletto il livello di sicurezza dal disco; rifiuta mirror, pulizia di generazioni, percorsi relativi, nomi e specifiche malformate | Un livello abbassato mentre la finestra è aperta deve valere subito; una pianificazione parte senza nessuno davanti e non deve poter cancellare | Core + UI | `schedule::{install_arguments,removal_arguments}`, `schedule_form::build_spec` | 7 test + dal vivo |
 
+| L33 | Cancellare gli originali di uno «Sposta» richiede **tutti** insieme: livello Standard riletto dal disco, una copia **non simulata, riuscita e con verifica passata** (`VerifiedCopy`, il tipo è la prova), la conferma della persona; si cancellano solo i file con una copia di **stessa dimensione e data** e ognuno è riletto subito prima; mai in modo ricorsivo, le cartelle si tolgono solo se vuote; link e giunzioni non si toccano | Spostare è l'unica azione della console che distrugge dati: la sicurezza sta nell'ordine, nella prova e nel non fidarsi di ciò che è cambiato nel frattempo | Core + UI | `moves::{plan_move,execute_move,VerifiedCopy}`, `SessionLog::begin_move` | 12 test + dal vivo |
+
 ## 3. Copia, anteprima, Explorer
 
 | ID | Comportamento | Perché | Dove vive | Come si porta | Verifica |
@@ -175,7 +177,7 @@ Le regole di sicurezza chiave (nessun comando che copi, cancelli, pianifichi o i
 
 ## 7. Stato e conteggi
 
-Righe: 13 confini, 12 esecuzione, 32 lavori, 11 copia/Explorer, 12 editor, 7 aspetto, 10 build. **97** voci. Quelle marcate **Nuovo**
+Righe: 13 confini, 12 esecuzione, 33 lavori, 11 copia/Explorer, 12 editor, 7 aspetto, 10 build. **98** voci. Quelle marcate **Nuovo**
 (E09, E12, A04, A05, A06, A07, C10 in parte) sono i requisiti che nascono dalla specifica, non da un difetto passato.
 
 ## 8. Come si usa questo catalogo
@@ -195,5 +197,5 @@ Righe: 13 confini, 12 esecuzione, 32 lavori, 11 copia/Explorer, 12 editor, 7 asp
   difetti D1-D30 resta da fare quando si arriva alle schermate corrispondenti.
 - **C08 è un'ipotesi favorevole**: `PopupWindow` non sta nel layout, ma non ho provato un pannello Recenti reale.
 - **E09 e A04** sono funzioni che non esistono ancora; la verifica "dal vivo" dipende dal tray (non riuscito nella Fase 1).
-- **Il conteggio 97** è fatto a mano e può non riflettere righe aggiunte dopo.
+- **Il conteggio 98** è fatto a mano e può non riflettere righe aggiunte dopo.
 - **Revisione contro D1-D30 fatta (8 Ott 2026)**: dei difetti documentati, quelli che toccano la console sono D22, D24, D25, D26, D28, D29, D30; D24 (G06), D26 (J12), D30 (I03) e D25 (core, `--resume-from`) erano già coperti; D22 (I10) e D28 (C11) sono state aggiunte; D29 riguarda solo la DLL Shell, invariata. D1-D21, D23 e D27 vivono nel core o nella CLI e la nuova interfaccia li eredita senza codice proprio.
