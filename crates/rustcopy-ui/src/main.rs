@@ -13,6 +13,7 @@ mod check;
 mod csv;
 mod form;
 mod format;
+mod help;
 mod report_rows;
 mod run;
 mod runs;
@@ -48,7 +49,8 @@ mod generated {
     slint::include_modules!();
 }
 use generated::{
-    AdviceRow, AppTray, AppWindow, DetailRow, EditForm, HistRow, PropRow, SessionRow, TaskRow,
+    AdviceRow, AppTray, AppWindow, DetailRow, EditForm, HelpRow, HistRow, PropRow, SessionRow,
+    TaskRow,
 };
 
 /// Names the mutex and the pipe of the single window (E12).
@@ -1126,6 +1128,65 @@ fn main() -> Result<(), slint::PlatformError> {
                         form.dest = text.into();
                     }
                     ui.set_form(form);
+                });
+            });
+        });
+    }
+
+    // Aiuto: static text, plus the guided example (core `example_workspace`, which refuses to overwrite).
+    {
+        let weak = ui.as_weak();
+        ui.on_show_help(move || {
+            let Some(ui) = weak.upgrade() else { return };
+            let rows: Vec<HelpRow> = help::entries()
+                .into_iter()
+                .map(|e| HelpRow {
+                    heading: e.heading,
+                    term: e.term.into(),
+                    text: e.text.into(),
+                })
+                .collect();
+            ui.set_help_rows(ModelRc::new(VecModel::from(rows)));
+            ui.set_help_message("".into());
+            ui.set_page(8);
+        });
+    }
+    {
+        let weak = ui.as_weak();
+        ui.on_create_example(move || {
+            let weak = weak.clone();
+            std::thread::spawn(move || {
+                let result = match dirs::document_dir() {
+                    Some(documents) => robocopy_ingest::example_workspace::create_example_workspace(
+                        &documents.join("rustcopy-demo"),
+                    )
+                    .map_err(|e| match e {
+                        robocopy_ingest::errors::IngestError::ExampleWorkspaceAlreadyExists(dir) => {
+                            format!(
+                                "{} esiste già: un esempio non ne riscrive mai uno. Toglila o usa quella che c'è.",
+                                dir.display()
+                            )
+                        }
+                        other => other.to_string(),
+                    }),
+                    None => Err("Non trovo la cartella Documenti.".to_string()),
+                };
+                let _ = weak.upgrade_in_event_loop(move |ui| match result {
+                    Ok(config) => {
+                        ui.set_help_ok(true);
+                        ui.set_help_message(
+                            format!(
+                                "Esempio pronto: {}. Lo trovi tra le attività: provalo con «Esegui».",
+                                config.display()
+                            )
+                            .into(),
+                        );
+                        ui.invoke_add_config(config.to_string_lossy().into_owned().into());
+                    }
+                    Err(message) => {
+                        ui.set_help_ok(false);
+                        ui.set_help_message(message.into());
+                    }
                 });
             });
         });

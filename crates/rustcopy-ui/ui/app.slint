@@ -3,14 +3,14 @@
 //
 // One entity, the "lavoro" (SPEC §5.0): the sidebar lists every copy started from here with how it
 // went; "Nuova copia" is the quick way in, a row opens the detail of one copy.
-import { Button, LineEdit, ProgressIndicator, ListView, Palette, CheckBox, ComboBox, TabWidget, TextEdit } from "std-widgets.slint";
+import { Button, LineEdit, ProgressIndicator, ListView, Palette, CheckBox, ComboBox, TabWidget, TextEdit, ScrollView } from "std-widgets.slint";
 import { Theme } from "theme.slint";
 import { Strings } from "strings.slint";
 import { Badge, BadgeKind, StatCard, Banner, SectionLabel, SpeedChart } from "components.slint";
-import { SessionRow, SessionItem, SessionUi, TaskRow, TaskItem, PropRow, HistRow, AdviceRow, DetailRow, DetailRows } from "sessions.slint";
+import { SessionRow, SessionItem, SessionUi, TaskRow, TaskItem, PropRow, HistRow, AdviceRow, DetailRow, DetailRows, HelpRow } from "sessions.slint";
 import { EditForm, TextField, ToggleField, TabPage } from "editor.slint";
 
-export { SessionRow, TaskRow, PropRow, EditForm, HistRow, AdviceRow, DetailRow }
+export { SessionRow, TaskRow, PropRow, EditForm, HistRow, AdviceRow, DetailRow, HelpRow }
 
 export component AppTray inherits SystemTrayIcon {
     icon: @image-url("icon.png");
@@ -69,6 +69,9 @@ export component AppWindow inherits Window {
     in-out property <int> hist-filter;
     in property <string> hist-message;
     in property <string> report-name;
+    in property <[HelpRow]> help-rows;
+    in property <string> help-message;
+    in property <bool> help-ok;
     in-out property <string> cred-name;
     in-out property <string> cred-secret;
     in property <string> cred-message;
@@ -149,6 +152,8 @@ export component AppWindow inherits Window {
     callback add-config(string);
     callback remove-config(string);
     callback open-report-file();
+    callback show-help();
+    callback create-example();
     callback edit-browse(int);
     callback show-credentials();
     callback save-credential(string, string);
@@ -197,6 +202,12 @@ export component AppWindow inherits Window {
                     text: Strings.nav-tasks;
                     clicked => {
                         root.show-tasks();
+                    }
+                }
+                Button {
+                    text: Strings.nav-help;
+                    clicked => {
+                        root.show-help();
                     }
                 }
                 SectionLabel {
@@ -701,6 +712,76 @@ export component AppWindow inherits Window {
                     y: 8px;
                     font-size: Theme.body;
                     color: Theme.text-faint;
+                }
+            }
+        }
+
+        if root.page == 8: VerticalLayout {
+            padding: Theme.page-padding;
+            spacing: Theme.gap;
+            HorizontalLayout {
+                spacing: 10px;
+                alignment: start;
+                Button {
+                    text: Strings.props-back;
+                    clicked => {
+                        root.show-tasks();
+                    }
+                }
+                Text {
+                    text: Strings.help-title;
+                    font-size: Theme.title;
+                    font-weight: 700;
+                    color: Theme.text;
+                    vertical-alignment: center;
+                }
+            }
+            HorizontalLayout {
+                spacing: 10px;
+                alignment: start;
+                Button {
+                    text: Strings.help-example;
+                    clicked => {
+                        root.create-example();
+                    }
+                }
+            }
+            Text {
+                text: Strings.help-example-hint;
+                wrap: word-wrap;
+                font-size: Theme.small;
+                color: Theme.text-muted;
+            }
+            if root.help-message != "": Banner {
+                text: root.help-message;
+                label-prefix: Strings.help-title;
+                kind: root.help-ok ? BadgeKind.ok : BadgeKind.warning;
+            }
+            ScrollView {
+                vertical-stretch: 1;
+                min-height: 200px;
+                VerticalLayout {
+                    spacing: 6px;
+                    for row in root.help-rows: VerticalLayout {
+                        spacing: 1px;
+                        padding-top: row.heading ? 10px : 0px;
+                        if row.heading: SectionLabel {
+                            text: row.term;
+                        }
+                        if !row.heading: Text {
+                            text: row.term;
+                            font-size: Theme.body;
+                            font-weight: 700;
+                            color: Theme.text;
+                            wrap: word-wrap;
+                        }
+                        if !row.heading: Text {
+                            text: row.text;
+                            font-size: Theme.body;
+                            color: Theme.text-muted;
+                            wrap: word-wrap;
+                        }
+                    }
                 }
             }
         }
