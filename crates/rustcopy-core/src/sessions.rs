@@ -599,6 +599,37 @@ fn fresh(paths: Vec<PathBuf>, since: DateTime<Utc>) -> Vec<PathBuf> {
         .collect()
 }
 
+/// Folders used by recent lavori, newest first, without repeats.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct RecentFolders {
+    pub sources: Vec<String>,
+    pub dests: Vec<String>,
+}
+
+/// The folders the recent `sessions` (newest first, as [`SessionLog::list`] returns them) copied from
+/// and to, at most `limit` of each. Nothing is stored for this: the log already is the memory, so
+/// there is no second list that could disagree with it. Repeats are judged case-insensitively, as
+/// Windows paths are, and blank entries are dropped.
+pub fn recent_folders(sessions: &[SessionSummary], limit: usize) -> RecentFolders {
+    fn push(list: &mut Vec<String>, value: &str, limit: usize) {
+        let value = value.trim();
+        if value.is_empty() || list.len() >= limit {
+            return;
+        }
+        if !list.iter().any(|known| known.eq_ignore_ascii_case(value)) {
+            list.push(value.to_string());
+        }
+    }
+    let mut recent = RecentFolders::default();
+    for session in sessions {
+        for source in &session.sources {
+            push(&mut recent.sources, source, limit);
+        }
+        push(&mut recent.dests, &session.dest, limit);
+    }
+    recent
+}
+
 /// A saved task as the list of attività shows it.
 #[derive(Debug, Clone, PartialEq)]
 pub struct TaskEntry {
@@ -1395,5 +1426,22 @@ dest='D:/a'
             log.checkpoints_of(&first.id).is_empty(),
             "a resume that ended clean settles the checkpoint"
         );
+    }
+    #[test]
+    fn recent_folders_are_newest_first_without_repeats_or_blanks() {
+        let base = tempfile::tempdir().expect("tempdir");
+        let log = SessionLog::at(base.path());
+        for (src, dst) in [
+            (r"C:\foto", r"D:\backup"),
+            (r"C:\docs", r"D:\backup"),
+            (r"c:\FOTO", r"E:\altro"),
+        ] {
+            log.begin(&[PathBuf::from(src)], Path::new(dst), &[pair(src, dst)])
+                .expect("begin");
+        }
+        let recent = recent_folders(&log.list(10, None), 8);
+        assert_eq!(recent.sources, vec![r"c:\FOTO", r"C:\docs"]);
+        assert_eq!(recent.dests, vec![r"E:\altro", r"D:\backup"]);
+        assert_eq!(recent_folders(&log.list(10, None), 1).dests.len(), 1);
     }
 }
