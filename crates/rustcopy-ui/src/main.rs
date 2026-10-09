@@ -20,6 +20,7 @@ mod keep_awake;
 mod move_text;
 mod path_check;
 mod problems;
+mod queue;
 mod report_rows;
 mod run;
 mod runs;
@@ -61,7 +62,7 @@ mod generated {
 }
 use generated::{
     AdviceRow, AppTray, AppWindow, DetailRow, EditForm, HelpRow, HistRow, JobRow, PropRow,
-    SessionRow, TaskRow,
+    QueueRow, SessionRow, TaskRow,
 };
 
 /// Names the mutex and the pipe of the single window (E12).
@@ -102,6 +103,9 @@ struct Ctx {
     paused_since: Cell<Option<std::time::Instant>>,
     /// Keeps the computer awake while a copy started here is running.
     awake: keep_awake::KeepAwake,
+    /// The names of the jobs of the configuration now running, when it has several: the queue is
+    /// drawn from them and from the position the progress samples report.
+    queue_names: RefCell<Vec<String>>,
     /// Discards the answer for a configuration's jobs once another list was asked for.
     jobs_view: Generation,
     /// Discards the answer for a report page once another page or report was asked for.
@@ -870,6 +874,26 @@ fn start_restore_preview(ui: &AppWindow, report: PathBuf, workdir: Option<PathBu
     });
 }
 
+/// Draws the queue of a multi-job run: one row per job with where it stands. `current` is the job the
+/// progress samples say is running (1-based). Empty for a run with fewer than two jobs.
+fn show_queue(ui: &AppWindow, ctx: &Ctx, current: Option<usize>) {
+    let names = ctx.queue_names.borrow();
+    let rows: Vec<QueueRow> = names
+        .iter()
+        .zip(queue::states(names.len(), current))
+        .map(|(name, state)| QueueRow {
+            name: name.as_str().into(),
+            state: match state {
+                queue::QueueState::Waiting => 0,
+                queue::QueueState::Running => 1,
+                queue::QueueState::Done => 2,
+            },
+            label: state.label().into(),
+        })
+        .collect();
+    ui.set_queue_rows(ModelRc::new(VecModel::from(rows)));
+}
+
 /// Starts the CLI for a session already in the log and puts the new-copy page into its running state.
 fn run_session(ui: &AppWindow, ctx: &Rc<Ctx>, session: &Session, resume: bool) {
     let started = ctx.slot.try_start(|| {
@@ -882,6 +906,17 @@ fn run_session(ui: &AppWindow, ctx: &Rc<Ctx>, session: &Session, resume: bool) {
     match started {
         Ok(()) => {
             *ctx.running_id.borrow_mut() = Some(session.id.clone());
+            // A resume names a checkpoint, not a configuration: no queue to draw for it.
+            *ctx.queue_names.borrow_mut() = if resume {
+                Vec::new()
+            } else {
+                gui_api::list_jobs(&session.config)
+                    .map(|jobs| jobs.into_iter().map(|j| j.name).collect::<Vec<_>>())
+                    .ok()
+                    .filter(|names| names.len() > 1)
+                    .unwrap_or_default()
+            };
+            show_queue(ui, ctx, None);
             let running_title = ctx
                 .log
                 .list(1, Some(&session.id))
@@ -1189,6 +1224,7 @@ fn main() -> Result<(), slint::PlatformError> {
         running_id: RefCell::new(None),
         open_when_done: Cell::new(false),
         awake: keep_awake::KeepAwake::default(),
+        queue_names: RefCell::new(Vec::new()),
         sessions: RefCell::new(Vec::new()),
         details: Generation::default(),
         schedules: Generation::default(),
@@ -2617,6 +2653,11 @@ fn main() -> Result<(), slint::PlatformError> {
                         .into(),
                 );
                 ui.set_speed_text(format::human_speed(sample.throughput_mbps).into());
+                show_queue(
+                    &ui,
+                    &ctx,
+                    sample.batch_index.and_then(|i| usize::try_from(i).ok()),
+                );
                 ui.set_batch_label(match (sample.batch_index, sample.batch_total) {
                     (Some(index), Some(total)) if total > 1 => {
                         format!("Job {index} di {total}").into()
@@ -2639,6 +2680,8 @@ fn main() -> Result<(), slint::PlatformError> {
             if let Some(done) = ctx.slot.with(|run| run.finished()).flatten() {
                 ctx.slot.take();
                 ctx.paused_since.set(None);
+                ctx.queue_names.borrow_mut().clear();
+                show_queue(&ui, &ctx, None);
                 ui.set_paused(false);
                 ui.set_running(false);
                 let id = ctx.running_id.borrow_mut().take();
