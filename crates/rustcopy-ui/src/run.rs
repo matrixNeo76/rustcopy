@@ -32,17 +32,30 @@ pub struct Finished {
 impl ActiveRun {
     /// Starts one configuration file as a child process.
     pub fn spawn(config: &Path) -> Result<Self, String> {
-        let exe = std::env::current_exe().map_err(|e| e.to_string())?;
-        // G03: beside this executable, never on PATH.
-        let cli = runner::cli_beside(&exe).map_err(|e| e.to_string())?;
         // The child runs in the configuration's folder, so a relative `--config` would resolve
         // against itself: make it absolute first (G05).
         let config = std::path::absolute(config).map_err(|e| e.to_string())?;
-        let cancel = runner::cancel_file_for_now(&config).map_err(|e| e.to_string())?;
+        Self::launch(&config, runner::run_arguments)
+    }
+
+    /// Resumes an interrupted run from its checkpoint (`--resume-from`): the fixed form in
+    /// `runner::resume_arguments`, run from the checkpoint's own folder like the original was.
+    pub fn spawn_resume(checkpoint: &Path) -> Result<Self, String> {
+        let checkpoint = std::path::absolute(checkpoint).map_err(|e| e.to_string())?;
+        Self::launch(&checkpoint, runner::resume_arguments)
+    }
+
+    /// `anchor` is the file the run is about (a configuration or a checkpoint): its folder is the
+    /// child's working directory.
+    fn launch(anchor: &Path, arguments: fn(&Path, &Path) -> Vec<String>) -> Result<Self, String> {
+        let exe = std::env::current_exe().map_err(|e| e.to_string())?;
+        // G03: beside this executable, never on PATH.
+        let cli = runner::cli_beside(&exe).map_err(|e| e.to_string())?;
+        let cancel = runner::cancel_file_for_now(anchor).map_err(|e| e.to_string())?;
         // A stop file left by a crashed run would make the CLI refuse to start.
         let _ = std::fs::remove_file(&cancel);
 
-        let args = runner::run_arguments(&config, &cancel);
+        let args = arguments(anchor, &cancel);
         let capture = std::fs::File::create(runner::output_file_for(&cancel))
             .map_err(|e| format!("cannot capture the run's output: {e}"))?;
         let capture_err = capture.try_clone().map_err(|e| e.to_string())?;
@@ -53,7 +66,7 @@ impl ActiveRun {
             .stdin(Stdio::null())
             .stdout(Stdio::from(capture))
             .stderr(Stdio::from(capture_err));
-        if let Some(parent) = config.parent().filter(|p| !p.as_os_str().is_empty()) {
+        if let Some(parent) = anchor.parent().filter(|p| !p.as_os_str().is_empty()) {
             command.current_dir(parent);
         }
         #[cfg(windows)]

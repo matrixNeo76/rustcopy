@@ -60,6 +60,10 @@ enum Line {
         /// The saved task this run executes in place (its configuration file), if any.
         #[serde(default)]
         task: Option<String>,
+        /// Set when this run resumes an interrupted one: the folder holding the checkpoint, where the
+        /// reports of the resumed run are written.
+        #[serde(default)]
+        resume_dir: Option<String>,
     },
     Finished {
         id: String,
@@ -98,6 +102,11 @@ pub struct SessionSummary {
     pub saved_as: Option<PathBuf>,
     /// The saved task this run executed in place, if it was one (not a copy chosen in the window).
     pub task: Option<PathBuf>,
+    /// Where this lavoro's own files live: the task's folder for a task run, else its session folder.
+    /// A checkpoint left by an interrupted run is looked for here.
+    pub folder: PathBuf,
+    /// The folder a resumed run took its checkpoint from, when this lavoro is a resume.
+    pub resume_dir: Option<PathBuf>,
 }
 
 /// A session just begun: where its configuration is, and its id.
@@ -197,6 +206,7 @@ impl SessionLog {
             dest: dest.to_string_lossy().into_owned(),
             verify,
             task: None,
+            resume_dir: None,
         })?;
         Ok(Session { id, dir, config })
     }
@@ -227,6 +237,7 @@ impl SessionLog {
             dest: dest.to_string_lossy().into_owned(),
             verify,
             task: None,
+            resume_dir: None,
         })?;
         Ok(Session {
             id,
@@ -256,8 +267,81 @@ impl SessionLog {
             dest,
             verify,
             task: Some(config.to_string_lossy().into_owned()),
+            resume_dir: None,
         })?;
         Ok(Session { id, dir, config })
+    }
+
+    /// The interrupted runs of a lavoro that can be resumed: checkpoints in its own folder, newest
+    /// first (`gui_api::list_checkpoints`). A checkpoint a later resume already carried through to a
+    /// clean end is left out: the file stays on disk (the CLI never removes it), but offering to resume
+    /// finished work would only invite a pointless second run.
+    pub fn checkpoints_of(&self, id: &str) -> Vec<gui_api::CheckpointSummary> {
+        let all = self.list(usize::MAX, None);
+        let Some(session) = all.iter().find(|s| s.id == id) else {
+            return Vec::new();
+        };
+        let mut found = gui_api::list_checkpoints(&session.folder).unwrap_or_default();
+        found.retain(|checkpoint| {
+            !all.iter().any(|later| {
+                later.state == SessionState::Clean
+                    && later.started_at >= checkpoint.timestamp
+                    && later.resume_dir.as_deref() == Some(session.folder.as_path())
+            })
+        });
+        found
+    }
+
+    /// Begins a lavoro that **resumes** an interrupted one from `checkpoint`, which must be one of
+    /// that lavoro's own (`checkpoints_of`): anything else is refused, so a path typed or pasted
+    /// elsewhere cannot start a run. The new lavoro keeps the old one's folders and task, and its
+    /// `config` is the checkpoint (what `runner::resume_arguments` takes).
+    pub fn begin_resume(&self, id: &str, checkpoint: &Path) -> Result<Session, IngestError> {
+        let old = self
+            .list(usize::MAX, None)
+            .into_iter()
+            .find(|s| s.id == id)
+            .ok_or_else(|| IngestError::CopyPlanInvalid(format!("Lavoro {id} non trovato.")))?;
+        let wanted = std::path::absolute(checkpoint)
+            .map_err(|e| IngestError::io(checkpoint, e))?
+            .to_string_lossy()
+            .to_lowercase();
+        let own = self
+            .checkpoints_of(id)
+            .into_iter()
+            .find(|c| {
+                std::path::absolute(&c.path)
+                    .map(|p| p.to_string_lossy().to_lowercase() == wanted)
+                    .unwrap_or(false)
+            })
+            .ok_or_else(|| {
+                IngestError::CopyPlanInvalid(
+                    "Questo punto di ripresa non appartiene a questa copia.".to_string(),
+                )
+            })?;
+        let checkpoint = PathBuf::from(own.path);
+        let folder = checkpoint
+            .parent()
+            .map(Path::to_path_buf)
+            .unwrap_or_else(|| old.folder.clone());
+
+        let new_id = self.new_id();
+        let dir = self.base.join(SESSIONS_DIR).join(&new_id);
+        std::fs::create_dir_all(&dir).map_err(|e| IngestError::io(&dir, e))?;
+        self.append(&Line::Started {
+            id: new_id.clone(),
+            at: Utc::now(),
+            sources: old.sources.clone(),
+            dest: old.dest.clone(),
+            verify: old.verify,
+            task: old.task.as_ref().map(|p| p.to_string_lossy().into_owned()),
+            resume_dir: Some(folder.to_string_lossy().into_owned()),
+        })?;
+        Ok(Session {
+            id: new_id,
+            dir,
+            config: checkpoint,
+        })
     }
 
     fn new_id(&self) -> String {
@@ -281,7 +365,15 @@ impl SessionLog {
             // a file written since this run began counts (a report left by an earlier run must never
             // make a run that wrote nothing look clean).
             Some((task, since)) => task_reports(task, since),
-            None => find_reports(&dir),
+            None => match started
+                .as_ref()
+                .and_then(|s| s.resume_dir.as_deref().map(|d| (d, s.started_at)))
+            {
+                // A resumed run writes into the folder its checkpoint came from, which also holds
+                // the reports of the run it continues: only the ones written since it began count.
+                Some((folder, since)) => fresh(find_reports(folder), since),
+                None => find_reports(&dir),
+            },
         };
         let mut files = 0u64;
         let mut bytes = 0u64;
@@ -344,8 +436,10 @@ impl SessionLog {
                     dest,
                     verify,
                     task,
+                    resume_dir,
                 } => {
                     order.push(id.clone());
+                    let session_dir = self.base.join(SESSIONS_DIR).join(&id);
                     by_id.insert(
                         id.clone(),
                         SessionSummary {
@@ -361,7 +455,13 @@ impl SessionLog {
                             elapsed_seconds: 0.0,
                             reports: Vec::new(),
                             saved_as: None,
+                            folder: task
+                                .as_deref()
+                                .map(Path::new)
+                                .and_then(Path::parent)
+                                .map_or(session_dir, Path::to_path_buf),
                             task: task.map(PathBuf::from),
+                            resume_dir: resume_dir.map(PathBuf::from),
                         },
                     );
                 }
@@ -474,20 +574,29 @@ fn task_reports(config: &Path, since: DateTime<Utc>) -> Vec<PathBuf> {
     let Ok(jobs) = gui_api::list_jobs(config) else {
         return Vec::new();
     };
-    let floor = std::time::SystemTime::from(since) - std::time::Duration::from_secs(2);
-    let mut found: Vec<PathBuf> = jobs
+    let paths: Vec<PathBuf> = jobs
         .into_iter()
         .filter_map(|job| job.report_path)
         .map(PathBuf::from)
+        .collect();
+    let mut found = fresh(paths, since);
+    found.sort();
+    found.dedup();
+    found
+}
+
+/// The paths among `paths` that exist and were modified after `since` (two seconds of slack for clock
+/// granularity).
+fn fresh(paths: Vec<PathBuf>, since: DateTime<Utc>) -> Vec<PathBuf> {
+    let floor = std::time::SystemTime::from(since) - std::time::Duration::from_secs(2);
+    paths
+        .into_iter()
         .filter(|path| {
             std::fs::metadata(path)
                 .and_then(|meta| meta.modified())
                 .is_ok_and(|modified| modified >= floor)
         })
-        .collect();
-    found.sort();
-    found.dedup();
-    found
+        .collect()
 }
 
 /// A saved task as the list of attività shows it.
@@ -1170,5 +1279,121 @@ mod tests {
         let tasks = tempfile::tempdir().expect("tempdir");
         let log = SessionLog::at(base.path());
         assert!(log.save_as_task("nope", tasks.path(), "x").is_err());
+    }
+    fn write_checkpoint_in(dir: &Path) -> PathBuf {
+        use clap::Parser;
+        let mut args = crate::cli::Args::try_parse_from([
+            "robocopy_ingest",
+            "--source",
+            "D:/src",
+            "--dest",
+            "E:/dst",
+        ])
+        .expect("parse");
+        args.source = Some(PathBuf::from("D:/src"));
+        args.dest = Some(PathBuf::from("E:/dst"));
+        let path = dir.join("run.checkpoint.json");
+        crate::checkpoint::Checkpoint::new(&args, "interrupted by Ctrl+C")
+            .write_to(&path)
+            .expect("write checkpoint");
+        path
+    }
+
+    #[test]
+    fn a_checkpoint_left_beside_a_task_can_be_resumed_and_a_foreign_one_cannot() {
+        let base = tempfile::tempdir().expect("tempdir");
+        let files = tempfile::tempdir().expect("tempdir");
+        let elsewhere = tempfile::tempdir().expect("tempdir");
+        let task = write_config(
+            files.path(),
+            "t.toml",
+            "source='C:/a'
+dest='D:/a'
+",
+        );
+        let log = SessionLog::at(base.path());
+        let first = log.begin_task(&task).expect("begin");
+        let own = write_checkpoint_in(files.path());
+        let foreign = write_checkpoint_in(elsewhere.path());
+
+        assert_eq!(log.checkpoints_of(&first.id).len(), 1);
+        let refused = log.begin_resume(&first.id, &foreign);
+        assert!(
+            refused.is_err(),
+            "a checkpoint of another folder is refused"
+        );
+
+        let resumed = log.begin_resume(&first.id, &own).expect("own checkpoint");
+        assert_eq!(
+            resumed.config, own,
+            "the run is started from the checkpoint"
+        );
+        let summary = log.list(1, Some(&resumed.id));
+        assert_eq!(summary[0].task.as_deref(), Some(task.as_path()));
+        assert_eq!(summary[0].resume_dir.as_deref(), Some(files.path()));
+    }
+
+    #[test]
+    fn a_resumed_run_counts_only_the_reports_written_since_it_began() {
+        let base = tempfile::tempdir().expect("tempdir");
+        let log = SessionLog::at(base.path());
+        let first = log
+            .begin(
+                &[PathBuf::from("C:/a")],
+                Path::new("D:/out"),
+                &[pair("C:/a", "D:/out/a")],
+            )
+            .expect("begin");
+        let old_report = first.dir.join("robocopy_ingest_report_old.json");
+        std::fs::write(&old_report, "{}").expect("write");
+        let old_time = std::time::SystemTime::now() - std::time::Duration::from_secs(3600);
+        std::fs::File::options()
+            .write(true)
+            .open(&old_report)
+            .and_then(|f| f.set_modified(old_time))
+            .expect("age the report");
+        let checkpoint = write_checkpoint_in(&first.dir);
+
+        let resumed = log.begin_resume(&first.id, &checkpoint).expect("resume");
+        let new_report = first.dir.join("robocopy_ingest_report_new.json");
+        std::fs::write(&new_report, "{}").expect("write");
+        log.finish(&resumed.id, 0).expect("finish");
+
+        let summary = log.list(1, Some(&resumed.id));
+        assert_eq!(summary[0].reports, vec![new_report]);
+    }
+    #[test]
+    fn a_checkpoint_already_resumed_to_a_clean_end_is_no_longer_offered() {
+        let base = tempfile::tempdir().expect("tempdir");
+        let log = SessionLog::at(base.path());
+        let first = log
+            .begin(
+                &[PathBuf::from("C:/a")],
+                Path::new("D:/out"),
+                &[pair("C:/a", "D:/out/a")],
+            )
+            .expect("begin");
+        let checkpoint = write_checkpoint_in(&first.dir);
+        assert_eq!(log.checkpoints_of(&first.id).len(), 1);
+
+        let resumed = log.begin_resume(&first.id, &checkpoint).expect("resume");
+        assert_eq!(
+            log.checkpoints_of(&first.id).len(),
+            1,
+            "still offered while the resume has not finished cleanly"
+        );
+        std::fs::write(
+            first.dir.join("robocopy_ingest_report_done.json"),
+            CLEAN_REPORT,
+        )
+        .expect("write");
+        assert_eq!(
+            log.finish(&resumed.id, 0).expect("finish"),
+            SessionState::Clean
+        );
+        assert!(
+            log.checkpoints_of(&first.id).is_empty(),
+            "a resume that ended clean settles the checkpoint"
+        );
     }
 }

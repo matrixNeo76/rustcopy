@@ -37,7 +37,7 @@ spunta solo dopo che è in `main`, con la CI verde e, se è un comportamento, pr
   - [~] 5b lacune di parità, nell'ordine della tabella
     - [x] 1 aprire un file di configurazione e vederne i job (aggiunto all'elenco, mai copiato; elenco ricordato; «Togli» lo toglie dall'elenco e lascia il file; badge «pianificata» da `schtasks`)
     - [x] 2 coda di più job (etichetta «Job N di M» dal progresso; esito aggregato). Provato dal vivo con 3 job da 8,4 GB totali
-    - [ ] 3 ripresa da checkpoint
+    - [x] 3 ripresa da checkpoint («Riprendi» nel dettaglio di una copia interrotta; il core rifiuta un punto di ripresa che non sia di quella copia; uno già portato a termine non si offre più). Provato dal vivo: 26 GB, Ferma a 350 file, Riprendi ha copiato i 551 rimanenti con esito pulito
     - [ ] 4 «Controlla prima»
     - [ ] 5 report e storico di un file qualsiasi, con filtro per esito ed esportazione CSV
     - [ ] 6 gestione credenziali

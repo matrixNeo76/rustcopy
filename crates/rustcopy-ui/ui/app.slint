@@ -107,6 +107,7 @@ export component AppWindow inherits Window {
     in property <string> d-speed;
     in property <string> d-detail;
     in property <string> d-saved;
+    in property <string> d-resume;
     in property <string> d-verify;
     in property <[DetailRow]> d-rows;
     in-out property <bool> d-show-technical: false;
@@ -134,6 +135,7 @@ export component AppWindow inherits Window {
     callback remove-config(string);
     callback select-session(string);
     callback repeat-session(string);
+    callback resume-session(string, string);
     callback begin-save(string);
     callback confirm-save(string);
     callback add-folders();
@@ -1035,12 +1037,25 @@ export component AppWindow inherits Window {
                     value: root.d-speed;
                 }
             }
+            if root.error != "": Banner {
+                text: root.error;
+                label-prefix: Strings.warning-prefix;
+                kind: BadgeKind.warning;
+            }
             HorizontalLayout {
                 spacing: 10px;
                 alignment: start;
+                if root.d-resume != "": Button {
+                    text: Strings.resume;
+                    primary: true;
+                    enabled: !root.running;
+                    clicked => {
+                        root.resume-session(root.selected-id, root.d-resume);
+                    }
+                }
                 Button {
                     text: Strings.repeat;
-                    primary: true;
+                    primary: root.d-resume == "";
                     enabled: !root.running && root.d-state != 4;
                     clicked => {
                         root.repeat-session(root.selected-id);
