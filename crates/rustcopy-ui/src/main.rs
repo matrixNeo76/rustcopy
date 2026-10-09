@@ -1077,6 +1077,41 @@ fn main() -> Result<(), slint::PlatformError> {
         });
     }
 
+    // The editor's folder pickers: the native dialog blocks, so it runs on a worker thread, and the
+    // chosen path goes into the form only (nothing is written until "Scrivi proposta").
+    {
+        let weak = ui.as_weak();
+        ui.on_edit_browse(move |which| {
+            let Some(ui) = weak.upgrade() else { return };
+            let current = if which == 0 {
+                ui.get_form().source.to_string()
+            } else {
+                ui.get_form().dest.to_string()
+            };
+            let weak = ui.as_weak();
+            std::thread::spawn(move || {
+                let mut dialog = rfd::FileDialog::new();
+                let start = PathBuf::from(current.trim());
+                if start.is_dir() {
+                    dialog = dialog.set_directory(&start);
+                }
+                let Some(path) = dialog.pick_folder() else {
+                    return;
+                };
+                let text = path.to_string_lossy().into_owned();
+                let _ = weak.upgrade_in_event_loop(move |ui| {
+                    let mut form = ui.get_form();
+                    if which == 0 {
+                        form.source = text.into();
+                    } else {
+                        form.dest = text.into();
+                    }
+                    ui.set_form(form);
+                });
+            });
+        });
+    }
+
     // Credentials (F56): the secret goes from this window straight to Windows' Credential Manager,
     // never to a process argument, and the field is emptied as soon as it has done its one job.
     {

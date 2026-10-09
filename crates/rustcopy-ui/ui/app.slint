@@ -147,6 +147,7 @@ export component AppWindow inherits Window {
     callback add-config(string);
     callback remove-config(string);
     callback open-report-file();
+    callback edit-browse(int);
     callback show-credentials();
     callback save-credential(string, string);
     callback delete-credential(string);
@@ -839,11 +840,19 @@ export component AppWindow inherits Window {
                         }
                         TextField {
                             label: Strings.f-source;
+                            browse-text: Strings.browse;
                             value <=> root.form.source;
+                            browse => {
+                                root.edit-browse(0);
+                            }
                         }
                         TextField {
                             label: Strings.f-dest;
+                            browse-text: Strings.browse;
                             value <=> root.form.dest;
+                            browse => {
+                                root.edit-browse(1);
+                            }
                         }
                         TextField {
                             label: Strings.f-pattern;
@@ -873,6 +882,21 @@ export component AppWindow inherits Window {
                                 wrap: word-wrap;
                                 font-size: Theme.small;
                                 color: Theme.text-muted;
+                            }
+                            if root.form.mirror: Banner {
+                                text: Strings.w-mirror-backup;
+                                label-prefix: Strings.warning-prefix;
+                                kind: BadgeKind.info;
+                            }
+                            if root.form.backup-type != 0 && root.form.verify-integrity: Banner {
+                                text: Strings.w-backup-verify;
+                                label-prefix: Strings.warning-prefix;
+                                kind: BadgeKind.warning;
+                            }
+                            if root.form.backup-type != 0 && (root.form.encrypt-keyring != "" || root.form.encrypt-other): Banner {
+                                text: Strings.w-backup-encrypt;
+                                label-prefix: Strings.warning-prefix;
+                                kind: BadgeKind.warning;
                             }
                         }
                         ToggleField {
