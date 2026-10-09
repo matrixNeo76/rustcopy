@@ -408,7 +408,7 @@ impl GenerationManifest {
     }
 
     /// One generation by id, read without materializing the rest of the history (see
-    /// [`Self::read_last_matching`]) — what a restore needs: the file listing of the state it
+    /// `Self::read_last_matching`) — what a restore needs: the file listing of the state it
     /// rebuilds, and nothing else from the manifest.
     pub fn load_generation(
         dest_root: &Path,
