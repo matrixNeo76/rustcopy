@@ -427,6 +427,14 @@ pub fn schedules_referencing(config_path: &Path) -> Result<Vec<String>, IngestEr
     crate::schedule::referencing_config(config_path)
 }
 
+/// The scheduled tasks that run `config_path`, with their next run and status as Task Scheduler
+/// reports them. Read-only, like [`schedules_referencing`]; the console shows it beside a task.
+pub fn schedule_details(
+    config_path: &Path,
+) -> Result<Vec<crate::schedule::ScheduledTask>, IngestError> {
+    crate::schedule::details_for_config(config_path)
+}
+
 /// Every scheduled task that invokes this binary, regardless of which config it targets — F62,
 /// the GUI half of `--list-schedules`. Read-only, same as `schedules_referencing` above: never
 /// installs, updates or removes a schedule.

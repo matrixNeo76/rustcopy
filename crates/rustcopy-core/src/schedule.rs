@@ -568,6 +568,22 @@ pub fn referencing_config(_config_path: &Path) -> Result<Vec<String>, IngestErro
     Ok(Vec::new())
 }
 
+/// The scheduled tasks whose command line references `config_path`, **with** what Task Scheduler says
+/// about each (next run, status) — what the console shows beside a task that is scheduled. Same
+/// query and same matching as [`referencing_config`]; read-only like it.
+#[cfg(windows)]
+pub fn details_for_config(config_path: &Path) -> Result<Vec<ScheduledTask>, IngestError> {
+    let Some(csv) = query_all_tasks_csv()? else {
+        return Ok(Vec::new());
+    };
+    Ok(tasks_for_config(&csv, config_path))
+}
+
+#[cfg(not(windows))]
+pub fn details_for_config(_config_path: &Path) -> Result<Vec<ScheduledTask>, IngestError> {
+    Ok(Vec::new())
+}
+
 /// Every scheduled task whose command line invokes `binary_path` — F62, unlike
 /// [`referencing_config`] this does not filter by which config a task happens to reference, only
 /// by which executable it runs. Read-only, same as every other function in this module that does
@@ -614,13 +630,20 @@ fn parse_scheduled_tasks(csv: &str) -> Vec<ScheduledTask> {
 }
 
 #[cfg(windows)]
-fn tasks_referencing(csv: &str, config_path: &Path) -> Vec<String> {
+fn tasks_for_config(csv: &str, config_path: &Path) -> Vec<ScheduledTask> {
     // Paths on Windows are case-insensitive; a task installed with one casing must still match a
     // config path typed or picked with another.
     let needle = config_path.display().to_string().to_lowercase();
     parse_scheduled_tasks(csv)
         .into_iter()
         .filter(|task| task.command.to_lowercase().contains(&needle))
+        .collect()
+}
+
+#[cfg(windows)]
+fn tasks_referencing(csv: &str, config_path: &Path) -> Vec<String> {
+    tasks_for_config(csv, config_path)
+        .into_iter()
         .map(|task| task.name)
         .collect()
 }
@@ -722,6 +745,17 @@ mod tests {
             ]);
             let found = tasks_referencing(&csv, Path::new(r"c:\jobs\nightly.toml"));
             assert_eq!(found, vec!["job".to_string()]);
+        }
+
+        #[test]
+        fn the_details_carry_what_task_scheduler_says_about_the_next_run() {
+            let csv = csv_with(&[
+                r#""WKAI01","\rustcopy-nightly","04/09/2026 02:00:00","Pronta","N/D","N/D","0","N/D","C:\rustcopy.exe --config C:\jobs\nightly.toml""#,
+            ]);
+            let found = tasks_for_config(&csv, Path::new(r"C:\jobs\nightly.toml"));
+            assert_eq!(found.len(), 1);
+            assert_eq!(found[0].next_run, "04/09/2026 02:00:00");
+            assert_eq!(found[0].status, "Pronta");
         }
 
         #[test]

@@ -128,6 +128,7 @@ Le regole di sicurezza chiave (nessun comando che copi, cancelli, pianifichi o i
 | L42 | Mentre una copia **avviata da questa finestra** è in corso il computer **non va in sospensione** (`SetThreadExecutionState`, solo il sistema: lo schermo può spegnersi); la richiesta si ritira nel tick in cui la copia finisce e sparisce da sola se la finestra si chiude. Non copre le copie pianificate: quelle sono di Task Scheduler (`StartWhenAvailable`, installazione da XML) | Una copia lunga non deve fermarsi perché un portatile ha deciso che nessuno è al computer | UI | `keep_awake::KeepAwake` | 1 test sulla decisione; la chiamata di sistema da controllare a mano (CONTROLLI_MANUALI_GUI.md) |
 | L43 | Durante l'esecuzione di una configurazione con **più job** la pagina mostra una riga per job (*in attesa*, *in corso*, *concluso*), letta dalla posizione che la riga di comando già pubblica; è disegnata **solo mentre la copia va** (a fine copia la finestra passa alla pagina del lavoro e l'esito di ciascun job sta dove è sempre stato, nella pagina Job); prima del primo campione il primo job è quello in corso, un indice fuori dal lotto non inventa un job | Un lotto lungo senza dire a che punto è sembra bloccato; mostrare un esito indovinato sarebbe peggio | UI | `queue::states` | 4 test + dal vivo (3 job: due conclusi, uno in corso) |
 | L44 | «Forza completo» sull'elenco delle attività, **solo per un'attività che contiene un backup a generazioni** e **dal livello Standard** (riletto dal disco al clic, non fidandosi del pulsante già disegnato): avvia la stessa configurazione con `--force-full`, quindi una generazione **completa** che apre un nuovo ciclo; non cancella nulla (la rotazione resta di `--keep-generations`, con la sua conferma, e dalla console non si raggiunge) | Una catena incrementale rovinata o un ciclo da riaprire non devono costringere a modificare la configurazione; ma ricopiare tutto costa tempo e spazio, quindi non è a un clic da un principiante | UI | `runner::force_full_arguments`, `safety::can_force_full` | 1 test F61 sulla lista di argomenti + dal vivo (seconda generazione completa creata dal pulsante) |
+| L45 | Un'attività **pianificata** mostra **quando Task Scheduler la farà partire**, nelle parole con cui Task Scheduler lo dice (mai riscritto in un altro formato; «N/D» non si stampa); la riga di un'attività ha **due livelli** (cosa è, poi cosa se ne può fare) perché con sette pulsanti accanto al testo il principale, «Esegui», finiva tagliato in una finestra di larghezza normale | Sapere che una copia è pianificata non dice se parte stanotte; un pulsante tagliato è una funzione persa | UI | `schedule::details_for_config`, `gui_api::schedule_details` | 1 test sul dettaglio + dal vivo (attività pianificata alle 04:30: «pianificata: prossima 10/10/2026 04:30:00») |
 
 ## 3. Copia, anteprima, Explorer
 
@@ -191,7 +192,7 @@ Le regole di sicurezza chiave (nessun comando che copi, cancelli, pianifichi o i
 
 ## 7. Stato e conteggi
 
-Righe: 13 confini, 12 esecuzione, 44 lavori, 11 copia/Explorer, 12 editor, 7 aspetto, 10 build. **109** voci. Quelle marcate **Nuovo**
+Righe: 13 confini, 12 esecuzione, 45 lavori, 11 copia/Explorer, 12 editor, 7 aspetto, 10 build. **110** voci. Quelle marcate **Nuovo**
 (E09, E12, A04, A05, A06, A07, C10 in parte) sono i requisiti che nascono dalla specifica, non da un difetto passato.
 
 ## 8. Come si usa questo catalogo
@@ -211,5 +212,5 @@ Righe: 13 confini, 12 esecuzione, 44 lavori, 11 copia/Explorer, 12 editor, 7 asp
   difetti D1-D30 resta da fare quando si arriva alle schermate corrispondenti.
 - **C08 è un'ipotesi favorevole**: `PopupWindow` non sta nel layout, ma non ho provato un pannello Recenti reale.
 - **E09 e A04** sono funzioni che non esistono ancora; la verifica "dal vivo" dipende dal tray (non riuscito nella Fase 1).
-- **Il conteggio 109** è fatto a mano e può non riflettere righe aggiunte dopo.
+- **Il conteggio 110** è fatto a mano e può non riflettere righe aggiunte dopo.
 - **Revisione contro D1-D30 fatta (8 Ott 2026)**: dei difetti documentati, quelli che toccano la console sono D22, D24, D25, D26, D28, D29, D30; D24 (G06), D26 (J12), D30 (I03) e D25 (core, `--resume-from`) erano già coperti; D22 (I10) e D28 (C11) sono state aggiunte; D29 riguarda solo la DLL Shell, invariata. D1-D21, D23 e D27 vivono nel core o nella CLI e la nuova interfaccia li eredita senza codice proprio.
