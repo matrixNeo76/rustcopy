@@ -150,6 +150,7 @@ export component AppWindow inherits Window {
     in property <string> running-title;
     in property <string> eta-text;
     in property <string> batch-label;
+    in property <string> recent-files;
     in property <[QueueRow]> queue-rows;
     in property <string> chart-commands;
     // Session option: read the copied files back and compare them. Algorithm index: 0 xxHash3, 1 SHA-256, 2 BLAKE3.
@@ -587,7 +588,23 @@ export component AppWindow inherits Window {
                     font-size: Theme.body;
                     color: Theme.text;
                 }
-                Text {
+                if root.recent-files != "": VerticalLayout {
+                    spacing: 2px;
+                    Text {
+                        text: Strings.recent-files;
+                        font-size: Theme.small;
+                        font-weight: 700;
+                        color: Theme.text-faint;
+                    }
+                    Text {
+                        text: root.recent-files;
+                        overflow: elide;
+                        wrap: no-wrap;
+                        font-size: Theme.small;
+                        color: Theme.text-muted;
+                    }
+                }
+                if root.recent-files == "": Text {
                     text: root.current-file;
                     overflow: elide;
                     font-size: Theme.small;

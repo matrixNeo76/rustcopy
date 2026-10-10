@@ -99,7 +99,14 @@ pub struct ThroughputProgress {
     // publisher tick (at most once a second) is nowhere near enough traffic to justify anything
     // fancier, and a `String` cannot live behind an atomic anyway.
     current_file: std::sync::Mutex<String>,
+    /// The last few completed files, newest first: what a window shows as a live list. A bounded
+    /// window, not a log: thousands of small files finish between two published samples, and a
+    /// list that tried to keep them all would be the unbounded growth this crate avoids elsewhere.
+    recent_files: std::sync::Mutex<std::collections::VecDeque<String>>,
 }
+
+/// How many completed files the live list keeps.
+pub const RECENT_FILES: usize = 8;
 
 impl ThroughputProgress {
     pub fn new(total_bytes: u64, label: &str) -> Arc<Self> {
@@ -115,6 +122,7 @@ impl ThroughputProgress {
             total_bytes,
             started: Instant::now(),
             current_file: std::sync::Mutex::new(String::new()),
+            recent_files: std::sync::Mutex::new(std::collections::VecDeque::new()),
         })
     }
 
@@ -158,6 +166,16 @@ impl ThroughputProgress {
         } else {
             Some(name.clone())
         }
+    }
+
+    /// The last completed files, newest first, at most [`RECENT_FILES`].
+    pub fn recent_files(&self) -> Vec<String> {
+        self.recent_files
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .iter()
+            .cloned()
+            .collect()
     }
 
     /// Average throughput in MB/s (10^6 bytes) since the bar was created.
@@ -212,12 +230,20 @@ impl ProgressSink for ThroughputProgress {
             .lock()
             .unwrap_or_else(|e| e.into_inner())
             .clear();
+        self.recent_files
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .clear();
         self.refresh();
     }
 
     fn set_current_file(&self, name: &str) {
         let mut current = self.current_file.lock().unwrap_or_else(|e| e.into_inner());
         name.clone_into(&mut current);
+        drop(current);
+        let mut recent = self.recent_files.lock().unwrap_or_else(|e| e.into_inner());
+        recent.push_front(name.to_string());
+        recent.truncate(RECENT_FILES);
     }
 }
 
@@ -248,6 +274,28 @@ pub fn speedup_factor(candidate_seconds: f64, baseline_seconds: f64) -> Option<f
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn the_recent_files_are_newest_first_and_bounded() {
+        let progress = super::ThroughputProgress::hidden(100);
+        use super::ProgressSink;
+        for i in 0..(super::RECENT_FILES + 5) {
+            progress.set_current_file(&format!("f{i}"));
+        }
+        let recent = progress.recent_files();
+        assert_eq!(recent.len(), super::RECENT_FILES);
+        assert_eq!(
+            recent[0],
+            format!("f{}", super::RECENT_FILES + 4),
+            "newest first"
+        );
+        assert_eq!(progress.current_file().as_deref(), Some(recent[0].as_str()));
+        progress.reset();
+        assert!(
+            progress.recent_files().is_empty(),
+            "a new phase starts a clean list"
+        );
+    }
+
     use super::*;
 
     #[test]
