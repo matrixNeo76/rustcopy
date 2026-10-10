@@ -259,6 +259,7 @@ fn refresh_tasks(ui: &AppWindow, ctx: &Rc<Ctx>) {
                 jobs: i32::try_from(task.jobs).unwrap_or(1),
                 saved: task.saved,
                 scheduled: false,
+                next_run: "".into(),
                 // Only a task with a generation backup in it has anything to force.
                 generations: gui_api::list_jobs(&task.path)
                     .map(|jobs| jobs.iter().any(|j| j.backup_type.is_some()))
@@ -278,12 +279,19 @@ fn refresh_tasks(ui: &AppWindow, ctx: &Rc<Ctx>) {
     let generation = ctx.schedules.clone();
     let weak = ui.as_weak();
     std::thread::spawn(move || {
-        let scheduled: Vec<bool> = paths
+        // (is scheduled, when it runs next as Task Scheduler says it) for each task.
+        let scheduled: Vec<(bool, String)> = paths
             .iter()
             .map(|path| {
-                gui_api::schedules_referencing(path)
-                    .map(|names| !names.is_empty())
-                    .unwrap_or(false)
+                let found = gui_api::schedule_details(path).unwrap_or_default();
+                let next = found
+                    .iter()
+                    .map(|task| task.next_run.trim())
+                    // "N/D" is Task Scheduler's own "no next run": not worth printing.
+                    .find(|when| !when.is_empty() && !when.eq_ignore_ascii_case("N/D"))
+                    .unwrap_or_default()
+                    .to_string();
+                (!found.is_empty(), next)
             })
             .collect();
         let _ = weak.upgrade_in_event_loop(move |ui| {
@@ -292,10 +300,11 @@ fn refresh_tasks(ui: &AppWindow, ctx: &Rc<Ctx>) {
             }
             use slint::Model;
             let model = ui.get_tasks();
-            for (index, flag) in scheduled.into_iter().enumerate() {
+            for (index, (flag, next)) in scheduled.into_iter().enumerate() {
                 if let Some(mut row) = model.row_data(index) {
-                    if row.scheduled != flag {
+                    if row.scheduled != flag || row.next_run.as_str() != next {
                         row.scheduled = flag;
+                        row.next_run = next.into();
                         model.set_row_data(index, row);
                     }
                 }

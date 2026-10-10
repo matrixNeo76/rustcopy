@@ -77,7 +77,7 @@ e destinazione · cronologia laterale di tutti i lavori con esito · un processo
 | Elenco attività con esito e ultima esecuzione | ✅ | per configurazione e, col pulsante «Job», per job (L7 colmata) |
 | Creare / modificare un'attività | ✅ | modifica per proposte, anche «+ Nuovo job» (L2 colmata); nuova da «Salva come attività» (L5) |
 | Completo / Incrementale / Differenziale | ✅ | |
-| Pianificazione (creare, vedere, togliere) | ✅ | dal livello Standard; non si vede la «prossima esecuzione» |
+| Pianificazione (creare, vedere, togliere) | ✅ | dal livello Standard; la «prossima esecuzione» si vede sull'attività (L45) |
 | Eventi prima/dopo | 🟡 | si leggono in Proprietà; **non si scrivono** dalla console (decisione F55 aperta) |
 | Conservazione per cicli, forza completo | ✅ | cicli sì (si può solo alzare); «Forza completo» dal livello Standard (L44) |
 | Cifratura | ✅ | AES-256, chiave nel Gestore credenziali |
