@@ -29,6 +29,7 @@ For full technical detail behind any entry, see `ANALYSIS.md` (defect list, `D<N
 ### Added
 
 - **Slint console, queue of a multi-job run**: one row per job (waiting, running, done) while the run goes, from the position the command line already publishes.
+- **`--force-full`**: makes one run a full generation whatever `--backup-type` says, opening a new cycle without deleting anything. The console offers it as "Forza completo" on a task that has a generation backup, from the Standard safety level.
 - **`--restore-generation <ID|latest>` and `--list-generations <DIR>`**: rebuild the state of one generation of a `--backup-type` backup (the generation folders layered in the order the runs depended on each other, files already deleted from the source then left out), never overwriting or deleting anything at the target and refusing a target inside the backup. Until now getting a state back from an incremental/differential chain was done by hand.
 - **Slint console keeps the computer awake during a copy it started** (the screen may still turn off; scheduled runs are Task Scheduler's). Released as soon as the copy ends or the window closes.
 - **Slint console, editor**: a "Verifica" button beside the source and destination folders says what is at that path (exists, how many files, how big) and only while the box still holds the checked text; every editor field now carries a sentence saying what it is for, also as its accessible description.

@@ -233,6 +233,17 @@ pub struct Args {
     #[arg(long, value_enum, value_name = "TYPE")]
     pub backup_type: Option<crate::generations::BackupType>,
 
+    /// Make this run a `full` generation whatever `--backup-type` says (`incremental` or
+    /// `differential`, from the command line or the configuration): it opens a new cycle instead of
+    /// appending to the chain. Use it when the chain cannot be trusted any more (a missing
+    /// generation folder, a restore that would need a lost increment) or to start a fresh cycle on
+    /// demand. Deletes nothing: the old generations stay until `--keep-generations` rotates them
+    /// out, which still asks for its own confirmation. Needs a backup type: with none it is an
+    /// error, because there is no generation pipeline to force. For one run only, so it is not a
+    /// configuration key.
+    #[arg(long, default_value_t = false)]
+    pub force_full: bool,
+
     /// F35: retention/rotation for backup generations. Keeps the N most recent *cycles* — a
     /// cycle is one `full` generation plus every `incremental`/`differential` generation that
     /// follows it, up to the next `full` — and deletes the entire folder (and manifest entry) of
@@ -621,6 +632,18 @@ pub struct Args {
 }
 
 impl Args {
+    /// The generation type this run really is: `--backup-type`, except that `--force-full` turns
+    /// `incremental`/`differential` into `full`. `None` when no backup type is in effect.
+    pub fn effective_backup_type(&self) -> Option<crate::generations::BackupType> {
+        self.backup_type.map(|kind| {
+            if self.force_full {
+                crate::generations::BackupType::Full
+            } else {
+                kind
+            }
+        })
+    }
+
     /// Real path to the source directory.
     ///
     /// Panics if called before `validate()` has confirmed `--source` was supplied — clap's
@@ -807,6 +830,12 @@ impl Args {
         // produce an unencrypted generation backup while the operator believes it is encrypted.
         if self.backup_type.is_some() && self.encrypt_aes256.is_some() {
             return Err(IngestError::BackupTypeAndEncryptionConflict);
+        }
+        // A forced full needs a generation pipeline to force. Checked only for the plain single-job
+        // run: inside a `[[jobs]]` batch (`job_name` set) a job without a backup type is simply a
+        // plain sync and the flag has nothing to say about it.
+        if self.force_full && self.backup_type.is_none() && self.job_name.is_none() {
+            return Err(IngestError::ForceFullWithoutBackupType);
         }
         // F35: nothing to rotate without a generation history in the first place.
         if self.keep_generations.is_some() && self.backup_type.is_none() {
@@ -1172,6 +1201,38 @@ mod tests {
     }
 
     /// F35: `--keep-generations` without `--backup-type` has nothing to rotate.
+    #[test]
+    fn force_full_turns_an_incremental_or_differential_run_into_a_full_one() {
+        use crate::generations::BackupType;
+        let mut args = Args::try_parse_from(["robocopy_ingest", "--source", "a", "--dest", "b"])
+            .expect("parse");
+        args.backup_type = Some(BackupType::Incremental);
+        assert_eq!(args.effective_backup_type(), Some(BackupType::Incremental));
+        args.force_full = true;
+        assert_eq!(args.effective_backup_type(), Some(BackupType::Full));
+        args.backup_type = Some(BackupType::Differential);
+        assert_eq!(args.effective_backup_type(), Some(BackupType::Full));
+        args.backup_type = None;
+        assert_eq!(args.effective_backup_type(), None, "nothing to force");
+    }
+
+    #[test]
+    fn force_full_without_a_backup_type_is_rejected_unless_it_is_a_job_of_a_batch() {
+        let mut args = Args::try_parse_from(["robocopy_ingest", "--source", "a", "--dest", "b"])
+            .expect("parse");
+        args.force_full = true;
+        assert!(matches!(
+            args.validate(),
+            Err(IngestError::ForceFullWithoutBackupType)
+        ));
+        // A plain job inside a `[[jobs]]` batch is a plain sync: the flag is not about it.
+        args.job_name = Some("photos".to_string());
+        assert!(!matches!(
+            args.validate(),
+            Err(IngestError::ForceFullWithoutBackupType)
+        ));
+    }
+
     #[test]
     fn keep_generations_without_backup_type_is_rejected() {
         let mut args =

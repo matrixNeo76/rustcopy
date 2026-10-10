@@ -63,6 +63,13 @@ impl SafetyLevel {
         self >= SafetyLevel::Standard
     }
 
+    /// Whether the console may start a run that forces a full generation (`--force-full`). It deletes
+    /// nothing, but it copies everything again, so it is behind the same level as a schedule rather
+    /// than one click away from a first-time user.
+    pub fn can_force_full(self) -> bool {
+        self >= SafetyLevel::Standard
+    }
+
     /// Whether the two-step *move* (copy, verify, confirm, delete the original) is available.
     pub fn can_move(self) -> bool {
         self >= SafetyLevel::Standard

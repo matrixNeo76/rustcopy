@@ -36,6 +36,10 @@ pub enum IngestError {
     #[error("--backup-type and --encrypt-aes256 cannot both be given: the generation backup pipeline does not encrypt its output yet")]
     BackupTypeAndEncryptionConflict,
 
+    /// `--force-full` was given with no `--backup-type` in effect: there is no generation to force.
+    #[error("--force-full needs a --backup-type (on the command line or in the configuration): without one there is no generation backup to turn into a full one")]
+    ForceFullWithoutBackupType,
+
     /// F72: `namespaced_path` interpolates a job name literally into a filename
     /// (`format!("{stem}.{name}.{ext}")`) -- a name containing a Windows reserved filename
     /// character or one of the reserved device names would otherwise surface as a cryptic I/O
@@ -271,6 +275,7 @@ impl IngestError {
             | IngestError::BackupTypeAndEncryptionConflict
             | IngestError::InvalidJobName { .. }
             | IngestError::KeepGenerationsWithoutBackupType
+            | IngestError::ForceFullWithoutBackupType
             | IngestError::SourceMissing(_)
             | IngestError::SourceNotADirectory(_)
             | IngestError::DestNotADirectory(_)

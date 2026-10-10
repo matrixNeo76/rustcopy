@@ -795,7 +795,13 @@ async fn execute(args: &Args, child_pid: Arc<AtomicU32>) -> Result<RunOutcome> {
     // below — see `execute_generation_backup`'s doc comment for why the two can't share `transfer()`.
     // `validate()` already rejects --backup-type together with --mirror, so nothing past this
     // point ever needs to consider the two together.
-    if let Some(backup_type) = args.backup_type {
+    if let Some(backup_type) = args.effective_backup_type() {
+        if args.force_full && args.backup_type != Some(backup_type) {
+            println!(
+                "Forcing a full generation (--backup-type {} turned into full for this run)",
+                args.backup_type.map_or("?", |kind| kind.as_str())
+            );
+        }
         return execute_generation_backup(
             args,
             backup_type,
@@ -1000,7 +1006,7 @@ async fn record_run_history(report: &IngestReport, exit_code: u8, args: &Args) {
     )
     .with_job(args.job_name.as_deref())
     .with_backup_type(
-        args.backup_type
+        args.effective_backup_type()
             .map(|kind| format!("{kind:?}").to_lowercase()),
     );
     let job_name = args.job_name.clone();

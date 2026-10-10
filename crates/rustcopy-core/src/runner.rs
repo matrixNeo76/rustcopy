@@ -174,6 +174,17 @@ pub fn run_arguments(config: &Path, cancel_file: &Path) -> Vec<String> {
     ]
 }
 
+/// The complete argument list for running one configuration with its generation backups forced to
+/// `full` for this run (`--force-full`). [`run_arguments`] plus that one flag: nothing else may be
+/// added, which is what keeps "Forza completo" from becoming a way to pass any other flag. It
+/// deletes nothing (pruning is `--keep-generations`' own, confirmed, job and never reachable from
+/// here).
+pub fn force_full_arguments(config: &Path, cancel_file: &Path) -> Vec<String> {
+    let mut arguments = run_arguments(config, cancel_file);
+    arguments.push("--force-full".to_string());
+    arguments
+}
+
 /// The complete argument list for resuming from a checkpoint (F31, closes the resume half of
 /// Onda 3 in `PIANO_GUI.md`). Same fixed shape and same reasoning as [`run_arguments`] — the only
 /// difference is `--resume-from` in place of `--config`, because `main.rs` treats the two as
@@ -597,6 +608,31 @@ mod tests {
             );
         }
         assert_eq!(args.len(), 6, "and nothing else may be added silently");
+    }
+
+    /// "Forza completo" is `run_arguments` plus exactly one flag, and still none of the destructive
+    /// ones.
+    #[test]
+    fn the_force_full_argument_list_adds_one_flag_and_no_destructive_one() {
+        let args = force_full_arguments(Path::new("jobs.toml"), Path::new(".jobs.stop-1"));
+        let joined = args.join(" ");
+        for forbidden in [
+            "--force-purge",
+            "--mirror",
+            "--install-service",
+            "--uninstall-service",
+            "--install-schedule",
+            "--uninstall-schedule",
+            "--keep-generations",
+        ] {
+            assert!(!joined.contains(forbidden), "{forbidden} in {joined}");
+        }
+        assert_eq!(args.last().map(String::as_str), Some("--force-full"));
+        assert_eq!(
+            args.len(),
+            7,
+            "run_arguments plus --force-full, nothing else"
+        );
     }
 
     /// Same prohibition, same reasoning, for the resume path — `--resume-from` is a second entry

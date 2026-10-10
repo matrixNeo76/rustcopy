@@ -2660,6 +2660,72 @@ fn listing_generations_prints_every_id_and_type() {
     assert!(text.contains("full") && text.contains("incremental"));
 }
 
+/// `--force-full` turns an incremental run into a full one: the new generation holds **every**
+/// file (not just the changed ones) and is recorded as `full`, which opens a new cycle. Nothing is
+/// deleted: the earlier generations stay.
+#[cfg(windows)]
+#[test]
+fn force_full_makes_an_incremental_run_a_full_generation_and_deletes_nothing() {
+    let source = fixture_tree(&[("a.csv", 8), ("b.csv", 8)]);
+    let workdir = tempfile::tempdir().expect("workdir");
+    let dest = workdir.path().join("dest");
+
+    let first = run_generation_backup(source.path(), &dest, workdir.path(), "full", "r1.json", &[]);
+    assert!(first.status.success(), "stderr: {}", stderr_of(&first));
+
+    // Nothing changed: a plain incremental would copy zero files. A forced full copies both.
+    let forced = run_generation_backup(
+        source.path(),
+        &dest,
+        workdir.path(),
+        "incremental",
+        "r2.json",
+        &["--force-full"],
+    );
+    assert!(forced.status.success(), "stderr: {}", stderr_of(&forced));
+    assert!(
+        stdout_of(&forced).contains("Forcing a full generation"),
+        "the run must say it was forced: {}",
+        stdout_of(&forced)
+    );
+
+    let manifest = read_manifest_generations(&dest.join(".rustcopy_generations.json"));
+    let generations = manifest.as_array().expect("array");
+    assert_eq!(generations.len(), 2, "the first generation is still there");
+    assert_eq!(generations[1]["backup_type"], "full");
+    assert_eq!(
+        generations[1]["files_copied"], 2,
+        "every file, not the delta"
+    );
+    let folder = dest.join(generations[1]["id"].as_str().expect("id"));
+    assert!(folder.join("a.csv").is_file() && folder.join("b.csv").is_file());
+    assert!(
+        dest.join(generations[0]["id"].as_str().expect("id"))
+            .is_dir(),
+        "forcing a full deletes nothing"
+    );
+}
+
+/// With no backup type there is no generation pipeline to force: a clear refusal.
+#[test]
+fn force_full_without_a_backup_type_is_rejected_by_the_real_binary() {
+    let source = fixture_tree(&[("a.csv", 8)]);
+    let dest = tempfile::tempdir().expect("dest");
+    let output = run(&[
+        "--source",
+        source.path().to_str().expect("utf8"),
+        "--dest",
+        dest.path().to_str().expect("utf8"),
+        "--force-full",
+    ]);
+    assert_eq!(output.status.code(), Some(2));
+    assert!(
+        stderr_of(&output).contains("--force-full needs a --backup-type"),
+        "stderr: {}",
+        stderr_of(&output)
+    );
+}
+
 /// A dry run copies nothing, so it must verify nothing and record nothing.
 #[cfg(windows)]
 #[test]
