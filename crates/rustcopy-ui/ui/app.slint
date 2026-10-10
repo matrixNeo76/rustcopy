@@ -7,10 +7,10 @@ import { Button, LineEdit, ProgressIndicator, ListView, Palette, CheckBox, Combo
 import { Theme } from "theme.slint";
 import { Strings } from "strings.slint";
 import { Badge, BadgeKind, StatCard, Banner, SectionLabel, SpeedChart } from "components.slint";
-import { SessionRow, SessionItem, SessionUi, TaskRow, TaskItem, PropRow, HistRow, AdviceRow, DetailRow, DetailRows, HelpRow, JobRow, JobItem } from "sessions.slint";
+import { SessionRow, SessionItem, SessionUi, TaskRow, TaskItem, PropRow, HistRow, AdviceRow, DetailRow, DetailRows, HelpRow, JobRow, JobItem, QueueRow } from "sessions.slint";
 import { EditForm, TextField, ToggleField, TabPage } from "editor.slint";
 
-export { SessionRow, TaskRow, PropRow, EditForm, HistRow, AdviceRow, DetailRow, HelpRow, JobRow }
+export { SessionRow, TaskRow, PropRow, EditForm, HistRow, AdviceRow, DetailRow, HelpRow, JobRow, QueueRow }
 
 export component AppTray inherits SystemTrayIcon {
     icon: @image-url("icon.png");
@@ -148,6 +148,7 @@ export component AppWindow inherits Window {
     in property <string> running-title;
     in property <string> eta-text;
     in property <string> batch-label;
+    in property <[QueueRow]> queue-rows;
     in property <string> chart-commands;
     // Session option: read the copied files back and compare them. Algorithm index: 0 xxHash3, 1 SHA-256, 2 BLAKE3.
     in-out property <bool> open-when-done: false;
@@ -542,6 +543,26 @@ export component AppWindow inherits Window {
                     text: root.batch-label;
                     font-size: Theme.body;
                     color: Theme.info;
+                }
+                if root.queue-rows.length > 1: VerticalLayout {
+                    spacing: 4px;
+                    for row in root.queue-rows: HorizontalLayout {
+                        spacing: 8px;
+                        alignment: start;
+                        Text {
+                            text: row.name;
+                            font-size: Theme.small;
+                            font-weight: row.state == 1 ? 700 : 400;
+                            color: row.state == 0 ? Theme.text-muted : Theme.text;
+                            vertical-alignment: center;
+                            min-width: 160px;
+                            overflow: elide;
+                        }
+                        Badge {
+                            text: row.label;
+                            kind: row.state == 1 ? BadgeKind.info : (row.state == 2 ? BadgeKind.ok : BadgeKind.neutral);
+                        }
+                    }
                 }
                 if root.paused: Banner {
                     text: Strings.paused-text;
