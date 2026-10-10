@@ -2259,6 +2259,7 @@ fn spawn_progress_publisher(
                 batch_index,
                 batch_total,
                 current_file: progress.current_file(),
+                recent_files: progress.recent_files(),
             };
 
             // Non-fatal, deliberately (AGENTS.md rule 11): a backup that succeeded must not be

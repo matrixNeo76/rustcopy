@@ -953,6 +953,7 @@ fn run_session(ui: &AppWindow, ctx: &Rc<Ctx>, session: &Session, mode: RunMode) 
             ui.set_fraction(-1.0);
             ui.set_files_done_text("".into());
             ui.set_current_file("".into());
+            ui.set_recent_files("".into());
             ui.set_eta_text("".into());
             ui.set_chart_commands("".into());
             ctx.speeds.borrow_mut().clear();
@@ -2719,6 +2720,7 @@ fn main() -> Result<(), slint::PlatformError> {
                 speeds.drain(..excess);
                 ui.set_chart_commands(format::chart_path(&speeds, 240.0, 56.0).into());
                 ui.set_current_file(sample.current_file.unwrap_or_default().into());
+                ui.set_recent_files(sample.recent_files.join("\n").into());
             }
             if let Some(done) = ctx.slot.with(|run| run.finished()).flatten() {
                 ctx.slot.take();

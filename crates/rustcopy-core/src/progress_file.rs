@@ -82,6 +82,10 @@ pub struct ProgressSample {
     /// default)]` so a sample written by a binary older than this field still parses.
     #[serde(default)]
     pub current_file: Option<String>,
+    /// The last few completed files, newest first (`progress::RECENT_FILES` at most): a live list for
+    /// a window. `#[serde(default)]` so a sample from an older binary still parses.
+    #[serde(default)]
+    pub recent_files: Vec<String>,
 }
 
 impl ProgressSample {
@@ -180,6 +184,7 @@ mod tests {
             batch_index: None,
             batch_total: None,
             current_file: None,
+            recent_files: Vec::new(),
         }
     }
 

@@ -199,6 +199,14 @@ pub fn parse_file_bytes(line: &str) -> Option<u64> {
     if trimmed.is_empty() || trimmed.contains('%') || is_labelled_line(trimmed) {
         return None;
     }
+    // A directory line ends in the directory's own path, which robocopy prints with a trailing
+    // separator, and a file name never can. This is what recognises a directory line in **any**
+    // locale: `IGNORED_STATUSES` only knows the English words, and on an Italian machine
+    // `Nuova directory   1   C:\src\` was counted as a copied file of one byte, inflating the file
+    // count by the number of folders.
+    if trimmed.ends_with(['\\', '/']) {
+        return None;
+    }
 
     let fields = split_fields(trimmed);
     let status: String = fields
@@ -686,6 +694,25 @@ mod tests {
     fn parses_tab_separated_new_file_line() {
         let line = "\t    New File  \t\t     52428800\tsales_2026_01.csv";
         assert_eq!(parse_file_bytes(line), Some(52_428_800));
+    }
+
+    /// Captured from this machine's robocopy (Italian): the directory line says "Nuova directory",
+    /// which no English status list knows. It must not count as a copied file.
+    #[test]
+    fn a_directory_line_is_not_a_file_whatever_the_language() {
+        assert_eq!(
+            parse_file_bytes("\t  Nuova directory       1\tC:\\rctest\\sched\\src\\"),
+            None
+        );
+        assert_eq!(
+            parse_file_bytes("\t  Nuova directory       1\tC:/rctest/sched/src/"),
+            None
+        );
+        // ...while the file line of the same run still counts.
+        assert_eq!(
+            parse_file_bytes("\t    Nuovo file\t\t       3\ta.txt"),
+            Some(3)
+        );
     }
 
     #[test]

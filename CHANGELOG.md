@@ -23,11 +23,13 @@ For full technical detail behind any entry, see `ANALYSIS.md` (defect list, `D<N
 
 ### Fixed
 
+- **Directory lines of a non-English robocopy were counted as copied files.** `parse_file_bytes` knew only English status words, so on an Italian machine `Nuova directory 1 C:\src\` counted as a one-byte file and inflated the file count by the number of folders. A line that ends in a path separator is a directory in any language.
 - **`--install-schedule` now creates a task that actually runs.** It used `schtasks /SC` flags, whose Task Scheduler defaults do not start a task on battery, stop it when the charger is unplugged, kill it after 72 hours and lose a run missed while the PC was off. The task is now registered from XML with those settings fixed (a missed run is caught up as soon as possible, and a run does not overlap itself).
 - **`--backup-type` now honours `--verify-integrity`.** It used to be silently ignored for generation backups. The copy is verified file by file against the source (only the files that generation copied), the report carries the integrity check, a failure exits with code 4, and a generation that did not verify is **not** recorded in the manifest, so the next incremental copies those files again instead of trusting them. The console warnings that said otherwise are gone.
 
 ### Added
 
+- **Slint console lists the last files copied** while a copy runs (up to 8, newest first), published in the progress sample as `recent_files`.
 - **Slint console shows when a scheduled task runs next** (as Task Scheduler reports it), and a task's buttons sit on their own row so "Esegui" is no longer cut off in a normal-width window.
 - **Slint console, queue of a multi-job run**: one row per job (waiting, running, done) while the run goes, from the position the command line already publishes.
 - **`--force-full`**: makes one run a full generation whatever `--backup-type` says, opening a new cycle without deleting anything. The console offers it as "Forza completo" on a task that has a generation backup, from the Standard safety level.
