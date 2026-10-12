@@ -188,6 +188,37 @@ pub fn build_task_xml(
     arguments: &str,
     start: chrono::NaiveDateTime,
 ) -> String {
+    build_task_xml_with(spec, exe, arguments, start, &TaskOptions::default())
+}
+
+/// What differs between an ordinary schedule and an elevated one.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct TaskOptions {
+    /// Run with the highest privileges the account has (`HighestAvailable`) instead of a limited token.
+    pub elevated: bool,
+    /// The folder the program starts in. Task Scheduler's default is the system folder, which would put
+    /// every relative report and log path somewhere nobody looks.
+    pub working_dir: Option<String>,
+}
+
+/// [`build_task_xml`] with the options an elevated schedule needs.
+pub fn build_task_xml_with(
+    spec: &ScheduleSpec,
+    exe: &str,
+    arguments: &str,
+    start: chrono::NaiveDateTime,
+    options: &TaskOptions,
+) -> String {
+    let run_level = if options.elevated {
+        "HighestAvailable"
+    } else {
+        "LeastPrivilege"
+    };
+    let working_dir = options
+        .working_dir
+        .as_deref()
+        .map(|dir| format!("<WorkingDirectory>{}</WorkingDirectory>", xml_escape(dir)))
+        .unwrap_or_default();
     let boundary = start.format("%Y-%m-%dT%H:%M:%S");
     let trigger = match spec {
         ScheduleSpec::Daily { .. } => format!(
@@ -218,7 +249,7 @@ pub fn build_task_xml(
          <RegistrationInfo><Description>rustcopy scheduled backup</Description></RegistrationInfo>\n\
          <Triggers>{trigger}</Triggers>\n\
          <Principals><Principal id=\"Author\"><LogonType>InteractiveToken</LogonType>\
-         <RunLevel>LeastPrivilege</RunLevel></Principal></Principals>\n\
+         <RunLevel>{run_level}</RunLevel></Principal></Principals>\n\
          <Settings>\
          <MultipleInstancesPolicy>IgnoreNew</MultipleInstancesPolicy>\
          <DisallowStartIfOnBatteries>false</DisallowStartIfOnBatteries>\
@@ -230,7 +261,7 @@ pub fn build_task_xml(
          <ExecutionTimeLimit>PT0S</ExecutionTimeLimit>\
          </Settings>\n\
          <Actions Context=\"Author\"><Exec><Command>{command}</Command>\
-         <Arguments>{arguments}</Arguments></Exec></Actions>\n\
+         <Arguments>{arguments}</Arguments>{working_dir}</Exec></Actions>\n\
          </Task>\n"
     )
 }
@@ -263,6 +294,9 @@ const SCHEDULE_ONLY_FLAGS: [&str; 3] = [
     "--uninstall-schedule",
 ];
 
+/// The scheduling flags that take no value.
+const SCHEDULE_ONLY_SWITCHES: [&str; 1] = ["--schedule-elevated"];
+
 /// Strips `--install-schedule`/`--schedule-name`/`--uninstall-schedule` (and their values) out of
 /// a raw argv, in either `--flag value` or `--flag=value` form — what's left is exactly the
 /// backup invocation that should run on a timer.
@@ -271,6 +305,10 @@ pub fn strip_schedule_flags(args: &[String]) -> Vec<String> {
     let mut i = 0;
     while i < args.len() {
         let arg = &args[i];
+        if SCHEDULE_ONLY_SWITCHES.contains(&arg.as_str()) {
+            i += 1; // a switch has no value token
+            continue;
+        }
         if SCHEDULE_ONLY_FLAGS.contains(&arg.as_str()) {
             i += 2; // skip the flag and its separate value token
             continue;
@@ -372,6 +410,202 @@ pub fn install_arguments(
         "--schedule-name".to_string(),
         name.to_string(),
     ])
+}
+
+/// What an **elevated** schedule refuses, over and above the ordinary rules (checked by the console's
+/// request and again by the elevated process itself, which does not trust that the request was checked):
+/// anything that deletes or runs a command. An elevated task is the only thing here that runs with
+/// administrator rights, so what it may do is limited to copying (and shadow-copying) files.
+///
+/// - `mirror` and `keep_generations`: the same reason a schedule never starts an unattended purge;
+/// - `pre_command`/`post_command`: arbitrary commands, which would run elevated;
+/// - a relative source or destination (the same rule as any schedule).
+pub fn validate_for_elevation(config: &Path) -> Result<(), IngestError> {
+    let parsed = crate::config::IngestConfig::load_from(config)?;
+    let jobs = parsed.jobs.clone().unwrap_or_default();
+    let mut every: Vec<(String, crate::config::JobConfig)> = Vec::new();
+    if jobs.is_empty() {
+        every.push(("job1".to_string(), parsed.defaults.clone()));
+    } else {
+        for (index, job) in jobs.iter().enumerate() {
+            every.push((
+                job.name
+                    .clone()
+                    .unwrap_or_else(|| format!("job{}", index + 1)),
+                job.merged_over(&parsed.defaults),
+            ));
+        }
+    }
+    for (name, job) in &every {
+        let refuse = |why: &str| {
+            Err(IngestError::Schedule(format!(
+                "Il job «{name}» {why}: una pianificazione elevata gira con diritti da amministratore e può soltanto copiare."
+            )))
+        };
+        if job.mirror == Some(true) {
+            return refuse("fa un mirror");
+        }
+        if job.keep_generations.is_some() {
+            return refuse("elimina vecchie generazioni");
+        }
+        if job.pre_command.is_some() || job.post_command.is_some() {
+            return refuse("esegue un comando prima o dopo la copia");
+        }
+        for path in [&job.source, &job.dest] {
+            let Some(path) = path else {
+                return refuse("non ha un'origine e una destinazione");
+            };
+            let text = path.to_string_lossy();
+            if !is_absolute_windows_path(&text) {
+                return refuse(&format!("usa il percorso relativo «{text}»"));
+            }
+        }
+    }
+    Ok(())
+}
+
+/// The argument list the console hands to the command line **through the elevation prompt** to install an
+/// elevated schedule. Fixed shape: only the validated configuration, spec and name vary.
+pub fn elevated_install_arguments(
+    level: crate::safety::SafetyLevel,
+    config: &Path,
+    spec: &str,
+    name: &str,
+) -> Result<Vec<String>, IngestError> {
+    if !level.can_prepare_elevated_schedules() {
+        return Err(IngestError::Schedule(format!(
+            "Il livello di sicurezza «{}» non permette una pianificazione con privilegi elevati: serve «{}».",
+            level.name(),
+            crate::safety::SafetyLevel::Expert.name()
+        )));
+    }
+    parse_schedule_spec(spec)?;
+    validate_task_name(name)?;
+    validate_for_elevation(config)?;
+    let config = std::path::absolute(config).map_err(|e| IngestError::io(config, e))?;
+    Ok(vec![
+        "--config".to_string(),
+        config.display().to_string(),
+        "--install-schedule".to_string(),
+        spec.to_string(),
+        "--schedule-name".to_string(),
+        name.to_string(),
+        "--schedule-elevated".to_string(),
+    ])
+}
+
+/// The argument list that removes an elevated schedule (and its copy) through the elevation prompt.
+pub fn elevated_removal_arguments(
+    level: crate::safety::SafetyLevel,
+    name: &str,
+) -> Result<Vec<String>, IngestError> {
+    if !level.can_prepare_elevated_schedules() {
+        return Err(IngestError::Schedule(format!(
+            "Il livello di sicurezza «{}» non permette di togliere una pianificazione elevata: serve «{}».",
+            level.name(),
+            crate::safety::SafetyLevel::Expert.name()
+        )));
+    }
+    validate_task_name(name)?;
+    Ok(vec![
+        "--uninstall-schedule".to_string(),
+        name.to_string(),
+        "--schedule-elevated".to_string(),
+    ])
+}
+
+/// Whether a task's command line runs the copy of an elevated schedule.
+pub fn is_elevated_command(command: &str) -> bool {
+    command.to_lowercase().contains(&format!(
+        "\\{}\\",
+        crate::elevation::ELEVATED_SUBDIR.to_lowercase()
+    ))
+}
+
+/// The command a schedule installed by [`install_elevated`] runs: the copy of the configuration, with
+/// the shadow copy switched on.
+pub fn elevated_arguments(copy: &Path) -> Vec<String> {
+    vec![
+        "--config".to_string(),
+        copy.display().to_string(),
+        "--vss-snapshot".to_string(),
+    ]
+}
+
+/// Installs an elevated schedule (the **elevated** command line). Refuses to do anything unless this
+/// process really is elevated: copying a configuration into a protected folder and registering a task
+/// that runs it with the highest rights are exactly the two steps that must not happen otherwise.
+#[cfg(windows)]
+pub fn install_elevated(name: &str, spec: &ScheduleSpec, config: &Path) -> Result<(), IngestError> {
+    if !crate::elevation::is_elevated() {
+        return Err(IngestError::Schedule(
+            "una pianificazione con privilegi elevati si crea solo da un processo eseguito come amministratore (la console lo avvia dopo la richiesta di Windows)".to_string(),
+        ));
+    }
+    validate_task_name(name)?;
+    validate_for_elevation(config)?;
+    let dir = crate::elevation::elevated_dir_in(&crate::elevation::program_data_dir()?, name);
+    crate::elevation::create_admin_only_dir(&dir)?;
+    let copy = dir.join("config.toml");
+    std::fs::copy(config, &copy).map_err(|e| IngestError::io(&copy, e))?;
+    let exe = std::env::current_exe()
+        .map_err(|e| IngestError::io(Path::new("<current executable>"), e))?;
+    let options = TaskOptions {
+        elevated: true,
+        working_dir: Some(dir.display().to_string()),
+    };
+    let xml = build_task_xml_with(
+        spec,
+        &exe.display().to_string(),
+        &build_task_arguments(&elevated_arguments(&copy)),
+        first_start(spec, chrono::Local::now().naive_local()),
+        &options,
+    );
+    // The XML is written inside the protected folder, not in a temp folder a limited process could swap
+    // between the write and the read.
+    let xml_file = dir.join("task.xml");
+    std::fs::write(&xml_file, task_xml_bytes(&xml)).map_err(|e| IngestError::io(&xml_file, e))?;
+    let result = run_schtasks(&build_create_args(name, &xml_file.display().to_string()));
+    let _ = std::fs::remove_file(&xml_file);
+    result
+}
+
+#[cfg(not(windows))]
+pub fn install_elevated(
+    _name: &str,
+    _spec: &ScheduleSpec,
+    _config: &Path,
+) -> Result<(), IngestError> {
+    Err(IngestError::Schedule(
+        "le pianificazioni elevate richiedono Windows".to_string(),
+    ))
+}
+
+/// Removes an elevated schedule and its copy of the configuration (the **elevated** command line). The
+/// reports the runs left in the folder stay: they are the person's record, and `remove_dir` (never
+/// `remove_dir_all`) refuses a folder that is not empty.
+#[cfg(windows)]
+pub fn uninstall_elevated(name: &str) -> Result<(), IngestError> {
+    if !crate::elevation::is_elevated() {
+        return Err(IngestError::Schedule(
+            "una pianificazione con privilegi elevati si toglie solo da un processo eseguito come amministratore".to_string(),
+        ));
+    }
+    validate_task_name(name)?;
+    run_schtasks(&build_delete_args(name))?;
+    let dir = crate::elevation::elevated_dir_in(&crate::elevation::program_data_dir()?, name);
+    for file in ["config.toml", "task.xml"] {
+        let _ = std::fs::remove_file(dir.join(file));
+    }
+    let _ = std::fs::remove_dir(&dir);
+    Ok(())
+}
+
+#[cfg(not(windows))]
+pub fn uninstall_elevated(_name: &str) -> Result<(), IngestError> {
+    Err(IngestError::Schedule(
+        "le pianificazioni elevate richiedono Windows".to_string(),
+    ))
 }
 
 /// The argument list that removes the schedule `name`, under the same level check. Fixed shape: only
@@ -1099,6 +1333,194 @@ mod tests {
             );
         }
     }
+    mod elevated {
+        use super::*;
+        use crate::safety::SafetyLevel;
+
+        fn config(dir: &Path, body: &str) -> std::path::PathBuf {
+            let path = dir.join("job.toml");
+            std::fs::write(&path, body).expect("write");
+            path
+        }
+
+        const PLAIN: &str = "source = 'C:/a'\ndest = 'D:/b'\n";
+
+        fn start() -> chrono::NaiveDateTime {
+            chrono::NaiveDateTime::parse_from_str("2026-10-12 02:00:00", "%Y-%m-%d %H:%M:%S")
+                .expect("instant")
+        }
+
+        #[test]
+        fn an_elevated_task_asks_for_the_highest_rights_and_starts_in_its_own_folder() {
+            let spec = ScheduleSpec::Daily {
+                time: "02:00".into(),
+            };
+            let xml = build_task_xml_with(
+                &spec,
+                "C:\\r\\robocopy_ingest.exe",
+                "--config x --vss-snapshot",
+                start(),
+                &TaskOptions {
+                    elevated: true,
+                    working_dir: Some("C:\\ProgramData\\rustcopy\\elevated\\notte".into()),
+                },
+            );
+            assert!(
+                xml.contains("<RunLevel>HighestAvailable</RunLevel>"),
+                "{xml}"
+            );
+            assert!(
+                xml.contains("<WorkingDirectory>C:\\ProgramData\\rustcopy\\elevated\\notte</WorkingDirectory>"),
+                "{xml}"
+            );
+            // Still only while the owner is logged on: no password is involved.
+            assert!(xml.contains("<LogonType>InteractiveToken</LogonType>"));
+        }
+
+        #[test]
+        fn an_ordinary_task_is_unchanged() {
+            let spec = ScheduleSpec::Daily {
+                time: "02:00".into(),
+            };
+            let xml = build_task_xml(&spec, "x.exe", "", start());
+            assert!(xml.contains("<RunLevel>LeastPrivilege</RunLevel>"));
+            assert!(!xml.contains("WorkingDirectory"));
+        }
+
+        #[test]
+        fn the_elevated_switch_never_reaches_a_scheduled_command() {
+            let args: Vec<String> = [
+                "--config",
+                "a.toml",
+                "--install-schedule",
+                "daily@02:00",
+                "--schedule-name",
+                "x",
+                "--schedule-elevated",
+                "--verify-integrity",
+            ]
+            .iter()
+            .map(|s| s.to_string())
+            .collect();
+            assert_eq!(
+                strip_schedule_flags(&args),
+                vec!["--config", "a.toml", "--verify-integrity"]
+            );
+        }
+
+        #[test]
+        fn only_the_highest_level_may_prepare_or_remove_an_elevated_schedule() {
+            let dir = tempfile::tempdir().expect("tempdir");
+            let file = config(dir.path(), PLAIN);
+            for level in [SafetyLevel::Prudent, SafetyLevel::Standard] {
+                assert!(elevated_install_arguments(level, &file, "daily@02:00", "notte").is_err());
+                assert!(elevated_removal_arguments(level, "notte").is_err());
+            }
+            assert!(
+                elevated_install_arguments(SafetyLevel::Expert, &file, "daily@02:00", "notte")
+                    .is_ok()
+            );
+            assert!(elevated_removal_arguments(SafetyLevel::Expert, "notte").is_ok());
+        }
+
+        /// The F61 prohibitions as a test: the argument list that goes through the elevation prompt has a
+        /// fixed shape and no destructive flag.
+        #[test]
+        fn the_elevated_install_arguments_have_a_fixed_shape_and_no_destructive_flag() {
+            let dir = tempfile::tempdir().expect("tempdir");
+            let file = config(dir.path(), PLAIN);
+            let args =
+                elevated_install_arguments(SafetyLevel::Expert, &file, "daily@02:00", "notte")
+                    .expect("allowed");
+            assert_eq!(args.len(), 7);
+            assert_eq!(args[0], "--config");
+            assert_eq!(args[2], "--install-schedule");
+            assert_eq!(args.last().map(String::as_str), Some("--schedule-elevated"));
+            let joined = args.join(" ");
+            for forbidden in [
+                "--force-purge",
+                "--mirror",
+                "--keep-generations",
+                "--pre-command",
+                "--post-command",
+            ] {
+                assert!(!joined.contains(forbidden), "{forbidden} in {joined}");
+            }
+            let removal =
+                elevated_removal_arguments(SafetyLevel::Expert, "notte").expect("allowed");
+            assert_eq!(
+                removal,
+                vec!["--uninstall-schedule", "notte", "--schedule-elevated"]
+            );
+        }
+
+        #[test]
+        fn an_elevated_schedule_refuses_whatever_deletes_or_runs_a_command() {
+            let dir = tempfile::tempdir().expect("tempdir");
+            let cases = [
+                ("mirror = true\n", "mirror"),
+                (
+                    "keep_generations = 3\nbackup_type = 'full'\n",
+                    "generazioni",
+                ),
+                ("pre_command = 'net stop x'\n", "comando"),
+                ("post_command = 'net start x'\n", "comando"),
+            ];
+            for (extra, word) in cases {
+                let file = config(dir.path(), &format!("{PLAIN}{extra}"));
+                let error = validate_for_elevation(&file).expect_err(extra).to_string();
+                assert!(error.contains(word), "{extra}: {error}");
+            }
+            let relative = config(dir.path(), "source = 'a'\ndest = 'D:/b'\n");
+            assert!(
+                validate_for_elevation(&relative).is_err(),
+                "a relative path"
+            );
+            let fine = config(dir.path(), PLAIN);
+            assert!(validate_for_elevation(&fine).is_ok());
+        }
+
+        #[test]
+        fn a_command_in_any_job_of_a_batch_is_refused() {
+            let dir = tempfile::tempdir().expect("tempdir");
+            let file = config(
+                dir.path(),
+                "[[jobs]]\nname='a'\nsource='C:/a'\ndest='D:/a'\n\n[[jobs]]\nname='b'\nsource='C:/b'\ndest='D:/b'\npost_command='x'\n",
+            );
+            let error = validate_for_elevation(&file)
+                .expect_err("job b")
+                .to_string();
+            assert!(error.contains("«b»"), "{error}");
+        }
+
+        #[test]
+        fn a_task_running_an_elevated_copy_is_recognised_whatever_the_case() {
+            assert!(is_elevated_command(
+                "\"C:\\x\\robocopy_ingest.exe\" --config C:\\ProgramData\\rustcopy\\elevated\\notte\\config.toml --vss-snapshot"
+            ));
+            assert!(is_elevated_command(
+                "c:\\programdata\\RUSTCOPY\\Elevated\\n\\config.toml"
+            ));
+            assert!(!is_elevated_command(
+                "C:\\x\\robocopy_ingest.exe --config C:\\jobs\\a.toml"
+            ));
+        }
+
+        #[test]
+        fn the_scheduled_command_runs_the_copy_with_the_shadow_copy_on() {
+            assert_eq!(
+                elevated_arguments(Path::new(
+                    "C:\\ProgramData\\rustcopy\\elevated\\n\\config.toml"
+                )),
+                vec![
+                    "--config",
+                    "C:\\ProgramData\\rustcopy\\elevated\\n\\config.toml",
+                    "--vss-snapshot"
+                ]
+            );
+        }
+    }
+
     mod console_requests {
         use super::*;
         use crate::safety::SafetyLevel;

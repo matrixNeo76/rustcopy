@@ -393,6 +393,22 @@ pub struct Args {
     )]
     pub install_schedule: Option<String>,
 
+    /// With `--install-schedule` or `--uninstall-schedule`: the schedule runs **elevated** (administrator
+    /// rights, no prompt each time) and exists to run with `--vss-snapshot`. Must itself be run as
+    /// Administrator, which the console arranges through the elevation prompt.
+    ///
+    /// The schedule runs a **copy** of `--config` kept in `ProgramData\rustcopy\elevated\<name>\`,
+    /// a folder only administrators can write to, so editing your own file never changes what runs with
+    /// those rights (re-install to update it). Refused for a configuration that mirrors, prunes
+    /// generations, runs a pre/post command or uses a relative source/destination: an elevated task may
+    /// only copy. With `--uninstall-schedule` it removes the task and the copy.
+    #[arg(
+        long,
+        default_value_t = false,
+        conflicts_with_all = ["restore_from", "resume_from"]
+    )]
+    pub schedule_elevated: bool,
+
     /// Name of the Task Scheduler entry to create (with --install-schedule) or delete (with
     /// --uninstall-schedule). Defaults to `rustcopy` when omitted with --install-schedule.
     #[arg(long, value_name = "NAME")]
@@ -836,6 +852,15 @@ impl Args {
         // plain sync and the flag has nothing to say about it.
         if self.force_full && self.backup_type.is_none() && self.job_name.is_none() {
             return Err(IngestError::ForceFullWithoutBackupType);
+        }
+        if self.schedule_elevated
+            && self.install_schedule.is_none()
+            && self.uninstall_schedule.is_none()
+        {
+            return Err(IngestError::Schedule(
+                "--schedule-elevated si usa insieme a --install-schedule o --uninstall-schedule"
+                    .to_string(),
+            ));
         }
         // F35: nothing to rotate without a generation history in the first place.
         if self.keep_generations.is_some() && self.backup_type.is_none() {

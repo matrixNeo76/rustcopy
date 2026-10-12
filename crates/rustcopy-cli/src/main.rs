@@ -101,6 +101,13 @@ async fn run(mut args: Args) -> Result<u8> {
     // this function's args-mutation chain entirely, same idea as the restore/resume branches
     // below but even earlier since it needs none of their machinery).
     if let Some(name) = args.uninstall_schedule.clone() {
+        if args.schedule_elevated {
+            robocopy_ingest::schedule::uninstall_elevated(&name).with_context(|| {
+                format!("cannot uninstall the elevated scheduled task {name:?}")
+            })?;
+            println!("removed elevated scheduled task '{name}' and its copy of the configuration");
+            return Ok(0);
+        }
         robocopy_ingest::schedule::uninstall(&name)
             .with_context(|| format!("cannot uninstall the scheduled task {name:?}"))?;
         println!("removed scheduled task '{name}'");
@@ -281,6 +288,24 @@ async fn run(mut args: Args) -> Result<u8> {
     // silently schedule a command that will fail every time it fires.
     if let Some(spec_raw) = args.install_schedule.clone() {
         let spec = robocopy_ingest::schedule::parse_schedule_spec(&spec_raw)?;
+        if args.schedule_elevated {
+            let name = args
+                .schedule_name
+                .clone()
+                .unwrap_or_else(|| "rustcopy".to_string());
+            let config = args.config.clone().ok_or_else(|| {
+                anyhow::anyhow!(
+                    "--schedule-elevated needs --config: the schedule runs a copy of it"
+                )
+            })?;
+            robocopy_ingest::schedule::install_elevated(&name, &spec, &config)
+                .with_context(|| format!("cannot install the elevated scheduled task {name:?}"))?;
+            println!(
+                "installed elevated scheduled task '{name}' ({spec_raw}); it runs a protected copy of {} with --vss-snapshot",
+                config.display()
+            );
+            return Ok(0);
+        }
         let name = args
             .schedule_name
             .clone()

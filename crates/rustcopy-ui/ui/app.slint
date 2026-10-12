@@ -94,6 +94,8 @@ export component AppWindow inherits Window {
     in property <string> sch-message;
     in property <bool> sch-ok;
     in property <bool> sch-busy;
+    in property <bool> can-elevated-schedule;
+    in-out property <bool> sch-elevated;
     in property <int> safety-level;
     in property <string> safety-level-name;
     in-out property <int> safety-pick;
@@ -1063,6 +1065,21 @@ export component AppWindow inherits Window {
                             root.sch-days[i] = self.checked;
                         }
                     }
+                }
+            }
+            if root.can-elevated-schedule: VerticalLayout {
+                spacing: 2px;
+                CheckBox {
+                    text: Strings.sch-elevated;
+                    checked <=> root.sch-elevated;
+                    accessible-description: Strings.sch-elevated-hint;
+                }
+                if root.sch-elevated: Text {
+                    x: 28px;
+                    text: Strings.sch-elevated-hint;
+                    wrap: word-wrap;
+                    font-size: Theme.small;
+                    color: Theme.text-muted;
                 }
             }
             HorizontalLayout {

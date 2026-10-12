@@ -82,7 +82,7 @@ e destinazione · cronologia laterale di tutti i lavori con esito · un processo
 | Conservazione per cicli, forza completo | ✅ | cicli sì (si può solo alzare); «Forza completo» dal livello Standard (L44) |
 | Cifratura | ✅ | AES-256, chiave nel Gestore credenziali |
 | Notifica via posta | ✅ | dal notify-server |
-| Copia di file in uso (VSS) | 🟡 | nel motore sì, **non esposta** nella console |
+| Copia di file in uso (VSS) | ✅ | pianificazione elevata dal livello Esperto, con configurazione protetta e una sola richiesta di Windows (L49); l'account/password di Cobian non si replica, per scelta |
 | Storico, registro | ✅ | storico con analisi e CSV; il registro grezzo si legge dal dettaglio di un lavoro (L48) |
 | Compressione (zip/7z) | ❌ | il motore non l'ha mai avuta |
 | FTP / cloud | ❌ | l'invio al cloud è un segnaposto che rifiuta |
