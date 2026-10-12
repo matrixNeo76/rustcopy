@@ -169,6 +169,8 @@ export component AppWindow inherits Window {
     in property <string> d-detail;
     in property <string> d-saved;
     in property <string> d-resume;
+    in property <[string]> d-checkpoints;
+    in-out property <int> d-checkpoint-index;
     in property <string> d-verify;
     in property <[DetailRow]> d-rows;
     in-out property <bool> d-show-technical: false;
@@ -232,7 +234,7 @@ export component AppWindow inherits Window {
     callback export-history();
     callback select-session(string);
     callback repeat-session(string);
-    callback resume-session(string, string);
+    callback resume-session(string, int);
     callback begin-save(string);
     callback confirm-save(string);
     callback add-folders();
@@ -1873,12 +1875,17 @@ export component AppWindow inherits Window {
             HorizontalLayout {
                 spacing: 10px;
                 alignment: start;
+                if root.d-checkpoints.length > 1: ComboBox {
+                    model: root.d-checkpoints;
+                    current-index <=> root.d-checkpoint-index;
+                    accessible-label: Strings.resume-which;
+                }
                 if root.d-resume != "": Button {
                     text: Strings.resume;
                     primary: true;
                     enabled: !root.running;
                     clicked => {
-                        root.resume-session(root.selected-id, root.d-resume);
+                        root.resume-session(root.selected-id, root.d-checkpoint-index);
                     }
                 }
                 Button {
