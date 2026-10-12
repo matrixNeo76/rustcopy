@@ -83,7 +83,7 @@ e destinazione · cronologia laterale di tutti i lavori con esito · un processo
 | Cifratura | ✅ | AES-256, chiave nel Gestore credenziali |
 | Notifica via posta | ✅ | dal notify-server |
 | Copia di file in uso (VSS) | 🟡 | nel motore sì, **non esposta** nella console |
-| Storico, registro | ✅ | storico con analisi e CSV; il registro grezzo della CLI non si legge dalla console |
+| Storico, registro | ✅ | storico con analisi e CSV; il registro grezzo si legge dal dettaglio di un lavoro (L48) |
 | Compressione (zip/7z) | ❌ | il motore non l'ha mai avuta |
 | FTP / cloud | ❌ | l'invio al cloud è un segnaposto che rifiuta |
 | Gruppi di attività, attività «fittizia», clonare, esegui come altro utente, backup mancati | ❌ | |

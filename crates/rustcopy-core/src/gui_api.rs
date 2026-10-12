@@ -893,6 +893,98 @@ pub fn read_report_page(
     Ok(ReportView::from_report(&report, offset, limit))
 }
 
+/// The most bytes [`read_log_tail`] reads from the end of a log: a log can be hundreds of
+/// megabytes (D18) and a window shows the last screenful, so the rest is never read.
+pub const LOG_TAIL_BYTES: u64 = 256 * 1024;
+
+/// The end of a job's log file, for a window to show.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct LogTail {
+    /// The log file the lines come from.
+    pub path: PathBuf,
+    /// The last lines, oldest first, at most the number asked for.
+    pub lines: Vec<String>,
+    /// The file has more before these lines.
+    pub truncated: bool,
+    /// The whole file's size, so a window can say how much it is not showing.
+    pub total_bytes: u64,
+}
+
+/// Where the configuration at `config_path` writes its log: the top-level `log_path`, else the
+/// first job's, else the CLI's own default. A relative path means relative to the configuration's
+/// folder, which is the working directory the console runs the CLI in.
+pub fn log_path_for(config_path: &Path) -> Result<PathBuf, IngestError> {
+    let config = IngestConfig::load_from(config_path)?;
+    let chosen = config
+        .defaults
+        .log_path
+        .clone()
+        .or_else(|| {
+            config
+                .jobs
+                .as_ref()
+                .and_then(|jobs| jobs.iter().find_map(|job| job.log_path.clone()))
+        })
+        .unwrap_or_else(|| PathBuf::from("./robocopy_ingest.log"));
+    Ok(if chosen.is_relative() {
+        config_path
+            .parent()
+            .map_or_else(|| chosen.clone(), |dir| dir.join(&chosen))
+    } else {
+        chosen
+    })
+}
+
+/// Reads the last `max_lines` lines of the log of the configuration at `config_path`, from at most
+/// the last [`LOG_TAIL_BYTES`] of the file. Read-only. A log that does not exist yet is not an
+/// error: a configuration that has never run has none, and it comes back empty.
+pub fn read_log_tail(config_path: &Path, max_lines: usize) -> Result<LogTail, IngestError> {
+    use std::io::{Read, Seek, SeekFrom};
+
+    let path = log_path_for(config_path)?;
+    let mut file = match std::fs::File::open(&path) {
+        Ok(file) => file,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+            return Ok(LogTail {
+                path,
+                lines: Vec::new(),
+                truncated: false,
+                total_bytes: 0,
+            });
+        }
+        Err(error) => return Err(IngestError::io(&path, error)),
+    };
+    let total_bytes = file
+        .metadata()
+        .map_err(|error| IngestError::io(&path, error))?
+        .len();
+    let start = total_bytes.saturating_sub(LOG_TAIL_BYTES);
+    file.seek(SeekFrom::Start(start))
+        .map_err(|error| IngestError::io(&path, error))?;
+    let mut bytes = Vec::new();
+    file.take(LOG_TAIL_BYTES)
+        .read_to_end(&mut bytes)
+        .map_err(|error| IngestError::io(&path, error))?;
+    // Lossy: a log is text, but the first byte read may be the middle of a multi-byte character.
+    let text = String::from_utf8_lossy(&bytes);
+    let mut lines: Vec<&str> = text.lines().collect();
+    // Starting mid-file, the first line is a fragment: drop it rather than show half a line.
+    if start > 0 && !lines.is_empty() {
+        lines.remove(0);
+    }
+    let cut = lines.len().saturating_sub(max_lines);
+    let truncated = start > 0 || cut > 0;
+    Ok(LogTail {
+        path,
+        lines: lines[cut..]
+            .iter()
+            .map(|line| (*line).to_string())
+            .collect(),
+        truncated,
+        total_bytes,
+    })
+}
+
 /// Reads a report and returns the first page of its error lists.
 pub fn read_report(path: &Path) -> Result<ReportView, IngestError> {
     read_report_page(path, 0, DEFAULT_ERROR_PAGE)
@@ -1438,6 +1530,83 @@ pub fn read_settings(config_path: &Path) -> Result<Vec<JobSettings>, IngestError
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn the_log_tail_of_a_never_run_configuration_is_empty_not_an_error() {
+        let dir = tempfile::tempdir().unwrap();
+        let config = dir.path().join("job.toml");
+        std::fs::write(
+            &config,
+            "source = 'a'
+dest = 'b'
+",
+        )
+        .unwrap();
+        let tail = super::read_log_tail(&config, 50).unwrap();
+        assert!(tail.lines.is_empty() && !tail.truncated && tail.total_bytes == 0);
+        assert_eq!(tail.path, dir.path().join("./robocopy_ingest.log"));
+    }
+
+    #[test]
+    fn the_log_tail_keeps_the_last_lines_and_says_when_there_were_more() {
+        let dir = tempfile::tempdir().unwrap();
+        let config = dir.path().join("job.toml");
+        std::fs::write(
+            &config,
+            "source = 'a'
+dest = 'b'
+log_path = 'run.log'
+",
+        )
+        .unwrap();
+        let text: String = (1..=10)
+            .map(|i| {
+                format!(
+                    "line {i}
+"
+                )
+            })
+            .collect();
+        std::fs::write(dir.path().join("run.log"), text).unwrap();
+        let tail = super::read_log_tail(&config, 3).unwrap();
+        assert_eq!(tail.lines, vec!["line 8", "line 9", "line 10"]);
+        assert!(tail.truncated, "seven lines were left out");
+        let all = super::read_log_tail(&config, 50).unwrap();
+        assert_eq!(all.lines.len(), 10);
+        assert!(!all.truncated);
+    }
+
+    #[test]
+    fn a_huge_log_is_read_only_at_its_end_and_never_starts_with_half_a_line() {
+        let dir = tempfile::tempdir().unwrap();
+        let config = dir.path().join("job.toml");
+        std::fs::write(
+            &config,
+            "source = 'a'
+dest = 'b'
+log_path = 'big.log'
+",
+        )
+        .unwrap();
+        let big: String = (0..60_000)
+            .map(|i| {
+                format!(
+                    "entry number {i:06}
+"
+                )
+            })
+            .collect();
+        assert!(big.len() as u64 > super::LOG_TAIL_BYTES);
+        std::fs::write(dir.path().join("big.log"), &big).unwrap();
+        let tail = super::read_log_tail(&config, 100_000).unwrap();
+        assert!(tail.truncated);
+        assert_eq!(tail.total_bytes, big.len() as u64);
+        assert!(
+            tail.lines.first().unwrap().starts_with("entry number "),
+            "{:?}",
+            tail.lines.first()
+        );
+        assert_eq!(tail.lines.last().unwrap(), "entry number 059999");
+    }
     use super::*;
     /// A real report, produced by the compiled binary and then normalised (fixed timestamp, no
     /// real hostname). Deserialised rather than hand-built: it is the exact path a UI takes when
