@@ -42,6 +42,10 @@ pub const EXIT_RETENTION_ABORTED: u8 = 5;
 /// needs. Distinct from [`EXIT_UNRECOVERABLE`] so a scheduler can tell "the disk is full" apart
 /// from "a flag was wrong" without parsing stderr.
 pub const EXIT_INSUFFICIENT_DISK_SPACE: u8 = 6;
+/// `--refuse-dest-links` found a junction or link in the destination (before the copy, or created
+/// while it ran). Its own code because a scheduler must be able to tell a possible redirection attack
+/// from a bad flag without parsing stderr.
+pub const EXIT_DESTINATION_UNSAFE: u8 = 7;
 
 /// What an exit code means, in one place.
 ///
@@ -59,6 +63,7 @@ pub fn exit_code_meaning(code: u8) -> &'static str {
         EXIT_INTEGRITY_FAILED => "copiato, ma la verifica ha trovato differenze",
         EXIT_RETENTION_ABORTED => "cancellazione della retention annullata",
         EXIT_INSUFFICIENT_DISK_SPACE => "spazio libero insufficiente in destinazione",
+        EXIT_DESTINATION_UNSAFE => "la destinazione contiene un collegamento (giunzione o link)",
         _ => "sconosciuto",
     }
 }
@@ -960,6 +965,18 @@ mod tests {
         assert_ne!(
             exit_code_meaning(EXIT_INSUFFICIENT_DISK_SPACE),
             exit_code_meaning(EXIT_UNRECOVERABLE)
+        );
+    }
+
+    #[test]
+    fn a_link_in_the_destination_has_its_own_meaning() {
+        assert_ne!(
+            exit_code_meaning(EXIT_DESTINATION_UNSAFE),
+            exit_code_meaning(EXIT_UNRECOVERABLE)
+        );
+        assert_ne!(
+            exit_code_meaning(EXIT_DESTINATION_UNSAFE),
+            exit_code_meaning(99)
         );
     }
 

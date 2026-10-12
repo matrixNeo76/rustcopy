@@ -42,9 +42,9 @@ const POLL_INTERVAL: Duration = Duration::from_secs(30);
 // binary returns. They used to be private constants here *and* a hand-written map in the
 // console's history pane — two definitions of one contract, free to drift.
 use robocopy_ingest::runner::{
-    EXIT_INGESTION_PROBLEM, EXIT_INSUFFICIENT_DISK_SPACE, EXIT_INTEGRITY_FAILED,
-    EXIT_MIRROR_ABORTED, EXIT_RETENTION_ABORTED as EXIT_RETENTION_PURGE_ABORTED,
-    EXIT_UNRECOVERABLE,
+    EXIT_DESTINATION_UNSAFE, EXIT_INGESTION_PROBLEM, EXIT_INSUFFICIENT_DISK_SPACE,
+    EXIT_INTEGRITY_FAILED, EXIT_MIRROR_ABORTED,
+    EXIT_RETENTION_ABORTED as EXIT_RETENTION_PURGE_ABORTED, EXIT_UNRECOVERABLE,
 };
 
 /// F37: a plain (non-`#[tokio::main]`) entry point on purpose. `windows_service::service_dispatcher`
@@ -85,6 +85,9 @@ async fn async_main() -> ExitCode {
                 }
                 Some(IngestError::InsufficientDiskSpace { .. }) => {
                     ExitCode::from(EXIT_INSUFFICIENT_DISK_SPACE)
+                }
+                Some(IngestError::DestinationHasLink { .. }) => {
+                    ExitCode::from(EXIT_DESTINATION_UNSAFE)
                 }
                 _ => ExitCode::from(EXIT_UNRECOVERABLE),
             }
@@ -753,6 +756,25 @@ struct RunOutcome {
     report_path: PathBuf,
 }
 
+/// `--refuse-dest-links`: look for a junction or symbolic link in the destination, its parents or its
+/// existing tree (`dest_guard`). Blocking tree walk, so it goes through `spawn_blocking_with_span`
+/// like every other filesystem operation here. `when` only labels the log line: the same check runs
+/// before the copy and again after it.
+async fn ensure_dest_has_no_links(args: &Args, when: &'static str) -> Result<()> {
+    if !args.refuse_dest_links {
+        return Ok(());
+    }
+    let dest = args.dest().to_path_buf();
+    let outcome =
+        spawn_blocking_with_span(move || robocopy_ingest::dest_guard::ensure_no_links(&dest))
+            .await
+            .context("the destination link check panicked")?;
+    if let Err(error) = &outcome {
+        tracing::error!(when, "destination link check failed: {error}");
+    }
+    Ok(outcome?)
+}
+
 async fn execute(args: &Args, child_pid: Arc<AtomicU32>) -> Result<RunOutcome> {
     let start_all = Instant::now();
     // Live feedback, 9 Set 2026: the only timestamp a report used to carry (`IngestReport`'s
@@ -815,6 +837,10 @@ async fn execute(args: &Args, child_pid: Arc<AtomicU32>) -> Result<RunOutcome> {
         }
     }
 
+    // `--refuse-dest-links`: before either pipeline writes anything, for the same reason as the
+    // free-space check above. Checked again after the copy, below, in each pipeline.
+    ensure_dest_has_no_links(args, "before the copy").await?;
+
     // F34: --backup-type diverts into a completely different pipeline (a naive, explicit-file-list
     // copy into a new generation subfolder, tracked in a manifest) rather than the plain-sync path
     // below — see `execute_generation_backup`'s doc comment for why the two can't share `transfer()`.
@@ -854,6 +880,9 @@ async fn execute(args: &Args, child_pid: Arc<AtomicU32>) -> Result<RunOutcome> {
     let (robocopy_outcome, copy_failure) =
         transfer(args, &effective_source, &inventory, child_pid).await?;
     let transfer_seconds = start_transfer.elapsed().as_secs_f64();
+    if !args.dry_run {
+        ensure_dest_has_no_links(args, "after the copy").await?;
+    }
 
     let (baseline_outcome, baseline_seconds) = if args.compare_baseline && copy_failure.is_none() {
         let start_base = Instant::now();
@@ -1209,6 +1238,9 @@ async fn execute_generation_backup(
         }
     };
     let transfer_seconds = start_transfer.elapsed().as_secs_f64();
+    if !args.dry_run {
+        ensure_dest_has_no_links(args, "after the copy").await?;
+    }
 
     // The report documents where *this generation's* files actually landed, not the destination
     // root -- hence a clone of `args` with `dest` pointed at the generation subfolder, which is also
