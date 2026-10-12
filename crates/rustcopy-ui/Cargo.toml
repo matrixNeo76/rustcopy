@@ -50,3 +50,6 @@ path = "src/main.rs"
 
 [dev-dependencies]
 tempfile.workspace = true
+# A headless backend and a way to find and press elements by their accessible label: the console's
+# .slint files are tested without opening a window. Tests only -- it never reaches the shipped binary.
+i-slint-backend-testing = "1.18"
