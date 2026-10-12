@@ -45,6 +45,8 @@ pub struct JobConfig {
     pub ignore_transient_missing: Option<bool>,
     /// F26d (`/XJ`). Per-job because whether junctions are content or loops depends on the tree.
     pub exclude_junctions: Option<bool>,
+    /// Only ever restricts: a job that sets it cannot be made to write through a destination link.
+    pub refuse_dest_links: Option<bool>,
     /// Namespaced per job by `run_jobs`, exactly like `report_path` — without that, two jobs would
     /// overwrite each other's dashboard, which is the collision fixed in `merged_over`'s `name`.
     pub html_report_path: Option<PathBuf>,
@@ -116,6 +118,7 @@ impl JobConfig {
                 .ignore_transient_missing
                 .or(base.ignore_transient_missing),
             exclude_junctions: self.exclude_junctions.or(base.exclude_junctions),
+            refuse_dest_links: self.refuse_dest_links.or(base.refuse_dest_links),
             html_report_path: self
                 .html_report_path
                 .clone()

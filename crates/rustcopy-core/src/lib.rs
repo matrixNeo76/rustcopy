@@ -21,6 +21,7 @@ pub mod cli;
 pub mod cloud;
 pub mod config;
 pub mod crypto;
+pub mod dest_guard;
 pub mod disk_space;
 pub mod elevation;
 pub mod engine;

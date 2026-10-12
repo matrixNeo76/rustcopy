@@ -555,6 +555,10 @@ pub fn elevated_arguments(copy: &Path, dir: &Path) -> Vec<String> {
             .to_string(),
         "--log-path".to_string(),
         dir.join("robocopy_ingest.log").display().to_string(),
+        // The elevated process writes with administrator rights into a folder the person chose:
+        // robocopy would write through a junction left there, so the run refuses to start (and
+        // refuses to succeed) when one is.
+        "--refuse-dest-links".to_string(),
     ]
 }
 
@@ -1573,6 +1577,11 @@ mod tests {
             // Report and log inside the protected folder, not wherever the configuration said.
             assert!(args[4].starts_with(&dir.display().to_string()), "{args:?}");
             assert!(args[6].starts_with(&dir.display().to_string()), "{args:?}");
+            // Never writes through a link left in the destination, with administrator rights.
+            assert!(
+                args.contains(&"--refuse-dest-links".to_string()),
+                "{args:?}"
+            );
         }
     }
 

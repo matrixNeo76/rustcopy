@@ -196,6 +196,15 @@ pub enum IngestError {
     )]
     InsufficientDiskSpace { needed: u64, available: u64 },
 
+    /// `--refuse-dest-links` found a junction or symbolic link in the destination, in one of its
+    /// parents, or (checked again after the copy) created while the copy ran. `robocopy.exe` writes
+    /// through such a link, so for a run with elevated rights it would write where the person who
+    /// controls the destination could not.
+    #[error(
+        "the destination contains a link (junction or symbolic link) at {path}: robocopy would write          through it. Point the job at the real folder, or remove the link"
+    )]
+    DestinationHasLink { path: String },
+
     /// `--restore-generation` could not build the requested state, or was asked to do something
     /// it refuses (a target inside the backup, a generation that does not exist, a chain with a
     /// missing folder).
@@ -286,6 +295,7 @@ impl IngestError {
             | IngestError::MirrorPurgeAborted { .. }
             | IngestError::RetentionPurgeAborted { .. }
             | IngestError::InsufficientDiskSpace { .. }
+            | IngestError::DestinationHasLink { .. }
             | IngestError::RestorePreviewFailed { .. }
             | IngestError::GenerationRestore(_)
             | IngestError::Crypto(_)

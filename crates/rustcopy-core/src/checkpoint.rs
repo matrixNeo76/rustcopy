@@ -59,6 +59,10 @@ pub struct ResumeExtras {
     pub preserve_timestamps: bool,
     #[serde(default)]
     pub preserve_acl: bool,
+    /// Restricting, so a resume puts it back: an interrupted run that refused destination links must
+    /// not resume into a destination that has one.
+    #[serde(default)]
+    pub refuse_dest_links: bool,
 }
 
 impl From<&Args> for ResumeExtras {
@@ -69,6 +73,7 @@ impl From<&Args> for ResumeExtras {
             long_paths: args.long_paths,
             preserve_timestamps: args.preserve_timestamps,
             preserve_acl: args.preserve_acl,
+            refuse_dest_links: args.refuse_dest_links,
         }
     }
 }
@@ -193,6 +198,7 @@ fn apply_configuration(args: &mut Args, saved: &ConfigurationReport, extras: &Re
     args.long_paths |= extras.long_paths;
     args.preserve_timestamps |= extras.preserve_timestamps;
     args.preserve_acl |= extras.preserve_acl;
+    args.refuse_dest_links |= extras.refuse_dest_links;
 }
 
 fn extend_unique(into: &mut Vec<String>, from: &[String]) {
@@ -351,6 +357,15 @@ mod tests {
         assert!(resumed.preserve_acl);
         assert!(resumed.preserve_timestamps);
         assert!(resumed.no_prescan);
+    }
+
+    /// An interrupted run that refused destination links must not resume into one that has them.
+    #[test]
+    fn a_resume_keeps_refusing_destination_links() {
+        let mut original = interrupted_run();
+        original.refuse_dest_links = true;
+        assert!(resume(&original, &[]).refuse_dest_links);
+        assert!(!resume(&interrupted_run(), &[]).refuse_dest_links);
     }
 
     /// An interrupted simulation must not resume as a real copy.

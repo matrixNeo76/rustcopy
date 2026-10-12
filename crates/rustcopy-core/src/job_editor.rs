@@ -427,6 +427,9 @@ pub fn apply_draft(
         // carried through verbatim rather than dropped.
         skip_space_check: base.skip_space_check,
         space_safety_margin_percent: base.space_safety_margin_percent,
+        // Carried through for a stronger reason than the fields above: this one only ever restricts,
+        // and an editor save that dropped it would widen what an elevated schedule may write through.
+        refuse_dest_links: base.refuse_dest_links,
     })
 }
 

@@ -37,6 +37,7 @@ completi e i comandi reali verificati sul campo vedi il [RUNBOOK](../RUNBOOK.md)
 | `--purge-preview-path <PATH>` | *nessuno* | — | (F63) Scrive su `PATH` l'elenco JSON **completo** dei file che `--mirror` cancellerebbe, poi esce senza copiare né eliminare nulla. Richiede `--mirror`. Gira anche senza `--force-purge`: un'anteprima è una lettura, non un'autorizzazione. |
 | `--exclude-files <GLOB>` | *nessuno* | `/XF` | Esclude file corrispondenti ai pattern indicati (ripetibile). |
 | `--exclude-dirs <GLOB>` | *nessuno* | `/XD` | Esclude directory corrispondenti ai pattern indicati (ripetibile). |
+| `--refuse-dest-links` | `false` | — | Rifiuta di partire se la destinazione, una sua cartella superiore o qualcosa che contiene già è una giunzione o un link simbolico, e fa fallire la run (esito `7`) se ne ricompare uno dopo la copia. Serve perché `robocopy.exe` **scrive attraverso** una giunzione in destinazione (verificato, con e senza `/XJ`): con i diritti da amministratore di una pianificazione elevata, chi controlla la destinazione potrebbe far scrivere dove non potrebbe. Costa una scansione dell'albero di destinazione già esistente. Una giunzione creata *durante* la copia non si può impedire, solo segnalare a fine copia. Una pianificazione elevata lo passa da sola. |
 | `--exclude-junctions` | `false` | `/XJ` | Esclude junction point e directory symlinkate. Senza questo flag, Robocopy le segue (suo default) e il prescan fa lo stesso, così i due contano sempre lo stesso albero (F26d). |
 | `--min-age-days <N>` | *nessuno* | `/MINAGE:N` | Esclude i file modificati negli ultimi N giorni. |
 | `--max-age-days <N>` | *nessuno* | `/MAXAGE:N` | Esclude i file più vecchi di N giorni. |
@@ -105,6 +106,7 @@ completi e i comandi reali verificati sul campo vedi il [RUNBOOK](../RUNBOOK.md)
 | `4` | `--verify-integrity` ha trovato un mismatch di checksum — il trasferimento in sé è comunque riuscito, distinto da `1` (F29b). |
 | `5` | `--keep-generations`: la purge di ritenzione è stata abortita — il backup appena eseguito resta comunque salvato, solo la rotazione dei cicli più vecchi viene annullata (F35). |
 | `6` | Il controllo preventivo di spazio libero ha trovato meno spazio del necessario in destinazione — nessun byte copiato (F65). |
+| `7` | `--refuse-dest-links`: la destinazione contiene una giunzione o un link (prima della copia: nessun byte copiato; dopo: la copia è avvenuta ma non vale come riuscita). |
 
 ---
 

@@ -358,6 +358,15 @@ pub struct Args {
     #[arg(long, default_value_t = false)]
     pub exclude_junctions: bool,
 
+    /// Refuse to run when the destination, any parent of it, or anything already inside it is a
+    /// junction or symbolic link, and fail the run (exit 7) if one is found again after the copy.
+    /// `robocopy.exe` writes through a junction in the destination (verified, with and without
+    /// `/XJ`), so for a run with elevated rights this stops whoever controls the destination from
+    /// redirecting the writes. Costs one walk of the existing destination tree. A junction created
+    /// *during* the copy cannot be prevented, only reported afterwards.
+    #[arg(long, default_value_t = false)]
+    pub refuse_dest_links: bool,
+
     // ── F7.1: Webhook completion notifications ──────────────────────────────
     /// Send an HTTP POST JSON execution summary to this Webhook URL upon completion.
     #[arg(long, value_name = "URL")]
@@ -736,6 +745,9 @@ impl Args {
         if let Some(v) = job.exclude_junctions {
             self.exclude_junctions = v;
         }
+        if let Some(v) = job.refuse_dest_links {
+            self.refuse_dest_links = v;
+        }
         if let Some(html) = &job.html_report_path {
             self.html_report_path = Some(html.clone());
         }
@@ -1105,6 +1117,23 @@ mod tests {
         assert_eq!(args.threads, 64);
         assert!(args.verify_integrity);
         assert_eq!(args.pattern, "*.csv");
+    }
+
+    /// `--refuse-dest-links` has TOML parity: a job can turn it on, and a job that says nothing
+    /// inherits it from the top-level defaults.
+    #[test]
+    fn refuse_dest_links_reaches_the_invocation_from_a_job_or_its_defaults() {
+        let mut args =
+            Args::try_parse_from(["robocopy_ingest", "--source", ".", "--dest", "./out"])
+                .expect("parses");
+        assert!(!args.refuse_dest_links);
+        let defaults = crate::config::JobConfig {
+            refuse_dest_links: Some(true),
+            ..crate::config::JobConfig::default()
+        };
+        let job = crate::config::JobConfig::default().merged_over(&defaults);
+        args.apply_job_config(&job);
+        assert!(args.refuse_dest_links);
     }
 
     /// F80: `--encrypt-aes256` was CLI-only; this is the one line that makes a per-job

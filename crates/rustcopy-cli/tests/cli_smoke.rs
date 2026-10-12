@@ -3889,3 +3889,79 @@ fn a_stopped_run_leaves_no_progress_file_behind() {
 
     let _ = child.wait_with_output();
 }
+
+/// `--refuse-dest-links` black-box test. `robocopy.exe` writes through a junction in the destination
+/// (verified by hand, with and without `/XJ`), so without the flag a junction at `dest\sub` sends the
+/// copy into its target; with it the run stops with the dedicated exit code **before** copying
+/// anything, and the target stays empty. Real NTFS junction (`mklink /J`, no privilege needed).
+#[cfg(windows)]
+#[test]
+fn refuse_dest_links_stops_a_copy_that_would_write_through_a_junction() {
+    let source = fixture_tree(&[("sub/a.csv", 10)]);
+    let workdir = tempfile::tempdir().expect("workdir");
+    let dest = workdir.path().join("dest");
+    let elsewhere = workdir.path().join("elsewhere");
+    std::fs::create_dir_all(&dest).expect("dest");
+    std::fs::create_dir_all(&elsewhere).expect("elsewhere");
+    let made = std::process::Command::new("cmd")
+        .args(["/C", "mklink", "/J"])
+        .arg(dest.join("sub"))
+        .arg(&elsewhere)
+        .output()
+        .expect("run mklink");
+    assert!(made.status.success(), "mklink /J must succeed");
+
+    let arguments = |flag: bool, tag: &str| {
+        let mut args: Vec<String> = vec![
+            "--source".into(),
+            source.path().display().to_string(),
+            "--dest".into(),
+            dest.display().to_string(),
+            "--log-path".into(),
+            workdir
+                .path()
+                .join(format!("{tag}.log"))
+                .display()
+                .to_string(),
+            "--report-path".into(),
+            workdir
+                .path()
+                .join(format!("{tag}.json"))
+                .display()
+                .to_string(),
+        ];
+        if flag {
+            args.push("--refuse-dest-links".into());
+        }
+        args
+    };
+
+    let guarded = arguments(true, "guarded");
+    let output = run(&guarded.iter().map(String::as_str).collect::<Vec<_>>());
+    assert_eq!(
+        output.status.code(),
+        Some(7),
+        "stderr: {}",
+        stderr_of(&output)
+    );
+    assert!(
+        stderr_of(&output).contains("link"),
+        "stderr: {}",
+        stderr_of(&output)
+    );
+    assert_eq!(
+        std::fs::read_dir(&elsewhere).expect("read").count(),
+        0,
+        "nothing may be written through the junction"
+    );
+
+    // Control: without the flag the very same run writes through it. This is the behaviour the flag
+    // exists to refuse, so if robocopy ever stops doing it this test says so instead of passing blind.
+    let unguarded = arguments(false, "unguarded");
+    let output = run(&unguarded.iter().map(String::as_str).collect::<Vec<_>>());
+    assert!(output.status.success(), "stderr: {}", stderr_of(&output));
+    assert!(
+        elsewhere.join("a.csv").is_file(),
+        "robocopy no longer writes through a destination junction: revisit dest_guard"
+    );
+}
