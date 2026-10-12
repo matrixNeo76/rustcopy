@@ -30,6 +30,7 @@ For full technical detail behind any entry, see `ANALYSIS.md` (defect list, `D<N
 ### Added
 
 - **Elevated schedules for files in use (VSS)**: `--schedule-elevated` and, in the console from the Expert level, "Con privilegi elevati". One Windows prompt at creation, then the task runs by itself with administrator rights and `--vss-snapshot`. It runs a protected copy of the configuration (writable only by administrators), refuses mirror, generation pruning, pre/post commands and relative paths, and does nothing when the process is not really elevated. No password is involved.
+- **Automated tests for the Slint console's interface** (`ui_tests`, 19 tests): every page builds, a lavoro's buttons fit inside the window, each button calls the right callback with the right argument, and buttons that must not be pressable (Esegui while a copy runs, "+ Nuovo job" without a name) are disabled. Test-only: adds the dev-dependency `i-slint-backend-testing` (one `Cargo.lock` line) and compiles the interface with debug info outside `--release`.
 - **Slint console lets you choose which interruption to resume** when a lavoro left several checkpoints, each shown with its date and a readable reason.
 - **Slint console shows the raw log** of a lavoro's configuration (last 400 lines, read-only, refreshable); the core reads only the last 256 KiB of the file.
 - **Slint console lists the last files copied** while a copy runs (up to 8, newest first), published in the progress sample as `recent_files`.

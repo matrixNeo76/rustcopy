@@ -31,6 +31,8 @@ mod single_instance;
 mod state;
 mod suspend;
 mod toast;
+#[cfg(test)]
+mod ui_tests;
 
 use std::cell::{Cell, RefCell};
 use std::path::{Path, PathBuf};
