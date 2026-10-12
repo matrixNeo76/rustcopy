@@ -421,7 +421,21 @@ pub fn install_arguments(
 /// - `pre_command`/`post_command`: arbitrary commands, which would run elevated;
 /// - a relative source or destination (the same rule as any schedule).
 pub fn validate_for_elevation(config: &Path) -> Result<(), IngestError> {
-    let parsed = crate::config::IngestConfig::load_from(config)?;
+    let text = std::fs::read_to_string(config).map_err(|e| IngestError::io(config, e))?;
+    validate_elevation_text(&text, config)
+}
+
+/// [`validate_for_elevation`] on text already read. The installer reads the file **once** and validates
+/// and copies those very bytes: validating the path and then copying the path again would let the
+/// person (or anything running as them) swap the file in between and have the unchecked version run
+/// elevated.
+pub fn validate_elevation_text(text: &str, origin: &Path) -> Result<(), IngestError> {
+    let parsed: crate::config::IngestConfig = toml::from_str(text).map_err(|err| {
+        IngestError::io(
+            origin,
+            std::io::Error::new(std::io::ErrorKind::InvalidData, err),
+        )
+    })?;
     let jobs = parsed.jobs.clone().unwrap_or_default();
     let mut every: Vec<(String, crate::config::JobConfig)> = Vec::new();
     if jobs.is_empty() {
@@ -450,6 +464,12 @@ pub fn validate_for_elevation(config: &Path) -> Result<(), IngestError> {
         }
         if job.pre_command.is_some() || job.post_command.is_some() {
             return refuse("esegue un comando prima o dopo la copia");
+        }
+        // The report and the log are written by the elevated process: a path the person chose, in a
+        // folder they can change, is a place where a swapped link would make that process overwrite
+        // some other file. An elevated schedule writes both inside its own protected folder.
+        if job.report_path.is_some() || job.log_path.is_some() || job.html_report_path.is_some() {
+            return refuse("sceglie dove scrivere il report o il registro");
         }
         for path in [&job.source, &job.dest] {
             let Some(path) = path else {
@@ -523,12 +543,18 @@ pub fn is_elevated_command(command: &str) -> bool {
 }
 
 /// The command a schedule installed by [`install_elevated`] runs: the copy of the configuration, with
-/// the shadow copy switched on.
-pub fn elevated_arguments(copy: &Path) -> Vec<String> {
+/// the shadow copy switched on and the report and log inside the protected folder `dir`.
+pub fn elevated_arguments(copy: &Path, dir: &Path) -> Vec<String> {
     vec![
         "--config".to_string(),
         copy.display().to_string(),
         "--vss-snapshot".to_string(),
+        "--report-path".to_string(),
+        dir.join("robocopy_ingest_report.json")
+            .display()
+            .to_string(),
+        "--log-path".to_string(),
+        dir.join("robocopy_ingest.log").display().to_string(),
     ]
 }
 
@@ -543,13 +569,24 @@ pub fn install_elevated(name: &str, spec: &ScheduleSpec, config: &Path) -> Resul
         ));
     }
     validate_task_name(name)?;
-    validate_for_elevation(config)?;
-    let dir = crate::elevation::elevated_dir_in(&crate::elevation::program_data_dir()?, name);
-    crate::elevation::create_admin_only_dir(&dir)?;
+    // Read once: what is validated is what is installed, byte for byte.
+    let bytes = std::fs::read(config).map_err(|e| IngestError::io(config, e))?;
+    let text = String::from_utf8(bytes.clone()).map_err(|_| {
+        IngestError::Schedule("la configurazione non è testo UTF-8 valido".to_string())
+    })?;
+    validate_elevation_text(&text, config)?;
+    let program_data = crate::elevation::program_data_dir()?;
+    let dir = crate::elevation::elevated_dir_in(&program_data, name);
+    crate::elevation::prepare_protected_dir(&program_data, &dir)?;
     let copy = dir.join("config.toml");
-    std::fs::copy(config, &copy).map_err(|e| IngestError::io(&copy, e))?;
-    let exe = std::env::current_exe()
+    std::fs::write(&copy, &bytes).map_err(|e| IngestError::io(&copy, e))?;
+    // The program that runs elevated is a copy kept in the protected folder too. Pointing the task at the
+    // installed program would hand administrator rights to whatever a limited user can write to that
+    // folder (a build folder, a user profile, a badly protected install).
+    let source_exe = std::env::current_exe()
         .map_err(|e| IngestError::io(Path::new("<current executable>"), e))?;
+    let exe = dir.join("robocopy_ingest.exe");
+    std::fs::copy(&source_exe, &exe).map_err(|e| IngestError::io(&exe, e))?;
     let options = TaskOptions {
         elevated: true,
         working_dir: Some(dir.display().to_string()),
@@ -557,7 +594,7 @@ pub fn install_elevated(name: &str, spec: &ScheduleSpec, config: &Path) -> Resul
     let xml = build_task_xml_with(
         spec,
         &exe.display().to_string(),
-        &build_task_arguments(&elevated_arguments(&copy)),
+        &build_task_arguments(&elevated_arguments(&copy, &dir)),
         first_start(spec, chrono::Local::now().naive_local()),
         &options,
     );
@@ -594,7 +631,7 @@ pub fn uninstall_elevated(name: &str) -> Result<(), IngestError> {
     validate_task_name(name)?;
     run_schtasks(&build_delete_args(name))?;
     let dir = crate::elevation::elevated_dir_in(&crate::elevation::program_data_dir()?, name);
-    for file in ["config.toml", "task.xml"] {
+    for file in ["config.toml", "task.xml", "robocopy_ingest.exe"] {
         let _ = std::fs::remove_file(dir.join(file));
     }
     let _ = std::fs::remove_dir(&dir);
@@ -709,7 +746,7 @@ pub fn uninstall(_name: &str) -> Result<(), IngestError> {
 
 #[cfg(windows)]
 fn run_schtasks(args: &[String]) -> Result<(), IngestError> {
-    let mut command = std::process::Command::new("schtasks.exe");
+    let mut command = std::process::Command::new(crate::elevation::system_program("schtasks.exe"));
     command.args(args);
     // The caller may be the CLI (already has a console) or the GUI (a windowed process with none) —
     // without this, `schtasks.exe` is a console-subsystem binary and Windows allocates it a fresh
@@ -1465,6 +1502,9 @@ mod tests {
                 ),
                 ("pre_command = 'net stop x'\n", "comando"),
                 ("post_command = 'net start x'\n", "comando"),
+                ("report_path = 'C:/Users/x/r.json'\n", "report"),
+                ("log_path = 'C:/Users/x/l.log'\n", "report"),
+                ("html_report_path = 'C:/Users/x/r.html'\n", "report"),
             ];
             for (extra, word) in cases {
                 let file = config(dir.path(), &format!("{PLAIN}{extra}"));
@@ -1478,6 +1518,22 @@ mod tests {
             );
             let fine = config(dir.path(), PLAIN);
             assert!(validate_for_elevation(&fine).is_ok());
+        }
+
+        /// What is validated is the text that was read, not the file: swapping the file afterwards cannot
+        /// make a configuration that was not checked run elevated.
+        #[test]
+        fn validation_of_text_does_not_look_at_the_file_again() {
+            let dir = tempfile::tempdir().expect("tempdir");
+            let origin = config(dir.path(), "mirror = true\nsource='C:/a'\ndest='D:/b'\n");
+            // The path now holds a harmless file, but the text that was read is the dangerous one.
+            std::fs::write(&origin, PLAIN).expect("swap");
+            assert!(validate_elevation_text(
+                "mirror = true\nsource='C:/a'\ndest='D:/b'\n",
+                &origin
+            )
+            .is_err());
+            assert!(validate_elevation_text(PLAIN, &origin).is_ok());
         }
 
         #[test]
@@ -1508,16 +1564,15 @@ mod tests {
 
         #[test]
         fn the_scheduled_command_runs_the_copy_with_the_shadow_copy_on() {
-            assert_eq!(
-                elevated_arguments(Path::new(
-                    "C:\\ProgramData\\rustcopy\\elevated\\n\\config.toml"
-                )),
-                vec![
-                    "--config",
-                    "C:\\ProgramData\\rustcopy\\elevated\\n\\config.toml",
-                    "--vss-snapshot"
-                ]
-            );
+            let dir = Path::new("C:/ProgramData/rustcopy/elevated/n");
+            let copy = dir.join("config.toml");
+            let args = elevated_arguments(&copy, dir);
+            assert_eq!(args[0], "--config");
+            assert_eq!(args[1], copy.display().to_string());
+            assert_eq!(args[2], "--vss-snapshot");
+            // Report and log inside the protected folder, not wherever the configuration said.
+            assert!(args[4].starts_with(&dir.display().to_string()), "{args:?}");
+            assert!(args[6].starts_with(&dir.display().to_string()), "{args:?}");
         }
     }
 

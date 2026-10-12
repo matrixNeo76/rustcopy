@@ -75,7 +75,8 @@ registrato le cose, quindi **vanno provate sulla copia installata, non su `targe
   elevati» → «Installa»: compare **una** richiesta di Windows, accettala. Atteso: «Pianificazione elevata ... installata», l'attività
   compare con «pianificata» in Utilità di pianificazione con «Esegui con i privilegi più elevati» e **non** chiede più nulla;
   `C:\ProgramData\rustcopy\elevated\<nome>\config.toml` esiste e, da un prompt normale, **non** puoi modificarlo (accesso negato).
-  Prova poi con un file di Office aperto nella cartella di origine: dopo «Esegui» dall'Utilità di pianificazione il file si copia.
+  Controlla anche che nella stessa cartella ci siano `robocopy_ingest.exe`, `config.toml` e (dopo la prima esecuzione) il report e il registro, e che
+  da un prompt normale non riesci a modificarne nessuno. Prova poi con un file di Office aperto nella cartella di origine: dopo «Esegui» dall'Utilità di pianificazione il file si copia.
   Infine «Togli la pianificazione con questo nome»: una richiesta, e task e `config.toml` spariscono (i report restano).
   Se rifiuti la richiesta di Windows: «Hai annullato la richiesta», nulla cambia.
 - [ ] **Avvio di uno «Sposta» dalla casella, e file singoli, dalla finestra.**
