@@ -108,7 +108,7 @@ const TRUSTED_OWNERS: [&str; 3] = [
     "S-1-5-80-956008885-3418522649-1831038044-1853292631-2271478464",
 ];
 
-/// Whether `sid` (in its `S-1-...` string form) is one of the owners [`TRUSTED_OWNERS`] lists.
+/// Whether `sid` (in its `S-1-...` string form) is one of the owners the trusted list holds.
 pub fn owner_is_trusted(sid: &str) -> bool {
     TRUSTED_OWNERS.iter().any(|t| t.eq_ignore_ascii_case(sid))
 }
