@@ -138,3 +138,75 @@ pub fn run_cli_once(args: &[String]) -> Result<(i32, String), String> {
     let tail = last.into_iter().rev().collect::<Vec<_>>().join("\n");
     Ok((output.status.code().unwrap_or(-1), tail))
 }
+
+/// How a run through the elevation prompt ended.
+#[derive(Debug, PartialEq, Eq)]
+pub enum Elevated {
+    /// The program ran and exited with this code.
+    Exited(i32),
+    /// The person declined the Windows prompt: nothing ran.
+    Declined,
+}
+
+/// Runs the CLI **elevated**, through the Windows elevation prompt, and waits for it. Windows cannot hand
+/// the output of an elevated process back to an unelevated one, so only the exit code comes back: whether
+/// the thing really happened is checked by looking at what it was meant to leave behind, not by trusting
+/// this number alone. The arguments come from the core, which has already decided they may exist.
+#[cfg(windows)]
+pub fn run_cli_elevated(args: &[String]) -> Result<Elevated, String> {
+    use std::os::windows::ffi::OsStrExt;
+    use windows_sys::Win32::Foundation::{CloseHandle, GetLastError, ERROR_CANCELLED};
+    use windows_sys::Win32::System::Threading::{
+        GetExitCodeProcess, WaitForSingleObject, INFINITE,
+    };
+    use windows_sys::Win32::UI::Shell::{
+        ShellExecuteExW, SEE_MASK_NOCLOSEPROCESS, SHELLEXECUTEINFOW,
+    };
+
+    let exe = std::env::current_exe().map_err(|e| e.to_string())?;
+    let cli = runner::cli_beside(&exe).map_err(|e| e.to_string())?;
+    let wide = |text: &std::ffi::OsStr| -> Vec<u16> { text.encode_wide().chain([0]).collect() };
+    let verb = wide(std::ffi::OsStr::new("runas"));
+    let file = wide(cli.as_os_str());
+    let parameters = wide(std::ffi::OsStr::new(
+        &robocopy_ingest::schedule::build_task_arguments(args),
+    ));
+
+    // SAFETY: `info` is fully initialised and every pointer in it outlives the call; the process
+    // handle it returns is waited on and closed exactly once.
+    unsafe {
+        let mut info: SHELLEXECUTEINFOW = std::mem::zeroed();
+        info.cbSize = std::mem::size_of::<SHELLEXECUTEINFOW>() as u32;
+        info.fMask = SEE_MASK_NOCLOSEPROCESS;
+        info.lpVerb = verb.as_ptr();
+        info.lpFile = file.as_ptr();
+        info.lpParameters = parameters.as_ptr();
+        info.nShow = 0; // SW_HIDE
+        if ShellExecuteExW(&mut info) == 0 {
+            return if GetLastError() == ERROR_CANCELLED {
+                Ok(Elevated::Declined)
+            } else {
+                Err(format!(
+                    "Windows non ha avviato il programma con privilegi elevati (errore {}).",
+                    GetLastError()
+                ))
+            };
+        }
+        if info.hProcess.is_null() {
+            return Err("Windows non ha dato il processo avviato.".to_string());
+        }
+        WaitForSingleObject(info.hProcess, INFINITE);
+        let mut code = 0u32;
+        let got = GetExitCodeProcess(info.hProcess, &mut code);
+        CloseHandle(info.hProcess);
+        if got == 0 {
+            return Err("Non sono riuscito a leggere come è finito il programma.".to_string());
+        }
+        Ok(Elevated::Exited(code as i32))
+    }
+}
+
+#[cfg(not(windows))]
+pub fn run_cli_elevated(_args: &[String]) -> Result<Elevated, String> {
+    Err("Le pianificazioni elevate richiedono Windows.".to_string())
+}

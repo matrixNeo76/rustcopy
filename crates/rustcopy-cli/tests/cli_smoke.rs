@@ -875,6 +875,105 @@ fn install_and_uninstall_schedule_round_trip_via_real_schtasks() {
     );
 }
 
+/// Whether this test process runs elevated: `net session` only succeeds for an administrator.
+#[cfg(windows)]
+fn this_test_runs_elevated() -> bool {
+    std::process::Command::new("net")
+        .arg("session")
+        .output()
+        .map(|o| o.status.success())
+        .unwrap_or(false)
+}
+
+/// An elevated schedule must **do nothing** unless the process doing it really is elevated: no folder in
+/// the machine data folder, no task. (When these tests run elevated, as on CI, the refusal cannot be
+/// observed and the test stands down rather than install a real elevated task.)
+#[cfg(windows)]
+#[test]
+fn an_elevated_schedule_is_refused_by_a_process_that_is_not_elevated() {
+    if this_test_runs_elevated() {
+        return;
+    }
+    let dir = tempfile::tempdir().expect("dir");
+    let config = dir.path().join("job.toml");
+    let (src, dst) = (dir.path().join("src"), dir.path().join("dst"));
+    std::fs::create_dir_all(&src).expect("src");
+    std::fs::write(
+        &config,
+        format!(
+            "source = '{}'\ndest = '{}'\n",
+            src.display().to_string().replace('\\', "/"),
+            dst.display().to_string().replace('\\', "/")
+        ),
+    )
+    .expect("write");
+    let name = format!("rustcopy-cli-smoke-elevated-{}", std::process::id());
+    let _guard = ScheduledTaskGuard(name.clone());
+
+    let output = run(&[
+        "--config",
+        config.to_str().expect("utf8"),
+        "--install-schedule",
+        "daily@02:00",
+        "--schedule-name",
+        &name,
+        "--schedule-elevated",
+    ]);
+    assert_eq!(
+        output.status.code(),
+        Some(2),
+        "stderr: {}",
+        stderr_of(&output)
+    );
+    assert!(
+        stderr_of(&output).contains("amministratore"),
+        "stderr: {}",
+        stderr_of(&output)
+    );
+    let program_data = std::env::var("ProgramData").unwrap_or_else(|_| "C:\\ProgramData".into());
+    assert!(
+        !Path::new(&program_data)
+            .join("rustcopy")
+            .join("elevated")
+            .join(&name)
+            .exists(),
+        "nothing may be created before the elevation check"
+    );
+    let query = std::process::Command::new("schtasks.exe")
+        .args(["/Query", "/TN", &name])
+        .output()
+        .expect("query");
+    assert!(!query.status.success(), "no task may exist");
+
+    let removal = run(&["--uninstall-schedule", &name, "--schedule-elevated"]);
+    assert_eq!(
+        removal.status.code(),
+        Some(2),
+        "stderr: {}",
+        stderr_of(&removal)
+    );
+}
+
+/// `--schedule-elevated` on its own says what it goes with.
+#[test]
+fn schedule_elevated_alone_is_rejected() {
+    let source = fixture_tree(&[("a.csv", 8)]);
+    let dest = tempfile::tempdir().expect("dest");
+    let output = run(&[
+        "--source",
+        source.path().to_str().expect("utf8"),
+        "--dest",
+        dest.path().to_str().expect("utf8"),
+        "--schedule-elevated",
+    ]);
+    assert_eq!(output.status.code(), Some(2));
+    assert!(
+        stderr_of(&output).contains("--install-schedule"),
+        "{}",
+        stderr_of(&output)
+    );
+}
+
 /// F62 black-box test: `--list-schedules` doesn't require --source/--dest — confirms the clap
 /// `required_unless_present_any` exemption and `validate()`'s early return, same pattern as
 /// `--install-service`'s equivalent test above.

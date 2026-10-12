@@ -22,6 +22,7 @@ pub mod cloud;
 pub mod config;
 pub mod crypto;
 pub mod disk_space;
+pub mod elevation;
 pub mod engine;
 pub mod errors;
 pub mod example_workspace;

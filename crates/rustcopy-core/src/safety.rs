@@ -63,6 +63,13 @@ impl SafetyLevel {
         self >= SafetyLevel::Standard
     }
 
+    /// Whether the console may prepare a schedule that runs **elevated** (administrator rights without a
+    /// prompt each time, for VSS). It is the one schedule that runs with more rights than the person has
+    /// day to day, so it sits at the highest level.
+    pub fn can_prepare_elevated_schedules(self) -> bool {
+        self >= SafetyLevel::Expert
+    }
+
     /// Whether the console may start a run that forces a full generation (`--force-full`). It deletes
     /// nothing, but it copies everything again, so it is behind the same level as a schedule rather
     /// than one click away from a first-time user.

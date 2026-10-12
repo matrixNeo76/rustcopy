@@ -1179,6 +1179,63 @@ where
     });
 }
 
+/// The same as [`run_schedule_command`] for a schedule that runs **elevated**: the command line is started
+/// through the Windows elevation prompt, which hands back only an exit code, so whether it worked is read
+/// from Task Scheduler afterwards (`should_exist`: the task must be there after an install, gone after a
+/// removal) instead of trusting the number alone.
+fn run_elevated_schedule_command<F>(ui: &AppWindow, task: String, should_exist: bool, build: F)
+where
+    F: FnOnce(SafetyLevel) -> Result<Vec<String>, robocopy_ingest::errors::IngestError>
+        + Send
+        + 'static,
+{
+    ui.set_sch_busy(true);
+    ui.set_sch_message(
+        "Windows sta chiedendo conferma: la richiesta può stare dietro altre finestre.".into(),
+    );
+    ui.set_sch_ok(true);
+    let weak = ui.as_weak();
+    std::thread::spawn(move || {
+        let level = safety::load(&robocopy_ingest::sessions::data_dir());
+        let outcome = build(level)
+            .map_err(|e| e.to_string())
+            .and_then(|args| run::run_cli_elevated(&args));
+        let present = gui_api::list_all_schedules()
+            .map(|all| all.iter().any(|t| t.name == task))
+            .unwrap_or(false);
+        let (ok, message) = match outcome {
+            Ok(run::Elevated::Declined) => (
+                false,
+                "Hai annullato la richiesta di Windows: non è stato cambiato nulla.".to_string(),
+            ),
+            Ok(run::Elevated::Exited(_)) if present == should_exist => (
+                true,
+                if should_exist {
+                    format!("Pianificazione elevata «{task}» installata.")
+                } else {
+                    format!("Pianificazione elevata «{task}» tolta.")
+                },
+            ),
+            Ok(run::Elevated::Exited(code)) => (
+                false,
+                format!(
+                    "Non è andata a buon fine (codice {code}): Windows non mostra il motivo di un'operazione con privilegi elevati. Controlla che il tuo account sia amministratore e che la configurazione non abbia mirror, pulizie o comandi."
+                ),
+            ),
+            Err(message) => (false, message),
+        };
+        let _ = weak.upgrade_in_event_loop(move |ui| {
+            ui.set_sch_busy(false);
+            ui.set_sch_ok(ok);
+            ui.set_sch_message(message.into());
+            if ok {
+                ui.invoke_show_tasks();
+                ui.set_page(10);
+            }
+        });
+    });
+}
+
 /// The plan for the second step of a move: the report must prove the copy was verified, the destination
 /// folders are recomputed from the sources exactly as the copy did, and the core looks at the disk.
 fn plan_a_move(session: &SessionSummary) -> Result<MovePlan, String> {
@@ -1219,6 +1276,10 @@ fn show_safety(ui: &AppWindow) {
     ui.set_safety_pick(level_index(level));
     ui.set_safety_unlocks(level.unlocks().into());
     ui.set_can_schedule(level.can_prepare_schedules());
+    ui.set_can_elevated_schedule(level.can_prepare_elevated_schedules());
+    if !level.can_prepare_elevated_schedules() {
+        ui.set_sch_elevated(false);
+    }
     ui.set_can_force_full(level.can_force_full());
     ui.set_can_move(level.can_move());
     if !level.can_move() {
@@ -1980,6 +2041,15 @@ fn main() -> Result<(), slint::PlatformError> {
             };
             let name = ui.get_sch_name().to_string();
             let config = PathBuf::from(config.as_str());
+            if ui.get_sch_elevated() {
+                let task = name.trim().to_string();
+                run_elevated_schedule_command(&ui, task.clone(), true, move |level| {
+                    robocopy_ingest::schedule::elevated_install_arguments(
+                        level, &config, &spec, &task,
+                    )
+                });
+                return;
+            }
             run_schedule_command(&ui, move |level| {
                 robocopy_ingest::schedule::install_arguments(level, &config, &spec, name.trim())
             });
@@ -1990,6 +2060,19 @@ fn main() -> Result<(), slint::PlatformError> {
         ui.on_remove_schedule(move || {
             let Some(ui) = weak.upgrade() else { return };
             let name = ui.get_sch_name().to_string();
+            // A schedule that runs an elevated copy can only be removed through the prompt too.
+            let task = name.trim().to_string();
+            let elevated = gui_api::list_all_schedules().is_ok_and(|all| {
+                all.iter().any(|t| {
+                    t.name == task && robocopy_ingest::schedule::is_elevated_command(&t.command)
+                })
+            });
+            if elevated {
+                run_elevated_schedule_command(&ui, task.clone(), false, move |level| {
+                    robocopy_ingest::schedule::elevated_removal_arguments(level, &task)
+                });
+                return;
+            }
             run_schedule_command(&ui, move |level| {
                 robocopy_ingest::schedule::removal_arguments(level, name.trim())
             });

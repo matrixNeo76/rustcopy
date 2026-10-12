@@ -69,6 +69,16 @@ registrato le cose, quindi **vanno provate sulla copia installata, non su `targe
   destinazione su un disco fisso la casella **non** deve comparire. 2) spunta la casella e copia pochi file: a copia finita il
   messaggio «L'unità E: è stata espulsa: puoi staccarla» e la chiavetta sparisce da Esplora file. 3) ripeti tenendo **un file aperto**
   sulla chiavetta (per esempio in Blocco note): atteso «ancora in uso... non l'ho espulsa» e la chiavetta resta com'era.
+- [ ] **Pianificazione con privilegi elevati (VSS).**
+  Perché a mano: la richiesta di Windows (UAC) è una finestra sicura che nessuna automazione può premere. Passi: livello **Esperto**
+  (pagina «Sicurezza»); Attività → «Pianifica» di un'attività **senza** mirror né comandi, con percorsi completi; spunta «Con privilegi
+  elevati» → «Installa»: compare **una** richiesta di Windows, accettala. Atteso: «Pianificazione elevata ... installata», l'attività
+  compare con «pianificata» in Utilità di pianificazione con «Esegui con i privilegi più elevati» e **non** chiede più nulla;
+  `C:\ProgramData\rustcopy\elevated\<nome>\config.toml` esiste e, da un prompt normale, **non** puoi modificarlo (accesso negato).
+  Controlla anche che nella stessa cartella ci siano `robocopy_ingest.exe`, `config.toml` e (dopo la prima esecuzione) il report e il registro, e che
+  da un prompt normale non riesci a modificarne nessuno. Prova poi con un file di Office aperto nella cartella di origine: dopo «Esegui» dall'Utilità di pianificazione il file si copia.
+  Infine «Togli la pianificazione con questo nome»: una richiesta, e task e `config.toml` spariscono (i report restano).
+  Se rifiuti la richiesta di Windows: «Hai annullato la richiesta», nulla cambia.
 - [ ] **Avvio di uno «Sposta» dalla casella, e file singoli, dalla finestra.**
   Perché a mano: sono le due funzioni che passano dal dialogo nativo «Aggiungi cartelle/file», che non sono riuscito a pilotare.
   Passi: livello Standard (pagina «Sicurezza»); Nuova copia → «Aggiungi file...» e scegli un paio di file; spunta «Sposta»;
