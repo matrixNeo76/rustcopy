@@ -1274,7 +1274,7 @@ fn show_safety(ui: &AppWindow) {
     ui.set_safety_level(level_index(level));
     ui.set_safety_level_name(level.name().into());
     ui.set_safety_pick(level_index(level));
-    ui.set_safety_unlocks(level.unlocks().into());
+    ui.set_safety_unlocks(level.describe().into());
     ui.set_can_schedule(level.can_prepare_schedules());
     ui.set_can_elevated_schedule(level.can_prepare_elevated_schedules());
     if !level.can_prepare_elevated_schedules() {
@@ -1954,7 +1954,7 @@ fn main() -> Result<(), slint::PlatformError> {
         let weak = ui.as_weak();
         ui.on_safety_picked(move |index| {
             let Some(ui) = weak.upgrade() else { return };
-            ui.set_safety_unlocks(level_for(index).unlocks().into());
+            ui.set_safety_unlocks(level_for(index).describe().into());
             ui.set_safety_confirming(false);
             ui.set_safety_message("".into());
         });

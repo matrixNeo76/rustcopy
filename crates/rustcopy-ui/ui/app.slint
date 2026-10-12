@@ -652,7 +652,39 @@ export component AppWindow inherits Window {
                 label-prefix: Strings.warning-prefix;
                 kind: BadgeKind.warning;
             }
-            Rectangle {
+            if root.tasks.length == 0: Rectangle {
+                border-radius: Theme.radius;
+                border-width: 1px;
+                border-color: Theme.border;
+                background: Theme.surface;
+                VerticalLayout {
+                    padding: 16px;
+                    spacing: 10px;
+                    Text {
+                        text: Strings.tasks-empty-title;
+                        font-size: Theme.heading;
+                        font-weight: 700;
+                        color: Theme.text;
+                    }
+                    Text {
+                        text: Strings.tasks-empty-steps;
+                        wrap: word-wrap;
+                        font-size: Theme.body;
+                        color: Theme.text-muted;
+                    }
+                    HorizontalLayout {
+                        alignment: start;
+                        Button {
+                            text: Strings.new-copy;
+                            primary: true;
+                            clicked => {
+                                root.new-copy();
+                            }
+                        }
+                    }
+                }
+            }
+            if root.tasks.length > 0: Rectangle {
                 vertical-stretch: 1;
                 min-height: 260px;
                 clip: true;
@@ -688,15 +720,9 @@ export component AppWindow inherits Window {
                         }
                     }
                 }
-                if root.tasks.length == 0: Text {
-                    text: Strings.tasks-empty;
-                    wrap: word-wrap;
-                    x: 6px;
-                    y: 8px;
-                    width: parent.width - 12px;
-                    font-size: Theme.body;
-                    color: Theme.text-faint;
-                }
+            }
+            SectionLabel {
+                text: Strings.tasks-from-file;
             }
             Text {
                 text: Strings.run-config-hint;
@@ -712,6 +738,7 @@ export component AppWindow inherits Window {
             }
             HorizontalLayout {
                 alignment: start;
+                spacing: 10px;
                 Button {
                     text: Strings.run-config-file;
                     enabled: !root.running;
@@ -725,6 +752,18 @@ export component AppWindow inherits Window {
                         root.open-report-file();
                     }
                 }
+            }
+            SectionLabel {
+                text: Strings.tasks-credentials-label;
+            }
+            Text {
+                text: Strings.tasks-credentials-hint;
+                wrap: word-wrap;
+                font-size: Theme.small;
+                color: Theme.text-muted;
+            }
+            HorizontalLayout {
+                alignment: start;
                 Button {
                     text: Strings.cred-open;
                     clicked => {
@@ -920,6 +959,12 @@ export component AppWindow inherits Window {
                 text: root.error;
                 label-prefix: Strings.warning-prefix;
                 kind: BadgeKind.warning;
+            }
+            Text {
+                text: Strings.log-intro;
+                wrap: word-wrap;
+                font-size: Theme.body;
+                color: Theme.text-muted;
             }
             Text {
                 text: root.log-path;
@@ -1863,7 +1908,8 @@ export component AppWindow inherits Window {
             }
         }
 
-        if root.page == 1: VerticalLayout {
+        if root.page == 1: ScrollView {
+          VerticalLayout {
             padding: Theme.page-padding;
             spacing: Theme.gap;
             alignment: start;
@@ -2053,8 +2099,7 @@ export component AppWindow inherits Window {
                 }
             }
             if root.d-show-technical: DetailRows {
-                vertical-stretch: 1;
-                min-height: 140px;
+                min-height: 380px;
                 rows: root.d-rows;
                 empty-text: Strings.technical-none;
             }
@@ -2109,6 +2154,7 @@ export component AppWindow inherits Window {
                 label-prefix: Strings.warning-prefix;
                 kind: root.save-ok ? BadgeKind.ok : BadgeKind.warning;
             }
+          }
         }
     }
 }

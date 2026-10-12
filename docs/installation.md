@@ -196,7 +196,7 @@ from = "rustcopy@example.com"
 to = ["admin@example.com"]
 ```
 
-La password della posta si salva in Gestione credenziali di Windows (pagina «Credenziali...» della
+La password della posta si salva in Gestione credenziali di Windows (pagina «Chiavi e password...» della
 console, o `--set-credential`) e il file la nomina soltanto. Una connessione **senza** cifratura
 (`security = "none"`) è accettata solo verso `localhost`/`127.0.0.1`: verso qualunque altro server il
 canale non parte e lo scrive nel registro, così una password non attraversa la rete in chiaro per una
