@@ -93,24 +93,24 @@ pub fn elevated_dir_in(program_data: &Path, name: &str) -> PathBuf {
     program_data.join(ELEVATED_SUBDIR).join(name)
 }
 
-/// The arguments of `icacls.exe` that leave `dir` writable by administrators and the system only
-/// (readable by everyone, so the console can still show the reports): the **owner** becomes
-/// Administrators (an owner can always rewrite the ACL, so a folder a limited user created before us would
-/// stay theirs otherwise), inheritance from the parent is cut, then three grants are written with
-/// well-known SIDs (not account names, which are translated).
-pub fn admin_only_acl_arguments(dir: &Path) -> Vec<String> {
-    vec![
-        dir.display().to_string(),
-        "/setowner".to_string(),
-        "*S-1-5-32-544".to_string(),
-        "/inheritance:r".to_string(),
-        "/grant:r".to_string(),
-        "*S-1-5-32-544:(OI)(CI)F".to_string(), // BUILTIN\Administrators
-        "/grant:r".to_string(),
-        "*S-1-5-18:(OI)(CI)F".to_string(), // NT AUTHORITY\SYSTEM
-        "/grant:r".to_string(),
-        "*S-1-5-32-545:(OI)(CI)RX".to_string(), // BUILTIN\Users: read and run only
-    ]
+/// The security descriptor every folder this module creates is born with, written once at creation
+/// (`CreateDirectoryW`) and never applied afterwards to something that already existed: `P` cuts
+/// inheritance from the parent, Administrators and SYSTEM get full control, Users only read and run (the
+/// console shows the reports). Well-known SIDs, not account names, which are translated.
+pub const ADMIN_ONLY_SDDL: &str = "D:P(A;OICI;FA;;;BA)(A;OICI;FA;;;SY)(A;OICI;GRGX;;;BU)";
+
+/// Who may own a folder this module is willing to trust: Administrators, SYSTEM and TrustedInstaller.
+/// A folder owned by anyone else was made by a limited user (or by something running as one), and an
+/// owner can rewrite the ACL whatever it says.
+const TRUSTED_OWNERS: [&str; 3] = [
+    "S-1-5-32-544",
+    "S-1-5-18",
+    "S-1-5-80-956008885-3418522649-1831038044-1853292631-2271478464",
+];
+
+/// Whether `sid` (in its `S-1-...` string form) is one of the owners [`TRUSTED_OWNERS`] lists.
+pub fn owner_is_trusted(sid: &str) -> bool {
+    TRUSTED_OWNERS.iter().any(|t| t.eq_ignore_ascii_case(sid))
 }
 
 /// The files an elevated schedule keeps in its folder, and nothing else.
@@ -129,21 +129,6 @@ const REPARSE_POINT: u32 = 0x400;
 /// must not be one: the elevated process would follow it to wherever a limited user pointed it.
 pub fn is_reparse(attributes: u32) -> bool {
     attributes & REPARSE_POINT != 0
-}
-
-/// The names in a folder that are not ours. A limited user could have put something there before the
-/// first install (a hard link, a junction with the name of a file we are about to write); nothing but our
-/// own files is accepted, so an unknown entry is refused rather than guessed about.
-pub fn unexpected_entries(names: &[String]) -> Vec<String> {
-    names
-        .iter()
-        .filter(|name| {
-            !KNOWN_FILES
-                .iter()
-                .any(|known| known.eq_ignore_ascii_case(name))
-        })
-        .cloned()
-        .collect()
 }
 
 /// The absolute path of a program in the system folder, from the Windows API. A bare `icacls.exe` is
@@ -181,78 +166,191 @@ fn refuse_reparse(path: &Path) -> Result<(), IngestError> {
 }
 
 #[cfg(windows)]
-fn restrict_to_administrators(dir: &Path) -> Result<(), IngestError> {
-    let mut command = std::process::Command::new(system_program("icacls.exe"));
-    command.args(admin_only_acl_arguments(dir));
-    {
-        use std::os::windows::process::CommandExt;
-        command.creation_flags(0x0800_0000); // CREATE_NO_WINDOW
+fn wide(path: &Path) -> Vec<u16> {
+    use std::os::windows::ffi::OsStrExt;
+    path.as_os_str()
+        .encode_wide()
+        .chain(std::iter::once(0))
+        .collect()
+}
+
+/// Outcome of trying to create a folder.
+#[cfg(windows)]
+#[derive(Debug)]
+enum Created {
+    Fresh,
+    AlreadyThere,
+}
+
+/// Creates `dir` **already carrying** [`ADMIN_ONLY_SDDL`]. There is no instant at which it exists with
+/// any other permissions, and if something is already there the call reports it instead of adopting it.
+#[cfg(windows)]
+fn create_admin_only(dir: &Path) -> Result<Created, IngestError> {
+    use windows_sys::Win32::Foundation::{LocalFree, ERROR_ALREADY_EXISTS};
+    use windows_sys::Win32::Security::Authorization::{
+        ConvertStringSecurityDescriptorToSecurityDescriptorW, SDDL_REVISION_1,
+    };
+    use windows_sys::Win32::Security::SECURITY_ATTRIBUTES;
+    use windows_sys::Win32::Storage::FileSystem::CreateDirectoryW;
+
+    let sddl: Vec<u16> = ADMIN_ONLY_SDDL.encode_utf16().chain(Some(0)).collect();
+    let path = wide(dir);
+    let mut descriptor = std::ptr::null_mut();
+    // SAFETY: `sddl` and `path` are NUL-terminated and outlive the calls; the descriptor Windows
+    // allocates is freed with LocalFree right after it is used.
+    unsafe {
+        if ConvertStringSecurityDescriptorToSecurityDescriptorW(
+            sddl.as_ptr(),
+            SDDL_REVISION_1,
+            &mut descriptor,
+            std::ptr::null_mut(),
+        ) == 0
+        {
+            return Err(IngestError::io(dir, std::io::Error::last_os_error()));
+        }
+        let attributes = SECURITY_ATTRIBUTES {
+            nLength: std::mem::size_of::<SECURITY_ATTRIBUTES>() as u32,
+            lpSecurityDescriptor: descriptor,
+            bInheritHandle: 0,
+        };
+        let ok = CreateDirectoryW(path.as_ptr(), &attributes);
+        let error = std::io::Error::last_os_error();
+        LocalFree(descriptor);
+        if ok != 0 {
+            Ok(Created::Fresh)
+        } else if error.raw_os_error() == Some(ERROR_ALREADY_EXISTS as i32) {
+            Ok(Created::AlreadyThere)
+        } else {
+            Err(IngestError::io(dir, error))
+        }
     }
-    let output = command
-        .output()
-        .map_err(|source| IngestError::SpawnFailed {
-            program: "icacls.exe".to_string(),
-            source,
-        })?;
-    if output.status.success() {
+}
+
+/// The owner of `path` in `S-1-...` string form, read from its security descriptor.
+#[cfg(windows)]
+fn owner_of(path: &Path) -> Result<String, IngestError> {
+    use windows_sys::Win32::Foundation::LocalFree;
+    use windows_sys::Win32::Security::Authorization::{
+        ConvertSidToStringSidW, GetNamedSecurityInfoW, SE_FILE_OBJECT,
+    };
+    use windows_sys::Win32::Security::OWNER_SECURITY_INFORMATION;
+
+    let wpath = wide(path);
+    let mut owner = std::ptr::null_mut();
+    let mut descriptor = std::ptr::null_mut();
+    // SAFETY: out-pointers are valid; `owner` points into `descriptor`, which is freed only after the
+    // SID string has been copied out.
+    unsafe {
+        let status = GetNamedSecurityInfoW(
+            wpath.as_ptr(),
+            SE_FILE_OBJECT,
+            OWNER_SECURITY_INFORMATION,
+            &mut owner,
+            std::ptr::null_mut(),
+            std::ptr::null_mut(),
+            std::ptr::null_mut(),
+            &mut descriptor,
+        );
+        if status != 0 {
+            return Err(IngestError::io(
+                path,
+                std::io::Error::from_raw_os_error(status as i32),
+            ));
+        }
+        let mut text: *mut u16 = std::ptr::null_mut();
+        let converted = ConvertSidToStringSidW(owner, &mut text);
+        let result = if converted == 0 || text.is_null() {
+            Err(IngestError::io(path, std::io::Error::last_os_error()))
+        } else {
+            let mut len = 0usize;
+            while *text.add(len) != 0 {
+                len += 1;
+            }
+            let sid = String::from_utf16_lossy(std::slice::from_raw_parts(text, len));
+            LocalFree(text.cast());
+            Ok(sid)
+        };
+        LocalFree(descriptor);
+        result
+    }
+}
+
+/// Refuses `path` unless it is a real folder (not a link) owned by someone this module trusts.
+#[cfg(windows)]
+fn require_trusted_folder(path: &Path) -> Result<(), IngestError> {
+    refuse_reparse(path)?;
+    let owner = owner_of(path)?;
+    if owner_is_trusted(&owner) {
         Ok(())
     } else {
         Err(IngestError::Schedule(format!(
-            "non sono riuscito a limitare ai soli amministratori la cartella {}: {}",
-            dir.display(),
-            String::from_utf8_lossy(&output.stdout).trim()
+            "la cartella {} esiste già ed è di un altro utente ({owner}), non di un amministratore: non la uso con diritti da amministratore. Cancellala da un prompt dei comandi elevato e riprova.",
+            path.display()
         )))
     }
 }
 
-/// Makes `leaf` (under `root`, the machine data folder) a folder only administrators can change, and
-/// checks that nothing a limited user could have prepared is in the way.
+/// Makes `leaf` (under `root`, the machine data folder) a **fresh** folder only administrators can
+/// change, and checks that nothing a limited user could have prepared is in the way.
 ///
 /// `C:\ProgramData` lets any user create folders in it, so `rustcopy`, `rustcopy\elevated` and the
-/// schedule's own folder may all exist **before** this runs, made by someone else. Each level is
-/// therefore created if missing, refused if it is a junction or link, taken over (owner set to
-/// Administrators, ACL rewritten) and only then trusted; and once the leaf is locked, whatever is in it
-/// must be one of our own file names or the install stops.
+/// schedule's own folder may all exist **before** this runs, made by someone else, who may also still
+/// hold an open handle to it — a handle survives any ACL change made afterwards, so taking such a folder
+/// over is not an option. Instead: a missing level is created already carrying [`ADMIN_ONLY_SDDL`]; an
+/// existing one must be a real folder (no junction or link) **owned by an administrator, SYSTEM or
+/// TrustedInstaller**, else the install stops and says what to delete; the leaf is rebuilt on every
+/// install (see `rebuild_leaf`) and every level's owner is checked once more at the end.
 #[cfg(windows)]
 pub fn prepare_protected_dir(root: &Path, leaf: &Path) -> Result<(), IngestError> {
     let relative = leaf
         .strip_prefix(root)
         .map_err(|_| IngestError::Schedule("cartella protetta fuori da ProgramData".to_string()))?;
+    let parts: Vec<_> = relative.components().collect();
     let mut current = root.to_path_buf();
-    for part in relative.components() {
+    for (index, part) in parts.iter().enumerate() {
         current.push(part);
+        let is_leaf = index + 1 == parts.len();
         refuse_reparse(&current)?;
-        if !current.exists() {
-            std::fs::create_dir(&current).map_err(|e| IngestError::io(&current, e))?;
+        if matches!(create_admin_only(&current)?, Created::AlreadyThere) {
+            // Something is already there: it is used only if an administrator made it.
+            require_trusted_folder(&current)?;
+            if is_leaf {
+                rebuild_leaf(&current)?;
+            }
         }
-        restrict_to_administrators(&current)?;
-        // Checked again after the lock: nothing swapped it for a link while it was being locked.
-        refuse_reparse(&current)?;
+        // Whatever ended up here, new or old, is checked: the owner is what the design relies on.
+        require_trusted_folder(&current)?;
     }
-    let names: Vec<String> = std::fs::read_dir(leaf)
-        .map_err(|e| IngestError::io(leaf, e))?
-        .filter_map(Result::ok)
-        .map(|entry| entry.file_name().to_string_lossy().into_owned())
-        .collect();
-    let strangers = unexpected_entries(&names);
-    if !strangers.is_empty() {
-        return Err(IngestError::Schedule(format!(
-            "la cartella {} contiene cose che non sono di rustcopy ({}): non la uso con diritti da amministratore",
-            leaf.display(),
-            strangers.join(", ")
-        )));
-    }
+    Ok(())
+}
+
+/// Empties an administrator-owned schedule folder of our own files, removes it and creates it again, so
+/// the folder an install writes into is always one made a moment ago with [`ADMIN_ONLY_SDDL`].
+/// `remove_dir` refuses a folder that still holds anything else, which is how a stranger is detected.
+#[cfg(windows)]
+fn rebuild_leaf(leaf: &Path) -> Result<(), IngestError> {
     for known in KNOWN_FILES {
         let file = leaf.join(known);
         refuse_reparse(&file)?;
-        // Our own leftovers from an earlier install are replaced, never reused.
         match std::fs::remove_file(&file) {
             Ok(()) => {}
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
             Err(e) => return Err(IngestError::io(&file, e)),
         }
     }
-    Ok(())
+    std::fs::remove_dir(leaf).map_err(|e| {
+        IngestError::Schedule(format!(
+            "la cartella {} contiene cose che non sono di rustcopy ({e}): non la uso con diritti da amministratore",
+            leaf.display()
+        ))
+    })?;
+    match create_admin_only(leaf)? {
+        Created::Fresh => Ok(()),
+        Created::AlreadyThere => Err(IngestError::Schedule(format!(
+            "qualcuno ha ricreato {} mentre la preparavo: non la uso con diritti da amministratore",
+            leaf.display()
+        ))),
+    }
 }
 
 #[cfg(not(windows))]
@@ -277,36 +375,37 @@ mod tests {
     }
 
     #[test]
-    fn the_acl_cuts_inheritance_and_grants_by_well_known_sid_only() {
-        let args = admin_only_acl_arguments(Path::new("C:/ProgramData/rustcopy/elevated/x"));
-        assert!(args.contains(&"/inheritance:r".to_string()));
-        let at = args
-            .iter()
-            .position(|a| a == "/setowner")
-            .expect("owner is set");
-        assert_eq!(
-            args[at + 1],
-            "*S-1-5-32-544",
-            "the owner becomes Administrators"
-        );
-        let grants: Vec<&String> = args.iter().filter(|a| a.contains(":(OI)(CI)")).collect();
+    fn the_descriptor_is_protected_and_grants_by_well_known_sid_only() {
+        assert!(ADMIN_ONLY_SDDL.starts_with("D:P"), "inheritance is cut");
+        let grants: Vec<&str> = ADMIN_ONLY_SDDL.split('(').skip(1).collect();
         assert_eq!(grants.len(), 3);
         // Administrators and SYSTEM may write; Users only read and run.
         assert!(grants
             .iter()
-            .any(|g| g.starts_with("*S-1-5-32-544") && g.ends_with(":(OI)(CI)F")));
+            .any(|g| g.contains(";FA;") && g.ends_with(";BA)")));
         assert!(grants
             .iter()
-            .any(|g| g.starts_with("*S-1-5-18") && g.ends_with(":(OI)(CI)F")));
+            .any(|g| g.contains(";FA;") && g.ends_with(";SY)")));
         assert!(grants
             .iter()
-            .any(|g| g.starts_with("*S-1-5-32-545") && g.ends_with(":(OI)(CI)RX")));
+            .any(|g| g.contains(";GRGX;") && g.ends_with(";BU)")));
         assert!(
-            !args
-                .iter()
-                .any(|a| a.contains("Everyone") || a.contains("S-1-1-0")),
+            !ADMIN_ONLY_SDDL.contains(";WD)") && !ADMIN_ONLY_SDDL.contains(";AU)"),
             "nobody else is granted anything"
         );
+    }
+
+    #[test]
+    fn only_administrators_system_and_trustedinstaller_own_a_trusted_folder() {
+        assert!(owner_is_trusted("S-1-5-32-544"));
+        assert!(owner_is_trusted("S-1-5-18"));
+        assert!(owner_is_trusted(
+            "S-1-5-80-956008885-3418522649-1831038044-1853292631-2271478464"
+        ));
+        assert!(!owner_is_trusted("S-1-5-32-545"), "Users");
+        assert!(!owner_is_trusted("S-1-5-21-1-2-3-1001"), "a plain account");
+        assert!(!owner_is_trusted("S-1-1-0"), "Everyone");
+        assert!(!owner_is_trusted(""));
     }
 
     #[test]
@@ -317,18 +416,39 @@ mod tests {
         assert!(!is_reparse(0x20), "a plain file");
     }
 
+    /// Windows API checks against real folders: the Windows folder is an administrator's; a folder made
+    /// by `create_admin_only` is born once and never adopted on a second call.
+    #[cfg(windows)]
     #[test]
-    fn a_folder_with_anything_but_our_files_is_refused() {
-        let ours: Vec<String> = ["config.toml", "ROBOCOPY_INGEST.EXE", "task.xml"]
-            .iter()
-            .map(|s| s.to_string())
-            .collect();
-        assert!(unexpected_entries(&ours).is_empty(), "case does not matter");
-        let planted: Vec<String> = ["config.toml", "payload.dll", "sub"]
-            .iter()
-            .map(|s| s.to_string())
-            .collect();
-        assert_eq!(unexpected_entries(&planted), vec!["payload.dll", "sub"]);
+    fn the_windows_folder_is_trusted() {
+        let windows = std::env::var_os("SystemRoot").expect("SystemRoot");
+        let owner = owner_of(Path::new(&windows)).expect("owner");
+        assert!(owner_is_trusted(&owner), "{owner}");
+        assert!(require_trusted_folder(Path::new(&windows)).is_ok());
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn creation_reports_an_existing_folder_instead_of_adopting_it() {
+        let base = tempfile::tempdir().expect("tempdir");
+        let dir = base.path().join("x");
+        assert!(matches!(create_admin_only(&dir), Ok(Created::Fresh)));
+        assert!(dir.is_dir());
+        assert!(matches!(create_admin_only(&dir), Ok(Created::AlreadyThere)));
+    }
+
+    /// The squatting attack: the folder a limited user made first is refused, because its owner is that
+    /// user (when this test runs elevated the owner is Administrators and there is nothing to refuse).
+    #[cfg(windows)]
+    #[test]
+    fn a_folder_somebody_else_made_first_is_refused() {
+        if is_elevated() {
+            return;
+        }
+        let root = tempfile::tempdir().expect("tempdir");
+        let leaf = root.path().join("rustcopy").join("elevated").join("job");
+        std::fs::create_dir_all(&leaf).expect("squatter");
+        assert!(prepare_protected_dir(root.path(), &leaf).is_err());
     }
 
     /// A junction (no privilege needed to make one) is refused where a plain folder is accepted: the
