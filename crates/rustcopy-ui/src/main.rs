@@ -10,6 +10,7 @@
 #![cfg_attr(windows, windows_subsystem = "windows")]
 
 mod check;
+mod checkpoint_choice;
 mod csv;
 mod eject;
 mod form;
@@ -106,6 +107,8 @@ struct Ctx {
     /// The names of the jobs of the configuration now running, when it has several: the queue is
     /// drawn from them and from the position the progress samples report.
     queue_names: RefCell<Vec<String>>,
+    /// The paths of the checkpoints offered for the open lavoro, in the order of the choice box.
+    checkpoint_paths: RefCell<Vec<String>>,
     /// Discards the answer for a configuration's jobs once another list was asked for.
     jobs_view: Generation,
     /// Discards the answer for a report page once another page or report was asked for.
@@ -810,13 +813,27 @@ fn fill_detail(ui: &AppWindow, ctx: &Rc<Ctx>, id: &str) {
         }
     }
     // An interrupted run left a checkpoint in its folder: offer to continue it (newest first).
-    let checkpoint =
+    let checkpoints =
         if session.state == SessionState::Interrupted || session.state == SessionState::NeedsLook {
-            ctx.log.checkpoints_of(id).into_iter().next()
+            ctx.log.checkpoints_of(id)
         } else {
-            None
+            Vec::new()
         };
-    ui.set_d_resume(checkpoint.map(|c| c.path).unwrap_or_default().into());
+    ui.set_d_resume(
+        checkpoints
+            .first()
+            .map(|c| c.path.clone())
+            .unwrap_or_default()
+            .into(),
+    );
+    ui.set_d_checkpoints(ModelRc::new(VecModel::from(
+        checkpoints
+            .iter()
+            .map(|c| SharedString::from(checkpoint_choice::label(c)))
+            .collect::<Vec<_>>(),
+    )));
+    ui.set_d_checkpoint_index(0);
+    *ctx.checkpoint_paths.borrow_mut() = checkpoints.into_iter().map(|c| c.path).collect();
 
     if session.state == SessionState::NeedsLook {
         if let Some(report) = session.reports.first().cloned() {
@@ -1246,6 +1263,7 @@ fn main() -> Result<(), slint::PlatformError> {
         open_when_done: Cell::new(false),
         awake: keep_awake::KeepAwake::default(),
         queue_names: RefCell::new(Vec::new()),
+        checkpoint_paths: RefCell::new(Vec::new()),
         sessions: RefCell::new(Vec::new()),
         details: Generation::default(),
         schedules: Generation::default(),
@@ -1286,17 +1304,23 @@ fn main() -> Result<(), slint::PlatformError> {
     {
         let weak = ui.as_weak();
         let ctx = ctx.clone();
-        ui.on_resume_session(move |id, checkpoint| {
+        ui.on_resume_session(move |id, choice| {
             let Some(ui) = weak.upgrade() else { return };
+            let chosen = checkpoint_choice::path_at(
+                &ctx.checkpoint_paths.borrow(),
+                usize::try_from(choice).unwrap_or(0),
+            )
+            .map(str::to_string);
+            let Some(checkpoint) = chosen else {
+                ui.set_error("Nessuna interruzione da riprendere.".into());
+                return;
+            };
             if ctx.slot.with(|run| run.is_running()) == Some(true) {
                 ui.set_error(ui.get_busy_text());
                 return;
             }
             ctx.open_when_done.set(false);
-            match ctx
-                .log
-                .begin_resume(id.as_str(), Path::new(checkpoint.as_str()))
-            {
+            match ctx.log.begin_resume(id.as_str(), Path::new(&checkpoint)) {
                 Ok(session) => run_session(&ui, &ctx, &session, RunMode::Resume),
                 Err(error) => ui.set_error(error.to_string().into()),
             }

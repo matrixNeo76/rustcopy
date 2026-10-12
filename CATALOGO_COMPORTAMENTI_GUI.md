@@ -130,6 +130,7 @@ Le regole di sicurezza chiave (nessun comando che copi, cancelli, pianifichi o i
 | L44 | «Forza completo» sull'elenco delle attività, **solo per un'attività che contiene un backup a generazioni** e **dal livello Standard** (riletto dal disco al clic, non fidandosi del pulsante già disegnato): avvia la stessa configurazione con `--force-full`, quindi una generazione **completa** che apre un nuovo ciclo; non cancella nulla (la rotazione resta di `--keep-generations`, con la sua conferma, e dalla console non si raggiunge) | Una catena incrementale rovinata o un ciclo da riaprire non devono costringere a modificare la configurazione; ma ricopiare tutto costa tempo e spazio, quindi non è a un clic da un principiante | UI | `runner::force_full_arguments`, `safety::can_force_full` | 1 test F61 sulla lista di argomenti + dal vivo (seconda generazione completa creata dal pulsante) |
 | L45 | Un'attività **pianificata** mostra **quando Task Scheduler la farà partire**, nelle parole con cui Task Scheduler lo dice (mai riscritto in un altro formato; «N/D» non si stampa); la riga di un'attività ha **due livelli** (cosa è, poi cosa se ne può fare) perché con sette pulsanti accanto al testo il principale, «Esegui», finiva tagliato in una finestra di larghezza normale | Sapere che una copia è pianificata non dice se parte stanotte; un pulsante tagliato è una funzione persa | UI | `schedule::details_for_config`, `gui_api::schedule_details` | 1 test sul dettaglio + dal vivo (attività pianificata alle 04:30: «pianificata: prossima 10/10/2026 04:30:00») |
 | L46 | Mentre una copia va, la pagina mostra **gli ultimi file copiati** (fino a 8, il più recente per primo), non solo l'ultimo; è una finestra **limitata**, non un registro: migliaia di file piccoli finiscono fra due campioni e una lista che li tenesse tutti sarebbe una crescita senza limite; si svuota a ogni nuova fase | Un solo nome che cambia troppo in fretta per essere letto non dice se la copia sta andando; un elenco intero costerebbe memoria | Core+UI | `ThroughputProgress::recent_files`, `ProgressSample::recent_files` | 1 test (ordine, limite, svuotamento) + dal vivo (compare il file in corso) |
+| L47 | Un lavoro che ha lasciato **più di un checkpoint** (fermato, ripreso, fermato di nuovo) mostra un **menu per scegliere da quale interruzione riprendere**, ognuna con data e motivo in parole leggibili (il percorso del file di stop non si mostra); con un solo checkpoint il menu non compare; una scelta non più valida riprende il più recente, mai un percorso fuori dall'elenco, e il core rifiuta comunque ogni checkpoint che non sia del lavoro | Riprendere dall'interruzione sbagliata rifà lavoro già fatto; un percorso scritto a mano non deve poter avviare una copia | UI | `checkpoint_choice::{label,path_at}`, `sessions::begin_resume` | 5 test + dal vivo (due checkpoint, scelta della seconda, ripresa avviata con `resume_dir`) |
 
 ## 3. Copia, anteprima, Explorer
 
@@ -193,7 +194,7 @@ Le regole di sicurezza chiave (nessun comando che copi, cancelli, pianifichi o i
 
 ## 7. Stato e conteggi
 
-Righe: 13 confini, 12 esecuzione, 46 lavori, 11 copia/Explorer, 12 editor, 7 aspetto, 10 build. **111** voci. Quelle marcate **Nuovo**
+Righe: 13 confini, 12 esecuzione, 47 lavori, 11 copia/Explorer, 12 editor, 7 aspetto, 10 build. **112** voci. Quelle marcate **Nuovo**
 (E09, E12, A04, A05, A06, A07, C10 in parte) sono i requisiti che nascono dalla specifica, non da un difetto passato.
 
 ## 8. Come si usa questo catalogo
@@ -213,5 +214,5 @@ Righe: 13 confini, 12 esecuzione, 46 lavori, 11 copia/Explorer, 12 editor, 7 asp
   difetti D1-D30 resta da fare quando si arriva alle schermate corrispondenti.
 - **C08 è un'ipotesi favorevole**: `PopupWindow` non sta nel layout, ma non ho provato un pannello Recenti reale.
 - **E09 e A04** sono funzioni che non esistono ancora; la verifica "dal vivo" dipende dal tray (non riuscito nella Fase 1).
-- **Il conteggio 111** è fatto a mano e può non riflettere righe aggiunte dopo.
+- **Il conteggio 112** è fatto a mano e può non riflettere righe aggiunte dopo.
 - **Revisione contro D1-D30 fatta (8 Ott 2026)**: dei difetti documentati, quelli che toccano la console sono D22, D24, D25, D26, D28, D29, D30; D24 (G06), D26 (J12), D30 (I03) e D25 (core, `--resume-from`) erano già coperti; D22 (I10) e D28 (C11) sono state aggiunte; D29 riguarda solo la DLL Shell, invariata. D1-D21, D23 e D27 vivono nel core o nella CLI e la nuova interfaccia li eredita senza codice proprio.
