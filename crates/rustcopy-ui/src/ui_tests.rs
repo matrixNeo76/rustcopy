@@ -489,3 +489,41 @@ fn the_editor_shows_its_own_message() {
         all_labels(&ui)
     );
 }
+
+// ---------------------------------------------------------------- elevated schedule
+
+const ELEVATED: &str = "Con privilegi elevati (per copiare file in uso)";
+
+/// The choice to run elevated is offered only where the core allows preparing one (the Expert level);
+/// below that the box must not exist at all, so it cannot be ticked by mistake.
+#[test]
+fn the_elevated_schedule_box_exists_only_when_the_core_allows_it() {
+    let ui = window();
+    ui.set_page(10);
+    ui.set_can_elevated_schedule(false);
+    assert!(!has(&ui, ELEVATED), "offered below the Expert level");
+    ui.set_can_elevated_schedule(true);
+    assert!(has(&ui, ELEVATED), "missing at the Expert level");
+}
+
+/// Ticking the box sets the property the Rust side reads, and the box says what it will do (one prompt
+/// from Windows, then no password) before the person confirms, through its accessible description.
+#[test]
+fn ticking_the_elevated_box_sets_the_flag_and_explains_itself() {
+    let ui = window();
+    ui.set_page(10);
+    ui.set_can_elevated_schedule(true);
+    assert!(!ui.get_sch_elevated(), "starts unticked");
+    let description = one(&ui, ELEVATED)
+        .accessible_description()
+        .map(|d| d.to_string())
+        .unwrap_or_default();
+    assert!(
+        description.contains("Windows chiede conferma una volta"),
+        "{description}"
+    );
+    press(&ui, ELEVATED);
+    assert!(ui.get_sch_elevated());
+    press(&ui, ELEVATED);
+    assert!(!ui.get_sch_elevated(), "ticking again clears it");
+}
