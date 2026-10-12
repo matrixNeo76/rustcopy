@@ -104,6 +104,9 @@ export component AppWindow inherits Window {
     in property <string> report-workdir;
     in property <bool> report-busy;
     in property <string> report-message;
+    in property <string> log-text;
+    in property <string> log-path;
+    in property <string> log-note;
     in property <string> report-page-text;
     in property <bool> report-pageable;
     in property <bool> report-has-prev;
@@ -192,6 +195,8 @@ export component AppWindow inherits Window {
     callback show-history(string);
     callback toggle-technical(string);
     callback open-session-report(string);
+    callback show-log(string);
+    callback refresh-log();
     callback report-page(bool);
     callback export-problems();
     callback edit-select-job(int);
@@ -880,6 +885,59 @@ export component AppWindow inherits Window {
                     font-size: Theme.body;
                     color: Theme.text-faint;
                 }
+            }
+        }
+
+        if root.page == 12: VerticalLayout {
+            padding: Theme.page-padding;
+            spacing: Theme.gap;
+            HorizontalLayout {
+                spacing: 10px;
+                alignment: start;
+                Button {
+                    text: Strings.log-back;
+                    clicked => {
+                        root.page = 1;
+                    }
+                }
+                Text {
+                    text: Strings.log-title;
+                    font-size: Theme.title;
+                    font-weight: 700;
+                    color: Theme.text;
+                    vertical-alignment: center;
+                }
+                Button {
+                    text: Strings.log-refresh;
+                    clicked => {
+                        root.refresh-log();
+                    }
+                }
+            }
+            if root.error != "": Banner {
+                text: root.error;
+                label-prefix: Strings.warning-prefix;
+                kind: BadgeKind.warning;
+            }
+            Text {
+                text: root.log-path;
+                overflow: elide;
+                font-size: Theme.small;
+                color: Theme.text-muted;
+            }
+            if root.log-note != "": Text {
+                text: root.log-note;
+                wrap: word-wrap;
+                font-size: Theme.small;
+                color: Theme.text-muted;
+            }
+            TextEdit {
+                vertical-stretch: 1;
+                min-height: 200px;
+                read-only: true;
+                wrap: no-wrap;
+                text: root.log-text != "" ? root.log-text : Strings.log-empty;
+                accessible-label: Strings.log-title;
             }
         }
 
@@ -1955,6 +2013,12 @@ export component AppWindow inherits Window {
                     text: root.d-show-technical ? Strings.hide-technical : Strings.show-technical;
                     clicked => {
                         root.toggle-technical(root.selected-id);
+                    }
+                }
+                Button {
+                    text: Strings.show-log;
+                    clicked => {
+                        root.show-log(root.selected-id);
                     }
                 }
                 Button {

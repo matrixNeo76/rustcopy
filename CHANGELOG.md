@@ -30,6 +30,7 @@ For full technical detail behind any entry, see `ANALYSIS.md` (defect list, `D<N
 ### Added
 
 - **Slint console lets you choose which interruption to resume** when a lavoro left several checkpoints, each shown with its date and a readable reason.
+- **Slint console shows the raw log** of a lavoro's configuration (last 400 lines, read-only, refreshable); the core reads only the last 256 KiB of the file.
 - **Slint console lists the last files copied** while a copy runs (up to 8, newest first), published in the progress sample as `recent_files`.
 - **Slint console shows when a scheduled task runs next** (as Task Scheduler reports it), and a task's buttons sit on their own row so "Esegui" is no longer cut off in a normal-width window.
 - **Slint console, queue of a multi-job run**: one row per job (waiting, running, done) while the run goes, from the position the command line already publishes.

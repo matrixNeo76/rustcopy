@@ -18,6 +18,7 @@ mod format;
 mod help;
 mod jobs_view;
 mod keep_awake;
+mod log_view;
 mod move_text;
 mod path_check;
 mod problems;
@@ -109,6 +110,8 @@ struct Ctx {
     queue_names: RefCell<Vec<String>>,
     /// The paths of the checkpoints offered for the open lavoro, in the order of the choice box.
     checkpoint_paths: RefCell<Vec<String>>,
+    /// The configuration whose log the log page is showing, for "Aggiorna".
+    log_config: RefCell<Option<PathBuf>>,
     /// Discards the answer for a configuration's jobs once another list was asked for.
     jobs_view: Generation,
     /// Discards the answer for a report page once another page or report was asked for.
@@ -462,6 +465,24 @@ fn set_path_check(ui: &AppWindow, which: usize, answer: String, checked: String)
         ui.set_dest_checked_for(checked.into());
         ui.set_dest_checking(false);
     }
+}
+
+/// Reads the end of the log of `config` on a worker thread and puts it on the log page.
+fn load_log(ui: &AppWindow, config: PathBuf) {
+    let weak = ui.as_weak();
+    std::thread::spawn(move || {
+        let result = gui_api::read_log_tail(&config, log_view::LINES);
+        let _ = weak.upgrade_in_event_loop(move |ui| match result {
+            Ok(tail) => {
+                ui.set_error("".into());
+                ui.set_log_path(tail.path.to_string_lossy().into_owned().into());
+                ui.set_log_note(log_view::note(&tail).into());
+                ui.set_log_text(tail.lines.join("\n").into());
+                ui.set_page(12);
+            }
+            Err(error) => ui.set_error(error.to_string().into()),
+        });
+    });
 }
 
 /// The rows of the jobs page: each job's line plus its last run, read from its own run index.
@@ -1264,6 +1285,7 @@ fn main() -> Result<(), slint::PlatformError> {
         awake: keep_awake::KeepAwake::default(),
         queue_names: RefCell::new(Vec::new()),
         checkpoint_paths: RefCell::new(Vec::new()),
+        log_config: RefCell::new(None),
         sessions: RefCell::new(Vec::new()),
         details: Generation::default(),
         schedules: Generation::default(),
@@ -2319,6 +2341,40 @@ fn main() -> Result<(), slint::PlatformError> {
                 .map(|n| n.to_string_lossy().into_owned())
                 .unwrap_or_default();
             show_history_page(&ui, &ctx, name, history_of_report(&report));
+        });
+    }
+
+    // The log of the selected lavoro's configuration: its last lines, read on a worker thread.
+    {
+        let weak = ui.as_weak();
+        let ctx = ctx.clone();
+        ui.on_show_log(move |id| {
+            let Some(ui) = weak.upgrade() else { return };
+            let config = ctx
+                .sessions
+                .borrow()
+                .iter()
+                .find(|s| s.id == id.as_str())
+                .and_then(|s| log_view::config_of(s.task.as_deref(), &s.folder));
+            let Some(config) = config else {
+                ui.set_error(
+                    "Per questo lavoro non c'è una configurazione di cui leggere il registro."
+                        .into(),
+                );
+                return;
+            };
+            *ctx.log_config.borrow_mut() = Some(config.clone());
+            load_log(&ui, config);
+        });
+    }
+    {
+        let weak = ui.as_weak();
+        let ctx = ctx.clone();
+        ui.on_refresh_log(move || {
+            let Some(ui) = weak.upgrade() else { return };
+            if let Some(config) = ctx.log_config.borrow().clone() {
+                load_log(&ui, config);
+            }
         });
     }
 
