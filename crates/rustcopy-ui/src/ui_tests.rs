@@ -432,7 +432,7 @@ fn the_log_page_says_so_when_there_is_no_log_yet_and_shows_it_when_there_is() {
     assert!(has(&ui, "Torna al lavoro") && has(&ui, "Aggiorna"));
     let none = "Il registro non c'è ancora: si crea alla prima copia di questa configurazione.";
     let text_area = |ui: &AppWindow| {
-        find(ui, "Registro")
+        find(ui, "Registro tecnico")
             .into_iter()
             .filter_map(|e| e.accessible_value())
             .map(|v| v.to_string())
@@ -526,4 +526,243 @@ fn ticking_the_elevated_box_sets_the_flag_and_explains_itself() {
     assert!(ui.get_sch_elevated());
     press(&ui, ELEVATED);
     assert!(!ui.get_sch_elevated(), "ticking again clears it");
+}
+
+// ---------------------------------------------------------------- clarity of the pages
+
+/// With no task yet the page says what a task is and how to make one, and offers the first step as a
+/// button: an empty list with a faint sentence in a large blank page was the thing a person could not
+/// make sense of.
+#[test]
+fn the_tasks_page_explains_itself_when_it_is_empty() {
+    let ui = window();
+    ui.set_page(2);
+    ui.set_tasks(ModelRc::new(VecModel::from(Vec::<TaskRow>::new())));
+    let labels = all_labels(&ui);
+    let text = labels.join("\n");
+    assert!(
+        text.contains("Non hai ancora nessuna attività"),
+        "{labels:?}"
+    );
+    assert!(
+        text.contains("Salva come attività..."),
+        "the steps name the button"
+    );
+    assert!(
+        text.contains("Un'attività è una copia"),
+        "it says what a task is"
+    );
+    // Two «Nuova copia»: the sidebar's and the card's own first step.
+    assert_eq!(find(&ui, "Nuova copia").len(), 2);
+    let (calls, sink) = capture::<&'static str>();
+    ui.on_new_copy(move || sink.borrow_mut().push("new"));
+    find(&ui, "Nuova copia")
+        .last()
+        .expect("the card's button")
+        .invoke_accessible_default_action();
+    assert_eq!(*calls.borrow(), vec!["new"]);
+}
+
+/// Once there is a task the explanation steps aside and the list is shown.
+#[test]
+fn the_empty_explanation_goes_away_once_there_is_a_task() {
+    let ui = window();
+    ui.set_page(2);
+    show_tasks(&ui, vec![task("notte", false, 1, true)]);
+    assert!(!all_labels(&ui)
+        .join("\n")
+        .contains("Non hai ancora nessuna attività"));
+    assert!(has(&ui, "Esegui"));
+}
+
+/// The tasks page groups what it offers: a file you already have, and keys and passwords, each with
+/// its own sentence; the old page had three buttons in a row with two unrelated sentences above them.
+#[test]
+fn the_tasks_page_separates_files_from_keys_and_passwords() {
+    let ui = window();
+    ui.set_page(2);
+    let labels = all_labels(&ui);
+    for expected in [
+        "Aggiungi un file di configurazione...",
+        "Apri un report...",
+        "Chiavi e password...",
+    ] {
+        assert!(
+            labels.iter().any(|l| l == expected),
+            "{expected}: {labels:?}"
+        );
+    }
+}
+
+/// The log page says what the log is for before showing it.
+#[test]
+fn the_log_page_says_what_a_log_is() {
+    let ui = window();
+    ui.set_page(12);
+    assert!(all_labels(&ui)
+        .join("\n")
+        .contains("È il diario che rustcopy scrive mentre lavora"));
+}
+
+/// The safety page describes the level picked in full, says what it cannot do, and does not promise a
+/// mirror from the console (which no level offers).
+#[test]
+fn the_safety_page_describes_the_level_in_full() {
+    let ui = window();
+    ui.set_page(9);
+    ui.set_safety_unlocks(
+        robocopy_ingest::safety::SafetyLevel::Standard
+            .describe()
+            .into(),
+    );
+    let text = all_labels(&ui).join("\n");
+    assert!(text.contains("«Sposta»"), "{text}");
+    assert!(text.contains("Non puoi ancora"), "{text}");
+    ui.set_safety_unlocks(
+        robocopy_ingest::safety::SafetyLevel::Expert
+            .describe()
+            .into(),
+    );
+    let text = all_labels(&ui).join("\n");
+    assert!(text.contains("privilegi elevati"), "{text}");
+    assert!(!text.contains("mirror e pulizie presidiati"));
+}
+
+/// The technical details are tall enough to read, and the page scrolls as a whole instead of squeezing
+/// them into what is left under the buttons.
+#[test]
+fn the_technical_details_are_not_squeezed() {
+    let ui = window();
+    ui.set_page(1);
+    ui.set_d_has_reports(true);
+    ui.set_d_state(0);
+    ui.set_d_show_technical(true);
+    let rows: Vec<crate::generated::DetailRow> = (0..40)
+        .map(|i| crate::generated::DetailRow {
+            kind: 1,
+            label: format!("voce {i}").into(),
+            value: "x".into(),
+        })
+        .collect();
+    ui.set_d_rows(ModelRc::new(VecModel::from(rows)));
+    assert!(
+        !has(&ui, "Mostra i dettagli tecnici"),
+        "when open, the button reads «Nascondi»"
+    );
+    let hide = one(&ui, "Nascondi i dettagli tecnici");
+    // Its button stays inside the window even with the table open: the table sits below it and the page
+    // scrolls, instead of the button being pushed away or the table squeezed.
+    assert!(hide.absolute_position().y < 700.0);
+}
+
+/// Not a check: writes what the pages look like to `RUSTCOPY_SNAPSHOT_DIR` as raw RGBA, for looking at.
+/// Run alone (`-- --ignored snapshot_pages`): it installs its own software-rendering platform, which
+/// cannot coexist with the testing backend the other tests use in the same process.
+#[test]
+#[ignore]
+fn snapshot_pages() {
+    use slint::platform::software_renderer::{MinimalSoftwareWindow, RepaintBufferType};
+    use slint::platform::{Platform, WindowAdapter};
+
+    let Some(dir) = std::env::var_os("RUSTCOPY_SNAPSHOT_DIR") else {
+        return;
+    };
+    thread_local! {
+        static WINDOW: Rc<MinimalSoftwareWindow> = MinimalSoftwareWindow::new(RepaintBufferType::NewBuffer);
+    }
+    struct Headless;
+    impl Platform for Headless {
+        fn create_window_adapter(&self) -> Result<Rc<dyn WindowAdapter>, slint::PlatformError> {
+            Ok(WINDOW.with(Clone::clone))
+        }
+    }
+    slint::platform::set_platform(Box::new(Headless)).expect("platform");
+    let window = WINDOW.with(Clone::clone);
+    window.set_size(slint::PhysicalSize::new(1040, 780));
+    let ui = AppWindow::new().expect("the interface builds");
+    let dump = |ui: &AppWindow, name: &str| {
+        let _ = ui;
+        slint::platform::update_timers_and_animations();
+        let mut pixels = vec![slint::Rgb8Pixel::new(0, 0, 0); 1040 * 780];
+        window.draw_if_needed(|renderer| {
+            renderer.render(&mut pixels, 1040);
+        });
+        let mut bytes = b"P6
+1040 780
+255
+"
+        .to_vec();
+        for p in &pixels {
+            bytes.extend_from_slice(&[p.r, p.g, p.b]);
+        }
+        std::fs::write(
+            std::path::Path::new(&dir).join(format!("{name}.ppm")),
+            bytes,
+        )
+        .expect("write");
+    };
+    ui.set_page(2);
+    ui.set_tasks(ModelRc::new(VecModel::from(Vec::<TaskRow>::new())));
+    dump(&ui, "tasks-empty");
+
+    let rows: Vec<crate::generated::HelpRow> = crate::help::entries()
+        .into_iter()
+        .map(|e| crate::generated::HelpRow {
+            heading: e.heading,
+            term: e.term.into(),
+            text: e.text.into(),
+        })
+        .collect();
+    ui.set_help_rows(ModelRc::new(VecModel::from(rows)));
+    ui.set_page(8);
+    dump(&ui, "help");
+
+    ui.set_page(9);
+    ui.set_safety_unlocks(
+        robocopy_ingest::safety::SafetyLevel::Expert
+            .describe()
+            .into(),
+    );
+    ui.set_safety_level_name("Prudente".into());
+    ui.set_safety_pick(2);
+    dump(&ui, "safety-expert");
+    ui.set_safety_unlocks(
+        robocopy_ingest::safety::SafetyLevel::Standard
+            .describe()
+            .into(),
+    );
+    ui.set_safety_pick(1);
+    dump(&ui, "safety-standard");
+
+    ui.set_page(12);
+    ui.set_log_path(
+        "C:/Users/x/AppData/Local/rustcopy/console/sessions/1/robocopy_ingest.log".into(),
+    );
+    ui.set_log_text(
+        "2026-10-12T20:09:31 INFO ingestion starting source=C:/src dest=NAS/dest
+2026-10-12T20:09:33 INFO source inventory complete files=31976"
+            .into(),
+    );
+    dump(&ui, "log");
+
+    ui.set_page(1);
+    ui.set_d_where("claude-code → claude-code".into());
+    ui.set_d_when("12/10 22:09".into());
+    ui.set_d_has_numbers(true);
+    ui.set_d_has_reports(true);
+    ui.set_d_files("31976".into());
+    ui.set_d_size("754,8 MB".into());
+    ui.set_d_time("5 min 24 s".into());
+    ui.set_d_speed("2,5 MB/s".into());
+    ui.set_d_state(0);
+    ui.set_d_show_technical(true);
+    let detail: Vec<crate::generated::DetailRow> = (0..30)
+        .map(|i| crate::generated::DetailRow {
+            kind: if i % 10 == 0 { 0 } else { 1 },
+            label: format!("voce {i}").into(),
+            value: "valore".into(),
+        })
+        .collect();
+    ui.set_d_rows(ModelRc::new(VecModel::from(detail)));
+    dump(&ui, "detail-technical");
 }

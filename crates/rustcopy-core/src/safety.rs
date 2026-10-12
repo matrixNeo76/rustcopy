@@ -49,12 +49,32 @@ impl SafetyLevel {
         }
     }
 
-    /// What this level adds on top of the one below, as sentences for the confirmation.
-    pub fn unlocks(self) -> &'static str {
+    /// What the level lets the person do and what it does not, in full: shown on the safety page for
+    /// the level picked and again in the confirmation that raises it.
+    ///
+    /// It describes what the console **actually offers** today, not what the level is reserved for: an
+    /// earlier wording promised "attended mirror and purges" at Expert, which the console never offers
+    /// at any level (`can_run_attended_purge` has no caller), and left out the one thing Expert really
+    /// unlocks. A description that promises more than the button does is worse than a short one.
+    pub fn describe(self) -> &'static str {
         match self {
-            SafetyLevel::Prudent => "Solo avviare copie, mostrare e segnalare. Nessuna pianificazione né cancellazione dalla console.",
-            SafetyLevel::Standard => "In più: preparare pianificazioni (le installa la riga di comando dopo la richiesta di Windows) e «Sposta», che copia, verifica e solo dopo la tua conferma cancella l'originale.",
-            SafetyLevel::Expert => "In più: mirror e pulizie presidiati, con anteprima e conferma a ogni esecuzione. Un mirror o una pulizia non presidiati non partono mai dalla console, a nessun livello.",
+            SafetyLevel::Prudent => "Con questo livello puoi:
+  • avviare una copia da «Nuova copia» e seguirne l'avanzamento;
+  • riprendere, ripetere o salvare come attività una copia;
+  • leggere report, storico e registro, e vedere l'anteprima di un ripristino;
+  • far verificare i file copiati.
+
+Con questo livello non puoi: preparare pianificazioni, usare «Sposta» (che cancella gli originali dopo averli copiati) né «Forza completo» (che rifà da capo una copia a generazioni).",
+            SafetyLevel::Standard => "Come Prudente, e in più puoi:
+  • preparare una pianificazione: un'attività di Utilità di pianificazione di Windows che avvia la copia all'ora scelta, con il tuo utente e solo quando sei connesso;
+  • usare «Sposta»: copia, verifica e, solo dopo la tua conferma, cancella gli originali che hanno una copia identica;
+  • usare «Forza completo»: rifà una copia completa invece di una incrementale. Non cancella nulla, ma ricopia tutto.
+
+Non puoi ancora: preparare pianificazioni con privilegi elevati.",
+            SafetyLevel::Expert => "Come Standard, e in più puoi:
+  • preparare una pianificazione con privilegi elevati: la copia parte da sola con diritti da amministratore e una copia ombra del disco (VSS), così copia anche i file aperti. Windows chiede conferma una volta sola, quando la crei.
+
+Una pianificazione elevata copia soltanto: niente mirror, niente comandi prima o dopo, solo percorsi completi. Mirror e pulizie non partono mai in automatico dalla console, a nessun livello, e oggi non sono ancora disponibili nemmeno con la tua conferma: restano un comando da scrivere a mano.",
         }
     }
 
@@ -245,6 +265,38 @@ mod tests {
         assert_eq!(lines.len(), 2);
         assert!(lines[0].ends_with("Prudente\tStandard"), "{}", lines[0]);
         assert!(lines[1].ends_with("Standard\tPrudente"), "{}", lines[1]);
+    }
+
+    /// The description says what the level does, and each claim has a function behind it: what a level
+    /// "can" do in words is what `can_*` says it can. It must also never promise a mirror or purge from the
+    /// console, which no level offers (see `describe`).
+    #[test]
+    fn the_description_matches_what_each_level_really_allows() {
+        use SafetyLevel::*;
+        for level in [Prudent, Standard, Expert] {
+            let text = level.describe();
+            assert!(text.lines().count() > 3, "{level:?} is described in full");
+            assert!(
+                !text.contains("mirror e pulizie presidiati"),
+                "{level:?} must not promise an attended purge the console does not offer"
+            );
+        }
+        // What each level names is exactly what its functions allow.
+        assert!(Standard.describe().contains("Sposta") && Standard.can_move());
+        assert!(Prudent.describe().contains("non puoi") && !Prudent.can_move());
+        assert!(Standard.describe().contains("Forza completo") && Standard.can_force_full());
+        assert!(
+            Expert.describe().contains("privilegi elevati")
+                && Expert.can_prepare_elevated_schedules()
+        );
+        assert!(
+            Standard.describe().contains("Non puoi ancora")
+                && !Standard.can_prepare_elevated_schedules(),
+            "Standard says it cannot do the elevated schedule, and it cannot"
+        );
+        // The one thing no level does, said plainly at the top.
+        assert!(Expert.describe().contains("a nessun livello"));
+        assert!(!Expert.can_run_unattended_purge());
     }
 
     #[test]

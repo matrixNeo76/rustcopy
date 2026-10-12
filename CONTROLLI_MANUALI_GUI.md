@@ -43,7 +43,7 @@ registrato le cose, quindi **vanno provate sulla copia installata, non su `targe
   semplice: sta già nel punto A, ma controllala anche **senza** la notifica, per esempio con le notifiche disattivate in Windows).
 - [ ] **Scala di Windows al 125 %, 150 %, 200 %.**
   Passi: Impostazioni di Windows → Schermo → Scala; riavvia la console a ogni valore e apri, nell'ordine: Nuova copia,
-  Attività, il dettaglio di una copia, Proprietà, Modifica, Storico, Credenziali, Pianifica.
+  Attività, il dettaglio di una copia, Proprietà, Modifica, Storico, Chiavi e password, Pianifica.
   Atteso: nessun testo tagliato o sovrapposto, nessun pulsante fuori dalla finestra.
 - [ ] **Tema scuro che segue il sistema, barra del titolo compresa.**
   Passi: con Windows in modalità scura apri la console.
@@ -86,7 +86,7 @@ registrato le cose, quindi **vanno provate sulla copia installata, non su `targe
   Atteso: la verifica è attiva da sola; il controllo elenca i file con copia identica; dopo la conferma spariscono **solo** quelli,
   le copie restano. Prova anche a creare un file nuovo nella cartella di origine tra la copia e la conferma: deve restare.
 - [ ] **Posta con un server vero.**
-  Passi: nel `notify-server.toml` abilita `[smtp]` (esempio in `docs/installation.md`); salva la password con la pagina «Credenziali...»
+  Passi: nel `notify-server.toml` abilita `[smtp]` (esempio in `docs/installation.md`); salva la password con la pagina «Chiavi e password...»
   (nome es. `smtp-rustcopy`) e nominala nel file come `keyring:smtp-rustcopy`; avvia `notify-server.exe`; lancia una copia con
   `--webhook-url http://127.0.0.1:3000/notify`.
   Atteso: arriva un messaggio con oggetto «[rustcopy] OK <computer>: <origine>» e il riepilogo. Prova anche con la password sbagliata:

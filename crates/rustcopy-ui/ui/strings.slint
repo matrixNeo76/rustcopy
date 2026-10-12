@@ -10,8 +10,12 @@ export global Strings {
     out property <string> new-copy: @tr("Nuova copia");
     out property <string> nav-tasks: @tr("Attività");
     out property <string> tasks-title: @tr("Attività salvate");
-    out property <string> tasks-intro: @tr("Le copie che hai salvato come attività. Ognuna ha una cartella sua, con il suo report e il suo storico, e si rilancia con un clic.");
-    out property <string> tasks-empty: @tr("Nessuna attività salvata. Apri il dettaglio di una copia e scegli «Salva come attività».");
+    out property <string> tasks-intro: @tr("Un'attività è una copia che imposti una volta e rilanci quando vuoi, anche in automatico con una pianificazione. Ricorda le sue cartelle, le sue impostazioni e il suo storico.");
+    out property <string> tasks-empty-title: @tr("Non hai ancora nessuna attività");
+    out property <string> tasks-empty-steps: @tr("Come se ne crea una:\n1. Premi «Nuova copia» e fai una copia come al solito.\n2. Quando è finita, scegli quella copia nell'elenco «Lavori» a sinistra e premi «Salva come attività...».\n3. Da qui potrai rilanciarla con «Esegui», cambiarne le impostazioni con «Modifica» o pianificarla con «Pianifica» (dal livello di sicurezza Standard).");
+    out property <string> tasks-from-file: @tr("DA UN FILE CHE HAI GIÀ");
+    out property <string> tasks-credentials-label: @tr("CHIAVI E PASSWORD");
+    out property <string> tasks-credentials-hint: @tr("Per cifrare i dati e per l'invio della posta: salva una chiave o una password in Gestione credenziali di Windows, senza scriverla in nessun file.");
     out property <string> task-details: @tr("Proprietà");
     out property <string> props-back: @tr("Torna alle attività");
     out property <string> props-intro: @tr("Le impostazioni che questa attività usa davvero e da dove vengono. Sola lettura: per cambiarle si modifica il file.");
@@ -42,7 +46,7 @@ export global Strings {
     out property <string> f-acl-hint: @tr("Copia anche i permessi NTFS, il proprietario e gli audit: può richiedere i privilegi di Amministratore.");
     out property <string> f-report-hint: @tr("Dove si scrive il report della copia. Se nel nome scrivi la parola timestamp fra parentesi graffe, ogni copia ha il suo report invece di sovrascrivere il precedente.");
     out property <string> f-report-placeholder: @tr("./robocopy_ingest_report.json (se lasciato vuoto)");
-    out property <string> f-log-hint: @tr("Il registro di ciò che è successo durante la copia.");
+    out property <string> f-log-hint: @tr("Il registro tecnico: ciò che rustcopy ha fatto durante la copia, utile se qualcosa va storto.");
     out property <string> f-log-placeholder: @tr("./robocopy_ingest.log (se lasciato vuoto)");
     out property <string> f-html-hint: @tr("Facoltativo: una pagina di riepilogo da aprire in un browser.");
     out property <string> f-check: @tr("Verifica");
@@ -122,9 +126,9 @@ export global Strings {
     out property <string> task-run: @tr("Esegui");
     out property <string> task-never: @tr("Mai eseguita");
     out property <string> run-config-file: @tr("Aggiungi un file di configurazione...");
-    out property <string> run-config-hint: @tr("Per i file .toml che hai già: restano dove sono e si eseguono con le loro impostazioni. Mirror e pulizie restano protetti dalla conferma della riga di comando, che senza un terminale si rifiuta.");
+    out property <string> run-config-hint: @tr("Un file di configurazione (.toml), scritto a mano o preso da un'altra macchina. Resta dove sta e viene eseguito con le sue impostazioni: la console non lo copia né lo modifica. Se contiene un mirror o una pulizia non parte da qui, serve la conferma della riga di comando.");
     out property <string> task-remove: @tr("Togli");
-    out property <string> cred-open: @tr("Credenziali...");
+    out property <string> cred-open: @tr("Chiavi e password...");
     out property <string> cred-title: @tr("Credenziali");
     out property <string> cred-intro: @tr("Salva o rimuove un segreto in Gestione credenziali di Windows: mai nel file di un'attività, mai come argomento di un comando. Lo si usa poi scrivendo keyring:NOME dove un campo accetta una chiave o una password.");
     out property <string> cred-name: @tr("Nome");
@@ -133,7 +137,7 @@ export global Strings {
     out property <string> cred-save: @tr("Salva");
     out property <string> cred-delete: @tr("Elimina");
     out property <string> cred-delete-hint: @tr("Elimina toglie quel nome da Gestione credenziali; un'attività che lo usa smetterà di trovare la chiave.");
-    out property <string> open-report-hint: @tr("Per il report .json di una copia fatta altrove o da una pianificazione: si legge soltanto, non si modifica nulla.");
+    out property <string> open-report-hint: @tr("Un report (.json) di una copia fatta altrove o da una pianificazione. Si legge soltanto: non cambia nulla.");
     out property <string> report-history: @tr("Storico di questo report");
     out property <string> hist-filter-all: @tr("Tutte");
     out property <string> hist-filter-ok: @tr("Riuscite");
@@ -193,8 +197,9 @@ export global Strings {
     out property <string> eject-title: @tr("Espulsione");
     out property <string> task-jobs: @tr("Job");
     out property <string> resume-which: @tr("Da quale interruzione riprendere");
-    out property <string> show-log: @tr("Registro della copia...");
-    out property <string> log-title: @tr("Registro");
+    out property <string> show-log: @tr("Registro tecnico...");
+    out property <string> log-title: @tr("Registro tecnico");
+    out property <string> log-intro: @tr("È il diario che rustcopy scrive mentre lavora: quando è partita la copia, con quali impostazioni, quanti file ha trovato e, se qualcosa va storto, il motivo. Se la copia è riuscita di solito non serve; se è fallita, il motivo sta nelle ultime righe.");
     out property <string> log-back: @tr("Torna al lavoro");
     out property <string> log-refresh: @tr("Aggiorna");
     out property <string> log-empty: @tr("Il registro non c'è ancora: si crea alla prima copia di questa configurazione.");
