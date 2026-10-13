@@ -1167,3 +1167,93 @@ fn the_last_step_shows_the_summary() {
     let text = all_labels(&ui).join("\n");
     assert!(text.contains("Nome: documenti"), "{text}");
 }
+
+// ---------------------------------------------------------------- suspend and run all
+
+/// A row offers to suspend an active task and to reactivate a suspended one, and says so with the path of
+/// the task and the state asked for.
+#[test]
+fn a_task_row_suspends_or_reactivates_with_its_path() {
+    let ui = window();
+    let mut paused = task("vecchia", false, 1, true);
+    paused.suspended = true;
+    paused.when = "Sospesa".into();
+    show_tasks(&ui, vec![task("notte", false, 1, true), paused]);
+    let (calls, sink) = capture::<String>();
+    ui.on_toggle_suspend_task(move |path, suspend| {
+        sink.borrow_mut().push(format!("{path} {suspend}"));
+    });
+    assert_eq!(
+        find(&ui, "Sospendi").len(),
+        1,
+        "only the active one can be suspended"
+    );
+    assert_eq!(
+        find(&ui, "Riattiva").len(),
+        1,
+        "only the suspended one can be reactivated"
+    );
+    press(&ui, "Sospendi");
+    press(&ui, "Riattiva");
+    assert_eq!(
+        *calls.borrow(),
+        vec!["C:/t/notte.toml true", "C:/t/vecchia.toml false"]
+    );
+}
+
+/// Suspending never needs a level, so its button is never greyed by one, and it sits inside the window
+/// next to everything else on the row.
+#[test]
+fn the_suspend_button_is_never_locked_and_fits_the_window() {
+    let ui = window();
+    show_tasks(&ui, vec![task("foto", true, 3, false)]);
+    ui.set_lock_schedule("Richiede il livello Standard".into());
+    ui.set_lock_force_full("Richiede il livello Standard".into());
+    let button = one(&ui, "Sospendi");
+    assert!(
+        button.accessible_enabled().unwrap_or(false),
+        "a level does not lock it"
+    );
+    let (x, w) = (button.absolute_position().x, button.size().width);
+    assert!(x >= 0.0 && x + w <= WIDTH, "x={x} w={w}");
+}
+
+/// «Esegui tutte» is there when there is something to run and nothing is running; it calls back; its result
+/// is shown as a sentence.
+#[test]
+fn run_all_is_offered_only_when_it_can_start_and_reports_how_it_went() {
+    let ui = window();
+    ui.set_page(2);
+    show_tasks(&ui, vec![]);
+    assert!(
+        !one(&ui, "Esegui tutte")
+            .accessible_enabled()
+            .unwrap_or(true),
+        "no task, nothing to run"
+    );
+    show_tasks(
+        &ui,
+        vec![task("a", false, 1, true), task("b", false, 1, true)],
+    );
+    ui.set_running(false);
+    assert!(one(&ui, "Esegui tutte")
+        .accessible_enabled()
+        .unwrap_or(false));
+    let (calls, sink) = capture::<&'static str>();
+    ui.on_run_all(move || sink.borrow_mut().push("all"));
+    press(&ui, "Esegui tutte");
+    assert_eq!(*calls.borrow(), vec!["all"]);
+
+    ui.set_running(true);
+    assert!(
+        !one(&ui, "Esegui tutte")
+            .accessible_enabled()
+            .unwrap_or(true),
+        "not while a copy runs"
+    );
+    ui.set_running(false);
+    ui.set_run_all_message("Esegui tutte: 2 attività, 2 riuscite.".into());
+    assert!(all_labels(&ui)
+        .join("\n")
+        .contains("Esegui tutte: 2 attività, 2 riuscite."));
+}

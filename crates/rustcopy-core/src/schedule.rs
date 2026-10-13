@@ -666,6 +666,62 @@ pub fn removal_arguments(
     Ok(vec!["--uninstall-schedule".to_string(), name.to_string()])
 }
 
+/// The `schtasks.exe` arguments that switch the task `name` off or on again. Fixed shape: only `/Change`,
+/// the (validated) name and the one switch; nothing else about the task can be altered through it.
+pub fn change_enabled_arguments(name: &str, enabled: bool) -> Vec<String> {
+    vec![
+        "/Change".to_string(),
+        "/TN".to_string(),
+        name.to_string(),
+        if enabled { "/ENABLE" } else { "/DISABLE" }.to_string(),
+    ]
+}
+
+/// Whether the schedule `name` may be switched off (`enabled == false`) or on at `level`.
+///
+/// **Switching off is allowed at every level**: it can only stop a backup from starting, which is the
+/// direction the safety level never restricts. Switching on lets an unattended run start again, so it is
+/// the same decision as preparing a schedule and needs the same level. Checked here, in the core, not in
+/// the button that asks.
+pub fn check_set_enabled(
+    level: crate::safety::SafetyLevel,
+    name: &str,
+    enabled: bool,
+) -> Result<(), IngestError> {
+    if enabled && !level.can_prepare_schedules() {
+        return Err(IngestError::Schedule(format!(
+            "Il livello di sicurezza «{}» non permette di riattivare pianificazioni: servono almeno «{}».",
+            level.name(),
+            crate::safety::SafetyLevel::Standard.name()
+        )));
+    }
+    validate_task_name(name)
+}
+
+/// Switches the Windows scheduled task `name` off or on (`schtasks /Change`). Reversible and deletes
+/// nothing; the task, its trigger and its command are left as they are.
+#[cfg(windows)]
+pub fn set_enabled(
+    level: crate::safety::SafetyLevel,
+    name: &str,
+    enabled: bool,
+) -> Result<(), IngestError> {
+    check_set_enabled(level, name, enabled)?;
+    run_schtasks(&change_enabled_arguments(name, enabled))
+}
+
+#[cfg(not(windows))]
+pub fn set_enabled(
+    level: crate::safety::SafetyLevel,
+    name: &str,
+    enabled: bool,
+) -> Result<(), IngestError> {
+    check_set_enabled(level, name, enabled)?;
+    Err(IngestError::Schedule(
+        "Le pianificazioni richiedono Windows.".to_string(),
+    ))
+}
+
 /// A task name `schtasks.exe` takes without surprises: letters, digits, space, `_`, `.` and `-`, up to 64
 /// characters, not starting with a space or a dot, and without the `\` that would put the task in a folder.
 fn validate_task_name(name: &str) -> Result<(), IngestError> {
@@ -964,19 +1020,37 @@ pub fn referencing_config(_config_path: &Path) -> Result<Vec<String>, IngestErro
 /// query and same matching as [`referencing_config`]; read-only like it.
 #[cfg(windows)]
 pub fn details_for_config(config_path: &Path) -> Result<Vec<ScheduledTask>, IngestError> {
+    Ok(details_for_configs(&[config_path.to_path_buf()])?
+        .pop()
+        .unwrap_or_default())
+}
+
+/// [`details_for_config`] for several configurations with **one** query of Task Scheduler.
+///
+/// Listing every task is the slow part (about five seconds on a machine with a few hundred tasks), so a
+/// table of N tasks must not ask it N times. The result has one list per path, in the same order. Each
+/// matching task then costs one small query for its stored XML, because the CSV does not carry the trigger
+/// in a form that survives translation and the XML does.
+#[cfg(windows)]
+pub fn details_for_configs(
+    config_paths: &[std::path::PathBuf],
+) -> Result<Vec<Vec<ScheduledTask>>, IngestError> {
     let Some(csv) = query_all_tasks_csv()? else {
-        return Ok(Vec::new());
+        return Ok(vec![Vec::new(); config_paths.len()]);
     };
-    let mut tasks = tasks_for_config(&csv, config_path);
-    for task in &mut tasks {
-        // One more query per task, and only for the few that run this config: the CSV does not carry
-        // the trigger in a form that survives translation, the stored XML does.
-        if let Some(xml) = query_task_xml(&task.name) {
-            task.trigger = describe_trigger(&xml);
-            task.disabled = task_is_disabled(&xml);
-        }
-    }
-    Ok(tasks)
+    Ok(config_paths
+        .iter()
+        .map(|config| {
+            let mut tasks = tasks_for_config(&csv, config);
+            for task in &mut tasks {
+                if let Some(xml) = query_task_xml(&task.name) {
+                    task.trigger = describe_trigger(&xml);
+                    task.disabled = task_is_disabled(&xml);
+                }
+            }
+            tasks
+        })
+        .collect())
 }
 
 /// The stored XML of one scheduled task, or `None` when `schtasks.exe` cannot give it. The output is
@@ -999,6 +1073,13 @@ fn query_task_xml(name: &str) -> Option<String> {
 #[cfg(not(windows))]
 pub fn details_for_config(_config_path: &Path) -> Result<Vec<ScheduledTask>, IngestError> {
     Ok(Vec::new())
+}
+
+#[cfg(not(windows))]
+pub fn details_for_configs(
+    config_paths: &[std::path::PathBuf],
+) -> Result<Vec<Vec<ScheduledTask>>, IngestError> {
+    Ok(vec![Vec::new(); config_paths.len()])
 }
 
 /// Every scheduled task whose command line invokes `binary_path` — F62, unlike
@@ -1112,6 +1193,59 @@ mod tests {
 
     /// What the console shows in "Quando": read back from the XML this module itself writes, for each
     /// shape, so the description cannot drift from what was registered.
+    /// Switching a schedule off or on (the console's "Sospendi"/"Riattiva").
+    mod switching {
+        use super::*;
+        use crate::safety::SafetyLevel;
+
+        #[test]
+        fn the_arguments_have_a_fixed_shape_with_one_switch() {
+            assert_eq!(
+                change_enabled_arguments("rustcopy notte", false),
+                vec!["/Change", "/TN", "rustcopy notte", "/DISABLE"]
+            );
+            assert_eq!(
+                change_enabled_arguments("rustcopy notte", true),
+                vec!["/Change", "/TN", "rustcopy notte", "/ENABLE"]
+            );
+        }
+
+        /// Switching off never needs a level; switching on is the decision preparing a schedule is.
+        #[test]
+        fn switching_off_is_allowed_everywhere_and_switching_on_needs_standard() {
+            for level in [
+                SafetyLevel::Prudent,
+                SafetyLevel::Standard,
+                SafetyLevel::Expert,
+            ] {
+                assert!(
+                    check_set_enabled(level, "notte", false).is_ok(),
+                    "{level:?}"
+                );
+            }
+            let refused = check_set_enabled(SafetyLevel::Prudent, "notte", true)
+                .expect_err("Prudent cannot switch a schedule on");
+            assert!(refused.to_string().contains("Standard"), "{refused}");
+            assert!(check_set_enabled(SafetyLevel::Standard, "notte", true).is_ok());
+            assert!(check_set_enabled(SafetyLevel::Expert, "notte", true).is_ok());
+        }
+
+        /// The name goes to `schtasks.exe` as an argument: the same validation as every other schedule action.
+        #[test]
+        fn a_name_that_could_misbehave_is_refused_either_way() {
+            for name in ["", "a\\b", ".hidden", "x/../y"] {
+                assert!(
+                    check_set_enabled(SafetyLevel::Expert, name, false).is_err(),
+                    "{name:?}"
+                );
+                assert!(
+                    check_set_enabled(SafetyLevel::Expert, name, true).is_err(),
+                    "{name:?}"
+                );
+            }
+        }
+    }
+
     mod trigger_text {
         use super::*;
 

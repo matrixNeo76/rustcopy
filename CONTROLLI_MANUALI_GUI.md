@@ -64,6 +64,9 @@ registrato le cose, quindi **vanno provate sulla copia installata, non su `targe
 
 ## D. Funzioni che toccano dischi o rete
 
+- [ ] **«Esegui tutte» e «Sospendi».**
+  Perché a mano: la coda gira nella finestra vera e le copie sono vere (la logica della coda è provata a parte, ma non il collegamento con la finestra). Passi: crea tre attività piccole con «Nuova attività» (cartelle di prova); premi «Esegui tutte». Atteso: partono **una alla volta** nell'ordine dell'elenco (mai due insieme) e alla fine compare «Esegui tutte: 3 attività, 3 riuscite.». Poi «Sospendi» la seconda (la riga diventa attenuata e dice «Sospesa») e rilancia «Esegui tutte»: partono solo le altre due. «Riattiva» la rimette. Durante la coda premi «Ferma»: la copia in corso si interrompe e **le altre non partono** (il messaggio dice «Interrotta»). Con una attività pianificata: «Sospendi» la mette in «Disabilitata» in Utilità di pianificazione e «Riattiva» la riabilita; con il livello Prudente «Riattiva» una pianificazione dice che serve Standard.
+
 - [ ] **Procedura guidata «Nuova attività» con i selettori veri.**
   Perché a mano: usa i dialoghi nativi «Aggiungi cartelle/file» e «Sfoglia...», che l'automazione non pilota. Passi: Attività → «Nuova attività»; passo 1: un nome, «Aggiungi cartelle...» con due cartelle di prova, togline una con «Togli»; passo 2: «Sfoglia...» per la destinazione e scegli «Incrementale»; passo 3: «Solo a mano» (poi, dal livello Standard, anche «Pianificata» con un'ora); passo 4: lascia tutto; passo 5: leggi il riepilogo e premi «Crea attività».
   Atteso: l'attività compare nell'elenco con «Incrementale»; «Esegui» fa **una copia completa** la prima volta (non un errore) e dalla seconda copia solo le novità. Riprova lo stesso nome: «Esiste già un'attività...» e l'attività di prima non cambia. Con il livello Prudente la voce «Pianificata» è grigia con «Richiede il livello Standard».
