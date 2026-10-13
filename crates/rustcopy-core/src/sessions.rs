@@ -588,19 +588,7 @@ impl SessionLog {
         let items = runner::plan_copy_with_files(&sources, Path::new(&session.dest))?;
         let text = runner::shell_drop_config_text(&items, Some(name), session.verify)?;
 
-        // Each task gets a folder of its own: the configuration runs with that folder as its working
-        // directory, so its report and its run history land there and cannot overwrite another
-        // task's (one shared folder would give every task the same default report file).
-        let task_dir = dir.join(name);
-        std::fs::create_dir_all(&task_dir).map_err(|e| IngestError::io(&task_dir, e))?;
-        let target = task_dir.join(format!("{name}.toml"));
-        let mut file = std::fs::OpenOptions::new()
-            .write(true)
-            .create_new(true)
-            .open(&target)
-            .map_err(|e| IngestError::io(&target, e))?;
-        file.write_all(text.as_bytes())
-            .map_err(|e| IngestError::io(&target, e))?;
+        let target = write_new_task_file(dir, name, &text)?;
         self.append(&Line::Saved {
             id: id.to_string(),
             at: Utc::now(),
@@ -608,6 +596,35 @@ impl SessionLog {
         })?;
         Ok(target)
     }
+}
+
+/// Writes `text` as the configuration of a **new** task `name` under `dir`, and returns the file.
+///
+/// Each task gets a folder of its own: the configuration runs with that folder as its working
+/// directory, so its report and its run history land there and cannot overwrite another task's (one
+/// shared folder would give every task the same default report file). The file is created with
+/// `create_new`, so an existing task is refused by the operating system itself, atomically, not by a
+/// check that could be raced; the refusal is a sentence, not a raw I/O error.
+pub fn write_new_task_file(dir: &Path, name: &str, text: &str) -> Result<PathBuf, IngestError> {
+    let task_dir = dir.join(name);
+    std::fs::create_dir_all(&task_dir).map_err(|e| IngestError::io(&task_dir, e))?;
+    let target = task_dir.join(format!("{name}.toml"));
+    let mut file = match std::fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(&target)
+    {
+        Ok(file) => file,
+        Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => {
+            return Err(IngestError::CopyPlanInvalid(format!(
+                "Esiste già un'attività chiamata «{name}»: scegli un altro nome."
+            )))
+        }
+        Err(e) => return Err(IngestError::io(&target, e)),
+    };
+    file.write_all(text.as_bytes())
+        .map_err(|e| IngestError::io(&target, e))?;
+    Ok(target)
 }
 
 /// The folder pairs of a configuration and the verification it asks for.

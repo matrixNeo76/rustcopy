@@ -64,6 +64,10 @@ registrato le cose, quindi **vanno provate sulla copia installata, non su `targe
 
 ## D. Funzioni che toccano dischi o rete
 
+- [ ] **Procedura guidata «Nuova attività» con i selettori veri.**
+  Perché a mano: usa i dialoghi nativi «Aggiungi cartelle/file» e «Sfoglia...», che l'automazione non pilota. Passi: Attività → «Nuova attività»; passo 1: un nome, «Aggiungi cartelle...» con due cartelle di prova, togline una con «Togli»; passo 2: «Sfoglia...» per la destinazione e scegli «Incrementale»; passo 3: «Solo a mano» (poi, dal livello Standard, anche «Pianificata» con un'ora); passo 4: lascia tutto; passo 5: leggi il riepilogo e premi «Crea attività».
+  Atteso: l'attività compare nell'elenco con «Incrementale»; «Esegui» fa **una copia completa** la prima volta (non un errore) e dalla seconda copia solo le novità. Riprova lo stesso nome: «Esiste già un'attività...» e l'attività di prima non cambia. Con il livello Prudente la voce «Pianificata» è grigia con «Richiede il livello Standard».
+
 - [ ] **Espelli l'unità alla fine, con una chiavetta.**
   Passi: 1) scegli una destinazione sulla chiavetta (`E:\...`): deve comparire la casella «Espelli l'unità alla fine»; con una
   destinazione su un disco fisso la casella **non** deve comparire. 2) spunta la casella e copia pochi file: a copia finita il

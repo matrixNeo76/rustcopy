@@ -34,6 +34,7 @@ mod tasks_view;
 mod toast;
 #[cfg(test)]
 mod ui_tests;
+mod wizard_form;
 
 use std::cell::{Cell, RefCell};
 use std::path::{Path, PathBuf};
@@ -768,6 +769,14 @@ fn start_task(ui: &AppWindow, ctx: &Rc<Ctx>, config: &Path, mode: RunMode) {
         return;
     }
     ctx.open_when_done.set(false);
+    // An incremental or differential task with nothing to build on starts from a full copy: the first run
+    // of a task made in the wizard would otherwise fail with "run --backup-type full first". It deletes
+    // nothing, so it does not need the level "Forza completo" asks for.
+    let mode = if mode == RunMode::Normal && gui_api::needs_first_full(config) {
+        RunMode::ForceFull
+    } else {
+        mode
+    };
     match ctx.log.begin_task(config) {
         Ok(session) => run_session(ui, ctx, &session, mode),
         Err(error) => ui.set_error(error.to_string().into()),
@@ -1161,9 +1170,11 @@ where
                 Ok((0, tail)) => {
                     ui.set_sch_ok(true);
                     ui.set_sch_message(tail.into());
-                    // The badge on the task list comes from Task Scheduler itself.
+                    // The badge on the task list comes from Task Scheduler itself. The schedule page is
+                    // where it was asked from, unless the wizard asked for the list (and then it is reset).
                     ui.invoke_show_tasks();
-                    ui.set_page(10);
+                    ui.set_page(ui.get_sch_return_page());
+                    ui.set_sch_return_page(10);
                 }
                 Ok((code, tail)) => {
                     ui.set_sch_ok(false);
@@ -1267,6 +1278,69 @@ fn level_for(index: i32) -> SafetyLevel {
         2 => SafetyLevel::Expert,
         _ => SafetyLevel::Prudent,
     }
+}
+
+/// What the wizard's screens hold, as the pure part reads it.
+fn wizard_fields(ui: &AppWindow) -> wizard_form::Fields {
+    wizard_form::Fields {
+        name: ui.get_wiz_name().to_string(),
+        sources: wizard_sources(ui),
+        dest: ui.get_wiz_dest().to_string(),
+        kind: ui.get_wiz_kind(),
+        verify: ui.get_wiz_verify(),
+        exclude_files: ui.get_wiz_exclude_files().to_string(),
+        exclude_dirs: ui.get_wiz_exclude_dirs().to_string(),
+        min_age: ui.get_wiz_min_age().to_string(),
+        max_age: ui.get_wiz_max_age().to_string(),
+        bandwidth: ui.get_wiz_bandwidth().to_string(),
+    }
+}
+
+fn wizard_sources(ui: &AppWindow) -> Vec<String> {
+    use slint::Model;
+    let model = ui.get_wiz_sources();
+    (0..model.row_count())
+        .filter_map(|i| model.row_data(i))
+        .map(|s| s.to_string())
+        .collect()
+}
+
+fn set_wizard_sources(ui: &AppWindow, list: &[String]) {
+    let rows: Vec<SharedString> = list.iter().map(SharedString::from).collect();
+    ui.set_wiz_sources(ModelRc::new(VecModel::from(rows)));
+}
+
+/// Adds the picked folders and files to the wizard's list, without repeats.
+fn wizard_add_sources(ui: &AppWindow, picked: &[PathBuf]) {
+    let mut list = wizard_sources(ui);
+    for path in picked {
+        let text = path.to_string_lossy().into_owned();
+        if !list
+            .iter()
+            .any(|existing| existing.eq_ignore_ascii_case(&text))
+        {
+            list.push(text);
+        }
+    }
+    set_wizard_sources(ui, &list);
+    ui.set_wiz_error("".into());
+}
+
+/// The `--install-schedule` text for the wizard's schedule step (the schedule page's own form), or the
+/// sentence that says what to fix.
+fn wizard_spec(ui: &AppWindow) -> Result<String, String> {
+    use slint::Model;
+    let days_model = ui.get_sch_days();
+    let mut days = [false; 7];
+    for (i, slot) in days.iter_mut().enumerate() {
+        *slot = days_model.row_data(i).unwrap_or(false);
+    }
+    schedule_form::build_spec(
+        schedule_form::Recurrence::from_index(ui.get_sch_kind()),
+        ui.get_sch_time().as_str(),
+        ui.get_sch_hours().as_str(),
+        days,
+    )
 }
 
 /// Shows the level in force in the status button and on the safety page.
@@ -2083,6 +2157,195 @@ fn main() -> Result<(), slint::PlatformError> {
             }
             run_schedule_command(&ui, move |level| {
                 robocopy_ingest::schedule::removal_arguments(level, name.trim())
+            });
+        });
+    }
+
+    // The "Nuova attività" wizard: five steps, the answers kept in the window's own properties. What a task may
+    // be is decided by `task_wizard` (the core); this collects, checks step by step, and shows the result.
+    {
+        let weak = ui.as_weak();
+        ui.on_wiz_open(move || {
+            let Some(ui) = weak.upgrade() else { return };
+            show_safety(&ui);
+            ui.set_wiz_step(0);
+            ui.set_wiz_name("".into());
+            ui.set_wiz_dest("".into());
+            ui.set_wiz_sources(ModelRc::new(VecModel::from(Vec::<SharedString>::new())));
+            ui.set_wiz_kind(0);
+            ui.set_wiz_schedule_on(false);
+            ui.set_wiz_verify(false);
+            ui.set_wiz_exclude_files("".into());
+            ui.set_wiz_exclude_dirs("".into());
+            ui.set_wiz_min_age("".into());
+            ui.set_wiz_max_age("".into());
+            ui.set_wiz_bandwidth("".into());
+            ui.set_wiz_summary("".into());
+            ui.set_wiz_error("".into());
+            ui.set_wiz_busy(false);
+            ui.set_sch_kind(0);
+            ui.set_sch_time("02:00".into());
+            ui.set_sch_hours("6".into());
+            ui.set_sch_days(ModelRc::new(VecModel::from(vec![false; 7])));
+            ui.set_sch_message("".into());
+            ui.set_page(13);
+        });
+    }
+    {
+        let weak = ui.as_weak();
+        ui.on_wiz_cancel(move || {
+            if let Some(ui) = weak.upgrade() {
+                ui.invoke_show_tasks();
+            }
+        });
+    }
+    {
+        let weak = ui.as_weak();
+        ui.on_wiz_add_folders(move || {
+            let weak = weak.clone();
+            std::thread::spawn(move || {
+                let picked = rfd::FileDialog::new().pick_folders().unwrap_or_default();
+                let _ = weak.upgrade_in_event_loop(move |ui| wizard_add_sources(&ui, &picked));
+            });
+        });
+    }
+    {
+        let weak = ui.as_weak();
+        ui.on_wiz_add_files(move || {
+            let weak = weak.clone();
+            std::thread::spawn(move || {
+                let picked = rfd::FileDialog::new().pick_files().unwrap_or_default();
+                let _ = weak.upgrade_in_event_loop(move |ui| wizard_add_sources(&ui, &picked));
+            });
+        });
+    }
+    {
+        let weak = ui.as_weak();
+        ui.on_wiz_remove_source(move |index| {
+            let Some(ui) = weak.upgrade() else { return };
+            let mut list = wizard_sources(&ui);
+            if let Ok(index) = usize::try_from(index) {
+                if index < list.len() {
+                    list.remove(index);
+                }
+            }
+            set_wizard_sources(&ui, &list);
+        });
+    }
+    {
+        let weak = ui.as_weak();
+        ui.on_wiz_browse_dest(move || {
+            let weak = weak.clone();
+            std::thread::spawn(move || {
+                let picked = rfd::FileDialog::new().pick_folder();
+                let _ = weak.upgrade_in_event_loop(move |ui| {
+                    if let Some(path) = picked {
+                        ui.set_wiz_dest(path.to_string_lossy().into_owned().into());
+                    }
+                });
+            });
+        });
+    }
+    {
+        let weak = ui.as_weak();
+        ui.on_wiz_back(move || {
+            let Some(ui) = weak.upgrade() else { return };
+            ui.set_wiz_error("".into());
+            ui.set_wiz_step((ui.get_wiz_step() - 1).max(0));
+        });
+    }
+    {
+        let weak = ui.as_weak();
+        ui.on_wiz_next(move || {
+            let Some(ui) = weak.upgrade() else { return };
+            let step = ui.get_wiz_step();
+            let fields = wizard_fields(&ui);
+            let problem = wizard_form::step_problem(step, &fields, &tasks_dir()).or_else(|| {
+                (step == 2 && ui.get_wiz_schedule_on())
+                    .then(|| wizard_spec(&ui).err())
+                    .flatten()
+            });
+            if let Some(problem) = problem {
+                ui.set_wiz_error(problem.into());
+                return;
+            }
+            ui.set_wiz_error("".into());
+            if step + 1 == wizard_form::STEPS - 1 {
+                let when = wizard_form::when_text(
+                    ui.get_wiz_schedule_on()
+                        .then(|| wizard_spec(&ui).ok())
+                        .flatten()
+                        .as_deref(),
+                );
+                ui.set_wiz_summary(wizard_form::summary(&fields, &when).into());
+            }
+            ui.set_wiz_step(step + 1);
+        });
+    }
+    {
+        let weak = ui.as_weak();
+        ui.on_wiz_create(move || {
+            let Some(ui) = weak.upgrade() else { return };
+            let fields = wizard_fields(&ui);
+            // Every step again: the person may have gone back and changed something.
+            for step in 0..wizard_form::STEPS {
+                if let Some(problem) = wizard_form::step_problem(step, &fields, &tasks_dir()) {
+                    ui.set_wiz_error(problem.into());
+                    ui.set_wiz_step(step);
+                    return;
+                }
+            }
+            let draft = match wizard_form::draft(&fields) {
+                Ok(draft) => draft,
+                Err(problem) => {
+                    ui.set_wiz_error(problem.into());
+                    return;
+                }
+            };
+            let spec = if ui.get_wiz_schedule_on() {
+                match wizard_spec(&ui) {
+                    Ok(spec) => Some(spec),
+                    Err(problem) => {
+                        ui.set_wiz_error(problem.into());
+                        ui.set_wiz_step(2);
+                        return;
+                    }
+                }
+            } else {
+                None
+            };
+            ui.set_wiz_busy(true);
+            ui.set_wiz_error("".into());
+            let weak = ui.as_weak();
+            std::thread::spawn(move || {
+                let outcome = robocopy_ingest::task_wizard::create_task(&tasks_dir(), &draft)
+                    .map_err(|error| error.to_string());
+                let _ = weak.upgrade_in_event_loop(move |ui| {
+                    ui.set_wiz_busy(false);
+                    match outcome {
+                        Err(message) => ui.set_wiz_error(message.into()),
+                        Ok(config) => {
+                            ui.invoke_show_tasks();
+                            let Some(spec) = spec else { return };
+                            // The schedule is the same command as from the schedule page, started with the
+                            // task just made; the page shows its progress and, if the core refuses, why.
+                            let task = draft.name.clone();
+                            ui.set_sch_task_name(task.clone().into());
+                            ui.set_sch_config(config.to_string_lossy().into_owned().into());
+                            ui.set_sch_name(format!("rustcopy {task}").into());
+                            ui.set_sch_elevated(false);
+                            ui.set_sch_message("".into());
+                            ui.set_sch_return_page(2);
+                            ui.set_page(10);
+                            let name = format!("rustcopy {task}");
+                            run_schedule_command(&ui, move |level| {
+                                robocopy_ingest::schedule::install_arguments(
+                                    level, &config, &spec, &name,
+                                )
+                            });
+                        }
+                    }
+                });
             });
         });
     }
