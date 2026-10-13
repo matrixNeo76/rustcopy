@@ -11,6 +11,10 @@ okf_version: "0.2"
 * [Analisi di Robustezza e Ottimizzazione Prestazioni](ANALYSIS.md) - Audit trail dei difetti D1-D27 e delle opportunità di miglioramento O1-O10.
 * [Changelog](CHANGELOG.md) - Cronologia lineare delle versioni, in stile Keep a Changelog.
 
+# Plan
+
+* [Piano della console centrata sulle attività (stile Cobian)](PIANO_GUI_ATTIVITA.md) - Progetto per rendere la console Slint simile anche a Cobian Reflector oltre che a TeraCopy: pagina principale con la tabella delle attività, procedura guidata per crearle, voci riservate sempre visibili, attiva/sospendi, eventi e posta nell'editor; con le fasi, le regole di sicurezza e le decisioni che restano all'utente.
+
 # Reference
 
 * [AGENTS.md — Developer \& AI Agent Guidelines](AGENTS.md) - Architectural rules, directory tree, and testing conventions for this codebase.
