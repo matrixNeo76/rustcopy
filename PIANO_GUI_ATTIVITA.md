@@ -96,7 +96,7 @@ nulla. La riga appare attenuata con «Sospesa». Lo stato della sospensione per 
 
 | Fase | Contenuto | Rischio |
 |---|---|---|
-| 1 | Pagina «Attività» come home con la tabella (colonne Tipo e Quando), «Copia al volo», voci riservate visibili in grigio, `SafetyLevel::requirement` | basso: solo presentazione |
+| 1 | Pagina «Attività» come home con la tabella (colonne Tipo e Quando), «Copia al volo», voci riservate visibili in grigio, `SafetyLevel::lock_reason` | basso: solo presentazione. **Fatta il 13 Ott 2026** |
 | 2 | Procedura guidata «Nuova attività» (5 passi) | medio: crea file; test di non sovrascrittura |
 | 3 | «Sospendi/riattiva» e «Esegui tutte» (coda tra attività) | medio: tocca `schtasks` |
 | 4 | Eventi prima/dopo nell'editor (Esperto + conferma) | alto: scrive un comando eseguibile; richiede la tua decisione |
