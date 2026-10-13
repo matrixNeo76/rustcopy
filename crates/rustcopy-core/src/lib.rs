@@ -55,6 +55,7 @@ pub mod scan;
 pub mod schedule;
 pub mod service;
 pub mod sessions;
+pub mod task_wizard;
 pub mod testkit;
 pub mod vss;
 

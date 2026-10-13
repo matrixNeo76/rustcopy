@@ -138,3 +138,55 @@ export component SpeedChart inherits Rectangle {
         fill: transparent;
     }
 }
+
+// A choice among a few, shown as a card with its own sentence (the wizard's kind of copy and way of
+// running): the selected one has the accent border; an unavailable one is greyed and says why.
+export component ChoiceCard inherits Rectangle {
+    in property <string> title;
+    in property <string> description;
+    in property <bool> selected;
+    in property <bool> enabled: true;
+    in property <string> reason;
+    callback clicked();
+    border-radius: Theme.radius;
+    border-width: root.selected ? 2px : 1px;
+    border-color: root.selected ? Theme.accent : Theme.border;
+    background: Theme.surface;
+    opacity: root.enabled ? 1.0 : 0.55;
+    accessible-role: button;
+    accessible-label: root.title;
+    accessible-description: root.enabled ? root.description : root.reason;
+    accessible-enabled: root.enabled;
+    accessible-checkable: true;
+    accessible-checked: root.selected;
+    accessible-action-default => {
+        if (root.enabled) {
+            root.clicked();
+        }
+    }
+    ta := TouchArea {
+        enabled: root.enabled;
+        clicked => {
+            root.clicked();
+        }
+    }
+    VerticalLayout {
+        padding: 10px;
+        spacing: 3px;
+        // The card is read once, as a button with its description; the texts inside it are not read again.
+        Text {
+            text: root.title;
+            font-size: Theme.body;
+            font-weight: 700;
+            color: Theme.text;
+            accessible-role: AccessibleRole.none;
+        }
+        Text {
+            text: root.enabled ? root.description : root.reason;
+            wrap: word-wrap;
+            font-size: Theme.small;
+            color: Theme.text-muted;
+            accessible-role: AccessibleRole.none;
+        }
+    }
+}

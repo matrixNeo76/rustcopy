@@ -51,11 +51,15 @@ pub fn entries() -> Vec<HelpEntry> {
         ),
         heading("Per cominciare"),
         item(
-            "1. Una prima copia",
-            "Premi «Copia al volo». In «Cosa copiare» aggiungi una o più cartelle (con «Aggiungi cartelle...» oppure trascinandole dentro la finestra). In «Dove metterle» scegli la cartella di destinazione, anche di rete. Poi premi «Copia». Se la destinazione esiste già, vengono copiati solo i file nuovi o cambiati.",
+            "1. Crea un'attività",
+            "Premi «Nuova attività» e segui i cinque passi: cosa copiare (un nome e le cartelle o i file), dove metterla e che tipo di copia, quando (a mano o pianificata), come (verifica, esclusioni, filtri) e il riepilogo. Alla fine «Crea attività» la scrive; da quel momento la trovi in «Attività» e la lanci con «Esegui».",
         ),
         item(
-            "2. Controllare prima di copiare",
+            "Oppure una copia una tantum",
+            "«Copia al volo»: scegli o trascina le cartelle, scegli dove metterle e premi «Copia». Se la destinazione esiste già, vengono copiati solo i file nuovi o cambiati. Dal dettaglio, «Salva come attività...» la trasforma in un'attività.",
+        ),
+        item(
+            "2. Controllare prima di copiare (copia al volo)",
             "«Controlla prima» conta file e dimensione di ciò che hai scelto e dice se la destinazione ha spazio. Lo fa solo quando glielo chiedi: su un disco grande può richiedere del tempo.",
         ),
         item(
@@ -67,10 +71,6 @@ pub fn entries() -> Vec<HelpEntry> {
             "Quando finisce, la copia compare in «Lavori» con il suo esito. Aprila: vedi quanti file sono stati copiati, la durata e la velocità. «Mostra i dettagli tecnici» mostra il report completo.",
         ),
         item(
-            "5. Rifarla quando vuoi",
-            "Dal dettaglio di una copia, «Salva come attività...» la trasforma in un'attività. Da quel momento la trovi in «Attività» e la rilanci con «Esegui».",
-        ),
-        item(
             "Se non hai niente da provare",
             "In questa pagina, «Crea un esempio in Documenti» prepara pochi file finti e un'attività già pronta. Non tocca dati veri.",
         ),
@@ -78,6 +78,10 @@ pub fn entries() -> Vec<HelpEntry> {
         item(
             "Copia al volo",
             "Dove si imposta e si avvia una copia: cartelle, destinazione, verifica dopo la copia e, se la destinazione è una chiavetta, «Espelli l'unità alla fine».",
+        ),
+        item(
+            "Nuova attività",
+            "La procedura guidata: «Avanti» e «Indietro» si muovono fra i passi senza perdere ciò che hai scritto, «Annulla» esce senza creare nulla. Un'attività incrementale o differenziale parte da una copia completa la prima volta. L'attività creata non fa mai mirror né cancellazioni e non ha comandi prima o dopo la copia.",
         ),
         item(
             "Attività",

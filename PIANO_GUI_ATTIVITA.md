@@ -63,7 +63,7 @@ Cinque passi, con barra di avanzamento e «Indietro»/«Avanti»:
    differenziale: tutto ciò che è cambiato dall'ultima completa; completa: tutto, ogni volta).
 3. **Quando**: mai (solo a mano), ogni giorno, ogni tot ore, nei giorni scelti. La scelta di pianificare richiede il livello Standard; sotto, il passo mostra la voce
    in grigio con la ragione.
-4. **Come**: verifica dopo la copia, esclusioni, filtri per età, cicli da conservare (solo se il tipo non è «semplice»), limite di banda.
+4. **Come**: verifica dopo la copia, esclusioni, filtri per età, limite di banda. **Niente «cicli da conservare»**: la conservazione cancella le versioni vecchie e una console non la introduce mai (resta a mano nel file, come per l'editor).
 5. **Riepilogo**: tutto quello che verrà scritto, in italiano, e «Crea attività». Scrive un file nuovo; non sovrascrive mai (`create_new`).
 
 Riuso: `job_editor::build_proposal(None, &[bozza])` e `propose_config` creano il file; `schedule::install` pianifica. Cambia soltanto la procedura che li chiama.
@@ -97,7 +97,7 @@ nulla. La riga appare attenuata con «Sospesa». Lo stato della sospensione per 
 | Fase | Contenuto | Rischio |
 |---|---|---|
 | 1 | Pagina «Attività» come home con la tabella (colonne Tipo e Quando), «Copia al volo», voci riservate visibili in grigio, `SafetyLevel::lock_reason` | basso: solo presentazione. **Fatta il 13 Ott 2026** |
-| 2 | Procedura guidata «Nuova attività» (5 passi) | medio: crea file; test di non sovrascrittura |
+| 2 | Procedura guidata «Nuova attività» (5 passi) | medio: crea file; test di non sovrascrittura. **Fatta il 13 Ott 2026** (senza «cicli da conservare»: cancella, quindi resta solo a mano, come per l'editor) |
 | 3 | «Sospendi/riattiva» e «Esegui tutte» (coda tra attività) | medio: tocca `schtasks` |
 | 4 | Eventi prima/dopo nell'editor (Esperto + conferma) | alto: scrive un comando eseguibile; richiede la tua decisione |
 | 5 | Posta nella console | basso/medio |

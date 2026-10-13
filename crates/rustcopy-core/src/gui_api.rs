@@ -435,6 +435,42 @@ pub fn schedule_details(
     crate::schedule::details_for_config(config_path)
 }
 
+/// Whether the first run of this configuration has to be a **full** generation: it has an incremental or
+/// differential job and its destination holds no generation to build on (an incremental needs any earlier
+/// generation, a differential needs a full one). Without it the first run would end in "run
+/// `--backup-type full` first", which is a dead end for someone who made the task from the console.
+///
+/// The console answers it by starting the run with `--force-full`, which deletes nothing. An unreadable
+/// manifest is **not** a reason to force anything: the run reports its own problem.
+pub fn needs_first_full(config_path: &Path) -> bool {
+    use crate::generations::{BackupType, GenerationIndex};
+    let Ok(jobs) = list_jobs(config_path) else {
+        return false;
+    };
+    let base = config_path.parent().unwrap_or_else(|| Path::new("."));
+    jobs.iter().any(|job| {
+        let (wants_full, dest) = match (job.backup_type.as_deref(), job.dest.as_deref()) {
+            (Some("incremental"), Some(dest)) => (false, dest),
+            (Some("differential"), Some(dest)) => (true, dest),
+            _ => return false,
+        };
+        let dest = Path::new(dest);
+        let dest = if dest.is_absolute() {
+            dest.to_path_buf()
+        } else {
+            base.join(dest)
+        };
+        match GenerationIndex::load(&dest, job.history_job_name.as_deref()) {
+            Ok(index) if wants_full => !index
+                .entries
+                .iter()
+                .any(|entry| entry.backup_type == BackupType::Full),
+            Ok(index) => index.entries.is_empty(),
+            Err(_) => false,
+        }
+    })
+}
+
 /// Every scheduled task that invokes this binary, regardless of which config it targets — F62,
 /// the GUI half of `--list-schedules`. Read-only, same as `schedules_referencing` above: never
 /// installs, updates or removes a schedule.
@@ -1530,6 +1566,99 @@ pub fn read_settings(config_path: &Path) -> Result<Vec<JobSettings>, IngestError
 
 #[cfg(test)]
 mod tests {
+
+    /// The first run of an incremental or differential task has to be a full one, until something exists to
+    /// build on; a plain task never needs it.
+    #[test]
+    fn the_first_run_needs_a_full_generation_until_one_exists() {
+        use crate::generations::{BackupType, Generation, GenerationManifest};
+        let dir = tempfile::tempdir().expect("tempdir");
+        let dest = dir.path().join("dest");
+        std::fs::create_dir_all(&dest).expect("dest");
+        let write = |kind: &str| {
+            let path = dir.path().join(format!("{kind}.toml"));
+            std::fs::write(
+                &path,
+                format!(
+                    "name = 'a'
+source = '{}'
+dest = '{}'
+backup_type = '{kind}'
+",
+                    dir.path().display().to_string().replace('\\', "/"),
+                    dest.display().to_string().replace('\\', "/"),
+                ),
+            )
+            .expect("config");
+            path
+        };
+        let plain = dir.path().join("plain.toml");
+        std::fs::write(
+            &plain,
+            format!(
+                "source = '{0}'
+dest = '{0}/d'
+",
+                dir.path().display().to_string().replace('\\', "/")
+            ),
+        )
+        .expect("plain");
+        let incremental = write("incremental");
+        let differential = write("differential");
+        let full = write("full");
+
+        assert!(!needs_first_full(&plain), "a plain task needs nothing");
+        assert!(!needs_first_full(&full), "a full task is its own start");
+        assert!(needs_first_full(&incremental), "nothing to build on yet");
+        assert!(needs_first_full(&differential));
+
+        let generation = |id: &str, kind: BackupType| Generation {
+            id: id.to_string(),
+            backup_type: kind,
+            created_at: "2026-10-13T00:00:00Z".to_string(),
+            files_copied: 0,
+            files: Vec::new(),
+        };
+        GenerationManifest::append_generation(&dest, None, &generation("g1", BackupType::Full))
+            .expect("append full");
+        assert!(!needs_first_full(&incremental), "a full generation exists");
+        assert!(!needs_first_full(&differential));
+    }
+
+    /// A differential needs a *full* behind it; an incremental alone does not count.
+    #[test]
+    fn a_differential_is_not_satisfied_by_an_incremental_generation() {
+        use crate::generations::{BackupType, Generation, GenerationManifest};
+        let dir = tempfile::tempdir().expect("tempdir");
+        let dest = dir.path().join("dest");
+        std::fs::create_dir_all(&dest).expect("dest");
+        let config = dir.path().join("d.toml");
+        std::fs::write(
+            &config,
+            format!(
+                "source = '{0}'
+dest = '{1}'
+backup_type = 'differential'
+",
+                dir.path().display().to_string().replace('\\', "/"),
+                dest.display().to_string().replace('\\', "/"),
+            ),
+        )
+        .expect("config");
+        GenerationManifest::append_generation(
+            &dest,
+            None,
+            &Generation {
+                id: "g1".into(),
+                backup_type: BackupType::Incremental,
+                created_at: "2026-10-13T00:00:00Z".into(),
+                files_copied: 0,
+                files: Vec::new(),
+            },
+        )
+        .expect("append");
+        assert!(needs_first_full(&config));
+    }
     #[test]
     fn the_log_tail_of_a_never_run_configuration_is_empty_not_an_error() {
         let dir = tempfile::tempdir().unwrap();

@@ -6,7 +6,8 @@
 import { Button, LineEdit, ProgressIndicator, ListView, Palette, CheckBox, ComboBox, TabWidget, TextEdit, ScrollView } from "std-widgets.slint";
 import { Theme } from "theme.slint";
 import { Strings } from "strings.slint";
-import { Badge, BadgeKind, StatCard, Banner, SectionLabel, SpeedChart } from "components.slint";
+import { Badge, BadgeKind, StatCard, Banner, SectionLabel, SpeedChart, ChoiceCard } from "components.slint";
+import { ScheduleFields } from "schedule.slint";
 import { SessionRow, SessionItem, SessionUi, TaskRow, TaskItem, TaskCols, PropRow, HistRow, AdviceRow, DetailRow, DetailRows, HelpRow, JobRow, JobItem, QueueRow } from "sessions.slint";
 import { EditForm, TextField, ToggleField, TabPage } from "editor.slint";
 
@@ -87,6 +88,33 @@ export component AppWindow inherits Window {
     // What a control the safety level does not unlock says beside itself ("Richiede il livello Standard"); empty
     // when it is available. Set by the core's `SafetyLevel::lock_reason`, never decided here.
     in property <string> lock-schedule;
+    // The "Nuova attività" wizard (page 13). The schedule step reuses the sch-* fields of the schedule page.
+    in-out property <int> wiz-step: 0;
+    in-out property <string> wiz-name;
+    in-out property <string> wiz-dest;
+    in-out property <[string]> wiz-sources;
+    in-out property <int> wiz-kind: 0;
+    in-out property <bool> wiz-schedule-on: false;
+    in-out property <bool> wiz-verify: false;
+    in-out property <string> wiz-exclude-files;
+    in-out property <string> wiz-exclude-dirs;
+    in-out property <string> wiz-min-age;
+    in-out property <string> wiz-max-age;
+    in-out property <string> wiz-bandwidth;
+    in-out property <string> wiz-summary;
+    in-out property <string> wiz-error;
+    in-out property <bool> wiz-busy: false;
+    // Where the schedule page returns to after a schedule is installed (10 = stay on it).
+    in-out property <int> sch-return-page: 10;
+    callback wiz-open();
+    callback wiz-next();
+    callback wiz-back();
+    callback wiz-create();
+    callback wiz-cancel();
+    callback wiz-add-folders();
+    callback wiz-add-files();
+    callback wiz-remove-source(int);
+    callback wiz-browse-dest();
     in property <string> lock-elevated;
     in property <string> lock-move;
     in property <string> lock-force-full;
@@ -666,6 +694,14 @@ export component AppWindow inherits Window {
                         root.new-copy();
                     }
                 }
+                Button {
+                    text: Strings.wiz-new;
+                    primary: true;
+                    horizontal-stretch: 0;
+                    clicked => {
+                        root.wiz-open();
+                    }
+                }
             }
             Text {
                 text: Strings.tasks-intro;
@@ -867,6 +903,369 @@ export component AppWindow inherits Window {
                     accessible-description: Strings.tasks-credentials-hint;
                     clicked => {
                         root.show-credentials();
+                    }
+                }
+            }
+        }
+
+        if root.page == 13: VerticalLayout {
+            padding: Theme.page-padding;
+            spacing: Theme.gap;
+            HorizontalLayout {
+                spacing: 10px;
+                Button {
+                    text: Strings.wiz-cancel;
+                    horizontal-stretch: 0;
+                    clicked => {
+                        root.wiz-cancel();
+                    }
+                }
+                Text {
+                    text: Strings.wiz-title;
+                    font-size: Theme.title;
+                    font-weight: 700;
+                    color: Theme.text;
+                    vertical-alignment: center;
+                    horizontal-stretch: 1;
+                }
+                Text {
+                    text: @tr("Passo {} di {}", root.wiz-step + 1, 5);
+                    font-size: Theme.body;
+                    color: Theme.text-muted;
+                    vertical-alignment: center;
+                }
+            }
+            HorizontalLayout {
+                spacing: 6px;
+                for i in 5: Rectangle {
+                    height: 4px;
+                    border-radius: 2px;
+                    background: i <= root.wiz-step ? Theme.accent : Theme.border;
+                }
+            }
+            ScrollView {
+                vertical-stretch: 1;
+                min-height: 200px;
+                VerticalLayout {
+                    padding-right: 12px;
+                    spacing: Theme.gap;
+                    alignment: start;
+                    if root.wiz-step == 0: VerticalLayout {
+                        spacing: Theme.gap;
+                        Text {
+                            text: Strings.wiz-1-title;
+                            font-size: Theme.heading;
+                            font-weight: 700;
+                            color: Theme.text;
+                        }
+                        Text {
+                            text: Strings.wiz-1-hint;
+                            wrap: word-wrap;
+                            font-size: Theme.body;
+                            color: Theme.text-muted;
+                        }
+                        SectionLabel {
+                            text: Strings.wiz-name;
+                        }
+                        LineEdit {
+                            text <=> root.wiz-name;
+                            accessible-label: Strings.wiz-name;
+                        }
+                        Text {
+                            text: Strings.wiz-name-hint;
+                            wrap: word-wrap;
+                            font-size: Theme.small;
+                            color: Theme.text-muted;
+                        }
+                        SectionLabel {
+                            text: Strings.section-what;
+                        }
+                        if root.wiz-sources.length == 0: Text {
+                            text: Strings.wiz-no-sources;
+                            font-size: Theme.body;
+                            color: Theme.text-faint;
+                        }
+                        for source[i] in root.wiz-sources: HorizontalLayout {
+                            spacing: 10px;
+                            Text {
+                                text: source;
+                                overflow: elide;
+                                horizontal-stretch: 1;
+                                font-size: Theme.body;
+                                color: Theme.text;
+                                vertical-alignment: center;
+                            }
+                            Button {
+                                text: Strings.remove-folder;
+                                horizontal-stretch: 0;
+                                clicked => {
+                                    root.wiz-remove-source(i);
+                                }
+                            }
+                        }
+                        HorizontalLayout {
+                            spacing: 10px;
+                            alignment: start;
+                            Button {
+                                text: Strings.add-folders;
+                                clicked => {
+                                    root.wiz-add-folders();
+                                }
+                            }
+                            Button {
+                                text: Strings.add-files;
+                                clicked => {
+                                    root.wiz-add-files();
+                                }
+                            }
+                        }
+                    }
+                    if root.wiz-step == 1: VerticalLayout {
+                        spacing: Theme.gap;
+                        Text {
+                            text: Strings.wiz-2-title;
+                            font-size: Theme.heading;
+                            font-weight: 700;
+                            color: Theme.text;
+                        }
+                        Text {
+                            text: Strings.wiz-2-hint;
+                            wrap: word-wrap;
+                            font-size: Theme.body;
+                            color: Theme.text-muted;
+                        }
+                        HorizontalLayout {
+                            spacing: 10px;
+                            LineEdit {
+                                text <=> root.wiz-dest;
+                                placeholder-text: Strings.dest-placeholder;
+                                accessible-label: Strings.dest-label;
+                            }
+                            Button {
+                                text: Strings.browse;
+                                horizontal-stretch: 0;
+                                clicked => {
+                                    root.wiz-browse-dest();
+                                }
+                            }
+                        }
+                        SectionLabel {
+                            text: Strings.wiz-kind;
+                        }
+                        ChoiceCard {
+                            title: Strings.bt-plain;
+                            description: "Aggiorna la destinazione: copia i file nuovi o cambiati e non cancella nulla.";
+                            selected: root.wiz-kind == 0;
+                            clicked => {
+                                root.wiz-kind = 0;
+                            }
+                        }
+                        ChoiceCard {
+                            title: Strings.bt-full;
+                            description: "Ogni volta una copia di tutto, in una cartella nuova con la data.";
+                            selected: root.wiz-kind == 1;
+                            clicked => {
+                                root.wiz-kind = 1;
+                            }
+                        }
+                        ChoiceCard {
+                            title: Strings.bt-incremental;
+                            description: "Una versione per volta, con solo le novità dall'ultima. La prima volta è una copia completa.";
+                            selected: root.wiz-kind == 2;
+                            clicked => {
+                                root.wiz-kind = 2;
+                            }
+                        }
+                        ChoiceCard {
+                            title: Strings.bt-differential;
+                            description: "Una versione con tutto ciò che è cambiato dall'ultima completa. La prima volta è una copia completa.";
+                            selected: root.wiz-kind == 3;
+                            clicked => {
+                                root.wiz-kind = 3;
+                            }
+                        }
+                    }
+                    if root.wiz-step == 2: VerticalLayout {
+                        spacing: Theme.gap;
+                        Text {
+                            text: Strings.wiz-3-title;
+                            font-size: Theme.heading;
+                            font-weight: 700;
+                            color: Theme.text;
+                        }
+                        Text {
+                            text: Strings.wiz-3-hint;
+                            wrap: word-wrap;
+                            font-size: Theme.body;
+                            color: Theme.text-muted;
+                        }
+                        ChoiceCard {
+                            title: Strings.wiz-manual;
+                            description: Strings.wiz-manual-hint;
+                            selected: !root.wiz-schedule-on;
+                            clicked => {
+                                root.wiz-schedule-on = false;
+                            }
+                        }
+                        ChoiceCard {
+                            title: Strings.wiz-scheduled;
+                            description: Strings.wiz-scheduled-hint;
+                            reason: root.lock-schedule;
+                            enabled: root.can-schedule;
+                            selected: root.wiz-schedule-on;
+                            clicked => {
+                                root.wiz-schedule-on = true;
+                            }
+                        }
+                        if root.wiz-schedule-on: ScheduleFields {
+                            kind <=> root.sch-kind;
+                            time <=> root.sch-time;
+                            hours <=> root.sch-hours;
+                            days <=> root.sch-days;
+                        }
+                        if !root.can-schedule: Button {
+                            text: Strings.change-level;
+                            horizontal-stretch: 0;
+                            clicked => {
+                                root.show-safety();
+                            }
+                        }
+                    }
+                    if root.wiz-step == 3: VerticalLayout {
+                        spacing: Theme.gap;
+                        Text {
+                            text: Strings.wiz-4-title;
+                            font-size: Theme.heading;
+                            font-weight: 700;
+                            color: Theme.text;
+                        }
+                        Text {
+                            text: Strings.wiz-4-hint;
+                            wrap: word-wrap;
+                            font-size: Theme.body;
+                            color: Theme.text-muted;
+                        }
+                        CheckBox {
+                            text: Strings.verify-label;
+                            checked <=> root.wiz-verify;
+                            accessible-description: Strings.f-verify-hint;
+                        }
+                        SectionLabel {
+                            text: Strings.wiz-exclude-files;
+                        }
+                        TextEdit {
+                            text <=> root.wiz-exclude-files;
+                            height: 64px;
+                            accessible-label: Strings.wiz-exclude-files;
+                        }
+                        SectionLabel {
+                            text: Strings.wiz-exclude-dirs;
+                        }
+                        TextEdit {
+                            text <=> root.wiz-exclude-dirs;
+                            height: 64px;
+                            accessible-label: Strings.wiz-exclude-dirs;
+                        }
+                        HorizontalLayout {
+                            spacing: 10px;
+                            VerticalLayout {
+                                spacing: 2px;
+                                SectionLabel {
+                                    text: Strings.wiz-min-age;
+                                }
+                                LineEdit {
+                                    text <=> root.wiz-min-age;
+                                    accessible-label: Strings.wiz-min-age;
+                                }
+                            }
+                            VerticalLayout {
+                                spacing: 2px;
+                                SectionLabel {
+                                    text: Strings.wiz-max-age;
+                                }
+                                LineEdit {
+                                    text <=> root.wiz-max-age;
+                                    accessible-label: Strings.wiz-max-age;
+                                }
+                            }
+                            VerticalLayout {
+                                spacing: 2px;
+                                SectionLabel {
+                                    text: Strings.wiz-bandwidth;
+                                }
+                                LineEdit {
+                                    text <=> root.wiz-bandwidth;
+                                    accessible-label: Strings.wiz-bandwidth;
+                                }
+                            }
+                        }
+                    }
+                    if root.wiz-step == 4: VerticalLayout {
+                        spacing: Theme.gap;
+                        Text {
+                            text: Strings.wiz-5-title;
+                            font-size: Theme.heading;
+                            font-weight: 700;
+                            color: Theme.text;
+                        }
+                        Text {
+                            text: Strings.wiz-5-hint;
+                            wrap: word-wrap;
+                            font-size: Theme.body;
+                            color: Theme.text-muted;
+                        }
+                        Rectangle {
+                            border-radius: Theme.radius;
+                            border-width: 1px;
+                            border-color: Theme.border;
+                            background: Theme.surface;
+                            VerticalLayout {
+                                padding: 14px;
+                                Text {
+                                    text: root.wiz-summary;
+                                    wrap: word-wrap;
+                                    font-size: Theme.body;
+                                    color: Theme.text;
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+            if root.wiz-error != "": Banner {
+                text: root.wiz-error;
+                label-prefix: Strings.warning-prefix;
+                kind: BadgeKind.warning;
+            }
+            if root.sch-message != "" && root.wiz-step == 4: Banner {
+                text: root.sch-message;
+                label-prefix: Strings.sch-title;
+                kind: root.sch-ok ? BadgeKind.ok : BadgeKind.warning;
+            }
+            HorizontalLayout {
+                spacing: 10px;
+                Button {
+                    text: Strings.wiz-back;
+                    enabled: root.wiz-step > 0 && !root.wiz-busy;
+                    horizontal-stretch: 0;
+                    clicked => {
+                        root.wiz-back();
+                    }
+                }
+                Rectangle {
+                    horizontal-stretch: 1;
+                }
+                Button {
+                    text: root.wiz-step < 4 ? Strings.wiz-next : Strings.wiz-create;
+                    primary: true;
+                    enabled: !root.wiz-busy;
+                    horizontal-stretch: 0;
+                    clicked => {
+                        if (root.wiz-step < 4) {
+                            root.wiz-next();
+                        } else {
+                            root.wiz-create();
+                        }
                     }
                 }
             }
@@ -1166,50 +1565,11 @@ export component AppWindow inherits Window {
                 text <=> root.sch-name;
                 accessible-label: Strings.sch-name;
             }
-            SectionLabel {
-                text: Strings.sch-when;
-            }
-            ComboBox {
-                model: [Strings.sch-daily, Strings.sch-hours, Strings.sch-weekly];
-                current-index <=> root.sch-kind;
-                accessible-label: Strings.sch-when;
-            }
-            if root.sch-kind != 1: VerticalLayout {
-                spacing: 2px;
-                SectionLabel {
-                    text: Strings.sch-time;
-                }
-                LineEdit {
-                    text <=> root.sch-time;
-                    accessible-label: Strings.sch-time;
-                }
-            }
-            if root.sch-kind == 1: VerticalLayout {
-                spacing: 2px;
-                SectionLabel {
-                    text: Strings.sch-every;
-                }
-                LineEdit {
-                    text <=> root.sch-hours;
-                    accessible-label: Strings.sch-every;
-                }
-            }
-            if root.sch-kind == 2: VerticalLayout {
-                spacing: 2px;
-                SectionLabel {
-                    text: Strings.sch-days;
-                }
-                HorizontalLayout {
-                    spacing: 12px;
-                    alignment: start;
-                    for day[i] in ["Lun", "Mar", "Mer", "Gio", "Ven", "Sab", "Dom"]: CheckBox {
-                        text: day;
-                        checked: root.sch-days[i];
-                        toggled => {
-                            root.sch-days[i] = self.checked;
-                        }
-                    }
-                }
+            ScheduleFields {
+                kind <=> root.sch-kind;
+                time <=> root.sch-time;
+                hours <=> root.sch-hours;
+                days <=> root.sch-days;
             }
             VerticalLayout {
                 spacing: 2px;

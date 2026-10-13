@@ -1,0 +1,59 @@
+// The "when" fields of a schedule, shared by the schedule page and the new-task wizard so the two cannot
+// drift: how often, at what time or every how many hours, and on which days. Only the text is built from
+// them (schedule_form.rs); whether a schedule may exist at all is the core's decision.
+import { LineEdit, ComboBox, CheckBox } from "std-widgets.slint";
+import { Strings } from "strings.slint";
+import { SectionLabel } from "components.slint";
+
+export component ScheduleFields inherits VerticalLayout {
+    in-out property <int> kind;
+    in-out property <string> time;
+    in-out property <string> hours;
+    in-out property <[bool]> days;
+    spacing: 8px;
+    SectionLabel {
+        text: Strings.sch-when;
+    }
+    ComboBox {
+        model: [Strings.sch-daily, Strings.sch-hours, Strings.sch-weekly];
+        current-index <=> root.kind;
+        accessible-label: Strings.sch-when;
+    }
+    if root.kind != 1: VerticalLayout {
+        spacing: 2px;
+        SectionLabel {
+            text: Strings.sch-time;
+        }
+        LineEdit {
+            text <=> root.time;
+            accessible-label: Strings.sch-time;
+        }
+    }
+    if root.kind == 1: VerticalLayout {
+        spacing: 2px;
+        SectionLabel {
+            text: Strings.sch-every;
+        }
+        LineEdit {
+            text <=> root.hours;
+            accessible-label: Strings.sch-every;
+        }
+    }
+    if root.kind == 2: VerticalLayout {
+        spacing: 2px;
+        SectionLabel {
+            text: Strings.sch-days;
+        }
+        HorizontalLayout {
+            spacing: 12px;
+            alignment: start;
+            for day[i] in ["Lun", "Mar", "Mer", "Gio", "Ven", "Sab", "Dom"]: CheckBox {
+                text: day;
+                checked: root.days[i];
+                toggled => {
+                    root.days[i] = self.checked;
+                }
+            }
+        }
+    }
+}

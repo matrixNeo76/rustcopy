@@ -102,7 +102,7 @@ fn capture<T: 'static>() -> (Log<T>, Log<T>) {
 #[test]
 fn every_page_builds_and_keeps_the_sidebar() {
     let ui = window();
-    for page in 0..=12 {
+    for page in 0..=13 {
         ui.set_page(page);
         let labels = all_labels(&ui);
         for always in ["Copia al volo", "Attività", "Aiuto"] {
@@ -883,6 +883,34 @@ fn snapshot_pages() {
     ui.set_lock_force_full("Richiede il livello Standard".into());
     dump(&ui, "tasks-table-locked");
 
+    ui.set_page(13);
+    ui.set_wiz_name("documenti".into());
+    ui.set_wiz_sources(ModelRc::new(VecModel::from(vec![
+        slint::SharedString::from("C:\\Users\\io\\Documenti"),
+        slint::SharedString::from("C:\\Users\\io\\Foto"),
+    ])));
+    dump(&ui, "wiz-1");
+    ui.set_wiz_step(1);
+    ui.set_wiz_dest("\\\\NAS\\backup\\Documenti".into());
+    ui.set_wiz_kind(2);
+    dump(&ui, "wiz-2");
+    ui.set_wiz_step(2);
+    ui.set_can_schedule(false);
+    ui.set_lock_schedule("Richiede il livello Standard".into());
+    dump(&ui, "wiz-3-locked");
+    ui.set_can_schedule(true);
+    ui.set_lock_schedule("".into());
+    ui.set_wiz_schedule_on(true);
+    dump(&ui, "wiz-3");
+    ui.set_wiz_step(3);
+    dump(&ui, "wiz-4");
+    ui.set_wiz_step(4);
+    ui.set_wiz_summary(
+        "Nome: documenti\nCosa copiare: 2 elementi\nDove: NAS\\backup\nTipo: Incrementale\nQuando: Ogni giorno alle 02:00\nVerifica dopo la copia: no\nLa prima esecuzione sarà una copia completa, come punto di partenza.\nMai: mirror, cancellazioni, comandi prima o dopo la copia."
+            .into(),
+    );
+    dump(&ui, "wiz-5");
+
     let rows: Vec<crate::generated::HelpRow> = crate::help::entries()
         .into_iter()
         .map(|e| crate::generated::HelpRow {
@@ -943,4 +971,199 @@ fn snapshot_pages() {
         .collect();
     ui.set_d_rows(ModelRc::new(VecModel::from(detail)));
     dump(&ui, "detail-technical");
+}
+
+// ---------------------------------------------------------------- the new-task wizard
+
+/// The tasks page offers the wizard, and the button starts it.
+#[test]
+fn the_tasks_page_offers_a_new_task() {
+    let ui = window();
+    ui.set_page(2);
+    let (calls, sink) = capture::<&'static str>();
+    ui.on_wiz_open(move || sink.borrow_mut().push("open"));
+    press(&ui, "Nuova attività");
+    assert_eq!(*calls.borrow(), vec!["open"]);
+}
+
+/// Each step shows its own title, the step counter and the buttons that belong to it: «Indietro» only after
+/// the first step, «Avanti» until the last, then «Crea attività».
+#[test]
+fn the_wizard_shows_each_step_and_the_right_buttons() {
+    let ui = window();
+    ui.set_page(13);
+    let expected = [
+        (0, "Cosa copiare", "Passo 1 di 5"),
+        (1, "Dove metterla", "Passo 2 di 5"),
+        (2, "Quando", "Passo 3 di 5"),
+        (3, "Come", "Passo 4 di 5"),
+        (4, "Riepilogo", "Passo 5 di 5"),
+    ];
+    for (step, title, counter) in expected {
+        ui.set_wiz_step(step);
+        let labels = all_labels(&ui);
+        assert!(
+            labels.iter().any(|l| l.contains(counter)),
+            "{counter}: {labels:?}"
+        );
+        assert!(
+            labels.iter().any(|l| l == title),
+            "step {step} has no heading «{title}»: {labels:?}"
+        );
+        assert!(has(&ui, "Indietro"), "the button exists on every step");
+        assert_eq!(
+            one(&ui, "Indietro").accessible_enabled().unwrap_or(false),
+            step > 0,
+            "step {step}"
+        );
+        assert_eq!(has(&ui, "Avanti"), step < 4, "step {step}");
+        assert_eq!(has(&ui, "Crea attività"), step == 4, "step {step}");
+    }
+}
+
+#[test]
+fn the_wizard_buttons_call_their_callbacks() {
+    let ui = window();
+    ui.set_page(13);
+    let (calls, sink) = capture::<&'static str>();
+    let (a, b, c, d) = (sink.clone(), sink.clone(), sink.clone(), sink.clone());
+    ui.on_wiz_next(move || a.borrow_mut().push("next"));
+    ui.on_wiz_back(move || b.borrow_mut().push("back"));
+    ui.on_wiz_create(move || c.borrow_mut().push("create"));
+    ui.on_wiz_cancel(move || d.borrow_mut().push("cancel"));
+    ui.set_wiz_step(1);
+    press(&ui, "Avanti");
+    press(&ui, "Indietro");
+    ui.set_wiz_step(4);
+    press(&ui, "Crea attività");
+    press(&ui, "Annulla");
+    assert_eq!(*calls.borrow(), vec!["next", "back", "create", "cancel"]);
+}
+
+/// A busy wizard cannot be moved: neither «Avanti» nor «Indietro» works while the task is being made.
+#[test]
+fn nothing_moves_while_the_task_is_being_created() {
+    let ui = window();
+    ui.set_page(13);
+    ui.set_wiz_step(4);
+    ui.set_wiz_busy(true);
+    assert!(!one(&ui, "Crea attività")
+        .accessible_enabled()
+        .unwrap_or(true));
+    assert!(!one(&ui, "Indietro").accessible_enabled().unwrap_or(true));
+}
+
+/// The first step lists what was chosen, lets one be taken off by position, and says when there is none.
+#[test]
+fn the_sources_can_be_added_and_taken_off() {
+    let ui = window();
+    ui.set_page(13);
+    ui.set_wiz_step(0);
+    assert!(all_labels(&ui)
+        .join("\n")
+        .contains("Nessuna cartella o file scelto."));
+    ui.set_wiz_sources(ModelRc::new(VecModel::from(vec![
+        slint::SharedString::from("C:/Documenti"),
+        slint::SharedString::from("C:/Foto"),
+    ])));
+    let text = all_labels(&ui).join("\n");
+    assert!(
+        text.contains("C:/Documenti") && text.contains("C:/Foto"),
+        "{text}"
+    );
+    let (calls, sink) = capture::<i32>();
+    ui.on_wiz_remove_source(move |i| sink.borrow_mut().push(i));
+    let removes = find(&ui, "Togli");
+    assert_eq!(removes.len(), 2);
+    removes[1].invoke_accessible_default_action();
+    assert_eq!(
+        *calls.borrow(),
+        vec![1],
+        "the second row's button names the second source"
+    );
+}
+
+/// The kinds of copy are cards: pressing one chooses it, and the chosen one is marked.
+#[test]
+fn a_kind_of_copy_is_chosen_by_pressing_its_card() {
+    let ui = window();
+    ui.set_page(13);
+    ui.set_wiz_step(1);
+    assert_eq!(ui.get_wiz_kind(), 0);
+    press(&ui, "Incrementale");
+    assert_eq!(ui.get_wiz_kind(), 2);
+    press(&ui, "Differenziale");
+    assert_eq!(ui.get_wiz_kind(), 3);
+    press(&ui, "Copia semplice");
+    assert_eq!(ui.get_wiz_kind(), 0);
+}
+
+/// Scheduling is a choice that the safety level can lock: greyed with the reason, and it cannot be selected;
+/// «Solo a mano» always can.
+#[test]
+fn the_scheduled_choice_is_greyed_below_its_level_and_cannot_be_picked() {
+    let ui = window();
+    ui.set_page(13);
+    ui.set_wiz_step(2);
+    ui.set_can_schedule(false);
+    ui.set_lock_schedule("Richiede il livello Standard".into());
+    let scheduled = one(&ui, "Pianificata");
+    assert!(!scheduled.accessible_enabled().unwrap_or(true));
+    assert_eq!(
+        scheduled
+            .accessible_description()
+            .map(|d| d.to_string())
+            .as_deref(),
+        Some("Richiede il livello Standard")
+    );
+    scheduled.invoke_accessible_default_action();
+    assert!(!ui.get_wiz_schedule_on(), "a locked choice does nothing");
+    assert!(has(&ui, "Cambia livello..."));
+
+    ui.set_can_schedule(true);
+    ui.set_lock_schedule("".into());
+    press(&ui, "Pianificata");
+    assert!(ui.get_wiz_schedule_on());
+    assert!(has(&ui, "Ogni giorno") || all_labels(&ui).iter().any(|l| l.contains("Quando")));
+    press(&ui, "Solo a mano");
+    assert!(!ui.get_wiz_schedule_on());
+}
+
+/// The wizard never offers what deletes: there is no retention field, whatever the kind of copy.
+#[test]
+fn the_wizard_never_offers_retention() {
+    let ui = window();
+    ui.set_page(13);
+    ui.set_wiz_step(3);
+    for kind in 0..=3 {
+        ui.set_wiz_kind(kind);
+        assert!(
+            !all_labels(&ui)
+                .iter()
+                .any(|l| l.contains("Cicli da conservare")),
+            "kind {kind}"
+        );
+    }
+}
+
+/// What is wrong is said on the step it belongs to, as a banner.
+#[test]
+fn a_problem_is_shown_on_the_wizard() {
+    let ui = window();
+    ui.set_page(13);
+    ui.set_wiz_error("Dai un nome all'attività.".into());
+    assert!(all_labels(&ui)
+        .join("\n")
+        .contains("Dai un nome all'attività."));
+}
+
+/// The last step shows the summary the core will turn into a file.
+#[test]
+fn the_last_step_shows_the_summary() {
+    let ui = window();
+    ui.set_page(13);
+    ui.set_wiz_step(4);
+    ui.set_wiz_summary("Nome: documenti\nTipo: Incrementale".into());
+    let text = all_labels(&ui).join("\n");
+    assert!(text.contains("Nome: documenti"), "{text}");
 }
