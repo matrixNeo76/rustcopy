@@ -77,6 +77,9 @@ fn task(name: &str, generations: bool, jobs: i32, saved: bool) -> TaskRow {
         saved,
         scheduled: false,
         next_run: "".into(),
+        kind: "Copia semplice".into(),
+        when: "Non pianificata".into(),
+        suspended: false,
         generations,
     }
 }
@@ -102,7 +105,7 @@ fn every_page_builds_and_keeps_the_sidebar() {
     for page in 0..=12 {
         ui.set_page(page);
         let labels = all_labels(&ui);
-        for always in ["Nuova copia", "Attività", "Aiuto"] {
+        for always in ["Copia al volo", "Attività", "Aiuto"] {
             assert!(
                 labels.iter().any(|l| l == always),
                 "page {page} lost «{always}»"
@@ -137,8 +140,6 @@ fn the_safety_level_is_shown_where_the_person_can_see_it() {
 #[test]
 fn a_task_row_with_every_button_fits_the_window_and_esegui_is_among_them() {
     let ui = window();
-    ui.set_can_schedule(true);
-    ui.set_can_force_full(true);
     ui.set_running(false);
     show_tasks(&ui, vec![task("foto", true, 3, false)]);
     for label in [
@@ -165,32 +166,137 @@ fn a_task_row_with_every_button_fits_the_window_and_esegui_is_among_them() {
 fn the_optional_task_buttons_appear_only_when_they_apply() {
     let ui = window();
 
-    // A plain saved task: no purge-style options, nothing to force, a single job.
-    ui.set_can_schedule(false);
-    ui.set_can_force_full(true);
+    // A plain saved task: nothing to force, a single job, kept by the console.
     show_tasks(&ui, vec![task("a", false, 1, true)]);
-    for absent in ["Forza completo", "Job", "Pianifica", "Togli"] {
+    for absent in ["Forza completo", "Job", "Togli"] {
         assert!(!has(&ui, absent), "«{absent}");
     }
+    assert!(has(&ui, "Pianifica"), "scheduling is always on the row");
 
-    // Force-full needs both a generation backup in the task and the level for it.
+    // Force-full needs a generation backup in the task; several jobs add the per-job page; a task only
+    // remembered (not saved by the console) can be taken off the list.
+    show_tasks(&ui, vec![task("a", true, 3, false)]);
+    assert!(has(&ui, "Forza completo") && has(&ui, "Job") && has(&ui, "Togli"));
+}
+
+/// A control the safety level does not unlock is still on the row, greyed, with the reason beside it
+/// and a way to the page that changes the level; unlocked, the reason and the way go away.
+#[test]
+fn a_locked_task_button_is_visible_greyed_and_says_why() {
+    let ui = window();
     show_tasks(&ui, vec![task("a", true, 1, true)]);
-    assert!(has(&ui, "Forza completo"));
-    ui.set_can_force_full(false);
-    assert!(!has(&ui, "Forza completo"), "the level is what allows it");
+    assert!(
+        !has(&ui, "Cambia livello..."),
+        "nothing locked, nothing to explain"
+    );
+    assert!(one(&ui, "Pianifica").accessible_enabled().unwrap_or(false));
 
-    // Several jobs add the per-job page; scheduling follows the level; a task that is only remembered
-    // (not saved by the console) can be taken off the list.
-    ui.set_can_schedule(true);
-    show_tasks(&ui, vec![task("a", false, 3, false)]);
-    assert!(has(&ui, "Job") && has(&ui, "Pianifica") && has(&ui, "Togli"));
+    ui.set_lock_schedule("Richiede il livello Standard".into());
+    ui.set_lock_force_full("Richiede il livello Standard".into());
+    let schedule = one(&ui, "Pianifica");
+    assert!(!schedule.accessible_enabled().unwrap_or(true), "greyed");
+    assert!(!one(&ui, "Forza completo")
+        .accessible_enabled()
+        .unwrap_or(true));
+    let text = all_labels(&ui).join("\n");
+    assert!(
+        text.contains("Pianifica: Richiede il livello Standard")
+            || find(&ui, "Pianifica").iter().any(|e| e
+                .accessible_description()
+                .is_some_and(|d| d.contains("Standard"))),
+        "the reason is on screen: {text}"
+    );
+    assert_eq!(
+        schedule
+            .accessible_description()
+            .map(|d| d.to_string())
+            .as_deref(),
+        Some("Richiede il livello Standard")
+    );
+
+    let (calls, sink) = capture::<&'static str>();
+    ui.on_show_safety(move || sink.borrow_mut().push("level"));
+    press(&ui, "Cambia livello...");
+    assert_eq!(*calls.borrow(), vec!["level"]);
+
+    // Everything locked and every button present still fits the window.
+    for label in [
+        "Forza completo",
+        "Pianifica",
+        "Storico",
+        "Modifica",
+        "Proprietà",
+        "Esegui",
+        "Cambia livello...",
+    ] {
+        let button = one(&ui, label);
+        let (x, w) = (button.absolute_position().x, button.size().width);
+        assert!(x >= 0.0 && x + w <= WIDTH, "«{label}»: x={x} w={w}");
+    }
+}
+
+/// The table has its column titles above the rows, and each row says its kind, when it runs and when
+/// next; a suspended task says so instead of a time.
+#[test]
+fn the_tasks_table_has_columns_and_each_row_fills_them() {
+    let ui = window();
+    show_tasks(&ui, vec![]);
+    assert!(!has(&ui, "Ultima volta"), "no rows, no column titles");
+
+    let mut daily = task("notte", true, 1, true);
+    daily.kind = "Incrementale".into();
+    daily.when = "Ogni giorno alle 22:00".into();
+    daily.scheduled = true;
+    daily.next_run = "14/10/2026 22:00:00".into();
+    let mut paused = task("vecchia", false, 1, true);
+    paused.when = "Sospesa".into();
+    paused.scheduled = true;
+    paused.suspended = true;
+    show_tasks(&ui, vec![daily, paused]);
+    for title in ["Nome", "Tipo", "Quando", "Ultima volta", "Prossima"] {
+        assert!(has(&ui, title), "column «{title}» is missing");
+    }
+    let text = all_labels(&ui).join("\n");
+    for expected in [
+        "Incrementale",
+        "Ogni giorno alle 22:00",
+        "14/10/2026 22:00:00",
+        "Sospesa",
+    ] {
+        assert!(text.contains(expected), "{expected}: {text}");
+    }
+}
+
+/// The first thing the person sees is the tasks, not a copy to fill in.
+#[test]
+fn the_window_opens_on_the_tasks() {
+    let ui = window();
+    assert_eq!(ui.get_page(), 2);
+}
+
+/// The move choice is on the new-copy page whatever the level; below the one that unlocks it, it is
+/// greyed and says which level that is.
+#[test]
+fn the_move_choice_is_visible_and_greyed_below_its_level() {
+    let ui = window();
+    ui.set_page(0);
+    ui.set_can_move(false);
+    ui.set_lock_move("Richiede il livello Standard".into());
+    let choice = one(&ui, "Sposta: cancella gli originali dopo la verifica");
+    assert!(!choice.accessible_enabled().unwrap_or(true));
+    assert!(all_labels(&ui)
+        .join("\n")
+        .contains("Richiede il livello Standard"));
+    ui.set_can_move(true);
+    ui.set_lock_move("".into());
+    assert!(one(&ui, "Sposta: cancella gli originali dopo la verifica")
+        .accessible_enabled()
+        .unwrap_or(false));
 }
 
 #[test]
 fn the_task_buttons_call_the_right_callbacks_with_the_task_path() {
     let ui = window();
-    ui.set_can_schedule(true);
-    ui.set_can_force_full(true);
     show_tasks(&ui, vec![task("foto", true, 2, false)]);
     let (calls, sink) = capture::<String>();
     let sinks: Vec<_> = (0..4).map(|_| sink.clone()).collect();
@@ -494,16 +600,28 @@ fn the_editor_shows_its_own_message() {
 
 const ELEVATED: &str = "Con privilegi elevati (per copiare file in uso)";
 
-/// The choice to run elevated is offered only where the core allows preparing one (the Expert level);
-/// below that the box must not exist at all, so it cannot be ticked by mistake.
+/// The choice to run elevated is always on the schedule page; below the Expert level it is greyed and
+/// says which level unlocks it, so it cannot be ticked by mistake and does not look missing.
 #[test]
-fn the_elevated_schedule_box_exists_only_when_the_core_allows_it() {
+fn the_elevated_schedule_box_is_greyed_below_the_level_that_unlocks_it() {
     let ui = window();
     ui.set_page(10);
     ui.set_can_elevated_schedule(false);
-    assert!(!has(&ui, ELEVATED), "offered below the Expert level");
+    ui.set_lock_elevated("Richiede il livello Esperto".into());
+    let boxed = one(&ui, ELEVATED);
+    assert!(
+        !boxed.accessible_enabled().unwrap_or(true),
+        "greyed below Expert"
+    );
+    assert!(all_labels(&ui)
+        .join("\n")
+        .contains("Richiede il livello Esperto"));
     ui.set_can_elevated_schedule(true);
-    assert!(has(&ui, ELEVATED), "missing at the Expert level");
+    ui.set_lock_elevated("".into());
+    assert!(
+        one(&ui, ELEVATED).accessible_enabled().unwrap_or(false),
+        "usable at Expert"
+    );
 }
 
 /// Ticking the box sets the property the Rust side reads, and the box says what it will do (one prompt
@@ -552,11 +670,11 @@ fn the_tasks_page_explains_itself_when_it_is_empty() {
         text.contains("Un'attività è una copia"),
         "it says what a task is"
     );
-    // Two «Nuova copia»: the sidebar's and the card's own first step.
-    assert_eq!(find(&ui, "Nuova copia").len(), 2);
+    // Three «Copia al volo»: the sidebar's, the page's own and the card's first step.
+    assert_eq!(find(&ui, "Copia al volo").len(), 3);
     let (calls, sink) = capture::<&'static str>();
     ui.on_new_copy(move || sink.borrow_mut().push("new"));
-    find(&ui, "Nuova copia")
+    find(&ui, "Copia al volo")
         .last()
         .expect("the card's button")
         .invoke_accessible_default_action();
@@ -704,6 +822,66 @@ fn snapshot_pages() {
     ui.set_page(2);
     ui.set_tasks(ModelRc::new(VecModel::from(Vec::<TaskRow>::new())));
     dump(&ui, "tasks-empty");
+
+    let row = |name: &str,
+               folders: &str,
+               kind: &str,
+               when: &str,
+               next: &str,
+               state: i32,
+               last: &str,
+               generations: bool| TaskRow {
+        path: format!("C:/t/{name}.toml").into(),
+        name: name.into(),
+        folders: folders.into(),
+        last_state: state,
+        last_when: last.into(),
+        verify: "".into(),
+        jobs: 1,
+        saved: true,
+        scheduled: when != "Non pianificata",
+        next_run: next.into(),
+        kind: kind.into(),
+        when: when.into(),
+        suspended: when == "Sospesa",
+        generations,
+    };
+    ui.set_tasks(ModelRc::new(VecModel::from(vec![
+        row(
+            "Documenti",
+            "Documenti  →  \\\\NAS\\backup",
+            "Incrementale",
+            "Ogni giorno alle 22:00",
+            "14/10/2026 22:00:00",
+            0,
+            "ieri 22:00",
+            true,
+        ),
+        row(
+            "Foto",
+            "Foto  →  F:\\Foto",
+            "Copia semplice",
+            "Non pianificata",
+            "",
+            2,
+            "3 giorni fa",
+            false,
+        ),
+        row(
+            "Archivio vecchio",
+            "Archivio  →  \\\\NAS\\old",
+            "Completa",
+            "Sospesa",
+            "",
+            -1,
+            "",
+            true,
+        ),
+    ])));
+    dump(&ui, "tasks-table");
+    ui.set_lock_schedule("Richiede il livello Standard".into());
+    ui.set_lock_force_full("Richiede il livello Standard".into());
+    dump(&ui, "tasks-table-locked");
 
     let rows: Vec<crate::generated::HelpRow> = crate::help::entries()
         .into_iter()

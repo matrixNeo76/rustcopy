@@ -52,7 +52,7 @@ pub fn entries() -> Vec<HelpEntry> {
         heading("Per cominciare"),
         item(
             "1. Una prima copia",
-            "Premi «Nuova copia». In «Cosa copiare» aggiungi una o più cartelle (con «Aggiungi cartelle...» oppure trascinandole dentro la finestra). In «Dove metterle» scegli la cartella di destinazione, anche di rete. Poi premi «Copia». Se la destinazione esiste già, vengono copiati solo i file nuovi o cambiati.",
+            "Premi «Copia al volo». In «Cosa copiare» aggiungi una o più cartelle (con «Aggiungi cartelle...» oppure trascinandole dentro la finestra). In «Dove metterle» scegli la cartella di destinazione, anche di rete. Poi premi «Copia». Se la destinazione esiste già, vengono copiati solo i file nuovi o cambiati.",
         ),
         item(
             "2. Controllare prima di copiare",
@@ -76,12 +76,12 @@ pub fn entries() -> Vec<HelpEntry> {
         ),
         heading("Le pagine, una per una"),
         item(
-            "Nuova copia",
+            "Copia al volo",
             "Dove si imposta e si avvia una copia: cartelle, destinazione, verifica dopo la copia e, se la destinazione è una chiavetta, «Espelli l'unità alla fine».",
         ),
         item(
             "Attività",
-            "Le copie salvate come attività. Per ognuna: «Esegui» la rilancia, «Proprietà» mostra le impostazioni che usa davvero, «Modifica» prepara una proposta di modifica, «Storico» elenca le esecuzioni passate, «Pianifica» la fa partire all'ora scelta, «Togli» la toglie dall'elenco (senza cancellare il suo file). Qui puoi anche aggiungere un file di configurazione che hai già, aprire un report fatto altrove e gestire chiavi e password.",
+            "È la pagina da cui si parte. Una riga per attività, con il nome e le cartelle, il tipo di copia, quando è pianificata, com'è andata l'ultima volta e quando sarà la prossima. Per ognuna: «Esegui» la rilancia, «Proprietà» mostra le impostazioni che usa davvero, «Modifica» prepara una proposta di modifica, «Storico» elenca le esecuzioni passate, «Pianifica» la fa partire all'ora scelta, «Togli» la toglie dall'elenco (senza cancellare il suo file). Qui puoi anche aggiungere un file di configurazione che hai già, aprire un report fatto altrove e gestire chiavi e password.",
         ),
         item(
             "Lavori (a sinistra)",
@@ -266,7 +266,12 @@ mod tests {
         let screens = [
             include_str!("../ui/strings.slint"),
             include_str!("../ui/app.slint"),
+            include_str!("../ui/sessions.slint"),
         ]
+        .join("\n")
+        .lines()
+        .filter(|line| !line.trim_start().starts_with("//"))
+        .collect::<Vec<_>>()
         .join("\n")
         .to_lowercase();
         let text: String = entries().iter().map(|e| e.text.clone()).collect();

@@ -21,7 +21,7 @@ pub struct JobLine {
     pub unconfigured: bool,
 }
 
-fn kind_text(backup_type: Option<&str>) -> &'static str {
+pub(crate) fn kind_text(backup_type: Option<&str>) -> &'static str {
     match backup_type {
         Some("full") => "Completa",
         Some("incremental") => "Incrementale",

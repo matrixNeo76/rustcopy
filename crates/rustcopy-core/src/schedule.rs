@@ -778,6 +778,113 @@ fn run_schtasks(args: &[String]) -> Result<(), IngestError> {
     Ok(())
 }
 
+/// The XML with the whitespace Windows adds between tags removed, so a task registered from our own
+/// compact XML and one Windows rewrote with indentation read the same.
+fn compact_xml(xml: &str) -> String {
+    let mut out = String::with_capacity(xml.len());
+    let mut between_tags = false;
+    for line in xml.lines() {
+        let line = line.trim();
+        if line.is_empty() {
+            continue;
+        }
+        if between_tags && !line.starts_with('<') {
+            out.push(' ');
+        }
+        out.push_str(line);
+        between_tags = line.ends_with('>');
+    }
+    out
+}
+
+/// The text between `<tag>` and `</tag>`, first occurrence, in `xml`.
+fn tag_text<'a>(xml: &'a str, tag: &str) -> Option<&'a str> {
+    let open = format!("<{tag}>");
+    let start = xml.find(&open)? + open.len();
+    let end = xml[start..].find(&format!("</{tag}>"))? + start;
+    Some(&xml[start..end])
+}
+
+/// `HH:MM` out of a `StartBoundary` such as `2026-10-13T22:00:00`.
+fn boundary_time(boundary: &str) -> Option<String> {
+    let time = boundary.split_once('T')?.1;
+    Some(time.get(..5)?.to_string())
+}
+
+/// When a stored task's trigger fires, in plain Italian, for the shapes this module registers
+/// (`daily`, `hourly`, `weekly`) and a name for the common others. Empty when the XML has no trigger.
+///
+/// Read from the stored XML rather than the CSV `schtasks` prints: its labels and its dates are
+/// localized, the element names are not.
+pub fn describe_trigger(xml: &str) -> String {
+    let xml = compact_xml(xml);
+    let Some(triggers) = tag_text(&xml, "Triggers") else {
+        return String::new();
+    };
+    let at = tag_text(triggers, "StartBoundary")
+        .and_then(boundary_time)
+        .map(|t| format!(" alle {t}"))
+        .unwrap_or_default();
+    if let Some(days) = tag_text(triggers, "DaysOfWeek") {
+        const NAMES: [(&str, &str); 7] = [
+            ("Monday", "Lun"),
+            ("Tuesday", "Mar"),
+            ("Wednesday", "Mer"),
+            ("Thursday", "Gio"),
+            ("Friday", "Ven"),
+            ("Saturday", "Sab"),
+            ("Sunday", "Dom"),
+        ];
+        let picked: Vec<&str> = NAMES
+            .iter()
+            .filter(|(element, _)| days.contains(&format!("<{element}")))
+            .map(|(_, short)| *short)
+            .collect();
+        return format!("{}{at}", picked.join(", "));
+    }
+    if triggers.contains("<ScheduleByDay>") {
+        let every = tag_text(triggers, "DaysInterval")
+            .and_then(|n| n.trim().parse::<u32>().ok())
+            .unwrap_or(1);
+        return if every <= 1 {
+            format!("Ogni giorno{at}")
+        } else {
+            format!("Ogni {every} giorni{at}")
+        };
+    }
+    if let Some(interval) = tag_text(triggers, "Interval") {
+        let interval = interval.trim();
+        if let Some(hours) = interval
+            .strip_prefix("PT")
+            .and_then(|r| r.strip_suffix('H'))
+        {
+            return format!("Ogni {hours} ore");
+        }
+        if let Some(minutes) = interval
+            .strip_prefix("PT")
+            .and_then(|r| r.strip_suffix('M'))
+        {
+            return format!("Ogni {minutes} minuti");
+        }
+    }
+    if triggers.contains("<LogonTrigger>") {
+        return "All'accesso".to_string();
+    }
+    if triggers.contains("<BootTrigger>") {
+        return "All'avvio del computer".to_string();
+    }
+    "Pianificata".to_string()
+}
+
+/// Whether the task is switched off: `<Enabled>false</Enabled>` under `<Settings>` (the triggers carry
+/// their own `<Enabled>`, which is not this).
+pub fn task_is_disabled(xml: &str) -> bool {
+    let xml = compact_xml(xml);
+    tag_text(&xml, "Settings")
+        .and_then(|settings| tag_text(settings, "Enabled"))
+        .is_some_and(|value| value.trim().eq_ignore_ascii_case("false"))
+}
+
 /// One scheduled task discovered by [`list_installed`] — F62, `--list-schedules`, closing the gap
 /// `CLAUDE.md`'s F36 note had documented ("no --list-schedules — the operator can run
 /// `schtasks /Query /TN <name>` directly"). Also the shape `gui_api::list_all_schedules` hands to
@@ -794,6 +901,15 @@ pub struct ScheduledTask {
     pub next_run: String,
     /// "Stato" — "Pronta"/"Disabilitata"/etc., same locale caveat as `next_run`.
     pub status: String,
+    /// When the trigger fires, in plain Italian ("Ogni giorno alle 22:00"), read from the task's
+    /// stored XML by [`describe_trigger`] rather than from the localized CSV. Empty when it could not
+    /// be read.
+    #[serde(default)]
+    pub trigger: String,
+    /// Whether the task is switched off (`<Settings><Enabled>false`), read from the stored XML: the
+    /// localized `status` text is not something to compare against.
+    #[serde(default)]
+    pub disabled: bool,
 }
 
 /// Queries `schtasks.exe` once and returns its raw verbose CSV, or `None` when the query itself
@@ -851,7 +967,33 @@ pub fn details_for_config(config_path: &Path) -> Result<Vec<ScheduledTask>, Inge
     let Some(csv) = query_all_tasks_csv()? else {
         return Ok(Vec::new());
     };
-    Ok(tasks_for_config(&csv, config_path))
+    let mut tasks = tasks_for_config(&csv, config_path);
+    for task in &mut tasks {
+        // One more query per task, and only for the few that run this config: the CSV does not carry
+        // the trigger in a form that survives translation, the stored XML does.
+        if let Some(xml) = query_task_xml(&task.name) {
+            task.trigger = describe_trigger(&xml);
+            task.disabled = task_is_disabled(&xml);
+        }
+    }
+    Ok(tasks)
+}
+
+/// The stored XML of one scheduled task, or `None` when `schtasks.exe` cannot give it. The output is
+/// declared UTF-16 but arrives through a pipe in the console code page; every tag read from it is
+/// ASCII, so a lossy conversion loses nothing that matters.
+#[cfg(windows)]
+fn query_task_xml(name: &str) -> Option<String> {
+    use std::os::windows::process::CommandExt;
+    let output = std::process::Command::new(crate::elevation::system_program("schtasks.exe"))
+        .args(["/Query", "/TN", name, "/XML"])
+        .creation_flags(0x0800_0000) // CREATE_NO_WINDOW
+        .output()
+        .ok()?;
+    output
+        .status
+        .success()
+        .then(|| String::from_utf8_lossy(&output.stdout).into_owned())
 }
 
 #[cfg(not(windows))]
@@ -899,6 +1041,8 @@ fn parse_scheduled_tasks(csv: &str) -> Vec<ScheduledTask> {
                 next_run: fields.get(2)?.clone(), // "Prossima esecuzione" / "Next Run Time"
                 status: fields.get(3)?.clone(),   // "Stato" / "Status"
                 command: fields.get(8)?.clone(),  // "Attività da eseguire" / "Task To Run"
+                trigger: String::new(),
+                disabled: false,
             })
         })
         .collect()
@@ -965,6 +1109,95 @@ fn parse_csv_line(line: &str) -> Vec<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// What the console shows in "Quando": read back from the XML this module itself writes, for each
+    /// shape, so the description cannot drift from what was registered.
+    mod trigger_text {
+        use super::*;
+
+        fn start() -> chrono::NaiveDateTime {
+            chrono::NaiveDate::from_ymd_opt(2026, 10, 14)
+                .expect("date")
+                .and_hms_opt(22, 0, 0)
+                .expect("time")
+        }
+
+        fn xml_for(spec: &str) -> String {
+            build_task_xml(
+                &parse_schedule_spec(spec).expect("spec"),
+                "C:/x/robocopy_ingest.exe",
+                "--config C:/x/a.toml",
+                start(),
+            )
+        }
+
+        #[test]
+        fn each_shape_we_register_reads_back_in_plain_italian() {
+            assert_eq!(
+                describe_trigger(&xml_for("daily@22:00")),
+                "Ogni giorno alle 22:00"
+            );
+            assert_eq!(describe_trigger(&xml_for("hourly@6")), "Ogni 6 ore");
+            assert_eq!(
+                describe_trigger(&xml_for("weekly@MON,WED,FRI@07:30")),
+                "Lun, Mer, Ven alle 22:00"
+            );
+        }
+
+        /// Windows rewrites a registered task with indentation and line breaks between the tags; the
+        /// description must not depend on our compact form.
+        #[test]
+        fn windows_own_indented_rewrite_reads_the_same() {
+            let rewritten = [
+                "<?xml version=\"1.0\" encoding=\"UTF-16\"?>",
+                "<Task>",
+                "  <Triggers>",
+                "    <CalendarTrigger>",
+                "      <StartBoundary>2026-10-14T06:15:00</StartBoundary>",
+                "      <Enabled>true</Enabled>",
+                "      <ScheduleByDay>",
+                "        <DaysInterval>2</DaysInterval>",
+                "      </ScheduleByDay>",
+                "    </CalendarTrigger>",
+                "  </Triggers>",
+                "</Task>",
+            ]
+            .join("\r\n");
+            assert_eq!(describe_trigger(&rewritten), "Ogni 2 giorni alle 06:15");
+        }
+
+        #[test]
+        fn other_triggers_have_a_name_and_none_is_empty() {
+            assert_eq!(
+                describe_trigger("<Task><Triggers><LogonTrigger><Enabled>true</Enabled></LogonTrigger></Triggers></Task>"),
+                "All'accesso"
+            );
+            assert_eq!(
+                describe_trigger("<Task><Triggers><BootTrigger/></Triggers></Task>"),
+                "Pianificata",
+                "an unknown shape is still said to be scheduled"
+            );
+            assert_eq!(describe_trigger("<Task></Task>"), "");
+            assert_eq!(describe_trigger(""), "");
+        }
+
+        /// A task switched off is told apart from the trigger's own `<Enabled>`.
+        #[test]
+        fn a_disabled_task_is_read_from_its_settings_not_its_trigger() {
+            let on = xml_for("daily@22:00");
+            assert!(!task_is_disabled(&on));
+            let off = on.replace(
+                "<Enabled>true</Enabled><ExecutionTimeLimit>",
+                "<Enabled>false</Enabled><ExecutionTimeLimit>",
+            );
+            assert_ne!(on, off, "the fixture must actually change the setting");
+            assert!(task_is_disabled(&off));
+            // A disabled trigger inside an enabled task is not a disabled task.
+            let trigger_only =
+                on.replacen("<Enabled>true</Enabled>", "<Enabled>false</Enabled>", 1);
+            assert!(!task_is_disabled(&trigger_only));
+        }
+    }
 
     // `tasks_referencing`/`parse_csv_line` are `#[cfg(windows)]` (see their doc comments), so the
     // tests exercising them have to be too — they'd otherwise fail to compile on a non-Windows CI

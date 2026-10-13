@@ -7,7 +7,7 @@ import { Button, LineEdit, ProgressIndicator, ListView, Palette, CheckBox, Combo
 import { Theme } from "theme.slint";
 import { Strings } from "strings.slint";
 import { Badge, BadgeKind, StatCard, Banner, SectionLabel, SpeedChart } from "components.slint";
-import { SessionRow, SessionItem, SessionUi, TaskRow, TaskItem, PropRow, HistRow, AdviceRow, DetailRow, DetailRows, HelpRow, JobRow, JobItem, QueueRow } from "sessions.slint";
+import { SessionRow, SessionItem, SessionUi, TaskRow, TaskItem, TaskCols, PropRow, HistRow, AdviceRow, DetailRow, DetailRows, HelpRow, JobRow, JobItem, QueueRow } from "sessions.slint";
 import { EditForm, TextField, ToggleField, TabPage } from "editor.slint";
 
 export { SessionRow, TaskRow, PropRow, EditForm, HistRow, AdviceRow, DetailRow, HelpRow, JobRow, QueueRow }
@@ -46,7 +46,7 @@ export component AppWindow inherits Window {
     background: Palette.background;
 
     // 0 = new copy, 1 = detail of the selected lavoro, 2 = saved tasks, 3 = properties of a task, 4 = editor, 5 = history of a task
-    in-out property <int> page: 0;
+    in-out property <int> page: 2;
     // Text the Rust side shows when a second launch asks for something the first window refuses.
     out property <string> refused-request-text: Strings.request-refused;
     out property <string> busy-text: Strings.busy;
@@ -84,6 +84,12 @@ export component AppWindow inherits Window {
     in property <string> d-move-text;
     in property <bool> d-move-busy;
     in property <bool> can-schedule;
+    // What a control the safety level does not unlock says beside itself ("Richiede il livello Standard"); empty
+    // when it is available. Set by the core's `SafetyLevel::lock_reason`, never decided here.
+    in property <string> lock-schedule;
+    in property <string> lock-elevated;
+    in property <string> lock-move;
+    in property <string> lock-force-full;
     in property <string> sch-task-name;
     in property <string> sch-config;
     in-out property <string> sch-name;
@@ -273,16 +279,17 @@ export component AppWindow inherits Window {
                     color: Theme.text;
                 }
                 Button {
-                    text: Strings.new-copy;
-                    primary: true;
+                    text: Strings.nav-tasks;
+                    primary: root.page == 2;
                     clicked => {
-                        root.new-copy();
+                        root.show-tasks();
                     }
                 }
                 Button {
-                    text: Strings.nav-tasks;
+                    text: Strings.new-copy;
+                    primary: root.page == 0;
                     clicked => {
-                        root.show-tasks();
+                        root.new-copy();
                     }
                 }
                 Button {
@@ -479,11 +486,17 @@ export component AppWindow inherits Window {
                         accessible-label: Strings.verify-label;
                     }
                 }
-                if root.can-move: CheckBox {
+                CheckBox {
                     text: Strings.move-mode;
                     checked <=> root.move-mode;
-                    enabled: !root.running;
-                    accessible-description: Strings.move-mode-hint;
+                    enabled: !root.running && root.can-move;
+                    accessible-description: root.can-move ? Strings.move-mode-hint : root.lock-move;
+                }
+                if !root.can-move: Text {
+                    x: 28px;
+                    text: root.lock-move;
+                    font-size: Theme.small;
+                    color: Theme.text-muted;
                 }
                 if root.can-move && root.move-mode: Text {
                     text: Strings.move-mode-hint;
@@ -634,12 +647,25 @@ export component AppWindow inherits Window {
         if root.page == 2: VerticalLayout {
             padding: Theme.page-padding;
             spacing: Theme.gap;
-            alignment: start;
-            Text {
-                text: Strings.tasks-title;
-                font-size: Theme.title;
-                font-weight: 700;
-                color: Theme.text;
+            // With tasks the list takes the height there is; with none the explanation stays compact at the top.
+            alignment: root.tasks.length > 0 ? LayoutAlignment.stretch : LayoutAlignment.start;
+            HorizontalLayout {
+                spacing: 10px;
+                Text {
+                    text: Strings.tasks-title;
+                    font-size: Theme.title;
+                    font-weight: 700;
+                    color: Theme.text;
+                    vertical-alignment: center;
+                    horizontal-stretch: 1;
+                }
+                Button {
+                    text: Strings.new-copy;
+                    horizontal-stretch: 0;
+                    clicked => {
+                        root.new-copy();
+                    }
+                }
             }
             Text {
                 text: Strings.tasks-intro;
@@ -684,6 +710,47 @@ export component AppWindow inherits Window {
                     }
                 }
             }
+            if root.tasks.length > 0: HorizontalLayout {
+                padding-left: 11px;
+                padding-right: 11px;
+                spacing: TaskCols.gap;
+                Text {
+                    horizontal-stretch: 1;
+                    min-width: 120px;
+                    text: Strings.col-name;
+                    font-size: Theme.small;
+                    font-weight: 700;
+                    color: Theme.text-faint;
+                }
+                Text {
+                    width: TaskCols.kind;
+                    text: Strings.col-kind;
+                    font-size: Theme.small;
+                    font-weight: 700;
+                    color: Theme.text-faint;
+                }
+                Text {
+                    width: TaskCols.when;
+                    text: Strings.col-when;
+                    font-size: Theme.small;
+                    font-weight: 700;
+                    color: Theme.text-faint;
+                }
+                Text {
+                    width: TaskCols.last;
+                    text: Strings.col-last;
+                    font-size: Theme.small;
+                    font-weight: 700;
+                    color: Theme.text-faint;
+                }
+                Text {
+                    width: TaskCols.next;
+                    text: Strings.col-next;
+                    font-size: Theme.small;
+                    font-weight: 700;
+                    color: Theme.text-faint;
+                }
+            }
             if root.tasks.length > 0: Rectangle {
                 vertical-stretch: 1;
                 min-height: 260px;
@@ -713,59 +780,91 @@ export component AppWindow inherits Window {
                         force-full => {
                             root.force-full-task(task.path);
                         }
-                        can-force-full: root.can-force-full;
-                        can-schedule: root.can-schedule;
+                        lock-force-full: root.lock-force-full;
+                        lock-schedule: root.lock-schedule;
+                        change-level => {
+                            root.show-safety();
+                        }
                         schedule => {
                             root.schedule-task(task.path);
                         }
                     }
                 }
             }
-            SectionLabel {
-                text: Strings.tasks-from-file;
+            if root.tasks.length == 0: VerticalLayout {
+                spacing: Theme.gap;
+                SectionLabel {
+                    text: Strings.tasks-from-file;
+                }
+                Text {
+                    text: Strings.run-config-hint;
+                    wrap: word-wrap;
+                    font-size: Theme.small;
+                    color: Theme.text-muted;
+                }
+                Text {
+                    text: Strings.open-report-hint;
+                    wrap: word-wrap;
+                    font-size: Theme.small;
+                    color: Theme.text-muted;
+                }
+                HorizontalLayout {
+                    alignment: start;
+                    spacing: 10px;
+                    Button {
+                        text: Strings.run-config-file;
+                        enabled: !root.running;
+                        clicked => {
+                            root.run-config-file();
+                        }
+                    }
+                    Button {
+                        text: Strings.open-report;
+                        clicked => {
+                            root.open-report-file();
+                        }
+                    }
+                }
+                SectionLabel {
+                    text: Strings.tasks-credentials-label;
+                }
+                Text {
+                    text: Strings.tasks-credentials-hint;
+                    wrap: word-wrap;
+                    font-size: Theme.small;
+                    color: Theme.text-muted;
+                }
+                HorizontalLayout {
+                    alignment: start;
+                    Button {
+                        text: Strings.cred-open;
+                        clicked => {
+                            root.show-credentials();
+                        }
+                    }
+                }
             }
-            Text {
-                text: Strings.run-config-hint;
-                wrap: word-wrap;
-                font-size: Theme.small;
-                color: Theme.text-muted;
-            }
-            Text {
-                text: Strings.open-report-hint;
-                wrap: word-wrap;
-                font-size: Theme.small;
-                color: Theme.text-muted;
-            }
-            HorizontalLayout {
-                alignment: start;
+            if root.tasks.length > 0: HorizontalLayout {
                 spacing: 10px;
+                alignment: start;
                 Button {
                     text: Strings.run-config-file;
                     enabled: !root.running;
+                    accessible-description: Strings.run-config-hint;
                     clicked => {
                         root.run-config-file();
                     }
                 }
                 Button {
                     text: Strings.open-report;
+                    accessible-description: Strings.open-report-hint;
                     clicked => {
                         root.open-report-file();
                     }
                 }
-            }
-            SectionLabel {
-                text: Strings.tasks-credentials-label;
-            }
-            Text {
-                text: Strings.tasks-credentials-hint;
-                wrap: word-wrap;
-                font-size: Theme.small;
-                color: Theme.text-muted;
-            }
-            HorizontalLayout {
-                alignment: start;
                 Button {
                     text: Strings.cred-open;
+                    accessible-description: Strings.tasks-credentials-hint;
                     clicked => {
                         root.show-credentials();
                     }
@@ -1112,12 +1211,19 @@ export component AppWindow inherits Window {
                     }
                 }
             }
-            if root.can-elevated-schedule: VerticalLayout {
+            VerticalLayout {
                 spacing: 2px;
                 CheckBox {
                     text: Strings.sch-elevated;
                     checked <=> root.sch-elevated;
-                    accessible-description: Strings.sch-elevated-hint;
+                    enabled: root.can-elevated-schedule;
+                    accessible-description: root.can-elevated-schedule ? Strings.sch-elevated-hint : root.lock-elevated;
+                }
+                if !root.can-elevated-schedule: Text {
+                    x: 28px;
+                    text: root.lock-elevated;
+                    font-size: Theme.small;
+                    color: Theme.text-muted;
                 }
                 if root.sch-elevated: Text {
                     x: 28px;

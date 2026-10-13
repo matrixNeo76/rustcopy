@@ -39,7 +39,51 @@ pub enum SafetyLevel {
     Expert,
 }
 
+/// A capability a level can unlock, named so the interface can ask "what level does this need?" instead
+/// of hard-coding the answer next to each button.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Feature {
+    /// A schedule installed from the console.
+    Schedule,
+    /// A schedule that runs with administrator rights and a shadow copy of the disk.
+    ElevatedSchedule,
+    /// The two-step move: copy, verify, confirm, delete the original.
+    Move,
+    /// A run that rebuilds a full generation.
+    ForceFull,
+}
+
+impl Feature {
+    /// The lowest level that unlocks the feature. The one place this is decided: every `can_*` below and
+    /// every message in the interface derive from it, so the greyed button and the refusal in the core
+    /// cannot disagree.
+    pub fn required_level(self) -> SafetyLevel {
+        match self {
+            Feature::Schedule | Feature::Move | Feature::ForceFull => SafetyLevel::Standard,
+            Feature::ElevatedSchedule => SafetyLevel::Expert,
+        }
+    }
+}
+
 impl SafetyLevel {
+    /// Whether this level unlocks `feature`.
+    pub fn allows(self, feature: Feature) -> bool {
+        self >= feature.required_level()
+    }
+
+    /// Why `feature` is unavailable at this level, as the sentence shown beside it; `None` when it is
+    /// available. The interface greys the control when this is `Some` and prints the text.
+    pub fn lock_reason(self, feature: Feature) -> Option<String> {
+        if self.allows(feature) {
+            None
+        } else {
+            Some(format!(
+                "Richiede il livello {}",
+                feature.required_level().name()
+            ))
+        }
+    }
+
     /// The name shown to the person.
     pub fn name(self) -> &'static str {
         match self {
@@ -80,26 +124,26 @@ Una pianificazione elevata copia soltanto: niente mirror, niente comandi prima o
 
     /// Whether the console may prepare a schedule (the CLI installs it, after UAC).
     pub fn can_prepare_schedules(self) -> bool {
-        self >= SafetyLevel::Standard
+        self.allows(Feature::Schedule)
     }
 
     /// Whether the console may prepare a schedule that runs **elevated** (administrator rights without a
     /// prompt each time, for VSS). It is the one schedule that runs with more rights than the person has
     /// day to day, so it sits at the highest level.
     pub fn can_prepare_elevated_schedules(self) -> bool {
-        self >= SafetyLevel::Expert
+        self.allows(Feature::ElevatedSchedule)
     }
 
     /// Whether the console may start a run that forces a full generation (`--force-full`). It deletes
     /// nothing, but it copies everything again, so it is behind the same level as a schedule rather
     /// than one click away from a first-time user.
     pub fn can_force_full(self) -> bool {
-        self >= SafetyLevel::Standard
+        self.allows(Feature::ForceFull)
     }
 
     /// Whether the two-step *move* (copy, verify, confirm, delete the original) is available.
     pub fn can_move(self) -> bool {
-        self >= SafetyLevel::Standard
+        self.allows(Feature::Move)
     }
 
     /// Whether an attended mirror or purge, with preview and confirmation, may be started.
@@ -270,6 +314,45 @@ mod tests {
     /// The description says what the level does, and each claim has a function behind it: what a level
     /// "can" do in words is what `can_*` says it can. It must also never promise a mirror or purge from the
     /// console, which no level offers (see `describe`).
+    /// The `can_*` functions, the greyed-out text and the level a feature needs all come from one
+    /// answer, so a feature moved to another level moves everywhere at once.
+    #[test]
+    fn a_locked_feature_names_the_level_that_unlocks_it() {
+        use SafetyLevel::*;
+        let all = [
+            Feature::Schedule,
+            Feature::ElevatedSchedule,
+            Feature::Move,
+            Feature::ForceFull,
+        ];
+        for level in [Prudent, Standard, Expert] {
+            for feature in all {
+                assert_eq!(
+                    level.lock_reason(feature).is_none(),
+                    level.allows(feature),
+                    "{level:?} {feature:?}"
+                );
+            }
+        }
+        assert_eq!(
+            Prudent.lock_reason(Feature::Schedule).as_deref(),
+            Some("Richiede il livello Standard")
+        );
+        assert_eq!(
+            Standard.lock_reason(Feature::ElevatedSchedule).as_deref(),
+            Some("Richiede il livello Esperto")
+        );
+        assert_eq!(Expert.lock_reason(Feature::ElevatedSchedule), None);
+        assert_eq!(
+            (
+                Prudent.can_prepare_schedules(),
+                Standard.can_move(),
+                Standard.can_force_full()
+            ),
+            (false, true, true)
+        );
+    }
+
     #[test]
     fn the_description_matches_what_each_level_really_allows() {
         use SafetyLevel::*;

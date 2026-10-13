@@ -30,6 +30,7 @@ mod schedule_form;
 mod single_instance;
 mod state;
 mod suspend;
+mod tasks_view;
 mod toast;
 #[cfg(test)]
 mod ui_tests;
@@ -253,6 +254,7 @@ fn refresh_tasks(ui: &AppWindow, ctx: &Rc<Ctx>) {
             let last = sessions
                 .iter()
                 .find(|s| s.task.as_deref() == Some(task.path.as_path()));
+            let job_list = gui_api::list_jobs(&task.path).unwrap_or_default();
             TaskRow {
                 path: task.path.to_string_lossy().into_owned().into(),
                 name: task.name.as_str().into(),
@@ -268,10 +270,11 @@ fn refresh_tasks(ui: &AppWindow, ctx: &Rc<Ctx>) {
                 saved: task.saved,
                 scheduled: false,
                 next_run: "".into(),
+                kind: tasks_view::kind_label(&job_list).into(),
+                when: tasks_view::NOT_SCHEDULED.into(),
+                suspended: false,
                 // Only a task with a generation backup in it has anything to force.
-                generations: gui_api::list_jobs(&task.path)
-                    .map(|jobs| jobs.iter().any(|j| j.backup_type.is_some()))
-                    .unwrap_or(false),
+                generations: job_list.iter().any(|j| j.backup_type.is_some()),
             }
         })
         .collect();
@@ -287,19 +290,11 @@ fn refresh_tasks(ui: &AppWindow, ctx: &Rc<Ctx>) {
     let generation = ctx.schedules.clone();
     let weak = ui.as_weak();
     std::thread::spawn(move || {
-        // (is scheduled, when it runs next as Task Scheduler says it) for each task.
-        let scheduled: Vec<(bool, String)> = paths
+        // What Task Scheduler says about each task: whether it is scheduled, when, and when next.
+        let scheduled: Vec<tasks_view::ScheduleCell> = paths
             .iter()
             .map(|path| {
-                let found = gui_api::schedule_details(path).unwrap_or_default();
-                let next = found
-                    .iter()
-                    .map(|task| task.next_run.trim())
-                    // "N/D" is Task Scheduler's own "no next run": not worth printing.
-                    .find(|when| !when.is_empty() && !when.eq_ignore_ascii_case("N/D"))
-                    .unwrap_or_default()
-                    .to_string();
-                (!found.is_empty(), next)
+                tasks_view::schedule_cell(&gui_api::schedule_details(path).unwrap_or_default())
             })
             .collect();
         let _ = weak.upgrade_in_event_loop(move |ui| {
@@ -308,11 +303,17 @@ fn refresh_tasks(ui: &AppWindow, ctx: &Rc<Ctx>) {
             }
             use slint::Model;
             let model = ui.get_tasks();
-            for (index, (flag, next)) in scheduled.into_iter().enumerate() {
+            for (index, cell) in scheduled.into_iter().enumerate() {
                 if let Some(mut row) = model.row_data(index) {
-                    if row.scheduled != flag || row.next_run.as_str() != next {
-                        row.scheduled = flag;
-                        row.next_run = next.into();
+                    if row.scheduled != cell.scheduled
+                        || row.suspended != cell.suspended
+                        || row.next_run.as_str() != cell.next_run
+                        || row.when.as_str() != cell.when
+                    {
+                        row.scheduled = cell.scheduled;
+                        row.suspended = cell.suspended;
+                        row.next_run = cell.next_run.into();
+                        row.when = cell.when.into();
                         model.set_row_data(index, row);
                     }
                 }
@@ -1285,6 +1286,13 @@ fn show_safety(ui: &AppWindow) {
     if !level.can_move() {
         ui.set_move_mode(false);
     }
+    // What a locked control says beside itself; the core is the one that knows which level it needs.
+    use robocopy_ingest::safety::Feature;
+    let lock = |feature| level.lock_reason(feature).unwrap_or_default().into();
+    ui.set_lock_schedule(lock(Feature::Schedule));
+    ui.set_lock_elevated(lock(Feature::ElevatedSchedule));
+    ui.set_lock_move(lock(Feature::Move));
+    ui.set_lock_force_full(lock(Feature::ForceFull));
 }
 
 /// Opens a folder in Explorer. Failure is silent on purpose: the copy has finished and is reported;
