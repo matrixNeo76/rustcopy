@@ -66,6 +66,17 @@ struct Args {
     /// F41: remove the previously installed service and exit. Requires Administrator.
     #[arg(long, default_value_t = false, conflicts_with = "install_service")]
     uninstall_service: bool,
+
+    /// Send one clearly marked test message through the **mail** channel of `--config` and exit: `0` it was
+    /// sent, `1` the mail server refused or could not be reached, `2` the mail channel is not switched on or
+    /// its settings are not valid. This is what "Invia una prova" in the console runs. It starts no server.
+    #[arg(
+        long,
+        default_value_t = false,
+        requires = "config",
+        conflicts_with_all = ["install_service", "uninstall_service"]
+    )]
+    send_test: bool,
 }
 
 fn main() -> Result<()> {
@@ -76,6 +87,9 @@ fn main() -> Result<()> {
     tracing_subscriber::fmt::init();
     let args = Args::parse();
 
+    if args.send_test {
+        return send_test(&args);
+    }
     if args.install_service {
         return install_service();
     }
@@ -92,6 +106,47 @@ fn main() -> Result<()> {
     // is a future that never resolves, so `serve_until_shutdown_or` behaves exactly like the
     // pre-F41 `serve_until_shutdown` here.
     runtime.block_on(run_server(args, std::future::pending()))
+}
+
+/// `--send-test`: one test message through the mail channel, and a sentence on stdout saying how it went.
+/// Exits `0` when it was sent, `1` when the mail server refused it or could not be reached, `2` when the mail
+/// channel is not switched on or its settings cannot be used: a caller tells a refusal from a setup problem
+/// by the code, and shows the sentence.
+fn send_test(args: &Args) -> Result<()> {
+    use robocopy_ingest::notify::WebhookPayload;
+    use robocopy_ingest::notify_sink::NotificationSink;
+
+    let path = args.config.as_ref().context("--send-test needs --config")?;
+    let config = NotifyServerConfig::load_from(path)
+        .with_context(|| format!("cannot read {}", path.display()))?;
+    let Some(smtp) = config.smtp.as_ref().filter(|smtp| smtp.enabled) else {
+        println!(
+            "Il canale posta non è attivo in {}: attivalo e salva le impostazioni.",
+            path.display()
+        );
+        std::process::exit(2);
+    };
+    let sink = match robocopy_ingest::notify_smtp::SmtpSink::new(smtp, SINK_TIMEOUT) {
+        Ok(sink) => sink,
+        Err(reason) => {
+            println!("Le impostazioni della posta non sono utilizzabili: {reason}");
+            std::process::exit(2);
+        }
+    };
+    let host = std::env::var("COMPUTERNAME").unwrap_or_default();
+    let payload = WebhookPayload::test_message(&host);
+    let runtime =
+        tokio::runtime::Runtime::new().context("failed to build the tokio async runtime")?;
+    match runtime.block_on(sink.deliver(&payload)) {
+        Ok(()) => {
+            println!("Messaggio di prova inviato a {}.", smtp.to.join(", "));
+            Ok(())
+        }
+        Err(error) => {
+            println!("Invio non riuscito: {error}");
+            std::process::exit(1);
+        }
+    }
 }
 
 /// F41: registers this binary's own invocation (captured from the real argv, minus the

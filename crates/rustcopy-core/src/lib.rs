@@ -37,6 +37,7 @@ pub mod html_report;
 pub mod integrity;
 pub mod job_editor;
 pub mod logging;
+pub mod mail_settings;
 pub mod moves;
 pub mod notify;
 #[cfg(feature = "notify-server")]

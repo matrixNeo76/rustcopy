@@ -43,12 +43,7 @@ impl Security {
     }
 }
 
-fn is_loopback(host: &str) -> bool {
-    matches!(
-        host.trim().to_lowercase().as_str(),
-        "localhost" | "127.0.0.1" | "::1" | "[::1]"
-    )
-}
+use crate::notify_sink::is_loopback;
 
 /// Mails a backup notification.
 pub struct SmtpSink {

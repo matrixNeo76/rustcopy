@@ -102,7 +102,7 @@ fn capture<T: 'static>() -> (Log<T>, Log<T>) {
 #[test]
 fn every_page_builds_and_keeps_the_sidebar() {
     let ui = window();
-    for page in 0..=13 {
+    for page in 0..=14 {
         ui.set_page(page);
         let labels = all_labels(&ui);
         for always in ["Copia al volo", "Attività", "Aiuto"] {
@@ -911,6 +911,20 @@ fn snapshot_pages() {
     );
     dump(&ui, "wiz-5");
 
+    ui.set_page(14);
+    ui.set_mail_enabled(true);
+    ui.set_mail_host("smtp.example.com".into());
+    ui.set_mail_security(0);
+    ui.set_mail_user("rustcopy@example.com".into());
+    ui.set_mail_password_name("smtp-rustcopy".into());
+    ui.set_mail_from("rustcopy@example.com".into());
+    ui.set_mail_to("admin@example.com".into());
+    ui.set_mail_file("C:\\Users\\io\\AppData\\Local\\rustcopy\\console\\notify-server.toml".into());
+    ui.set_mail_server_text("Il server di notifica non risponde su 127.0.0.1:3000: perché le attività mandino la posta deve essere avviato (notify-server.exe --config <questo file>) e l'attività deve inviargli l'esito con --webhook-url http://127.0.0.1:3000/notify.".into());
+    ui.set_mail_message("Messaggio di prova inviato a admin@example.com.".into());
+    ui.set_mail_ok(true);
+    dump(&ui, "mail");
+
     let rows: Vec<crate::generated::HelpRow> = crate::help::entries()
         .into_iter()
         .map(|e| crate::generated::HelpRow {
@@ -1256,4 +1270,92 @@ fn run_all_is_offered_only_when_it_can_start_and_reports_how_it_went() {
     assert!(all_labels(&ui)
         .join("\n")
         .contains("Esegui tutte: 2 attività, 2 riuscite."));
+}
+
+// ---------------------------------------------------------------- the mail page
+
+/// The tasks page leads to the mail settings, from the compact row as well as from the empty state.
+#[test]
+fn the_tasks_page_leads_to_the_mail_settings() {
+    let (calls, sink) = capture::<&'static str>();
+    let ui = window();
+    ui.on_show_mail(move || sink.borrow_mut().push("mail"));
+    show_tasks(&ui, vec![]);
+    press(&ui, "Notifiche per posta...");
+    show_tasks(&ui, vec![task("a", false, 1, true)]);
+    press(&ui, "Notifiche per posta...");
+    assert_eq!(*calls.borrow(), vec!["mail", "mail"]);
+}
+
+/// Every field has a label a screen reader can read, and the buttons call their callbacks.
+#[test]
+fn the_mail_page_has_its_fields_and_buttons() {
+    let ui = window();
+    ui.set_page(14);
+    for label in [
+        "Server di posta",
+        "Porta (vuoto = quella usuale)",
+        "Protezione della connessione",
+        "Nome utente (vuoto se il server non lo chiede)",
+        "Nome della password salvata",
+        "Password (solo per salvarla o cambiarla)",
+        "Mittente",
+        "Destinatari (separati da virgola)",
+        "Salva",
+        "Invia una prova",
+        "Torna alle attività",
+    ] {
+        assert!(
+            has(&ui, label),
+            "«{label}» is missing: {:?}",
+            all_labels(&ui)
+        );
+    }
+    let (calls, sink) = capture::<&'static str>();
+    let (a, b) = (sink.clone(), sink.clone());
+    ui.on_save_mail(move || a.borrow_mut().push("save"));
+    ui.on_test_mail(move || b.borrow_mut().push("test"));
+    press(&ui, "Salva");
+    press(&ui, "Invia una prova");
+    assert_eq!(*calls.borrow(), vec!["save", "test"]);
+}
+
+/// Nothing can be saved or tested twice at once while a test is going.
+#[test]
+fn the_mail_buttons_wait_while_a_test_is_going() {
+    let ui = window();
+    ui.set_page(14);
+    ui.set_mail_busy(true);
+    assert!(!one(&ui, "Salva").accessible_enabled().unwrap_or(true));
+    assert!(!one(&ui, "Invia una prova")
+        .accessible_enabled()
+        .unwrap_or(true));
+}
+
+/// The password is typed into a masked box that is only for saving it; a password somebody wrote by hand in
+/// the file in another form is shown as it is and the box for saving one is not offered.
+#[test]
+fn a_hand_written_password_spec_hides_the_box_for_a_new_one() {
+    let ui = window();
+    ui.set_page(14);
+    assert!(has(&ui, "Password (solo per salvarla o cambiarla)"));
+    ui.set_mail_password_other("env:SMTP_PASSWORD".into());
+    assert!(!has(&ui, "Password (solo per salvarla o cambiarla)"));
+    assert!(all_labels(&ui).join("\n").contains("env:SMTP_PASSWORD"));
+}
+
+/// What the server says about itself and the answer of the last action are on the page.
+#[test]
+fn the_mail_page_shows_the_server_state_and_the_last_answer() {
+    let ui = window();
+    ui.set_page(14);
+    ui.set_mail_server_text("Il server di notifica non risponde su 127.0.0.1:3000.".into());
+    ui.set_mail_message("Messaggio di prova inviato a admin@example.com.".into());
+    ui.set_mail_ok(true);
+    let text = all_labels(&ui).join("\n");
+    assert!(text.contains("non risponde su 127.0.0.1:3000"), "{text}");
+    assert!(
+        text.contains("Messaggio di prova inviato a admin@example.com."),
+        "{text}"
+    );
 }

@@ -94,6 +94,38 @@ pub fn cli_beside(supervisor_exe: &Path) -> Result<PathBuf, IngestError> {
     }
 }
 
+/// The notify server's executable file name on this platform.
+pub const NOTIFY_SERVER_BINARY: &str = if cfg!(windows) {
+    "notify-server.exe"
+} else {
+    "notify-server"
+};
+
+/// Finds `notify-server` beside the given executable, and nowhere else, for the same reason as
+/// [`cli_beside`]: another copy earlier on `PATH` is not the one this console shipped with.
+pub fn notify_server_beside(supervisor_exe: &Path) -> Result<PathBuf, IngestError> {
+    let candidate = supervisor_exe
+        .parent()
+        .unwrap_or_else(|| Path::new("."))
+        .join(NOTIFY_SERVER_BINARY);
+    if candidate.is_file() {
+        Ok(candidate)
+    } else {
+        Err(IngestError::CliBinaryNotFound(candidate))
+    }
+}
+
+/// The complete argument list of "Invia una prova" on the mail page: `notify-server` with the console's own
+/// configuration and `--send-test`, which sends one clearly-marked test message through the mail channel and
+/// exits. Fixed shape, no parameter through which another flag could arrive.
+pub fn mail_test_arguments(config: &Path) -> Vec<String> {
+    vec![
+        "--config".to_string(),
+        config.display().to_string(),
+        "--send-test".to_string(),
+    ]
+}
+
 /// Distinguishes stop files produced within the same millisecond by the same process.
 static CANCEL_FILE_SEQUENCE: AtomicU64 = AtomicU64::new(0);
 
@@ -978,6 +1010,18 @@ mod tests {
             exit_code_meaning(EXIT_DESTINATION_UNSAFE),
             exit_code_meaning(99)
         );
+    }
+
+    #[test]
+    fn the_mail_test_has_a_fixed_shape_and_no_other_flag() {
+        let args = mail_test_arguments(Path::new("C:/d/notify-server.toml"));
+        assert_eq!(
+            args,
+            vec!["--config", "C:/d/notify-server.toml", "--send-test"]
+        );
+        for forbidden in ["--install-service", "--uninstall-service", "--bind"] {
+            assert!(!args.iter().any(|a| a == forbidden), "{forbidden}");
+        }
     }
 
     // ----- F95: plan_copy ------------------------------------------------------------------

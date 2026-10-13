@@ -19,6 +19,7 @@ mod help;
 mod jobs_view;
 mod keep_awake;
 mod log_view;
+mod mail_form;
 mod move_text;
 mod path_check;
 mod problems;
@@ -1338,6 +1339,58 @@ fn level_for(index: i32) -> SafetyLevel {
     }
 }
 
+fn mail_fields(ui: &AppWindow) -> mail_form::Fields {
+    mail_form::Fields {
+        enabled: ui.get_mail_enabled(),
+        host: ui.get_mail_host().to_string(),
+        port: ui.get_mail_port().to_string(),
+        security: ui.get_mail_security(),
+        username: ui.get_mail_user().to_string(),
+        password_name: ui.get_mail_password_name().to_string(),
+        password_other: ui.get_mail_password_other().to_string(),
+        from: ui.get_mail_from().to_string(),
+        to: ui.get_mail_to().to_string(),
+        subject_prefix: ui.get_mail_prefix().to_string(),
+    }
+}
+
+fn set_mail_fields(ui: &AppWindow, fields: &mail_form::Fields) {
+    ui.set_mail_enabled(fields.enabled);
+    ui.set_mail_host(fields.host.as_str().into());
+    ui.set_mail_port(fields.port.as_str().into());
+    ui.set_mail_security(fields.security);
+    ui.set_mail_user(fields.username.as_str().into());
+    ui.set_mail_password_name(fields.password_name.as_str().into());
+    ui.set_mail_password_other(fields.password_other.as_str().into());
+    ui.set_mail_from(fields.from.as_str().into());
+    ui.set_mail_to(fields.to.as_str().into());
+    ui.set_mail_prefix(fields.subject_prefix.as_str().into());
+}
+
+/// Saves the mail page: the password, if one was typed, goes to the Credential Manager under the chosen name
+/// (never into the file), then the `[smtp]` section is written. The sentence to show when it cannot be.
+fn save_mail(ui: &AppWindow) -> Result<(), String> {
+    let fields = mail_fields(ui);
+    let settings = mail_form::settings(&fields)?;
+    if let Some(problem) = settings.problem() {
+        return Err(problem);
+    }
+    let secret = ui.get_mail_secret().to_string();
+    if !secret.is_empty() {
+        let name = fields.password_name.trim();
+        if name.is_empty() || !fields.password_other.is_empty() {
+            return Err("Scrivi il nome con cui salvare la password.".to_string());
+        }
+        gui_api::set_credential(name, &secret).map_err(|e| e.to_string())?;
+        ui.set_mail_secret("".into());
+    }
+    robocopy_ingest::mail_settings::write(
+        &robocopy_ingest::mail_settings::default_path(),
+        &settings,
+    )
+    .map_err(|e| e.to_string())
+}
+
 /// What the wizard's screens hold, as the pure part reads it.
 fn wizard_fields(ui: &AppWindow) -> wizard_form::Fields {
     wizard_form::Fields {
@@ -2216,6 +2269,83 @@ fn main() -> Result<(), slint::PlatformError> {
             }
             run_schedule_command(&ui, move |level| {
                 robocopy_ingest::schedule::removal_arguments(level, name.trim())
+            });
+        });
+    }
+
+    // The mail page: the [smtp] section of the console's own notify-server.toml. The password goes straight
+    // to Windows' Credential Manager and only its name reaches the file; the test is `notify-server
+    // --send-test`, so the console needs no mail library of its own.
+    {
+        let weak = ui.as_weak();
+        ui.on_show_mail(move || {
+            let Some(ui) = weak.upgrade() else { return };
+            let path = robocopy_ingest::mail_settings::default_path();
+            let fields = mail_form::fields_from(&robocopy_ingest::mail_settings::read(&path));
+            set_mail_fields(&ui, &fields);
+            ui.set_mail_secret("".into());
+            ui.set_mail_message("".into());
+            ui.set_mail_file(path.to_string_lossy().into_owned().into());
+            ui.set_mail_server_text("".into());
+            ui.set_page(14);
+            // Whether the server answers: a quick connect, off the window's thread.
+            let weak = ui.as_weak();
+            std::thread::spawn(move || {
+                let bind = robocopy_ingest::mail_settings::bind_address(&path);
+                let listening = robocopy_ingest::mail_settings::server_is_listening(&bind);
+                let _ = weak.upgrade_in_event_loop(move |ui| {
+                    ui.set_mail_server_text(mail_form::server_status(listening, &bind).into());
+                });
+            });
+        });
+    }
+    {
+        let weak = ui.as_weak();
+        ui.on_save_mail(move || {
+            let Some(ui) = weak.upgrade() else { return };
+            match save_mail(&ui) {
+                Ok(()) => {
+                    ui.set_mail_ok(true);
+                    ui.set_mail_message("Impostazioni salvate.".into());
+                }
+                Err(message) => {
+                    ui.set_mail_ok(false);
+                    ui.set_mail_message(message.into());
+                }
+            }
+        });
+    }
+    {
+        let weak = ui.as_weak();
+        ui.on_test_mail(move || {
+            let Some(ui) = weak.upgrade() else { return };
+            // The test reads the saved file, so what is on screen is saved first.
+            if let Err(message) = save_mail(&ui) {
+                ui.set_mail_ok(false);
+                ui.set_mail_message(message.into());
+                return;
+            }
+            ui.set_mail_busy(true);
+            ui.set_mail_ok(true);
+            ui.set_mail_message("Invio della prova...".into());
+            let weak = ui.as_weak();
+            std::thread::spawn(move || {
+                let path = robocopy_ingest::mail_settings::default_path();
+                let outcome = run::run_notify_server_once(&runner::mail_test_arguments(&path))
+                    .map(|(code, out)| mail_form::test_outcome(code, &out));
+                let _ = weak.upgrade_in_event_loop(move |ui| {
+                    ui.set_mail_busy(false);
+                    match outcome {
+                        Ok((ok, text)) => {
+                            ui.set_mail_ok(ok);
+                            ui.set_mail_message(text.into());
+                        }
+                        Err(message) => {
+                            ui.set_mail_ok(false);
+                            ui.set_mail_message(message.into());
+                        }
+                    }
+                });
             });
         });
     }
