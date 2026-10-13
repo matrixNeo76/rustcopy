@@ -139,6 +139,33 @@ pub fn run_cli_once(args: &[String]) -> Result<(i32, String), String> {
     Ok((output.status.code().unwrap_or(-1), tail))
 }
 
+/// Runs `notify-server` (the one shipped beside the console) once with a ready-made argument list and waits
+/// for it, returning its exit code and the last of what it printed. Used only for "Invia una prova": the
+/// arguments come from `runner::mail_test_arguments`, a fixed shape with no room for another flag.
+pub fn run_notify_server_once(args: &[String]) -> Result<(i32, String), String> {
+    let exe = std::env::current_exe().map_err(|e| e.to_string())?;
+    let server = runner::notify_server_beside(&exe).map_err(|e| {
+        format!(
+            "Il server di notifica non è installato accanto alla console ({e}): reinstalla con la componente «CLI e notify-server»."
+        )
+    })?;
+    let mut command = Command::new(&server);
+    command.args(args).stdin(Stdio::null());
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt;
+        command.creation_flags(0x0800_0000); // CREATE_NO_WINDOW
+    }
+    let output = command
+        .output()
+        .map_err(|e| format!("cannot start {}: {e}", server.display()))?;
+    let mut text = String::from_utf8_lossy(&output.stdout).into_owned();
+    text.push_str(&String::from_utf8_lossy(&output.stderr));
+    let last: Vec<&str> = text.lines().rev().take(6).collect();
+    let tail = last.into_iter().rev().collect::<Vec<_>>().join("\n");
+    Ok((output.status.code().unwrap_or(-1), tail))
+}
+
 /// How a run through the elevation prompt ended.
 #[derive(Debug, PartialEq, Eq)]
 pub enum Elevated {

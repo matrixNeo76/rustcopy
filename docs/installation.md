@@ -196,6 +196,8 @@ from = "rustcopy@example.com"
 to = ["admin@example.com"]
 ```
 
+Dalla console, la pagina «Notifiche per posta...» prepara questa sezione nel file `notify-server.toml` della console (cartella dati) e «Invia una prova» manda un messaggio di prova; da riga di comando `notify-server.exe --config notify-server.toml --send-test` fa lo stesso (esito `0` inviato, `1` rifiutato o server irraggiungibile, `2` canale spento o impostazioni non utilizzabili).
+
 La password della posta si salva in Gestione credenziali di Windows (pagina «Chiavi e password...» della
 console, o `--set-credential`) e il file la nomina soltanto. Una connessione **senza** cifratura
 (`security = "none"`) è accettata solo verso `localhost`/`127.0.0.1`: verso qualunque altro server il

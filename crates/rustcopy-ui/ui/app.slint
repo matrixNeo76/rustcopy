@@ -107,6 +107,26 @@ export component AppWindow inherits Window {
     // Where the schedule page returns to after a schedule is installed (10 = stay on it).
     in-out property <int> sch-return-page: 10;
     // "Sospendi"/"Riattiva" a task (path, whether to suspend) and "Esegui tutte".
+    // The mail page (page 14): the [smtp] section of the console's notify-server.toml.
+    in-out property <bool> mail-enabled: false;
+    in-out property <string> mail-host;
+    in-out property <string> mail-port;
+    in-out property <int> mail-security: 0;
+    in-out property <string> mail-user;
+    in-out property <string> mail-password-name;
+    in-out property <string> mail-password-other;
+    in-out property <string> mail-secret;
+    in-out property <string> mail-from;
+    in-out property <string> mail-to;
+    in-out property <string> mail-prefix;
+    in-out property <string> mail-message;
+    in-out property <bool> mail-ok: false;
+    in-out property <bool> mail-busy: false;
+    in-out property <string> mail-server-text;
+    in-out property <string> mail-file;
+    callback show-mail();
+    callback save-mail();
+    callback test-mail();
     callback toggle-suspend-task(string, bool);
     callback run-all();
     in-out property <string> run-all-message;
@@ -892,10 +912,18 @@ export component AppWindow inherits Window {
                 }
                 HorizontalLayout {
                     alignment: start;
+                    spacing: 10px;
                     Button {
                         text: Strings.cred-open;
                         clicked => {
                             root.show-credentials();
+                        }
+                    }
+                    Button {
+                        text: Strings.mail-open;
+                        accessible-description: Strings.mail-intro;
+                        clicked => {
+                            root.show-mail();
                         }
                     }
                 }
@@ -923,6 +951,187 @@ export component AppWindow inherits Window {
                     accessible-description: Strings.tasks-credentials-hint;
                     clicked => {
                         root.show-credentials();
+                    }
+                }
+                Button {
+                    text: Strings.mail-open;
+                    accessible-description: Strings.mail-intro;
+                    clicked => {
+                        root.show-mail();
+                    }
+                }
+            }
+        }
+
+        if root.page == 14: VerticalLayout {
+            padding: Theme.page-padding;
+            spacing: Theme.gap;
+            HorizontalLayout {
+                spacing: 10px;
+                alignment: start;
+                Button {
+                    text: Strings.mail-back;
+                    clicked => {
+                        root.show-tasks();
+                    }
+                }
+                Text {
+                    text: Strings.mail-title;
+                    font-size: Theme.title;
+                    font-weight: 700;
+                    color: Theme.text;
+                    vertical-alignment: center;
+                }
+            }
+            ScrollView {
+                vertical-stretch: 1;
+                min-height: 200px;
+                VerticalLayout {
+                    padding-right: 12px;
+                    spacing: 8px;
+                    alignment: start;
+                    Text {
+                        text: Strings.mail-intro;
+                        wrap: word-wrap;
+                        font-size: Theme.body;
+                        color: Theme.text-muted;
+                    }
+                    Text {
+                        text: root.mail-server-text;
+                        wrap: word-wrap;
+                        font-size: Theme.small;
+                        color: Theme.text-muted;
+                    }
+                    CheckBox {
+                        text: Strings.mail-enabled;
+                        checked <=> root.mail-enabled;
+                    }
+                    SectionLabel {
+                        text: Strings.mail-host;
+                    }
+                    LineEdit {
+                        text <=> root.mail-host;
+                        accessible-label: Strings.mail-host;
+                    }
+                    HorizontalLayout {
+                        spacing: 10px;
+                        VerticalLayout {
+                            spacing: 2px;
+                            SectionLabel {
+                                text: Strings.mail-port;
+                            }
+                            LineEdit {
+                                text <=> root.mail-port;
+                                accessible-label: Strings.mail-port;
+                            }
+                        }
+                        VerticalLayout {
+                            spacing: 2px;
+                            SectionLabel {
+                                text: Strings.mail-security;
+                            }
+                            ComboBox {
+                                model: [Strings.mail-sec-starttls, Strings.mail-sec-tls, Strings.mail-sec-none];
+                                current-index <=> root.mail-security;
+                                accessible-label: Strings.mail-security;
+                            }
+                        }
+                    }
+                    SectionLabel {
+                        text: Strings.mail-user;
+                    }
+                    LineEdit {
+                        text <=> root.mail-user;
+                        accessible-label: Strings.mail-user;
+                    }
+                    if root.mail-password-other == "": VerticalLayout {
+                        spacing: 4px;
+                        SectionLabel {
+                            text: Strings.mail-password-name;
+                        }
+                        LineEdit {
+                            text <=> root.mail-password-name;
+                            accessible-label: Strings.mail-password-name;
+                        }
+                        Text {
+                            text: Strings.mail-password-name-hint;
+                            wrap: word-wrap;
+                            font-size: Theme.small;
+                            color: Theme.text-muted;
+                        }
+                        SectionLabel {
+                            text: Strings.mail-secret;
+                        }
+                        LineEdit {
+                            text <=> root.mail-secret;
+                            input-type: InputType.password;
+                            accessible-label: Strings.mail-secret;
+                        }
+                    }
+                    if root.mail-password-other != "": VerticalLayout {
+                        spacing: 2px;
+                        Text {
+                            text: Strings.mail-password-other;
+                            wrap: word-wrap;
+                            font-size: Theme.small;
+                            color: Theme.text-muted;
+                        }
+                        Text {
+                            text: root.mail-password-other;
+                            font-size: Theme.body;
+                            color: Theme.text;
+                        }
+                    }
+                    SectionLabel {
+                        text: Strings.mail-from;
+                    }
+                    LineEdit {
+                        text <=> root.mail-from;
+                        accessible-label: Strings.mail-from;
+                    }
+                    SectionLabel {
+                        text: Strings.mail-to;
+                    }
+                    LineEdit {
+                        text <=> root.mail-to;
+                        accessible-label: Strings.mail-to;
+                    }
+                    SectionLabel {
+                        text: Strings.mail-prefix;
+                    }
+                    LineEdit {
+                        text <=> root.mail-prefix;
+                        accessible-label: Strings.mail-prefix;
+                    }
+                    Text {
+                        text: @tr("{} {}", Strings.mail-file, root.mail-file);
+                        wrap: word-wrap;
+                        font-size: Theme.small;
+                        color: Theme.text-muted;
+                    }
+                }
+            }
+            if root.mail-message != "": Banner {
+                text: root.mail-message;
+                label-prefix: Strings.mail-title;
+                kind: root.mail-ok ? BadgeKind.ok : BadgeKind.warning;
+            }
+            HorizontalLayout {
+                spacing: 10px;
+                alignment: start;
+                Button {
+                    text: Strings.mail-save;
+                    primary: true;
+                    enabled: !root.mail-busy;
+                    clicked => {
+                        root.save-mail();
+                    }
+                }
+                Button {
+                    text: Strings.mail-test;
+                    enabled: !root.mail-busy;
+                    clicked => {
+                        root.test-mail();
                     }
                 }
             }

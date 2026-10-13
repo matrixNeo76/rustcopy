@@ -310,3 +310,164 @@ fn install_and_uninstall_service_round_trip() {
         "sc query must no longer find the service after uninstall"
     );
 }
+
+// ---------------------------------------------------------------- `--send-test` (the console's "Invia una prova")
+
+/// A tiny SMTP server on a real socket: it greets, answers the usual commands and returns everything it was
+/// sent. `refuse_recipient` makes it answer the recipient with an error, as a server that rejects the address.
+fn fake_smtp(refuse_recipient: bool) -> (u16, std::thread::JoinHandle<String>) {
+    use std::io::Write;
+    let listener = std::net::TcpListener::bind("127.0.0.1:0").expect("bind");
+    let port = listener.local_addr().expect("addr").port();
+    let handle = std::thread::spawn(move || {
+        let (stream, _) = listener.accept().expect("accept");
+        let mut write = stream.try_clone().expect("clone");
+        let mut lines = BufReader::new(stream).lines();
+        write.write_all(b"220 fake ESMTP\r\n").expect("greet");
+        let mut received = String::new();
+        let mut in_data = false;
+        while let Some(Ok(line)) = lines.next() {
+            if in_data {
+                if line == "." {
+                    in_data = false;
+                    write.write_all(b"250 queued\r\n").expect("queued");
+                } else {
+                    received.push_str(&line);
+                    received.push('\n');
+                }
+                continue;
+            }
+            let upper = line.to_uppercase();
+            received.push_str(&format!("> {line}\n"));
+            let reply: &[u8] = if upper.starts_with("EHLO") || upper.starts_with("HELO") {
+                b"250 fake\r\n"
+            } else if upper.starts_with("RCPT") && refuse_recipient {
+                b"550 no such user\r\n"
+            } else if upper.starts_with("DATA") {
+                in_data = true;
+                b"354 go ahead\r\n"
+            } else if upper.starts_with("QUIT") {
+                let _ = write.write_all(b"221 bye\r\n");
+                break;
+            } else {
+                b"250 ok\r\n"
+            };
+            if write.write_all(reply).is_err() {
+                break;
+            }
+        }
+        received
+    });
+    (port, handle)
+}
+
+fn write_mail_config(dir: &std::path::Path, port: u16, enabled: bool) -> std::path::PathBuf {
+    let path = dir.join("notify-server.toml");
+    std::fs::write(
+        &path,
+        format!(
+            "[smtp]\nenabled = {enabled}\nhost = \"127.0.0.1\"\nport = {port}\nsecurity = \"none\"\nfrom = \"rustcopy@example.test\"\nto = [\"admin@example.test\"]\n"
+        ),
+    )
+    .expect("config");
+    path
+}
+
+fn run_send_test(config: &std::path::Path) -> (Option<i32>, String) {
+    let output = Command::new(NOTIFY_SERVER_BIN)
+        .arg("--config")
+        .arg(config)
+        .arg("--send-test")
+        .output()
+        .expect("run notify-server --send-test");
+    (
+        output.status.code(),
+        String::from_utf8_lossy(&output.stdout).into_owned(),
+    )
+}
+
+/// The real binary mails one clearly marked test message through the real mail channel: exit 0, a sentence
+/// that names the recipient, and the server received a message that says it is a test.
+#[test]
+fn send_test_delivers_a_marked_test_message_through_the_mail_channel() {
+    let dir = tempfile::tempdir().expect("dir");
+    let (port, server) = fake_smtp(false);
+    let config = write_mail_config(dir.path(), port, true);
+    let (code, out) = run_send_test(&config);
+    assert_eq!(code, Some(0), "{out}");
+    assert!(
+        out.contains("Messaggio di prova inviato a admin@example.test"),
+        "{out}"
+    );
+    let received = server.join().expect("server");
+    assert!(
+        received.contains("> MAIL FROM:<rustcopy@example.test>"),
+        "{received}"
+    );
+    assert!(
+        received.contains("RCPT TO:<admin@example.test>"),
+        "{received}"
+    );
+    assert!(received.contains("PROVA"), "marked as a test: {received}");
+    assert!(received.contains("Subject: [rustcopy]"), "{received}");
+}
+
+/// A mail channel that is switched off is a setup problem (exit 2), not a delivery failure: nothing is sent
+/// and the sentence says what to do.
+#[test]
+fn send_test_with_the_channel_off_is_a_setup_problem_and_sends_nothing() {
+    let dir = tempfile::tempdir().expect("dir");
+    let (port, server) = fake_smtp(false);
+    let config = write_mail_config(dir.path(), port, false);
+    let (code, out) = run_send_test(&config);
+    assert_eq!(code, Some(2), "{out}");
+    assert!(out.contains("non è attivo"), "{out}");
+    // Nothing connected: unblock the fake server so the thread ends.
+    let _ = std::net::TcpStream::connect(("127.0.0.1", port));
+    let received = server.join().expect("server");
+    assert!(!received.contains("MAIL FROM"), "{received}");
+}
+
+/// A server that refuses the recipient is a delivery failure (exit 1) with a sentence, so the console can
+/// tell "the server said no" from "the settings are wrong".
+#[test]
+fn send_test_reports_a_refusal_from_the_mail_server() {
+    let dir = tempfile::tempdir().expect("dir");
+    let (port, server) = fake_smtp(true);
+    let config = write_mail_config(dir.path(), port, true);
+    let (code, out) = run_send_test(&config);
+    assert_eq!(code, Some(1), "{out}");
+    assert!(out.contains("Invio non riuscito"), "{out}");
+    let _ = server.join();
+}
+
+/// Settings the sink refuses to build (no encryption to a host that is not this computer) are a setup
+/// problem (exit 2) and never reach the network.
+#[test]
+fn send_test_refuses_an_unencrypted_connection_to_another_host() {
+    let dir = tempfile::tempdir().expect("dir");
+    let path = dir.path().join("notify-server.toml");
+    std::fs::write(
+        &path,
+        "[smtp]\nenabled = true\nhost = \"mail.example.com\"\nsecurity = \"none\"\nfrom = \"a@b.it\"\nto = [\"c@d.it\"]\n",
+    )
+    .expect("config");
+    let (code, out) = run_send_test(&path);
+    assert_eq!(code, Some(2), "{out}");
+    assert!(out.contains("non sono utilizzabili"), "{out}");
+}
+
+/// `--send-test` needs a configuration, and does not combine with the service switches.
+#[test]
+fn send_test_needs_a_configuration_and_refuses_the_service_switches() {
+    let without = Command::new(NOTIFY_SERVER_BIN)
+        .arg("--send-test")
+        .output()
+        .expect("run");
+    assert!(!without.status.success());
+    let with_service = Command::new(NOTIFY_SERVER_BIN)
+        .args(["--config", "x.toml", "--send-test", "--install-service"])
+        .output()
+        .expect("run");
+    assert!(!with_service.status.success());
+}

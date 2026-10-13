@@ -93,8 +93,9 @@ registrato le cose, quindi **vanno provate sulla copia installata, non su `targe
   Atteso: la verifica è attiva da sola; il controllo elenca i file con copia identica; dopo la conferma spariscono **solo** quelli,
   le copie restano. Prova anche a creare un file nuovo nella cartella di origine tra la copia e la conferma: deve restare.
 - [ ] **Posta con un server vero.**
-  Passi: nel `notify-server.toml` abilita `[smtp]` (esempio in `docs/installation.md`); salva la password con la pagina «Chiavi e password...»
-  (nome es. `smtp-rustcopy`) e nominala nel file come `keyring:smtp-rustcopy`; avvia `notify-server.exe`; lancia una copia con
+  Passi: dalla console apri Attività → «Notifiche per posta...», compila server, protezione, utente, mittente e destinatario, scrivi la password
+  nel campo mascherato con un nome (es. `smtp-rustcopy`), «Salva» e **«Invia una prova»**: atteso «Messaggio di prova inviato a ...» e in casella un
+  messaggio con «PROVA». Poi la prova completa: avvia `notify-server.exe --config` con il file indicato dalla pagina e lancia una copia con
   `--webhook-url http://127.0.0.1:3000/notify`.
   Atteso: arriva un messaggio con oggetto «[rustcopy] OK <computer>: <origine>» e il riepilogo. Prova anche con la password sbagliata:
   l'errore deve comparire nel registro del server, e il backup **non** deve fallire.

@@ -100,7 +100,7 @@ nulla. La riga appare attenuata con «Sospesa». Lo stato della sospensione per 
 | 2 | Procedura guidata «Nuova attività» (5 passi) | medio: crea file; test di non sovrascrittura. **Fatta il 13 Ott 2026** (senza «cicli da conservare»: cancella, quindi resta solo a mano, come per l'editor) |
 | 3 | «Sospendi/riattiva» e «Esegui tutte» (coda tra attività) | medio: tocca `schtasks`. **Fatta il 14 Ott 2026** |
 | 4 | Eventi prima/dopo nell'editor (Esperto + conferma) | alto: scrive un comando eseguibile; richiede la tua decisione |
-| 5 | Posta nella console | basso/medio |
+| 5 | Posta nella console | basso/medio. **Fatta il 14 Ott 2026**: impostazioni e prova; l'avvio del server di notifica e il `--webhook-url` nelle attività restano espliciti (la pagina dice cosa manca) |
 
 Ogni fase: test in `ui_tests`, immagini delle pagine (`snapshot_pages`), catalogo e changelog aggiornati, controllo manuale in `CONTROLLI_MANUALI_GUI.md`.
 

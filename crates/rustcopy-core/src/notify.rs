@@ -85,6 +85,27 @@ pub struct WebhookPayload {
 }
 
 impl WebhookPayload {
+    /// A made-up successful run, for "Invia una prova" on the mail settings page: it travels the same path
+    /// as a real notification (the same sinks, the same formatting) so a test that arrives proves the real
+    /// ones will, and it is plainly marked as a test so nobody mistakes it for a backup.
+    pub fn test_message(host: &str) -> Self {
+        Self {
+            schema_version: current_notify_schema_version(),
+            text: "Messaggio di prova di rustcopy: se lo leggi, la posta funziona.".to_string(),
+            report_summary: "Questa è una prova: nessuna copia è stata eseguita.".to_string(),
+            status: BackupStatus::Success,
+            files_copied: 0,
+            bytes_copied: 0,
+            elapsed_seconds: 0.0,
+            source: "PROVA".to_string(),
+            dest: "PROVA".to_string(),
+            host: host.to_string(),
+            tool_version: env!("CARGO_PKG_VERSION").to_string(),
+            exit_code: Some(0),
+            integrity_status: None,
+        }
+    }
+
     pub fn from_report(report: &IngestReport) -> Self {
         let integrity_passed = report
             .integrity_check

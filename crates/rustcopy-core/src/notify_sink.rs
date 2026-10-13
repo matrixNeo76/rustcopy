@@ -229,6 +229,15 @@ impl GenericWebhookSink {
     }
 }
 
+/// Whether `host` is this computer. A mail connection without encryption is accepted only to such a host: the
+/// one definition, used by the email sink when it is built and by the console's mail settings page.
+pub fn is_loopback(host: &str) -> bool {
+    matches!(
+        host.trim().to_lowercase().as_str(),
+        "localhost" | "127.0.0.1" | "::1" | "[::1]"
+    )
+}
+
 /// TOML configuration for `notify-server` (`notify-server.toml`), mirroring the
 /// [`crate::config::IngestConfig`] pattern: every field optional, deserialized with `serde`.
 ///
