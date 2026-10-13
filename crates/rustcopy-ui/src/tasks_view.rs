@@ -68,6 +68,89 @@ pub fn schedule_cell(found: &[ScheduledTask]) -> ScheduleCell {
     }
 }
 
+/// The queue of "Esegui tutte": the tasks in the order of the list, **one at a time** (several copies to the
+/// same NAS at once slow every one of them down), each recorded as it ends. A pure state machine, so the
+/// order, a task that cannot start and a stop are tested without a window or a copy.
+#[derive(Debug, Default)]
+pub struct RunAll {
+    pending: std::collections::VecDeque<std::path::PathBuf>,
+    results: Vec<(String, Option<robocopy_ingest::sessions::SessionState>)>,
+    current: Option<String>,
+    stopped: bool,
+}
+
+impl RunAll {
+    pub fn new(paths: impl IntoIterator<Item = std::path::PathBuf>) -> Self {
+        Self {
+            pending: paths.into_iter().collect(),
+            ..Self::default()
+        }
+    }
+
+    /// The next task to start, which becomes the current one; `None` when none is left.
+    pub fn next(&mut self) -> Option<std::path::PathBuf> {
+        let next = self.pending.pop_front();
+        self.current = next.as_ref().map(|path| {
+            path.file_stem()
+                .map(|n| n.to_string_lossy().into_owned())
+                .unwrap_or_default()
+        });
+        next
+    }
+
+    /// Records how the current task ended (`None`: it could not be started).
+    pub fn finished(&mut self, state: Option<robocopy_ingest::sessions::SessionState>) {
+        let name = self.current.take().unwrap_or_default();
+        self.results.push((name, state));
+    }
+
+    /// The person stopped it: nothing still waiting will start.
+    pub fn stop(&mut self) {
+        self.pending.clear();
+        self.stopped = true;
+    }
+
+    pub fn summary(&self) -> String {
+        run_all_summary(&self.results, self.stopped)
+    }
+}
+
+/// How "Esegui tutte" ended, in one sentence: how many tasks, how they went, and which need a look.
+/// `results` is each task run in turn with how it ended (`None`: it could not be started); `stopped`
+/// is true when the person stopped it, which also means the tasks after the one stopped never ran.
+pub fn run_all_summary(
+    results: &[(String, Option<robocopy_ingest::sessions::SessionState>)],
+    stopped: bool,
+) -> String {
+    use robocopy_ingest::sessions::SessionState;
+    if results.is_empty() {
+        return "Esegui tutte: nessuna attività attiva da eseguire.".to_string();
+    }
+    let clean = results
+        .iter()
+        .filter(|(_, state)| matches!(state, Some(SessionState::Clean | SessionState::DryRun)))
+        .count();
+    let look: Vec<&str> = results
+        .iter()
+        .filter(|(_, state)| !matches!(state, Some(SessionState::Clean | SessionState::DryRun)))
+        .map(|(name, _)| name.as_str())
+        .collect();
+    let mut text = format!(
+        "Esegui tutte: {} attività, {} riuscit{}",
+        results.len(),
+        clean,
+        if clean == 1 { "a" } else { "e" }
+    );
+    if !look.is_empty() {
+        text.push_str(&format!(", da controllare: {}", look.join(", ")));
+    }
+    if stopped {
+        text.push_str(". Interrotta: le attività rimaste non sono partite");
+    }
+    text.push('.');
+    text
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -100,6 +183,113 @@ mod tests {
             trigger: trigger.into(),
             disabled,
         }
+    }
+
+    #[test]
+    fn the_queue_runs_the_tasks_in_order_one_at_a_time_and_records_each() {
+        use robocopy_ingest::sessions::SessionState::{Clean, NeedsLook};
+        let mut queue = RunAll::new([
+            std::path::PathBuf::from("C:/t/notte.toml"),
+            std::path::PathBuf::from("C:/t/foto.toml"),
+        ]);
+        assert_eq!(
+            queue.next(),
+            Some(std::path::PathBuf::from("C:/t/notte.toml"))
+        );
+        queue.finished(Some(Clean));
+        assert_eq!(
+            queue.next(),
+            Some(std::path::PathBuf::from("C:/t/foto.toml"))
+        );
+        queue.finished(Some(NeedsLook));
+        assert_eq!(queue.next(), None, "nothing left");
+        assert_eq!(
+            queue.summary(),
+            "Esegui tutte: 2 attività, 1 riuscita, da controllare: foto."
+        );
+    }
+
+    /// A task that could not be started is counted and the next one still goes.
+    #[test]
+    fn a_task_that_cannot_start_does_not_stop_the_others() {
+        use robocopy_ingest::sessions::SessionState::Clean;
+        let mut queue = RunAll::new([
+            std::path::PathBuf::from("C:/t/rotta.toml"),
+            std::path::PathBuf::from("C:/t/buona.toml"),
+        ]);
+        queue.next();
+        queue.finished(None);
+        assert_eq!(
+            queue.next(),
+            Some(std::path::PathBuf::from("C:/t/buona.toml"))
+        );
+        queue.finished(Some(Clean));
+        assert_eq!(queue.next(), None);
+        assert_eq!(
+            queue.summary(),
+            "Esegui tutte: 2 attività, 1 riuscita, da controllare: rotta."
+        );
+    }
+
+    /// Stopping the one that runs stops the whole queue: the ones waiting never start.
+    #[test]
+    fn stopping_clears_what_is_waiting_and_says_so() {
+        use robocopy_ingest::sessions::SessionState::Interrupted;
+        let mut queue = RunAll::new([
+            std::path::PathBuf::from("C:/t/a.toml"),
+            std::path::PathBuf::from("C:/t/b.toml"),
+            std::path::PathBuf::from("C:/t/c.toml"),
+        ]);
+        queue.next();
+        queue.stop();
+        queue.finished(Some(Interrupted));
+        assert_eq!(queue.next(), None, "b and c never start");
+        let text = queue.summary();
+        assert!(
+            text.contains("1 attività")
+                && text.contains("Interrotta")
+                && text.contains("da controllare: a"),
+            "{text}"
+        );
+    }
+
+    #[test]
+    fn an_empty_queue_says_there_was_nothing_to_run() {
+        let mut queue = RunAll::new(Vec::new());
+        assert_eq!(queue.next(), None);
+        assert!(queue.summary().contains("nessuna attività attiva"));
+    }
+
+    #[test]
+    fn the_run_all_summary_counts_and_names_what_needs_a_look() {
+        use robocopy_ingest::sessions::SessionState::{Clean, Interrupted, NeedsLook};
+        assert_eq!(
+            run_all_summary(&[], false),
+            "Esegui tutte: nessuna attività attiva da eseguire."
+        );
+        let all_clean = [
+            ("a".to_string(), Some(Clean)),
+            ("b".to_string(), Some(Clean)),
+        ];
+        assert_eq!(
+            run_all_summary(&all_clean, false),
+            "Esegui tutte: 2 attività, 2 riuscite."
+        );
+        let mixed = [
+            ("notte".to_string(), Some(Clean)),
+            ("foto".to_string(), Some(NeedsLook)),
+            ("vecchia".to_string(), None),
+        ];
+        assert_eq!(
+            run_all_summary(&mixed, false),
+            "Esegui tutte: 3 attività, 1 riuscita, da controllare: foto, vecchia."
+        );
+        let stopped = [("a".to_string(), Some(Interrupted))];
+        let text = run_all_summary(&stopped, true);
+        assert!(
+            text.contains("Interrotta") && text.contains("da controllare: a"),
+            "{text}"
+        );
     }
 
     #[test]

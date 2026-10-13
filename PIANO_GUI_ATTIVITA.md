@@ -98,7 +98,7 @@ nulla. La riga appare attenuata con «Sospesa». Lo stato della sospensione per 
 |---|---|---|
 | 1 | Pagina «Attività» come home con la tabella (colonne Tipo e Quando), «Copia al volo», voci riservate visibili in grigio, `SafetyLevel::lock_reason` | basso: solo presentazione. **Fatta il 13 Ott 2026** |
 | 2 | Procedura guidata «Nuova attività» (5 passi) | medio: crea file; test di non sovrascrittura. **Fatta il 13 Ott 2026** (senza «cicli da conservare»: cancella, quindi resta solo a mano, come per l'editor) |
-| 3 | «Sospendi/riattiva» e «Esegui tutte» (coda tra attività) | medio: tocca `schtasks` |
+| 3 | «Sospendi/riattiva» e «Esegui tutte» (coda tra attività) | medio: tocca `schtasks`. **Fatta il 14 Ott 2026** |
 | 4 | Eventi prima/dopo nell'editor (Esperto + conferma) | alto: scrive un comando eseguibile; richiede la tua decisione |
 | 5 | Posta nella console | basso/medio |
 

@@ -320,11 +320,13 @@ export component TaskItem inherits Rectangle {
     callback jobs();
     callback force-full();
     callback change-level();
+    callback suspend-toggle();
     in property <string> lock-force-full;
     in property <string> lock-schedule;
     property <bool> locked: root.lock-schedule != "" || (root.entry.generations && root.lock-force-full != "");
-    // Three rows: what the task is, what can be done with it, and (only when something is locked) why.
-    height: root.locked ? 150px : 124px;
+    // Three rows: what the task is, what can be done with it, and (beside the suspend button) why anything is
+    // locked and how to change that.
+    height: 150px;
     border-radius: Theme.radius;
     border-width: 1px;
     border-color: Theme.border;
@@ -468,7 +470,7 @@ export component TaskItem inherits Rectangle {
                 }
             }
         }
-        if root.locked: HorizontalLayout {
+        HorizontalLayout {
             spacing: 8px;
             Text {
                 horizontal-stretch: 1;
@@ -478,11 +480,18 @@ export component TaskItem inherits Rectangle {
                 color: Theme.text-muted;
                 vertical-alignment: center;
             }
-            Button {
+            if root.locked: Button {
                 text: Strings.change-level;
                 horizontal-stretch: 0;
                 clicked => {
                     root.change-level();
+                }
+            }
+            Button {
+                text: root.entry.suspended ? Strings.task-resume : Strings.task-suspend;
+                horizontal-stretch: 0;
+                clicked => {
+                    root.suspend-toggle();
                 }
             }
         }

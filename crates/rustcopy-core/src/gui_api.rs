@@ -435,6 +435,42 @@ pub fn schedule_details(
     crate::schedule::details_for_config(config_path)
 }
 
+/// [`schedule_details`] for many configurations with one query of Task Scheduler (one list per path, in
+/// order): what the tasks table uses, so its cost does not grow with the number of tasks.
+pub fn schedule_details_many(
+    config_paths: &[PathBuf],
+) -> Result<Vec<Vec<crate::schedule::ScheduledTask>>, IngestError> {
+    crate::schedule::details_for_configs(config_paths)
+}
+
+/// Switches off (`enabled == false`) or on the Windows schedules that run `config_path`, and returns how
+/// many it changed. A schedule that runs an **elevated** copy is refused with a sentence: changing it needs
+/// the elevation prompt, so it is handled from the schedule page. Switching on needs the level that
+/// preparing a schedule needs (`schedule::check_set_enabled`); switching off never does.
+pub fn set_schedules_enabled(
+    config_path: &Path,
+    enabled: bool,
+    level: crate::safety::SafetyLevel,
+) -> Result<usize, IngestError> {
+    let tasks = schedule_details(config_path)?;
+    let mut changed = 0;
+    for task in &tasks {
+        if crate::schedule::is_elevated_command(&task.command) {
+            return Err(IngestError::Schedule(format!(
+                "La pianificazione «{}» gira con privilegi elevati: si sospende o si toglie dalla pagina Pianifica, con la richiesta di Windows.",
+                task.name
+            )));
+        }
+        // Already in the wanted state: nothing to change, and nothing to refuse.
+        if task.disabled == !enabled {
+            continue;
+        }
+        crate::schedule::set_enabled(level, &task.name, enabled)?;
+        changed += 1;
+    }
+    Ok(changed)
+}
+
 /// Whether the first run of this configuration has to be a **full** generation: it has an incremental or
 /// differential job and its destination holds no generation to build on (an incremental needs any earlier
 /// generation, a differential needs a full one). Without it the first run would end in "run

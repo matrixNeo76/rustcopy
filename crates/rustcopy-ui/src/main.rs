@@ -122,6 +122,8 @@ struct Ctx {
     report_view: Generation,
     /// Discards a "Verifica" answer for the source box (0) or the destination box (1) once that box was asked again.
     path_checks: [Generation; 2],
+    /// "Esegui tutte" in progress: the tasks still to run, how the ones that ran ended, and which one runs now.
+    run_all: RefCell<Option<tasks_view::RunAll>>,
     /// The plan of a move waiting for the person's confirmation: which lavoro, and what it would delete.
     /// Shared with the worker threads that compute and execute it.
     move_plan: Arc<Mutex<Option<(String, MovePlan)>>>,
@@ -247,6 +249,7 @@ fn refresh(ui: &AppWindow, ctx: &Rc<Ctx>) {
 /// Rereads the saved tasks and pairs each with how its latest run from this console went.
 fn refresh_tasks(ui: &AppWindow, ctx: &Rc<Ctx>) {
     let sessions = ctx.sessions.borrow();
+    let suspended_set = robocopy_ingest::suspended::SuspendedSet::default_location();
     let rows: Vec<TaskRow> = ctx
         .log
         .list_entries(&tasks_dir())
@@ -272,8 +275,13 @@ fn refresh_tasks(ui: &AppWindow, ctx: &Rc<Ctx>) {
                 scheduled: false,
                 next_run: "".into(),
                 kind: tasks_view::kind_label(&job_list).into(),
-                when: tasks_view::NOT_SCHEDULED.into(),
-                suspended: false,
+                // Suspended by the person: said at once, without waiting for Task Scheduler's answer.
+                suspended: suspended_set.contains(&task.path),
+                when: if suspended_set.contains(&task.path) {
+                    tasks_view::SUSPENDED.into()
+                } else {
+                    tasks_view::NOT_SCHEDULED.into()
+                },
                 // Only a task with a generation backup in it has anything to force.
                 generations: job_list.iter().any(|j| j.backup_type.is_some()),
             }
@@ -283,6 +291,8 @@ fn refresh_tasks(ui: &AppWindow, ctx: &Rc<Ctx>) {
         .iter()
         .map(|row| PathBuf::from(row.path.as_str()))
         .collect();
+    // Which of them the person suspended: the schedule's answer must not clear it.
+    let flagged: Vec<bool> = rows.iter().map(|row| row.suspended).collect();
     ui.set_tasks(ModelRc::new(VecModel::from(rows)));
 
     // Which of them a Windows scheduled task already runs: asked of `schtasks.exe` on a worker thread
@@ -292,11 +302,11 @@ fn refresh_tasks(ui: &AppWindow, ctx: &Rc<Ctx>) {
     let weak = ui.as_weak();
     std::thread::spawn(move || {
         // What Task Scheduler says about each task: whether it is scheduled, when, and when next.
-        let scheduled: Vec<tasks_view::ScheduleCell> = paths
+        // One query of Task Scheduler for the whole table: asking per task cost seconds each.
+        let scheduled: Vec<tasks_view::ScheduleCell> = gui_api::schedule_details_many(&paths)
+            .unwrap_or_else(|_| vec![Vec::new(); paths.len()])
             .iter()
-            .map(|path| {
-                tasks_view::schedule_cell(&gui_api::schedule_details(path).unwrap_or_default())
-            })
+            .map(|found| tasks_view::schedule_cell(found))
             .collect();
         let _ = weak.upgrade_in_event_loop(move |ui| {
             if !generation.is_current(ticket) {
@@ -306,15 +316,27 @@ fn refresh_tasks(ui: &AppWindow, ctx: &Rc<Ctx>) {
             let model = ui.get_tasks();
             for (index, cell) in scheduled.into_iter().enumerate() {
                 if let Some(mut row) = model.row_data(index) {
+                    // Suspended by the person, or every Windows task of it switched off.
+                    let suspended = cell.suspended || flagged.get(index).copied().unwrap_or(false);
+                    let when = if suspended {
+                        tasks_view::SUSPENDED.to_string()
+                    } else {
+                        cell.when.clone()
+                    };
+                    let next_run = if suspended {
+                        String::new()
+                    } else {
+                        cell.next_run.clone()
+                    };
                     if row.scheduled != cell.scheduled
-                        || row.suspended != cell.suspended
-                        || row.next_run.as_str() != cell.next_run
-                        || row.when.as_str() != cell.when
+                        || row.suspended != suspended
+                        || row.next_run.as_str() != next_run
+                        || row.when.as_str() != when
                     {
                         row.scheduled = cell.scheduled;
-                        row.suspended = cell.suspended;
-                        row.next_run = cell.next_run.into();
-                        row.when = cell.when.into();
+                        row.suspended = suspended;
+                        row.next_run = next_run.into();
+                        row.when = when.into();
                         model.set_row_data(index, row);
                     }
                 }
@@ -763,6 +785,42 @@ fn detail_row(row: report_rows::Row) -> DetailRow {
 }
 
 /// Runs a saved task (or any configuration file) in place, as a lavoro of the list.
+/// Starts the next task of "Esegui tutte", or says how it all went when none is left. A task that cannot be
+/// started is recorded as such and the next one goes on: one broken task does not stop the others.
+fn run_all_next(ui: &AppWindow, ctx: &Rc<Ctx>) {
+    loop {
+        let next = {
+            let mut guard = ctx.run_all.borrow_mut();
+            let Some(all) = guard.as_mut() else { return };
+            all.next()
+        };
+        let Some(path) = next else {
+            if let Some(all) = ctx.run_all.borrow_mut().take() {
+                ui.set_run_all_message(all.summary().into());
+            }
+            return;
+        };
+        start_task(ui, ctx, &path, RunMode::Normal);
+        if ctx.slot.with(|run| run.is_running()) == Some(true) {
+            return;
+        }
+        // It did not start (the reason is on the page): count it and go on.
+        if let Some(all) = ctx.run_all.borrow_mut().as_mut() {
+            all.finished(None);
+        }
+    }
+}
+
+/// Called when a copy ends: if it was one of "Esegui tutte", records how it went and starts the next.
+fn run_all_after_finish(ui: &AppWindow, ctx: &Rc<Ctx>, state: Option<SessionState>) {
+    {
+        let mut guard = ctx.run_all.borrow_mut();
+        let Some(all) = guard.as_mut() else { return };
+        all.finished(state);
+    }
+    run_all_next(ui, ctx);
+}
+
 fn start_task(ui: &AppWindow, ctx: &Rc<Ctx>, config: &Path, mode: RunMode) {
     if ctx.slot.with(|run| run.is_running()) == Some(true) {
         ui.set_error(ui.get_busy_text());
@@ -1428,6 +1486,7 @@ fn main() -> Result<(), slint::PlatformError> {
         running_id: RefCell::new(None),
         open_when_done: Cell::new(false),
         awake: keep_awake::KeepAwake::default(),
+        run_all: RefCell::new(None),
         queue_names: RefCell::new(Vec::new()),
         checkpoint_paths: RefCell::new(Vec::new()),
         log_config: RefCell::new(None),
@@ -2158,6 +2217,57 @@ fn main() -> Result<(), slint::PlatformError> {
             run_schedule_command(&ui, move |level| {
                 robocopy_ingest::schedule::removal_arguments(level, name.trim())
             });
+        });
+    }
+
+    // "Sospendi"/"Riattiva": switches the task's Windows schedules off or on and keeps the console's own list of
+    // suspended tasks. Suspending is allowed at every level; reactivating a schedule needs the level that
+    // preparing one needs, and the core says so (`schedule::check_set_enabled`).
+    {
+        let weak = ui.as_weak();
+        ui.on_toggle_suspend_task(move |path, suspend| {
+            let weak = weak.clone();
+            let path = PathBuf::from(path.as_str());
+            std::thread::spawn(move || {
+                let level = safety::load(&robocopy_ingest::sessions::data_dir());
+                let outcome = gui_api::set_schedules_enabled(&path, !suspend, level)
+                    .map_err(|error| error.to_string())
+                    .and_then(|_| {
+                        robocopy_ingest::suspended::SuspendedSet::default_location()
+                            .set(&path, suspend)
+                            .map_err(|error| error.to_string())
+                    });
+                let _ = weak.upgrade_in_event_loop(move |ui| match outcome {
+                    Ok(()) => {
+                        ui.set_error("".into());
+                        ui.invoke_show_tasks();
+                    }
+                    Err(message) => ui.set_error(message.into()),
+                });
+            });
+        });
+    }
+    // "Esegui tutte": the tasks that are not suspended, one after the other.
+    {
+        let weak = ui.as_weak();
+        let ctx = ctx.clone();
+        ui.on_run_all(move || {
+            let Some(ui) = weak.upgrade() else { return };
+            if ctx.slot.with(|run| run.is_running()) == Some(true) {
+                ui.set_error(ui.get_busy_text());
+                return;
+            }
+            use slint::Model;
+            let model = ui.get_tasks();
+            let paths: Vec<PathBuf> = (0..model.row_count())
+                .filter_map(|i| model.row_data(i))
+                .filter(|row| !row.suspended)
+                .map(|row| PathBuf::from(row.path.as_str()))
+                .collect();
+            ui.set_error("".into());
+            ui.set_run_all_message("".into());
+            *ctx.run_all.borrow_mut() = Some(tasks_view::RunAll::new(paths));
+            run_all_next(&ui, &ctx);
         });
     }
 
@@ -3037,6 +3147,11 @@ fn main() -> Result<(), slint::PlatformError> {
                     ui.set_paused(false);
                 }
             }
+            // Stopping a copy that is one of "Esegui tutte" stops the whole run: the tasks still waiting
+            // do not start behind the person's back.
+            if let Some(all) = ctx.run_all.borrow_mut().as_mut() {
+                all.stop();
+            }
             ctx.slot.with(|run| run.request_stop());
         });
     }
@@ -3170,7 +3285,9 @@ fn main() -> Result<(), slint::PlatformError> {
                     let state = ctx.log.finish(&id, done.exit_code);
                     refresh(&ui, &ctx);
                     select_session(&ui, &ctx, &id);
-                    announce_finish(&ui, &ctx, &id, state.ok());
+                    let state = state.ok();
+                    announce_finish(&ui, &ctx, &id, state);
+                    run_all_after_finish(&ui, &ctx, state);
                 }
             }
             // After the finish handling, so the request is withdrawn on the tick that ends the copy.

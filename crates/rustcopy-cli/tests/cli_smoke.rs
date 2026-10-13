@@ -3965,3 +3965,81 @@ fn refuse_dest_links_stops_a_copy_that_would_write_through_a_junction() {
         "robocopy no longer writes through a destination junction: revisit dest_guard"
     );
 }
+
+/// Suspending and reactivating a task against the **real** Task Scheduler: install a schedule for a config,
+/// then `gui_api::set_schedules_enabled` switches it off and on, the stored XML says which, and the plain-
+/// language "when" comes out of the XML Windows actually keeps. Switching off needs no level; switching on
+/// does. Not a mock: this is what the console's button does.
+#[cfg(windows)]
+#[test]
+fn a_real_schedule_is_suspended_and_reactivated_and_says_when_it_runs() {
+    use robocopy_ingest::gui_api;
+    use robocopy_ingest::safety::SafetyLevel;
+
+    let source = fixture_tree(&[("a.csv", 8)]);
+    let dest = tempfile::tempdir().expect("dest");
+    let dir = tempfile::tempdir().expect("dir");
+    let config = dir.path().join("job.toml");
+    let path_text = |p: &std::path::Path| p.display().to_string().replace('\\', "/");
+    std::fs::write(
+        &config,
+        format!(
+            "source = '{}'\ndest = '{}'\n",
+            path_text(source.path()),
+            path_text(dest.path())
+        ),
+    )
+    .expect("config");
+    let task_name = format!("rustcopy-cli-suspend-test-{}", std::process::id());
+    let _guard = ScheduledTaskGuard(task_name.clone());
+
+    let install = run(&[
+        "--config",
+        config.to_str().expect("utf8"),
+        "--install-schedule",
+        "daily@03:00",
+        "--schedule-name",
+        &task_name,
+    ]);
+    assert!(install.status.success(), "stderr: {}", stderr_of(&install));
+
+    let found = gui_api::schedule_details(&config).expect("details");
+    assert_eq!(found.len(), 1, "{found:?}");
+    assert_eq!(found[0].trigger, "Ogni giorno alle 03:00");
+    assert!(!found[0].disabled);
+
+    // Off: no level is needed, one task changes, the stored task says so.
+    let changed =
+        gui_api::set_schedules_enabled(&config, false, SafetyLevel::Prudent).expect("off");
+    assert_eq!(changed, 1);
+    let found = gui_api::schedule_details(&config).expect("details");
+    assert!(
+        found[0].disabled,
+        "the stored task is switched off: {found:?}"
+    );
+    assert_eq!(
+        found[0].trigger, "Ogni giorno alle 03:00",
+        "its trigger is untouched"
+    );
+
+    // Already off: nothing to change, nothing to refuse.
+    assert_eq!(
+        gui_api::set_schedules_enabled(&config, false, SafetyLevel::Prudent).expect("again"),
+        0
+    );
+
+    // On needs the level that preparing a schedule needs.
+    let refused = gui_api::set_schedules_enabled(&config, true, SafetyLevel::Prudent)
+        .expect_err("Prudent cannot reactivate");
+    assert!(refused.to_string().contains("Standard"), "{refused}");
+    assert!(gui_api::schedule_details(&config).expect("details")[0].disabled);
+
+    assert_eq!(
+        gui_api::set_schedules_enabled(&config, true, SafetyLevel::Standard).expect("on"),
+        1
+    );
+    assert!(!gui_api::schedule_details(&config).expect("details")[0].disabled);
+
+    let removed = run(&["--uninstall-schedule", &task_name]);
+    assert!(removed.status.success(), "stderr: {}", stderr_of(&removed));
+}

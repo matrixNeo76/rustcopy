@@ -106,6 +106,10 @@ export component AppWindow inherits Window {
     in-out property <bool> wiz-busy: false;
     // Where the schedule page returns to after a schedule is installed (10 = stay on it).
     in-out property <int> sch-return-page: 10;
+    // "Sospendi"/"Riattiva" a task (path, whether to suspend) and "Esegui tutte".
+    callback toggle-suspend-task(string, bool);
+    callback run-all();
+    in-out property <string> run-all-message;
     callback wiz-open();
     callback wiz-next();
     callback wiz-back();
@@ -695,6 +699,14 @@ export component AppWindow inherits Window {
                     }
                 }
                 Button {
+                    text: Strings.run-all;
+                    enabled: !root.running && root.tasks.length > 0;
+                    horizontal-stretch: 0;
+                    clicked => {
+                        root.run-all();
+                    }
+                }
+                Button {
                     text: Strings.wiz-new;
                     primary: true;
                     horizontal-stretch: 0;
@@ -745,6 +757,11 @@ export component AppWindow inherits Window {
                         }
                     }
                 }
+            }
+            if root.run-all-message != "": Banner {
+                text: root.run-all-message;
+                label-prefix: Strings.run-all;
+                kind: BadgeKind.info;
             }
             if root.tasks.length > 0: HorizontalLayout {
                 padding-left: 11px;
@@ -820,6 +837,9 @@ export component AppWindow inherits Window {
                         lock-schedule: root.lock-schedule;
                         change-level => {
                             root.show-safety();
+                        }
+                        suspend-toggle => {
+                            root.toggle-suspend-task(task.path, !task.suspended);
                         }
                         schedule => {
                             root.schedule-task(task.path);
