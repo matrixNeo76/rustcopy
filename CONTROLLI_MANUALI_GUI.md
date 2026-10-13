@@ -23,6 +23,9 @@ registrato le cose, quindi **vanno provate sulla copia installata, non su `targe
 
 ## A. Installazione e avvio
 
+- [ ] **Aggiornare con la console aperta, e chiuderla con la X.**
+  Passi: 1) apri la console, premi la X: con nessuna copia in corso deve **sparire anche dall'icona vicino all'orologio** (Gestione attività non deve più mostrare `rustcopy-gui.exe`). 2) avvia una copia lunga e premi la X: la finestra si nasconde ma la copia continua (l'icona resta); a copia finita, dopo una decina di secondi, anche il programma si chiude da solo. 3) riapri la console e lancia l'installatore **senza chiuderla**: prima di toccare qualsiasi file compare «rustcopy è ancora aperto...» con «Riprova» e «Annulla»; chiudi la console, premi «Riprova» e l'installazione prosegue; con «Annulla» si ferma senza cambiare nulla.
+
 - [ ] **Installazione sul Windows Server senza Visual C++ (D30).**
   Passi: su un Server 2016/2019/2022 pulito, esegui l'installer; poi avvia la console dal menu Start.
   Atteso: nessuna richiesta di runtime, nessun errore di DLL mancanti; la console si apre. Il rapporto di installazione

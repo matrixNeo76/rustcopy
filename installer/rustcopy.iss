@@ -199,6 +199,7 @@ begin
 end;
 
 #include "install-report.pas"
+#include "console-running.pas"
 
 // Backstop for the gui\shell nesting above: Inno's component tree unchecks/grays out a child
 // when its parent is unchecked, but does not stop a *parent* from being deselected while a
@@ -219,6 +220,15 @@ begin
       mbError, MB_OK);
     Result := False;
   end;
+end;
+
+// Asked before Setup does anything to the files: an open console would be found by the RestartManager
+// only after a thirty-second wait and a message that says nothing useful (console-running.pas).
+function PrepareToInstall(var NeedsRestart: Boolean): String;
+begin
+  Result := '';
+  if not WaitForConsoleToClose() then
+    Result := 'rustcopy e'' ancora aperto (anche solo vicino all''orologio): chiudilo e rilancia l''installazione.';
 end;
 
 procedure CurStepChanged(CurStep: TSetupStep);
