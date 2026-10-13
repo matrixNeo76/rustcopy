@@ -18,6 +18,7 @@ mod format;
 mod help;
 mod jobs_view;
 mod keep_awake;
+mod lifetime;
 mod log_view;
 mod mail_form;
 mod move_text;
@@ -125,6 +126,9 @@ struct Ctx {
     path_checks: [Generation; 2],
     /// "Esegui tutte" in progress: the tasks still to run, how the ones that ran ended, and which one runs now.
     run_all: RefCell<Option<tasks_view::RunAll>>,
+    /// Since when the window has been hidden with nothing running or waiting (`lifetime`): a console in that
+    /// state ends by itself after a few seconds instead of lingering in the notification area.
+    hidden_idle_since: Cell<Option<std::time::Instant>>,
     /// The plan of a move waiting for the person's confirmation: which lavoro, and what it would delete.
     /// Shared with the worker threads that compute and execute it.
     move_plan: Arc<Mutex<Option<(String, MovePlan)>>>,
@@ -1540,6 +1544,7 @@ fn main() -> Result<(), slint::PlatformError> {
         open_when_done: Cell::new(false),
         awake: keep_awake::KeepAwake::default(),
         run_all: RefCell::new(None),
+        hidden_idle_since: Cell::new(None),
         queue_names: RefCell::new(Vec::new()),
         checkpoint_paths: RefCell::new(Vec::new()),
         log_config: RefCell::new(None),
@@ -3422,6 +3427,19 @@ fn main() -> Result<(), slint::PlatformError> {
             }
             // After the finish handling, so the request is withdrawn on the tick that ends the copy.
             let running = ctx.slot.with(|run| run.is_running()) == Some(true);
+            // A console that was hidden to keep a copy going, and has nothing left to do, ends by itself
+            // after a few seconds instead of staying in the notification area for days.
+            let busy = lifetime::is_busy(running, ctx.run_all.borrow().is_some());
+            let visible = ui.window().is_visible();
+            if visible || busy {
+                ctx.hidden_idle_since.set(None);
+            } else if ctx.hidden_idle_since.get().is_none() {
+                ctx.hidden_idle_since.set(Some(std::time::Instant::now()));
+            }
+            let hidden_for = ctx.hidden_idle_since.get().map(|since| since.elapsed());
+            if lifetime::quit_when_hidden_idle(visible, busy, hidden_for) {
+                let _ = slint::quit_event_loop();
+            }
             ctx.awake.update(running, keep_awake::set_system_awake);
         });
     }
@@ -3443,6 +3461,22 @@ fn main() -> Result<(), slint::PlatformError> {
     tray.show()?;
     if std::env::var_os("RUSTCOPY_UI_DARK").is_some() {
         ui.set_force_dark(true);
+    }
+
+    // Closing the window ends the program when nothing runs; with a copy going it only hides the window and
+    // the copy continues (`lifetime`).
+    {
+        let ctx = ctx.clone();
+        ui.window().on_close_requested(move || {
+            let busy = lifetime::is_busy(
+                ctx.slot.with(|run| run.is_running()) == Some(true),
+                ctx.run_all.borrow().is_some(),
+            );
+            if lifetime::quit_on_close(busy) {
+                let _ = slint::quit_event_loop();
+            }
+            slint::CloseRequestResponse::HideWindow
+        });
     }
 
     ui.show()?;
