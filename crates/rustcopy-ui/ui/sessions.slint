@@ -29,6 +29,12 @@ export struct TaskRow {
     scheduled: bool,
     /// When Task Scheduler will run it next, as it reports it (empty when unknown or not scheduled).
     next-run: string,
+    /// The kind of copy in words ("Incrementale", "Copia semplice", "3 job").
+    kind: string,
+    /// When it runs, in words ("Ogni giorno alle 22:00", "Non pianificata", "Sospesa").
+    when: string,
+    /// Every Windows task that runs it is switched off.
+    suspended: bool,
     generations: bool,
 }
 
@@ -290,6 +296,18 @@ export component SessionItem inherits Rectangle {
 
 // One saved task on the Attività page. `last-state` is the number of `SessionState`, or -1 when the
 // task has never run from this console.
+// The widths of the tasks table's columns, shared by its header and by every row so they line up.
+export global TaskCols {
+    out property <length> kind: 104px;
+    out property <length> when: 150px;
+    out property <length> last: 130px;
+    out property <length> next: 112px;
+    out property <length> gap: 10px;
+}
+
+// One row of the tasks table (PIANO_GUI_ATTIVITA.md 3.1): what the task is in columns, then what can be done
+// with it. A control the safety level does not unlock stays visible and greyed, with the reason beside it
+// (`lock-*` is empty when it is available): a level decides what can be done, not what exists.
 export component TaskItem inherits Rectangle {
     in property <TaskRow> entry;
     in property <bool> enabled: true;
@@ -301,125 +319,172 @@ export component TaskItem inherits Rectangle {
     callback schedule();
     callback jobs();
     callback force-full();
-    in property <bool> can-force-full;
-    in property <bool> can-schedule;
-    // Two rows: what the task is, then what can be done with it. Seven buttons beside the text did not
-    // fit a window of the default width, and the one that matters (Esegui) was the one cut off.
-    height: 118px;
+    callback change-level();
+    in property <string> lock-force-full;
+    in property <string> lock-schedule;
+    property <bool> locked: root.lock-schedule != "" || (root.entry.generations && root.lock-force-full != "");
+    // Three rows: what the task is, what can be done with it, and (only when something is locked) why.
+    height: root.locked ? 150px : 124px;
     border-radius: Theme.radius;
     border-width: 1px;
     border-color: Theme.border;
     background: Theme.surface;
+    opacity: root.entry.suspended ? 0.65 : 1.0;
     VerticalLayout {
         padding: 10px;
         spacing: 8px;
-        VerticalLayout {
-            spacing: 3px;
-            Text {
-                text: root.entry.name;
-                overflow: elide;
-                font-size: Theme.body;
-                font-weight: 700;
-                color: Theme.text;
-            }
-            Text {
-                text: root.entry.folders;
-                overflow: elide;
-                font-size: Theme.small;
-                color: Theme.text-muted;
-            }
-            HorizontalLayout {
-                spacing: 8px;
-                alignment: start;
-                if root.entry.last-state >= 0: Badge {
-                    text: SessionUi.state-text(root.entry.last-state);
-                    kind: SessionUi.state-kind(root.entry.last-state);
-                }
-                if root.entry.jobs > 1: Text {
-                    text: @tr("{} job", root.entry.jobs);
-                    font-size: Theme.small;
-                    color: Theme.text-muted;
-                    vertical-alignment: center;
-                }
-                if root.entry.scheduled: Badge {
-                    text: root.entry.next-run != "" ? @tr("{}: prossima {}", Strings.task-scheduled, root.entry.next-run) : Strings.task-scheduled;
-                    kind: BadgeKind.info;
+        HorizontalLayout {
+            spacing: TaskCols.gap;
+            VerticalLayout {
+                horizontal-stretch: 1;
+                min-width: 120px;
+                spacing: 3px;
+                Text {
+                    text: root.entry.name;
+                    overflow: elide;
+                    font-size: Theme.body;
+                    font-weight: 700;
+                    color: Theme.text;
                 }
                 Text {
-                    text: root.entry.last-state >= 0 ? root.entry.last-when : Strings.task-never;
+                    text: root.entry.folders;
+                    overflow: elide;
                     font-size: Theme.small;
                     color: Theme.text-muted;
-                    vertical-alignment: center;
+                }
+            }
+            VerticalLayout {
+                width: TaskCols.kind;
+                spacing: 3px;
+                Text {
+                    text: root.entry.kind;
+                    overflow: elide;
+                    font-size: Theme.body;
+                    color: Theme.text;
                 }
                 if root.entry.verify != "": Text {
                     text: @tr("Verifica: {}", root.entry.verify);
+                    overflow: elide;
                     font-size: Theme.small;
                     color: Theme.text-muted;
-                    vertical-alignment: center;
                 }
+            }
+            Text {
+                width: TaskCols.when;
+                text: root.entry.when;
+                overflow: elide;
+                font-size: Theme.body;
+                color: root.entry.suspended ? Theme.warning : (root.entry.scheduled ? Theme.text : Theme.text-faint);
+            }
+            VerticalLayout {
+                width: TaskCols.last;
+                spacing: 3px;
+                alignment: start;
+                if root.entry.last-state >= 0: HorizontalLayout {
+                    alignment: start;
+                    Badge {
+                        text: SessionUi.state-text(root.entry.last-state);
+                        kind: SessionUi.state-kind(root.entry.last-state);
+                    }
+                }
+                Text {
+                    text: root.entry.last-state >= 0 ? root.entry.last-when : Strings.task-never;
+                    overflow: elide;
+                    font-size: Theme.small;
+                    color: Theme.text-muted;
+                }
+            }
+            Text {
+                width: TaskCols.next;
+                text: root.entry.next-run != "" ? root.entry.next-run : "—";
+                overflow: elide;
+                font-size: Theme.small;
+                color: root.entry.next-run != "" ? Theme.text : Theme.text-faint;
             }
         }
         HorizontalLayout {
-        spacing: 8px;
-        alignment: end;
-        if !root.entry.saved: Button {
-            text: Strings.task-remove;
-            horizontal-stretch: 0;
-            clicked => {
-                root.remove();
+            spacing: 8px;
+            alignment: end;
+            if !root.entry.saved: Button {
+                text: Strings.task-remove;
+                horizontal-stretch: 0;
+                clicked => {
+                    root.remove();
+                }
+            }
+            if root.entry.generations: Button {
+                text: Strings.task-force-full;
+                enabled: root.lock-force-full == "";
+                accessible-description: root.lock-force-full;
+                horizontal-stretch: 0;
+                clicked => {
+                    root.force-full();
+                }
+            }
+            if root.entry.jobs > 1: Button {
+                text: Strings.task-jobs;
+                horizontal-stretch: 0;
+                clicked => {
+                    root.jobs();
+                }
+            }
+            Button {
+                text: Strings.task-schedule;
+                enabled: root.lock-schedule == "";
+                accessible-description: root.lock-schedule;
+                horizontal-stretch: 0;
+                clicked => {
+                    root.schedule();
+                }
+            }
+            Button {
+                text: Strings.task-history;
+                horizontal-stretch: 0;
+                clicked => {
+                    root.history();
+                }
+            }
+            Button {
+                text: Strings.task-edit;
+                horizontal-stretch: 0;
+                clicked => {
+                    root.edit();
+                }
+            }
+            Button {
+                text: Strings.task-details;
+                horizontal-stretch: 0;
+                clicked => {
+                    root.details();
+                }
+            }
+            Button {
+                text: Strings.task-run;
+                primary: true;
+                enabled: root.enabled;
+                horizontal-stretch: 0;
+                clicked => {
+                    root.run();
+                }
             }
         }
-        if root.entry.generations && root.can-force-full: Button {
-            text: Strings.task-force-full;
-            horizontal-stretch: 0;
-            clicked => {
-                root.force-full();
+        if root.locked: HorizontalLayout {
+            spacing: 8px;
+            Text {
+                horizontal-stretch: 1;
+                text: (root.lock-schedule != "" ? Strings.task-schedule + ": " + root.lock-schedule : "") + (root.lock-schedule != "" && root.entry.generations && root.lock-force-full != "" ? "  ·  " : "") + (root.entry.generations && root.lock-force-full != "" ? Strings.task-force-full + ": " + root.lock-force-full : "");
+                overflow: elide;
+                font-size: Theme.small;
+                color: Theme.text-muted;
+                vertical-alignment: center;
             }
-        }
-        if root.entry.jobs > 1: Button {
-            text: Strings.task-jobs;
-            horizontal-stretch: 0;
-            clicked => {
-                root.jobs();
+            Button {
+                text: Strings.change-level;
+                horizontal-stretch: 0;
+                clicked => {
+                    root.change-level();
+                }
             }
-        }
-        if root.can-schedule: Button {
-            text: Strings.task-schedule;
-            horizontal-stretch: 0;
-            clicked => {
-                root.schedule();
-            }
-        }
-        Button {
-            text: Strings.task-history;
-            horizontal-stretch: 0;
-            clicked => {
-                root.history();
-            }
-        }
-        Button {
-            text: Strings.task-edit;
-            horizontal-stretch: 0;
-            clicked => {
-                root.edit();
-            }
-        }
-        Button {
-            text: Strings.task-details;
-            horizontal-stretch: 0;
-            clicked => {
-                root.details();
-            }
-        }
-        Button {
-            text: Strings.task-run;
-            primary: true;
-            enabled: root.enabled;
-            horizontal-stretch: 0;
-            clicked => {
-                root.run();
-            }
-        }
         }
     }
 }
