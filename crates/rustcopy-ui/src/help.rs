@@ -101,7 +101,7 @@ pub fn entries() -> Vec<HelpEntry> {
         ),
         item(
             "Modifica",
-            "Scrive una proposta in un file nuovo accanto all'originale: quello in uso non viene mai toccato, non si può accendere il mirror e non si può abbassare la conservazione. La sostituzione la fai tu.",
+            "Scrive una proposta in un file nuovo accanto all'originale: quello in uso non viene mai toccato, non si può accendere il mirror e non si può abbassare la conservazione. La sostituzione la fai tu. In «Avanzate» si possono scrivere un comando prima e uno dopo la copia: solo con il livello Esperto, e dopo una conferma che ti mostra il testo esatto.",
         ),
         item(
             "Storico",
@@ -155,7 +155,7 @@ pub fn entries() -> Vec<HelpEntry> {
         ),
         item(
             "Esperto",
-            "In più: pianificazioni con privilegi elevati, per copiare anche i file aperti. Mirror e pulizie non partono mai in automatico dalla console, a nessun livello.",
+            "In più: pianificazioni con privilegi elevati, per copiare anche i file aperti, e i comandi prima e dopo la copia nell'editor (con conferma del testo). Mirror e pulizie non partono mai in automatico dalla console, a nessun livello.",
         ),
         heading("Parole che si incontrano"),
         item(

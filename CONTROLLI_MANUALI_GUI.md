@@ -67,6 +67,9 @@ registrato le cose, quindi **vanno provate sulla copia installata, non su `targe
 
 ## D. Funzioni che toccano dischi o rete
 
+- [ ] **Comandi prima e dopo la copia nell'editor.**
+  Passi: livello **Prudente**: Attività → «Modifica» → scheda «Avanzate»: le due caselle dei comandi sono **grigie** con «Richiede il livello Esperto». Passa a **Esperto** (pagina Sicurezza) e riapri «Modifica»: scrivi in «Comando prima della copia» `cmd /c echo prova > C:\\prova\\prima.txt` e in «dopo» un altro; «Salva come proposta»: atteso **nessun file scritto**, ma un riquadro con il testo esatto e «Confermo: scrivi la proposta»; «Annulla» torna indietro senza scrivere. Rifai e conferma: compare il percorso della proposta; aprila e verifica che contenga i due comandi. Sostituisci l'attività con la proposta e lancia «Esegui»: il file `prima.txt` deve comparire **prima** della copia. Poi torna a Prudente: i comandi sono visibili ma non modificabili, e «Togli» funziona.
+
 - [ ] **«Esegui tutte» e «Sospendi».**
   Perché a mano: la coda gira nella finestra vera e le copie sono vere (la logica della coda è provata a parte, ma non il collegamento con la finestra). Passi: crea tre attività piccole con «Nuova attività» (cartelle di prova); premi «Esegui tutte». Atteso: partono **una alla volta** nell'ordine dell'elenco (mai due insieme) e alla fine compare «Esegui tutte: 3 attività, 3 riuscite.». Poi «Sospendi» la seconda (la riga diventa attenuata e dice «Sospesa») e rilancia «Esegui tutte»: partono solo le altre due. «Riattiva» la rimette. Durante la coda premi «Ferma»: la copia in corso si interrompe e **le altre non partono** (il messaggio dice «Interrotta»). Con una attività pianificata: «Sospendi» la mette in «Disabilitata» in Utilità di pianificazione e «Riattiva» la riabilita; con il livello Prudente «Riattiva» una pianificazione dice che serve Standard.
 
