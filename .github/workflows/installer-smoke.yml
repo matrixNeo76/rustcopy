@@ -89,7 +89,7 @@ jobs:
 
       - name: Keep the install report and Setup log
         if: always()
-        uses: actions/upload-artifact@v6
+        uses: actions/upload-artifact@v7
         with:
           name: install-report-windows-server-2022
           path: ${{ runner.temp }}/rustcopy-install-reports
