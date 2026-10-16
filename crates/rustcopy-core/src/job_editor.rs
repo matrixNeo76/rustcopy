@@ -1499,9 +1499,12 @@ mod tests {
                 Some("net stop db"),
                 "the form shows what the job runs"
             );
-            let out =
-                build_proposal_with(Some(&config), &[draft.clone()], &CommandPermit::denied())
-                    .expect("untouched");
+            let out = build_proposal_with(
+                Some(&config),
+                std::slice::from_ref(&draft),
+                &CommandPermit::denied(),
+            )
+            .expect("untouched");
             let jobs = out.jobs.expect("jobs");
             assert_eq!(
                 jobs[0].pre_command, None,
@@ -1545,7 +1548,7 @@ mod tests {
             draft.pre_command = Some("net stop db".into());
             assert!(propose_config_from_path_with(
                 Some(&existing),
-                &[draft.clone()],
+                std::slice::from_ref(&draft),
                 &out,
                 &CommandPermit::denied()
             )
