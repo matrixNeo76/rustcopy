@@ -51,6 +51,9 @@ pub enum Feature {
     Move,
     /// A run that rebuilds a full generation.
     ForceFull,
+    /// A command that runs before or after a job's copy, written from the job editor. It is the one thing the
+    /// console writes that **executes** later, on every run and unattended, so it sits at the highest level.
+    JobCommands,
 }
 
 impl Feature {
@@ -60,7 +63,7 @@ impl Feature {
     pub fn required_level(self) -> SafetyLevel {
         match self {
             Feature::Schedule | Feature::Move | Feature::ForceFull => SafetyLevel::Standard,
-            Feature::ElevatedSchedule => SafetyLevel::Expert,
+            Feature::ElevatedSchedule | Feature::JobCommands => SafetyLevel::Expert,
         }
     }
 }
@@ -114,9 +117,10 @@ Con questo livello non puoi: preparare pianificazioni, usare «Sposta» (che can
   • usare «Sposta»: copia, verifica e, solo dopo la tua conferma, cancella gli originali che hanno una copia identica;
   • usare «Forza completo»: rifà una copia completa invece di una incrementale. Non cancella nulla, ma ricopia tutto.
 
-Non puoi ancora: preparare pianificazioni con privilegi elevati.",
+Non puoi ancora: preparare pianificazioni con privilegi elevati, né scrivere nell'editor un comando da eseguire prima o dopo la copia.",
             SafetyLevel::Expert => "Come Standard, e in più puoi:
-  • preparare una pianificazione con privilegi elevati: la copia parte da sola con diritti da amministratore e una copia ombra del disco (VSS), così copia anche i file aperti. Windows chiede conferma una volta sola, quando la crei.
+  • preparare una pianificazione con privilegi elevati: la copia parte da sola con diritti da amministratore e una copia ombra del disco (VSS), così copia anche i file aperti. Windows chiede conferma una volta sola, quando la crei;
+  • scrivere nell'editor di un'attività un comando da eseguire prima o dopo la copia. Gira con i tuoi diritti a ogni esecuzione, anche in automatico, quindi ti mostra il testo esatto e chiede una conferma. Togliere un comando si può a ogni livello.
 
 Una pianificazione elevata copia soltanto: niente mirror, niente comandi prima o dopo, solo percorsi completi. Mirror e pulizie non partono mai in automatico dalla console, a nessun livello, e oggi non sono ancora disponibili nemmeno con la tua conferma: restano un comando da scrivere a mano.",
         }
@@ -139,6 +143,12 @@ Una pianificazione elevata copia soltanto: niente mirror, niente comandi prima o
     /// than one click away from a first-time user.
     pub fn can_force_full(self) -> bool {
         self.allows(Feature::ForceFull)
+    }
+
+    /// Whether the job editor may write a command to run before or after a copy (and only with the person's
+    /// confirmation of its exact text, see `job_editor::CommandPermit`). Removing a command needs no level.
+    pub fn can_edit_job_commands(self) -> bool {
+        self.allows(Feature::JobCommands)
     }
 
     /// Whether the two-step *move* (copy, verify, confirm, delete the original) is available.
@@ -324,6 +334,7 @@ mod tests {
             Feature::ElevatedSchedule,
             Feature::Move,
             Feature::ForceFull,
+            Feature::JobCommands,
         ];
         for level in [Prudent, Standard, Expert] {
             for feature in all {
@@ -371,6 +382,17 @@ mod tests {
         assert!(
             Expert.describe().contains("privilegi elevati")
                 && Expert.can_prepare_elevated_schedules()
+        );
+        assert!(
+            Expert.describe().contains("comando") && Expert.can_edit_job_commands(),
+            "Expert says it can write a command, and can"
+        );
+        assert!(
+            Standard
+                .describe()
+                .contains("né scrivere nell'editor un comando")
+                && !Standard.can_edit_job_commands(),
+            "Standard says it cannot, and cannot"
         );
         assert!(
             Standard.describe().contains("Non puoi ancora")

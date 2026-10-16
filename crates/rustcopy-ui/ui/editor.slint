@@ -36,6 +36,8 @@ export struct EditForm {
     html-report-path: string,
     encrypt-keyring: string,
     encrypt-other: bool,
+    pre-command: string,
+    post-command: string,
 }
 
 // A labelled text box with an explanation under it. Every control says what it does (RF-Y07).
@@ -55,12 +57,18 @@ export component TextField inherits VerticalLayout {
     in property <bool> checking;
     callback browse();
     callback check();
+    // When set, a button beside the field clears it **whatever `enabled` says**: a command can always be taken
+    // off, even where it cannot be written.
+    in property <string> clear-text;
+    callback clear();
     spacing: 2px;
+    // The box below carries this text as its own accessible label: the visible label is not read a second time.
     Text {
         text: root.label;
         font-size: Theme.small;
         font-weight: 700;
         color: Theme.text-faint;
+        accessible-role: AccessibleRole.none;
     }
     HorizontalLayout {
         spacing: 8px;
@@ -85,6 +93,13 @@ export component TextField inherits VerticalLayout {
             horizontal-stretch: 0;
             clicked => {
                 root.check();
+            }
+        }
+        if root.clear-text != "": Button {
+            text: root.clear-text;
+            horizontal-stretch: 0;
+            clicked => {
+                root.clear();
             }
         }
     }

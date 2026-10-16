@@ -925,6 +925,23 @@ fn snapshot_pages() {
     ui.set_mail_ok(true);
     dump(&ui, "mail");
 
+    ui.set_page(4);
+    ui.set_edit_tab(5);
+    ui.set_can_edit_commands(true);
+    let mut form = ui.get_form();
+    form.name = "foto".into();
+    form.pre_command = "net stop mydb".into();
+    form.post_command = "net start mydb".into();
+    ui.set_form(form);
+    dump(&ui, "editor-commands");
+    ui.set_edit_confirm_text("Stai per scrivere un comando che verrà eseguito con i tuoi diritti a ogni esecuzione di questa attività, anche in automatico e senza nessuno davanti. Controlla il testo:\n  • «foto» - Prima della copia: net stop mydb\n  • «foto» - Dopo la copia: net start mydb\nViene scritto in una proposta accanto al file: il file in uso non cambia finché non lo sostituisci tu.".into());
+    ui.set_edit_confirming(true);
+    dump(&ui, "editor-confirm");
+    ui.set_edit_confirming(false);
+    ui.set_can_edit_commands(false);
+    ui.set_lock_commands("Richiede il livello Esperto".into());
+    dump(&ui, "editor-locked");
+
     let rows: Vec<crate::generated::HelpRow> = crate::help::entries()
         .into_iter()
         .map(|e| crate::generated::HelpRow {
@@ -1358,4 +1375,84 @@ fn the_mail_page_shows_the_server_state_and_the_last_answer() {
         text.contains("Messaggio di prova inviato a admin@example.com."),
         "{text}"
     );
+}
+
+// ---------------------------------------------------------------- commands in the editor
+
+/// Below the Expert level the two command boxes are there but not writable, and say why; at Expert they are.
+#[test]
+fn the_command_boxes_are_locked_below_expert_and_say_which_level_unlocks_them() {
+    let ui = window();
+    ui.set_page(4);
+    ui.set_edit_tab(5);
+    ui.set_can_edit_commands(false);
+    ui.set_lock_commands("Richiede il livello Esperto".into());
+    for label in ["Comando prima della copia", "Comando dopo la copia"] {
+        let field = one(&ui, label);
+        assert!(
+            !field.accessible_enabled().unwrap_or(true),
+            "«{label}» must be locked"
+        );
+    }
+    assert!(all_labels(&ui)
+        .join("\n")
+        .contains("Richiede il livello Esperto"));
+    ui.set_can_edit_commands(true);
+    for label in ["Comando prima della copia", "Comando dopo la copia"] {
+        assert!(
+            one(&ui, label).accessible_enabled().unwrap_or(false),
+            "«{label}» at Expert"
+        );
+    }
+}
+
+/// A command can always be taken off, even where it cannot be written: its «Togli» is there only when there
+/// is a command, is enabled whatever the level, and empties the box.
+#[test]
+fn a_command_can_always_be_taken_off() {
+    let ui = window();
+    ui.set_page(4);
+    ui.set_edit_tab(5);
+    ui.set_can_edit_commands(false);
+    assert!(!has(&ui, "Togli"), "no command, nothing to take off");
+    let mut form = ui.get_form();
+    form.pre_command = "net stop db".into();
+    ui.set_form(form);
+    let button = one(&ui, "Togli");
+    assert!(
+        button.accessible_enabled().unwrap_or(false),
+        "not locked by the level"
+    );
+    button.invoke_accessible_default_action();
+    assert_eq!(ui.get_form().pre_command.as_str(), "", "the box is emptied");
+}
+
+/// A new command is not written on the first press: its exact text is shown with what it means, the button
+/// becomes the confirmation, and «Annulla» goes back without writing.
+#[test]
+fn a_new_command_is_confirmed_before_it_is_written() {
+    let ui = window();
+    ui.set_page(4);
+    let (calls, sink) = capture::<&'static str>();
+    let (a, b, c) = (sink.clone(), sink.clone(), sink.clone());
+    ui.on_edit_save(move || a.borrow_mut().push("save"));
+    ui.on_edit_confirm(move || b.borrow_mut().push("confirm"));
+    ui.on_edit_cancel_confirm(move || c.borrow_mut().push("cancel"));
+
+    press(&ui, "Salva come proposta");
+    assert_eq!(*calls.borrow(), vec!["save"]);
+
+    ui.set_edit_confirm_text(
+        "Stai per scrivere un comando che verrà eseguito con i tuoi diritti a ogni esecuzione.\n  • «foto» - Prima della copia: net stop db".into(),
+    );
+    ui.set_edit_confirming(true);
+    let text = all_labels(&ui).join("\n");
+    assert!(text.contains("net stop db"), "{text}");
+    assert!(
+        !has(&ui, "Salva come proposta"),
+        "the save button became the confirmation"
+    );
+    press(&ui, "Confermo: scrivi la proposta");
+    press(&ui, "Annulla");
+    assert_eq!(*calls.borrow(), vec!["save", "confirm", "cancel"]);
 }

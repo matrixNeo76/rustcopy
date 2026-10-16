@@ -11,6 +11,15 @@ export global Strings {
     out property <string> task-suspend: @tr("Sospendi");
     out property <string> task-resume: @tr("Riattiva");
     out property <string> run-all: @tr("Esegui tutte");
+    out property <string> cmd-pre: @tr("Comando prima della copia");
+    out property <string> cmd-post: @tr("Comando dopo la copia");
+    out property <string> cmd-pre-hint: @tr("Si esegue prima della copia; se fallisce, la copia non parte.");
+    out property <string> cmd-post-hint: @tr("Si esegue dopo la copia riuscita; se fallisce lo dice nel report, ma la copia resta riuscita.");
+    out property <string> cmd-hint: @tr("Gira con i tuoi diritti a ogni esecuzione, anche in automatico e senza nessuno davanti. Scriverlo o cambiarlo richiede il livello Esperto e una conferma che mostra il testo; toglierlo si può sempre. Una riga sola.");
+    out property <string> cmd-clear: @tr("Togli");
+    out property <string> cmd-confirm-label: @tr("Conferma");
+    out property <string> cmd-confirm: @tr("Confermo: scrivi la proposta");
+    out property <string> cmd-cancel: @tr("Annulla");
     out property <string> mail-open: @tr("Notifiche per posta...");
     out property <string> mail-title: @tr("Notifiche per posta");
     out property <string> mail-intro: @tr("Perché una copia ti scriva quando finisce: la console prepara qui le impostazioni del server di posta. La posta la invia il server di notifica (notify-server), non la console: la copia gli manda l'esito e lui lo inoltra. La password si salva in Gestione credenziali di Windows e nel file resta solo il suo nome.");
@@ -85,7 +94,7 @@ export global Strings {
     out property <string> props-empty: @tr("Nessuna impostazione leggibile per questa attività.");
     out property <string> task-edit: @tr("Modifica");
     out property <string> ed-back: @tr("Torna alle attività");
-    out property <string> ed-intro: @tr("Le modifiche non toccano il file in uso: si salva una proposta accanto, e sei tu a sostituirla. Le impostazioni che qui non compaiono (comandi prima e dopo, webhook, spazio libero) restano come nel file.");
+    out property <string> ed-intro: @tr("Le modifiche non toccano il file in uso: si salva una proposta accanto, e sei tu a sostituirla. Le impostazioni che qui non compaiono (webhook, spazio libero) restano come nel file. I comandi prima e dopo la copia stanno in «Avanzate».");
     out property <string> ed-job: @tr("Job");
     out property <string> ed-new-job-name: @tr("Nome di un nuovo job");
     out property <string> ed-add-job: @tr("+ Nuovo job");

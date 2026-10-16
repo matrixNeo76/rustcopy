@@ -129,6 +129,9 @@ struct Ctx {
     /// Since when the window has been hidden with nothing running or waiting (`lifetime`): a console in that
     /// state ends by itself after a few seconds instead of lingering in the notification area.
     hidden_idle_since: Cell<Option<std::time::Instant>>,
+    /// The commands the editor showed for confirmation and is waiting on: a confirm writes only when the form
+    /// still holds exactly these (an edit made while the question was open asks again).
+    pending_commands: RefCell<Vec<form::CommandChange>>,
     /// The plan of a move waiting for the person's confirmation: which lavoro, and what it would delete.
     /// Shared with the worker threads that compute and execute it.
     move_plan: Arc<Mutex<Option<(String, MovePlan)>>>,
@@ -426,6 +429,8 @@ fn to_slint(form: &FormValues) -> EditForm {
         html_report_path: form.html_report_path.as_str().into(),
         encrypt_keyring: form.encrypt_keyring.as_str().into(),
         encrypt_other: form.encrypt_other,
+        pre_command: form.pre_command.as_str().into(),
+        post_command: form.post_command.as_str().into(),
     }
 }
 
@@ -462,6 +467,71 @@ fn from_slint(form: EditForm) -> FormValues {
         html_report_path: form.html_report_path.to_string(),
         encrypt_keyring: form.encrypt_keyring.to_string(),
         encrypt_other: form.encrypt_other,
+        pre_command: form.pre_command.to_string(),
+        post_command: form.post_command.to_string(),
+    }
+}
+
+/// Writes the editor's proposal. A command that is new or different from what the file had is **not written**
+/// on the first press: its exact text is shown and the person must confirm it (`confirmed == true` on the
+/// second press, and only when the form still holds exactly the commands that were shown). What the level
+/// allows is the core's to say (`job_editor::CommandPermit`, the level read from disk): this only asks.
+fn edit_save(ui: &AppWindow, ctx: &Rc<Ctx>, confirmed: bool) {
+    let mut guard = ctx.edit.borrow_mut();
+    let Some(state) = guard.as_mut() else { return };
+    let file_jobs = job_editor::read_drafts(&state.config)
+        .map(|d| d.len())
+        .unwrap_or(state.drafts.len());
+    let mut asking = false;
+    let result = state.commit(from_slint(ui.get_form())).and_then(|()| {
+        let changed = state.to_write(file_jobs);
+        if changed.is_empty() {
+            return Err("Nessuna modifica da scrivere.".to_string());
+        }
+        // A job added here has nothing to copy until it has a source and a destination.
+        if let Some(empty) = changed
+            .iter()
+            .find(|d| d.source.trim().is_empty() || d.dest.trim().is_empty())
+        {
+            return Err(format!(
+                "Il job «{}» ha bisogno di una cartella di origine e di una di destinazione.",
+                empty.name
+            ));
+        }
+        let needing = form::commands_to_confirm(&state.originals, &changed);
+        let shown = ctx.pending_commands.borrow().clone();
+        if !needing.is_empty() && !(confirmed && needing == shown) {
+            // Ask first (or ask again: the form no longer holds what was shown).
+            ui.set_edit_confirm_text(form::confirmation_text(&needing).into());
+            ui.set_edit_confirming(true);
+            *ctx.pending_commands.borrow_mut() = needing;
+            asking = true;
+            return Ok(PathBuf::new());
+        }
+        let permit = job_editor::CommandPermit::from_disk(
+            needing.iter().map(|change| change.text.clone()).collect(),
+        );
+        let out = job_editor::suggest_proposal_path_now(&state.config);
+        job_editor::propose_config_from_path_with(Some(&state.config), &changed, &out, &permit)
+            .map(|()| out)
+            .map_err(|error| error.to_string())
+    });
+    if asking {
+        ui.set_edit_ok(false);
+        ui.set_edit_message("".into());
+        return;
+    }
+    ui.set_edit_confirming(false);
+    ctx.pending_commands.borrow_mut().clear();
+    match result {
+        Ok(out) => {
+            ui.set_edit_ok(true);
+            ui.set_edit_message(out.to_string_lossy().into_owned().into());
+        }
+        Err(message) => {
+            ui.set_edit_ok(false);
+            ui.set_edit_message(message.into());
+        }
     }
 }
 
@@ -1482,6 +1552,8 @@ fn show_safety(ui: &AppWindow) {
     ui.set_lock_elevated(lock(Feature::ElevatedSchedule));
     ui.set_lock_move(lock(Feature::Move));
     ui.set_lock_force_full(lock(Feature::ForceFull));
+    ui.set_can_edit_commands(level.can_edit_job_commands());
+    ui.set_lock_commands(lock(Feature::JobCommands));
 }
 
 /// Opens a folder in Explorer. Failure is silent on purpose: the copy has finished and is reported;
@@ -1545,6 +1617,7 @@ fn main() -> Result<(), slint::PlatformError> {
         awake: keep_awake::KeepAwake::default(),
         run_all: RefCell::new(None),
         hidden_idle_since: Cell::new(None),
+        pending_commands: RefCell::new(Vec::new()),
         queue_names: RefCell::new(Vec::new()),
         checkpoint_paths: RefCell::new(Vec::new()),
         log_config: RefCell::new(None),
@@ -1784,6 +1857,10 @@ fn main() -> Result<(), slint::PlatformError> {
                             .into(),
                     );
                     let state = EditState::new(config, drafts);
+                    // The level is read again when the editor opens: it may have changed since the window did.
+                    show_safety(&ui);
+                    ui.set_edit_confirming(false);
+                    ctx.pending_commands.borrow_mut().clear();
                     load_editor_form(&ui, &state);
                     *ctx.edit.borrow_mut() = Some(state);
                     ui.set_error("".into());
@@ -1864,43 +1941,27 @@ fn main() -> Result<(), slint::PlatformError> {
         let weak = ui.as_weak();
         let ctx = ctx.clone();
         ui.on_edit_save(move || {
-            let Some(ui) = weak.upgrade() else { return };
-            let mut guard = ctx.edit.borrow_mut();
-            let Some(state) = guard.as_mut() else { return };
-            let file_jobs = job_editor::read_drafts(&state.config)
-                .map(|d| d.len())
-                .unwrap_or(state.drafts.len());
-            let result = state
-                .commit(from_slint(ui.get_form()))
-                .and_then(|()| {
-                    let changed = state.to_write(file_jobs);
-                    if changed.is_empty() {
-                        return Err("Nessuna modifica da scrivere.".to_string());
-                    }
-                    // A job added here has nothing to copy until it has a source and a destination.
-                    if let Some(empty) = changed
-                        .iter()
-                        .find(|d| d.source.trim().is_empty() || d.dest.trim().is_empty())
-                    {
-                        return Err(format!(
-                            "Il job «{}» ha bisogno di una cartella di origine e di una di destinazione.",
-                            empty.name
-                        ));
-                    }
-                    let out = job_editor::suggest_proposal_path_now(&state.config);
-                    job_editor::propose_config_from_path(Some(&state.config), &changed, &out)
-                        .map(|()| out)
-                        .map_err(|error| error.to_string())
-                });
-            match result {
-                Ok(out) => {
-                    ui.set_edit_ok(true);
-                    ui.set_edit_message(out.to_string_lossy().into_owned().into());
-                }
-                Err(message) => {
-                    ui.set_edit_ok(false);
-                    ui.set_edit_message(message.into());
-                }
+            if let Some(ui) = weak.upgrade() {
+                edit_save(&ui, &ctx, false);
+            }
+        });
+    }
+    {
+        let weak = ui.as_weak();
+        let ctx = ctx.clone();
+        ui.on_edit_confirm(move || {
+            if let Some(ui) = weak.upgrade() {
+                edit_save(&ui, &ctx, true);
+            }
+        });
+    }
+    {
+        let weak = ui.as_weak();
+        let ctx = ctx.clone();
+        ui.on_edit_cancel_confirm(move || {
+            if let Some(ui) = weak.upgrade() {
+                ui.set_edit_confirming(false);
+                ctx.pending_commands.borrow_mut().clear();
             }
         });
     }

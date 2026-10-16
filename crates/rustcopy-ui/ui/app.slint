@@ -88,6 +88,15 @@ export component AppWindow inherits Window {
     // What a control the safety level does not unlock says beside itself ("Richiede il livello Standard"); empty
     // when it is available. Set by the core's `SafetyLevel::lock_reason`, never decided here.
     in property <string> lock-schedule;
+    // Writing a command before/after a copy from the editor (Expert only; taking one off is always possible).
+    in property <bool> can-edit-commands;
+    in property <string> lock-commands;
+    // The editor's tab (0 Base ... 5 Avanzate): a property so the tab shown can be set, and the tests can reach it.
+    in-out property <int> edit-tab: 0;
+    in-out property <bool> edit-confirming: false;
+    in-out property <string> edit-confirm-text;
+    callback edit-confirm();
+    callback edit-cancel-confirm();
     // The "Nuova attività" wizard (page 13). The schedule step reuses the sch-* fields of the schedule page.
     in-out property <int> wiz-step: 0;
     in-out property <string> wiz-name;
@@ -2223,6 +2232,7 @@ export component AppWindow inherits Window {
             TabWidget {
                 vertical-stretch: 1;
                 min-height: 260px;
+                current-index <=> root.edit-tab;
                 Tab {
                     title: Strings.tab-base;
                     TabPage {
@@ -2479,6 +2489,37 @@ export component AppWindow inherits Window {
                             hint: Strings.f-noprescan-hint;
                             value <=> root.form.no-prescan;
                         }
+                        Text {
+                            text: Strings.cmd-hint;
+                            wrap: word-wrap;
+                            font-size: Theme.small;
+                            color: Theme.text-muted;
+                        }
+                        if !root.can-edit-commands: Text {
+                            text: root.lock-commands;
+                            font-size: Theme.small;
+                            color: Theme.warning;
+                        }
+                        TextField {
+                            label: Strings.cmd-pre;
+                            hint: Strings.cmd-pre-hint;
+                            enabled: root.can-edit-commands;
+                            clear-text: root.form.pre-command != "" ? Strings.cmd-clear : "";
+                            value <=> root.form.pre-command;
+                            clear => {
+                                root.form.pre-command = "";
+                            }
+                        }
+                        TextField {
+                            label: Strings.cmd-post;
+                            hint: Strings.cmd-post-hint;
+                            enabled: root.can-edit-commands;
+                            clear-text: root.form.post-command != "" ? Strings.cmd-clear : "";
+                            value <=> root.form.post-command;
+                            clear => {
+                                root.form.post-command = "";
+                            }
+                        }
                         TextField {
                             label: Strings.f-report;
                             hint: Strings.f-report-hint;
@@ -2504,13 +2545,29 @@ export component AppWindow inherits Window {
                 label-prefix: Strings.warning-prefix;
                 kind: root.edit-ok ? BadgeKind.ok : BadgeKind.warning;
             }
+            if root.edit-confirming: Banner {
+                text: root.edit-confirm-text;
+                label-prefix: Strings.cmd-confirm-label;
+                kind: BadgeKind.warning;
+            }
             HorizontalLayout {
                 alignment: start;
+                spacing: 10px;
                 Button {
-                    text: Strings.ed-save;
+                    text: root.edit-confirming ? Strings.cmd-confirm : Strings.ed-save;
                     primary: true;
                     clicked => {
-                        root.edit-save();
+                        if (root.edit-confirming) {
+                            root.edit-confirm();
+                        } else {
+                            root.edit-save();
+                        }
+                    }
+                }
+                if root.edit-confirming: Button {
+                    text: Strings.cmd-cancel;
+                    clicked => {
+                        root.edit-cancel-confirm();
                     }
                 }
             }

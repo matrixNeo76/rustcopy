@@ -19,6 +19,12 @@
 //!    what it would delete, and without it the safety diff cannot run at all.
 //! 4. Omission never deletes. A job the caller does not mention is carried through untouched, and
 //!    a field the draft does not carry keeps whatever the file had.
+//! 5. A **command** (`pre_command`/`post_command`) is the one thing the editor writes that *executes*
+//!    later, on every run and unattended, so it may be **kept** and **removed** at any level but
+//!    **introduced or changed** only at the Expert level and only after the person confirmed its exact
+//!    text ([`CommandPermit`]). A command is never imported from anywhere: it is what was typed in the
+//!    box and confirmed. It must be a single line, and one that comes from the file's top-level values
+//!    cannot be removed from one job alone.
 //!
 //! # Why preservation matters as much as prohibition
 //!
@@ -30,8 +36,7 @@
 //! prohibition was meant to prevent, because nobody is looking for it.
 //!
 //! So the fields this editor does not own are not dropped — they are copied through verbatim:
-//! `pre_command`, `post_command` and `webhook_url` among them. Those belong to F55's write half,
-//! which is still an open decision, and carrying them untouched is what keeps it genuinely open.
+//! `webhook_url` among them (see below for the two commands, which it now owns under rule 5).
 //! `skip_space_check`/`space_safety_margin_percent` (F65) are carried the same way for a simpler
 //! reason: the form has no control for them yet, not a security decision — add one if that
 //! changes, rather than leaving them silently verbatim forever.
@@ -109,6 +114,42 @@ pub struct JobDraft {
     /// in another of `crypto::resolve_key`'s forms (`env:`/`file:`/literal, written by hand) is
     /// carried through unchanged like any field this draft does not touch.
     pub encrypt_aes256: Option<String>,
+    /// Phase 4. A command to run before the copy. Kept and removed at any level, written or changed only
+    /// under [`CommandPermit`] (rule 5 in the module header).
+    #[serde(default)]
+    pub pre_command: Option<String>,
+    /// Phase 4. As `pre_command`, after the copy.
+    #[serde(default)]
+    pub post_command: Option<String>,
+}
+
+/// What the caller has established about writing commands: the safety level (**read from disk by the caller**,
+/// in the core's terms, never trusted from a button drawn earlier) and the exact texts the person was shown
+/// and confirmed. A command that is introduced or changed is written only when the level allows it **and** its
+/// text is among the confirmed ones.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CommandPermit {
+    pub level: crate::safety::SafetyLevel,
+    pub confirmed: Vec<String>,
+}
+
+impl CommandPermit {
+    /// Nothing may be introduced or changed: the editor as it was before commands were editable.
+    pub fn denied() -> Self {
+        Self {
+            level: crate::safety::SafetyLevel::Prudent,
+            confirmed: Vec::new(),
+        }
+    }
+
+    pub fn new(level: crate::safety::SafetyLevel, confirmed: Vec<String>) -> Self {
+        Self { level, confirmed }
+    }
+
+    /// The permit for `confirmed` texts at the level stored on this machine.
+    pub fn from_disk(confirmed: Vec<String>) -> Self {
+        Self::new(crate::safety::load(&crate::sessions::data_dir()), confirmed)
+    }
 }
 
 fn optional_string(value: &Option<PathBuf>) -> Option<String> {
@@ -151,7 +192,70 @@ pub fn draft_from(job: &JobConfig, name: &str) -> JobDraft {
         mirror: job.mirror.unwrap_or(false),
         keep_generations: job.keep_generations,
         encrypt_aes256: job.encrypt_aes256.clone(),
+        pre_command: job.pre_command.clone(),
+        post_command: job.post_command.clone(),
     }
+}
+
+/// Decides what one command field of the job becomes (rule 5 in the module header).
+///
+/// `own`/`inherited` are what the job and the file's top-level values hold; `draft` is what the form says.
+/// Same text as now: carried as the file has it. Gone from the form: removed, at any level (unless it only
+/// exists at the top level). Anything else is a command being introduced or changed: it needs the Expert
+/// level **and** its exact text among the confirmed ones.
+fn resolve_command(
+    which: &'static str,
+    name: &str,
+    own: Option<&String>,
+    inherited: Option<&String>,
+    draft: &Option<String>,
+    permit: &CommandPermit,
+) -> Result<Option<String>, IngestError> {
+    let trimmed = |text: &str| text.trim().to_string();
+    let wanted = draft
+        .as_deref()
+        .map(trimmed)
+        .filter(|text| !text.is_empty());
+    let current = own.or(inherited).map(|text| trimmed(text));
+
+    if let Some(text) = &wanted {
+        if text.chars().any(char::is_control) {
+            return Err(IngestError::EditorCommandInvalid {
+                name: name.to_string(),
+                which,
+            });
+        }
+    }
+
+    if wanted == current {
+        // Not a change: what the file says is kept exactly as it is (even down to its spacing).
+        return Ok(own.cloned());
+    }
+    let Some(wanted) = wanted else {
+        // Removed. It narrows what runs, so it needs no level — but a job that only *inherits* the command
+        // cannot drop it without a job-level value that means "none", which the file cannot express.
+        return if own.is_some() {
+            Ok(None)
+        } else {
+            Err(IngestError::EditorCommandInherited {
+                name: name.to_string(),
+                which,
+            })
+        };
+    };
+    if !permit.level.can_edit_job_commands() {
+        return Err(IngestError::EditorCannotSetCommand {
+            name: name.to_string(),
+            which,
+        });
+    }
+    if !permit.confirmed.iter().any(|c| c.trim() == wanted) {
+        return Err(IngestError::EditorCommandNotConfirmed {
+            name: name.to_string(),
+            which,
+        });
+    }
+    Ok(Some(wanted))
 }
 
 /// Pins a boolean only when it is a real change.
@@ -198,6 +302,16 @@ pub fn apply_draft(
     own: Option<&JobConfig>,
     inherited: &JobConfig,
     draft: &JobDraft,
+) -> Result<JobConfig, IngestError> {
+    apply_draft_with(own, inherited, draft, &CommandPermit::denied())
+}
+
+/// [`apply_draft`] with what the caller has established about writing commands.
+pub fn apply_draft_with(
+    own: Option<&JobConfig>,
+    inherited: &JobConfig,
+    draft: &JobDraft,
+    commands: &CommandPermit,
 ) -> Result<JobConfig, IngestError> {
     let base = own.cloned().unwrap_or_default();
     // The CLI would reject an unusable name at the job's first scheduled run anyway (`namespaced_path`
@@ -421,8 +535,23 @@ pub fn apply_draft(
         // header: dropping them would be a silent semantic change, which is the failure mode this
         // whole module is shaped around.
         webhook_url: base.webhook_url.clone(),
-        pre_command: base.pre_command.clone(),
-        post_command: base.post_command.clone(),
+        // The two commands are owned under rule 5: kept, removed, or (Expert + confirmed) written.
+        pre_command: resolve_command(
+            "pre_command",
+            &draft.name,
+            base.pre_command.as_ref(),
+            inherited.pre_command.as_ref(),
+            &draft.pre_command,
+            commands,
+        )?,
+        post_command: resolve_command(
+            "post_command",
+            &draft.name,
+            base.post_command.as_ref(),
+            inherited.post_command.as_ref(),
+            &draft.post_command,
+            commands,
+        )?,
         // F65: same reasoning as the three fields above — not yet exposed in the editor form, so
         // carried through verbatim rather than dropped.
         skip_space_check: base.skip_space_check,
@@ -448,6 +577,15 @@ pub fn build_proposal(
     existing: Option<&IngestConfig>,
     drafts: &[JobDraft],
 ) -> Result<IngestConfig, IngestError> {
+    build_proposal_with(existing, drafts, &CommandPermit::denied())
+}
+
+/// [`build_proposal`] with what the caller has established about writing commands.
+pub fn build_proposal_with(
+    existing: Option<&IngestConfig>,
+    drafts: &[JobDraft],
+    commands: &CommandPermit,
+) -> Result<IngestConfig, IngestError> {
     let mut config = existing.cloned().unwrap_or_default();
     let stored_jobs = config.jobs.clone().unwrap_or_default();
 
@@ -464,10 +602,11 @@ pub fn build_proposal(
             [draft] if existing.is_none() || draft.name == current_label => {
                 // A single-job file has no layer above it, so nothing can be inherited and every
                 // field the draft sets is written outright.
-                config.defaults = apply_draft(
+                config.defaults = apply_draft_with(
                     existing.map(|cfg| &cfg.defaults),
                     &JobConfig::default(),
                     draft,
+                    commands,
                 )?;
                 return Ok(config);
             }
@@ -495,13 +634,18 @@ pub fn build_proposal(
             .position(|(index, job)| label_of(job, index) == draft.name)
         {
             Some(index) => {
-                jobs.push(apply_draft(Some(&stored_jobs[index]), &defaults, draft)?);
+                jobs.push(apply_draft_with(
+                    Some(&stored_jobs[index]),
+                    &defaults,
+                    draft,
+                    commands,
+                )?);
                 consumed[index] = true;
             }
             // A name matching nothing stored is a new job, placed where the draft is in this
             // list — normally the end, since that's where the editor's own "+ Nuovo job" appends
             // it, but not assumed here: a new job the operator then moved earlier belongs there.
-            None => jobs.push(apply_draft(None, &defaults, draft)?),
+            None => jobs.push(apply_draft_with(None, &defaults, draft, commands)?),
         }
     }
     // Any stored job no draft named stays exactly as it was, appended after everything the
@@ -526,7 +670,17 @@ pub fn propose_config(
     drafts: &[JobDraft],
     out_path: &Path,
 ) -> Result<(), IngestError> {
-    let proposal = build_proposal(existing, drafts)?;
+    propose_config_with(existing, drafts, out_path, &CommandPermit::denied())
+}
+
+/// [`propose_config`] with what the caller has established about writing commands.
+pub fn propose_config_with(
+    existing: Option<&IngestConfig>,
+    drafts: &[JobDraft],
+    out_path: &Path,
+    commands: &CommandPermit,
+) -> Result<(), IngestError> {
+    let proposal = build_proposal_with(existing, drafts, commands)?;
     let rendered = toml::to_string_pretty(&proposal).map_err(|error| {
         IngestError::io(
             out_path,
@@ -604,11 +758,21 @@ pub fn propose_config_from_path(
     drafts: &[JobDraft],
     out_path: &Path,
 ) -> Result<(), IngestError> {
+    propose_config_from_path_with(existing, drafts, out_path, &CommandPermit::denied())
+}
+
+/// [`propose_config_from_path`] with what the caller has established about writing commands.
+pub fn propose_config_from_path_with(
+    existing: Option<&Path>,
+    drafts: &[JobDraft],
+    out_path: &Path,
+    commands: &CommandPermit,
+) -> Result<(), IngestError> {
     let config = match existing {
         Some(path) => Some(IngestConfig::load_from(path)?),
         None => None,
     };
-    propose_config(config.as_ref(), drafts, out_path)
+    propose_config_with(config.as_ref(), drafts, out_path, commands)
 }
 
 /// [`suggest_proposal_path`] with this moment's stamp.
@@ -1135,5 +1299,276 @@ mod tests {
         let result =
             apply_draft(Some(&config.defaults), &JobConfig::default(), &draft).expect("applies");
         assert_eq!(result.report_path, None);
+    }
+
+    // ------------------------------------------------------------ commands (rule 5)
+
+    mod commands {
+        use super::*;
+        use crate::safety::SafetyLevel;
+
+        const WITH_COMMAND: &str = "source = 'C:/a'\ndest = 'D:/b'\npre_command = 'net stop db'\npost_command = 'net start db'\n";
+        const PLAIN: &str = "source = 'C:/a'\ndest = 'D:/b'\n";
+
+        fn expert(confirmed: &[&str]) -> CommandPermit {
+            CommandPermit::new(
+                SafetyLevel::Expert,
+                confirmed.iter().map(|c| c.to_string()).collect(),
+            )
+        }
+
+        fn first_job(config: &IngestConfig) -> JobConfig {
+            config.defaults.clone()
+        }
+
+        /// A command already in the file survives an edit that does not touch it, at every level, exactly as
+        /// written -- which is what stopped it being silently dropped when this editor first existed.
+        #[test]
+        fn an_untouched_command_is_kept_as_it_is_at_every_level() {
+            let config = config_from(WITH_COMMAND);
+            let draft = draft_for(&config, "job1");
+            for level in [
+                SafetyLevel::Prudent,
+                SafetyLevel::Standard,
+                SafetyLevel::Expert,
+            ] {
+                let out = build_proposal_with(
+                    Some(&config),
+                    std::slice::from_ref(&draft),
+                    &CommandPermit::new(level, vec![]),
+                )
+                .expect("proposal");
+                assert_eq!(
+                    first_job(&out).pre_command.as_deref(),
+                    Some("net stop db"),
+                    "{level:?}"
+                );
+                assert_eq!(
+                    first_job(&out).post_command.as_deref(),
+                    Some("net start db"),
+                    "{level:?}"
+                );
+            }
+        }
+
+        /// Without a permit (every older caller) the editor behaves as it did before commands were editable.
+        #[test]
+        fn the_plain_entry_points_never_introduce_a_command() {
+            let config = config_from(PLAIN);
+            let mut draft = draft_for(&config, "job1");
+            draft.pre_command = Some("del /q C:\\x".into());
+            let error = build_proposal(Some(&config), &[draft]).expect_err("refused");
+            assert!(
+                matches!(error, IngestError::EditorCannotSetCommand { .. }),
+                "{error}"
+            );
+        }
+
+        #[test]
+        fn a_command_is_introduced_only_at_expert_and_only_when_confirmed() {
+            let config = config_from(PLAIN);
+            let mut draft = draft_for(&config, "job1");
+            draft.pre_command = Some("  net stop db  ".into());
+
+            for level in [SafetyLevel::Prudent, SafetyLevel::Standard] {
+                let permit = CommandPermit::new(level, vec!["net stop db".into()]);
+                let error =
+                    build_proposal_with(Some(&config), std::slice::from_ref(&draft), &permit)
+                        .expect_err("level too low");
+                assert!(
+                    matches!(
+                        error,
+                        IngestError::EditorCannotSetCommand {
+                            which: "pre_command",
+                            ..
+                        }
+                    ),
+                    "{level:?}: {error}"
+                );
+            }
+            let error =
+                build_proposal_with(Some(&config), std::slice::from_ref(&draft), &expert(&[]))
+                    .expect_err("not confirmed");
+            assert!(
+                matches!(error, IngestError::EditorCommandNotConfirmed { .. }),
+                "{error}"
+            );
+            let error = build_proposal_with(
+                Some(&config),
+                std::slice::from_ref(&draft),
+                &expert(&["net stop other"]),
+            )
+            .expect_err("another text was confirmed");
+            assert!(
+                matches!(error, IngestError::EditorCommandNotConfirmed { .. }),
+                "{error}"
+            );
+
+            let out = build_proposal_with(
+                Some(&config),
+                std::slice::from_ref(&draft),
+                &expert(&["net stop db"]),
+            )
+            .expect("allowed");
+            assert_eq!(
+                first_job(&out).pre_command.as_deref(),
+                Some("net stop db"),
+                "trimmed, as confirmed"
+            );
+            assert_eq!(first_job(&out).post_command, None);
+        }
+
+        /// Changing a command is introducing a new one: same rule.
+        #[test]
+        fn changing_a_command_needs_the_same_level_and_confirmation() {
+            let config = config_from(WITH_COMMAND);
+            let mut draft = draft_for(&config, "job1");
+            draft.post_command = Some("net start db && del /q C:\\logs".into());
+            assert!(build_proposal_with(
+                Some(&config),
+                std::slice::from_ref(&draft),
+                &CommandPermit::new(
+                    SafetyLevel::Standard,
+                    vec![draft.post_command.clone().expect("set")]
+                )
+            )
+            .is_err());
+            assert!(
+                build_proposal_with(Some(&config), std::slice::from_ref(&draft), &expert(&[]))
+                    .is_err()
+            );
+            let out = build_proposal_with(
+                Some(&config),
+                std::slice::from_ref(&draft),
+                &expert(&["net start db && del /q C:\\logs"]),
+            )
+            .expect("allowed");
+            assert_eq!(
+                first_job(&out).post_command.as_deref(),
+                Some("net start db && del /q C:\\logs")
+            );
+            assert_eq!(
+                first_job(&out).pre_command.as_deref(),
+                Some("net stop db"),
+                "the other is untouched"
+            );
+        }
+
+        /// Removing narrows what runs: allowed at the lowest level, with nothing confirmed.
+        #[test]
+        fn removing_a_command_needs_no_level_and_no_confirmation() {
+            let config = config_from(WITH_COMMAND);
+            let mut draft = draft_for(&config, "job1");
+            draft.pre_command = None;
+            draft.post_command = Some("   ".into());
+            let out = build_proposal_with(Some(&config), &[draft], &CommandPermit::denied())
+                .expect("removed");
+            assert_eq!(first_job(&out).pre_command, None);
+            assert_eq!(first_job(&out).post_command, None);
+        }
+
+        /// A command that is one line: a break would run the first line and look like the whole.
+        #[test]
+        fn a_command_with_a_line_break_or_control_character_is_refused() {
+            let config = config_from(PLAIN);
+            for text in ["net stop db\nnet stop other", "ec\rho", "a\0b"] {
+                let mut draft = draft_for(&config, "job1");
+                draft.pre_command = Some(text.into());
+                let error = build_proposal_with(Some(&config), &[draft], &expert(&[text]))
+                    .expect_err("refused");
+                assert!(
+                    matches!(error, IngestError::EditorCommandInvalid { .. }),
+                    "{text:?}: {error}"
+                );
+            }
+        }
+
+        /// In a multi-job file a command at the top level is shown by each job that inherits it; leaving it
+        /// alone writes nothing at job level, and removing it from one job alone is refused with a sentence
+        /// (the file has no way to say "none" for one job).
+        #[test]
+        fn an_inherited_command_stays_inherited_and_cannot_be_removed_from_one_job() {
+            let config = config_from(
+                "pre_command = 'net stop db'\n[[jobs]]\nname = 'a'\nsource = 'C:/a'\ndest = 'D:/a'\n[[jobs]]\nname = 'b'\nsource = 'C:/b'\ndest = 'D:/b'\n",
+            );
+            // As `read_drafts` builds it: the job merged over the top-level values.
+            let jobs = config.jobs.clone().expect("jobs");
+            let draft = draft_from(&jobs[0].merged_over(&config.defaults), "a");
+            assert_eq!(
+                draft.pre_command.as_deref(),
+                Some("net stop db"),
+                "the form shows what the job runs"
+            );
+            let out = build_proposal_with(
+                Some(&config),
+                std::slice::from_ref(&draft),
+                &CommandPermit::denied(),
+            )
+            .expect("untouched");
+            let jobs = out.jobs.expect("jobs");
+            assert_eq!(
+                jobs[0].pre_command, None,
+                "still inherited, nothing pinned at job level"
+            );
+
+            let mut removed = draft;
+            removed.pre_command = None;
+            let error = build_proposal_with(Some(&config), &[removed], &CommandPermit::denied())
+                .expect_err("cannot remove an inherited command from one job");
+            assert!(
+                matches!(error, IngestError::EditorCommandInherited { .. }),
+                "{error}"
+            );
+        }
+
+        /// Editing one job's command leaves every other job exactly as it was.
+        #[test]
+        fn a_command_written_on_one_job_does_not_reach_the_others() {
+            let config = config_from(
+                "[[jobs]]\nname = 'a'\nsource = 'C:/a'\ndest = 'D:/a'\n[[jobs]]\nname = 'b'\nsource = 'C:/b'\ndest = 'D:/b'\n",
+            );
+            let mut draft = draft_for(&config, "a");
+            draft.post_command = Some("echo fatto".into());
+            let out = build_proposal_with(Some(&config), &[draft], &expert(&["echo fatto"]))
+                .expect("allowed");
+            let jobs = out.jobs.expect("jobs");
+            assert_eq!(jobs[0].post_command.as_deref(), Some("echo fatto"));
+            assert_eq!(jobs[1].post_command, None);
+            assert_eq!(jobs[1].source, config.jobs.expect("jobs")[1].source);
+        }
+
+        /// What reaches the file: written only when permitted, and a refusal writes nothing.
+        #[test]
+        fn a_refused_command_writes_no_proposal_file() {
+            let dir = tempfile::tempdir().expect("tempdir");
+            let existing = dir.path().join("job.toml");
+            std::fs::write(&existing, PLAIN).expect("seed");
+            let out = dir.path().join("job.proposta.toml");
+            let mut draft = read_drafts(&existing).expect("drafts").remove(0);
+            draft.pre_command = Some("net stop db".into());
+            assert!(propose_config_from_path_with(
+                Some(&existing),
+                std::slice::from_ref(&draft),
+                &out,
+                &CommandPermit::denied()
+            )
+            .is_err());
+            assert!(!out.exists(), "nothing written for a refused command");
+            propose_config_from_path_with(
+                Some(&existing),
+                &[draft],
+                &out,
+                &expert(&["net stop db"]),
+            )
+            .expect("written");
+            assert!(std::fs::read_to_string(&out)
+                .expect("read")
+                .contains("net stop db"));
+            assert_eq!(
+                std::fs::read_to_string(&existing).expect("read"),
+                PLAIN,
+                "the file in use is never touched"
+            );
+        }
     }
 }

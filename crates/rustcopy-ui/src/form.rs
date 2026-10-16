@@ -54,6 +54,10 @@ pub struct FormValues {
     /// `true` when encryption was set by hand in another form (`env:`, `file:`, a literal key): the
     /// form shows it read-only and never rewrites it.
     pub encrypt_other: bool,
+    /// A command to run before the copy, as typed. Empty = none.
+    pub pre_command: String,
+    /// A command to run after the copy, as typed. Empty = none.
+    pub post_command: String,
 }
 
 fn text<T: ToString>(value: &Option<T>) -> String {
@@ -142,6 +146,8 @@ impl FormValues {
             html_report_path: draft.html_report_path.clone().unwrap_or_default(),
             encrypt_keyring,
             encrypt_other,
+            pre_command: draft.pre_command.clone().unwrap_or_default(),
+            post_command: draft.post_command.clone().unwrap_or_default(),
         }
     }
 
@@ -189,8 +195,82 @@ impl FormValues {
             log_path: non_empty(&self.log_path),
             html_report_path: non_empty(&self.html_report_path),
             encrypt_aes256,
+            pre_command: non_empty(&self.pre_command),
+            post_command: non_empty(&self.post_command),
         })
     }
+}
+
+/// One command the person is about to introduce or change: which job, which of the two, and the exact text.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CommandChange {
+    pub job: String,
+    pub which: &'static str,
+    /// "Prima della copia" / "Dopo la copia".
+    pub label: &'static str,
+    pub text: String,
+}
+
+/// The commands among `to_write` that are **new or different** from what the file had (`originals`, matched by
+/// job name; a job the file does not have has none). Removing a command is not listed: it narrows what runs
+/// and needs no confirmation. These are the texts the person is shown and must confirm, and the ones the core
+/// is then told were confirmed.
+pub fn commands_to_confirm(originals: &[JobDraft], to_write: &[JobDraft]) -> Vec<CommandChange> {
+    let trimmed = |text: &Option<String>| {
+        text.as_deref()
+            .map(str::trim)
+            .filter(|t| !t.is_empty())
+            .map(str::to_string)
+    };
+    let mut out = Vec::new();
+    for draft in to_write {
+        let before = originals.iter().find(|o| o.name == draft.name);
+        for (which, label, now, was) in [
+            (
+                "pre_command",
+                "Prima della copia",
+                trimmed(&draft.pre_command),
+                before.and_then(|o| trimmed(&o.pre_command)),
+            ),
+            (
+                "post_command",
+                "Dopo la copia",
+                trimmed(&draft.post_command),
+                before.and_then(|o| trimmed(&o.post_command)),
+            ),
+        ] {
+            if let Some(text) = now {
+                if Some(&text) != was.as_ref() {
+                    out.push(CommandChange {
+                        job: draft.name.clone(),
+                        which,
+                        label,
+                        text,
+                    });
+                }
+            }
+        }
+    }
+    out
+}
+
+/// What the person reads before confirming: the exact commands, and what writing them means.
+pub fn confirmation_text(changes: &[CommandChange]) -> String {
+    let mut lines = vec![
+        "Stai per scrivere un comando che verrà eseguito con i tuoi diritti a ogni esecuzione di questa attività, anche in automatico e senza nessuno davanti. Controlla il testo:"
+            .to_string(),
+    ];
+    for change in changes {
+        lines.push(format!(
+            "  • «{}» - {}: {}",
+            change.job, change.label, change.text
+        ));
+    }
+    lines.push(
+        "Viene scritto in una proposta accanto al file: il file in uso non cambia finché non lo sostituisci tu."
+            .to_string(),
+    );
+    lines.join("\n")
 }
 
 fn non_empty(value: &str) -> Option<String> {
@@ -254,6 +334,8 @@ mod tests {
             mirror: false,
             keep_generations: Some(7),
             encrypt_aes256: None,
+            pre_command: None,
+            post_command: None,
         }
     }
 
@@ -373,5 +455,68 @@ mod tests {
         assert!(form.mirror);
         form.threads = "16".to_string();
         assert!(form.to_draft(&original).expect("draft").mirror);
+    }
+
+    #[test]
+    fn commands_round_trip_through_the_form() {
+        let mut original = draft();
+        original.pre_command = Some("net stop db".to_string());
+        original.post_command = Some("net start db".to_string());
+        let form = FormValues::from_draft(&original);
+        assert_eq!(form.pre_command, "net stop db");
+        assert_eq!(form.to_draft(&original).expect("round trip"), original);
+    }
+
+    /// An empty box is "no command", never an empty command.
+    #[test]
+    fn an_empty_command_box_means_no_command() {
+        let mut original = draft();
+        original.pre_command = Some("net stop db".to_string());
+        let mut form = FormValues::from_draft(&original);
+        form.pre_command = "   ".to_string();
+        assert_eq!(form.to_draft(&original).expect("draft").pre_command, None);
+    }
+
+    #[test]
+    fn only_new_or_changed_commands_need_confirming() {
+        let mut was = draft();
+        was.pre_command = Some("net stop db".to_string());
+        was.post_command = Some("net start db".to_string());
+        // Untouched: nothing to confirm.
+        assert!(
+            commands_to_confirm(std::slice::from_ref(&was), std::slice::from_ref(&was)).is_empty()
+        );
+        // Removed: narrows, nothing to confirm.
+        let mut removed = was.clone();
+        removed.pre_command = None;
+        assert!(commands_to_confirm(std::slice::from_ref(&was), &[removed]).is_empty());
+        // Changed and introduced: both listed with their exact text.
+        let mut changed = was.clone();
+        changed.post_command = Some(" net start db /y ".to_string());
+        let mut plain = draft();
+        plain.name = "nuovo".to_string();
+        plain.pre_command = Some("echo via".to_string());
+        let list = commands_to_confirm(&[was], &[changed, plain]);
+        assert_eq!(list.len(), 2);
+        assert_eq!(list[0].which, "post_command");
+        assert_eq!(
+            list[0].text, "net start db /y",
+            "trimmed, as the core will compare it"
+        );
+        assert_eq!(list[1].job, "nuovo");
+        assert_eq!(list[1].label, "Prima della copia");
+    }
+
+    #[test]
+    fn the_confirmation_shows_the_exact_text_and_what_it_means() {
+        let text = confirmation_text(&[CommandChange {
+            job: "foto".to_string(),
+            which: "pre_command",
+            label: "Prima della copia",
+            text: "net stop db".to_string(),
+        }]);
+        assert!(text.contains("net stop db"), "{text}");
+        assert!(text.contains("anche in automatico"), "{text}");
+        assert!(text.contains("il file in uso non cambia"), "{text}");
     }
 }

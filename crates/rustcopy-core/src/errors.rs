@@ -53,6 +53,23 @@ pub enum IngestError {
     #[error("the editor cannot turn mirroring on for job {0}: a job that deletes at the destination must be written in the configuration file by hand")]
     EditorCannotEnableMirror(String),
 
+    /// Phase 4. A command runs on every execution, also unattended: the editor writes one only at the Expert
+    /// level (`SafetyLevel::can_edit_job_commands`). Keeping or removing one needs no level.
+    #[error("the editor cannot set {which} for job {name} at this safety level: a command runs on every execution, also unattended, and is only written at the Expert level")]
+    EditorCannotSetCommand { name: String, which: &'static str },
+
+    /// Phase 4. The command is written only after the person confirmed its exact text.
+    #[error("the {which} of job {name} was not confirmed: the editor writes a command only after showing its exact text and asking")]
+    EditorCommandNotConfirmed { name: String, which: &'static str },
+
+    /// Phase 4. A command that comes from the file's top-level defaults cannot be removed from one job.
+    #[error("the {which} of job {name} comes from the configuration's top-level values: remove it there, the editor cannot take it off one job alone")]
+    EditorCommandInherited { name: String, which: &'static str },
+
+    /// Phase 4. A command is one line: a line break would run only the first line and look like all of it.
+    #[error("the {which} of job {name} must be a single line without control characters")]
+    EditorCommandInvalid { name: String, which: &'static str },
+
     /// F54. Retention deletes whole generation cycles.
     #[error("the editor cannot introduce keep_generations for job {0}: retention deletes old generations and must be written in the configuration file by hand")]
     EditorCannotIntroduceRetention(String),
@@ -308,6 +325,10 @@ impl IngestError {
             // F54: every editor refusal is a decision about what the interface may write, not a
             // condition that could clear on a second attempt.
             | IngestError::EditorCannotEnableMirror(_)
+            | IngestError::EditorCannotSetCommand { .. }
+            | IngestError::EditorCommandNotConfirmed { .. }
+            | IngestError::EditorCommandInherited { .. }
+            | IngestError::EditorCommandInvalid { .. }
             | IngestError::EditorCannotIntroduceRetention(_)
             | IngestError::EditorCannotLowerRetention { .. }
             | IngestError::EditorCannotDisablePrescanOnMirror(_)
